@@ -221,11 +221,14 @@ shared_readings:
       no bound is not submittable. `estimate-and-bound` reads `no` on `built` regardless, so this
       shared cell is not currently holding a row green on its own.
   - stage: under_test
-    rows: [registration-skill, skills-three-hosts]
+    rows: [registration-skill, rule-three-hosts]
     why: >
-      The agent layer is two skills and the three host files that carry them, and the test that
-      proves either proves it by reading the same set of files. Two test files here would
-      duplicate the fixtures rather than assert anything new.
+      The agent layer is one skill and one always-on rule, and tests/test_agent_layer.py proves
+      either by reading the same set of files: the vocabulary cases are parametrized over both,
+      because a verb the binary does not have is the same defect wherever it is written. Two
+      test files here would duplicate the fixtures rather than assert anything new. The row was
+      `skills-three-hosts` and named two skills until 2026-08-06, when the submission skill was
+      deleted for restating in prose what `check` prints in the `detail` beside every code.
   - stage: under_test
     rows: [datasets-yaml, model-family]
     why: >
@@ -1140,13 +1143,21 @@ slices:
 
   - name: The agent layer
     surfaces:
-      - id: skills-three-hosts
-        name: The skills, in three hosts
+      # RENAMED FROM `The skills, in three hosts`, AND THE ROW IS THE ALWAYS-ON RULE NOW.
+      # The submission skill it used to point at is deleted: its refusal table restated in
+      # prose what `check` prints in the `detail` beside every code, which is the layer's own
+      # design principle inverted. What in it was not already in the rule was folded into the
+      # rule first. `built` reads the distributed block rather than AGENTS.md alone, because
+      # this repository's AGENTS.md being present says nothing about whether the six research
+      # repositories carry anything.
+      - id: rule-three-hosts
+        name: The always-on rule, in three hosts
         designed: {reached: overview draws it}
         planned: {task: the-agent-layer/7}
-        built: {exists: [.agents/skills/submitting-a-run/SKILL.md, AGENTS.md]}
+        built: {exists: [skills/agents-md-block.md, tools/distribute_agent_layer.py]}
         deployed: {on_main: AGENTS.md}
-        under_test: {tests: [tests/test_agent_layer.py]}
+        under_test:
+          {tests: [tests/test_agent_layer.py, tests/test_agent_layer_is_distributed.py]}
 
       - id: registration-skill
         name: The registration skill

@@ -155,6 +155,10 @@ still where the work is going to become one.
 ## Where to go next
 
 - `edullm check --help` for the fields one submission takes.
-- `.agents/skills/submitting-a-run/` when somebody asks you to run something.
 - `.agents/skills/registering-a-repository/` when the platform does not carry this codebase.
+- `skills/README.md` for what every registered repository carries and where each host reads it.
 - `guides/the-platform.md` for how a person does all of this by hand.
+
+There is no skill for submitting a run. This file and the `detail` on each refusal are the
+whole of it, which is the point: a table of refusal codes here would be a copy of what
+`edullm check --json` already prints beside every one of them.

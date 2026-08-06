@@ -15,9 +15,7 @@ was right at one gate by coincidence and wrong by seven at the other.
 
 from __future__ import annotations
 
-import ast
 import re
-from enum import Enum
 from pathlib import Path
 
 import pytest
@@ -50,7 +48,6 @@ AGENTS = PROJECT_ROOT / "AGENTS.md"
 #: file because Claude Code reads nothing but its own directory. One text, three hosts.
 SKILLS = PROJECT_ROOT / ".agents" / "skills"
 
-SUBMITTING = SKILLS / "submitting-a-run" / "SKILL.md"
 REGISTERING = SKILLS / "registering-a-repository" / "SKILL.md"
 
 #: THE ALWAYS-ON RULE AS IT IS SHIPPED, WHICH IS NOT THIS REPOSITORY'S OWN ``AGENTS.md``.
@@ -66,24 +63,23 @@ SKILLS_README = PROJECT_ROOT / "skills" / "README.md"
 #: Every document in this layer. The shared properties below are parametrized over it, so a
 #: skill added later cannot arrive unheld.
 #:
-#: **``skills/edullm-platform/SKILL.md`` WAS A FOURTH AND IS GONE.** It described the same
-#: loop as the two skills below, at more lines than both together, and it was never put to
-#: the owner as an addition to the set he settled on 2026-08-04. Three documents over one
-#: loop drift; the cure was not deleting the coverage it had accumulated but moving that
-#: coverage onto the documents that actually ship, which is what the cases at the foot of
-#: this file now do.
+#: **TWO DOCUMENTS WERE REMOVED ON 2026-08-06 AND THE REASON IS THE SAME ONE TWICE.**
+#: ``skills/edullm-platform/SKILL.md`` was the two skills merged plus install instructions, at
+#: more lines than both together, and was never put to the owner as an addition to the set.
+#: ``submitting-a-run`` went for the sharper reason: its refusal table restated in prose what
+#: ``check`` now prints in the ``detail`` beside every code, which is the founding rule of this
+#: layer inverted. What in it was not already in the rule was folded into the rule first.
 AGENT_DOCUMENTS: tuple[Path, ...] = (
     AGENTS,
-    SUBMITTING,
     REGISTERING,
     RESEARCHER_RULE,
     SKILLS_README,
 )
 
-#: Every skill in this layer, which is AGENT_DOCUMENTS minus the two rules and the page that
-#: says where to put one. Held apart because the frontmatter and the length budget are
-#: properties of a skill and not of a rule.
-SKILL_DOCUMENTS: tuple[Path, ...] = (SUBMITTING, REGISTERING)
+#: The skills in this layer, which is one. Held apart from the rules because the frontmatter
+#: and the length budget are properties of a skill and not of a rule. A tuple rather than a
+#: single path so that a second skill, if one is ever approved, arrives held.
+SKILL_DOCUMENTS: tuple[Path, ...] = (REGISTERING,)
 
 #: What a SKILL.md body is allowed to run to. The context window is shared with the
 #: conversation, the other skills and the request, so a long skill costs every turn rather
@@ -122,8 +118,10 @@ NAMED_VERB = re.compile(r"`(?:edullm\s+)?([a-z][a-z-]*)`|(?<![.\w-])edullm\s+([a
 #: rather than to every backticked word, because the documents also name ``needs_a_dispatch``,
 #: ``format_version`` and the rest of the envelope, which are keys and not codes. A rule that
 #: could not tell them apart would either miss a stale code or refuse a correct key.
+#: The header of a table of refusal codes, which no document in this layer may carry any more.
+#: See :data:`RESTATED_TABLES`, where the argument is. Kept as a constant rather than inlined
+#: because it is the one banned table that reads like an obviously helpful thing to add back.
 CODE_TABLE_HEADER = "| Code | What to do |"
-CODE_TABLE_ROW = re.compile(r"^\|\s*`([a-z][a-z0-9_]*)`\s*\|")
 
 
 def flags_the_parser_takes() -> set[str]:
@@ -460,130 +458,32 @@ def test_the_skill_reads_the_machine_form_rather_than_the_paragraphs(skill: Path
     assert "--json" in text
 
 
-def refusal_codes_the_tree_can_produce() -> set[str]:
-    """Every code a refusal can arrive under, from all three halves of the vocabulary.
+def test_the_registration_skill_names_the_code_that_is_its_trigger() -> None:
+    """Mutation: rename the refusal and leave the skill describing the old one.
 
-    Read rather than listed, which is the point. One is the exception classes, which
-    ``tests/test_refusal_codes.py`` already derives from the raise sites, and another is the
-    ``Refusal(code=...)`` literals in the CLI package, which are the checks a laptop makes
-    that the compile step has no exception for. A skill matches on a code without caring
-    which half it came from, so a rule about a skill must not care either.
+    THIS IS THE ONE CODE THE LAYER STILL CANNOT DO WITHOUT NAMING, WHICH IS WHY IT HAS A CASE
+    OF ITS OWN NOW THAT THE TABLES ARE GONE. The rule tells an agent to switch to this skill
+    when ``check`` refuses with this code, and the skill's own description says the same, so
+    the code is the join between the two documents. Renamed in the package and not here, the
+    skill goes on existing and nothing ever reaches it.
 
-    **THE THIRD IS A HOLE THIS FILE HAD, AND ``unprovisioned_compute_profile`` IS THE ONE THAT
-    FOUND IT.** ``raise_sites`` walks the package for anything raising a subclass of
-    ``SubmissionRefusedError``, and ``ComputeProfileResolutionError`` in
-    ``contracts/workload.py`` is a ``ValueError`` that carries a ``reason_code`` and is not
-    one. ``cli/preflight.py`` catches it and builds ``Refusal(code=type(exc).reason_code)``,
-    so the code reaches a caller's ``refusals`` exactly as the others do, and
-    ``edullm check --compute gpu-8xh100`` prints it today. A skill tabulating it was being
-    told nothing raises it, which is the shape of wrongness that gets a correct row deleted.
-
-    So the class attribute is read wherever it is carried, by walking the same modules
-    ``raise_sites`` walks and taking every ``reason_code`` assigned a string at class scope.
-    That is wider than the raise sites and deliberately so, since what a caller can see is
-    every code ``preflight`` can put on a ``Refusal`` rather than only the ones whose class
-    happens to sit under one base.
+    Read off the exception rather than typed, for the reason ``errors.py``'s header gives
+    about the same string: a second spelling of a rule is a second answer to a settled
+    question, and this file would otherwise be the third place the code is written down.
     """
-    from tests.test_refusal_codes import REASON_CODE, package_modules, raise_sites
+    from edullm_platform.errors import UnregisteredRepositoryError
 
-    found = {site.code for site in raise_sites() if site.code}
-    for _module, tree in package_modules():
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ClassDef):
-                continue
-            for statement in node.body:
-                targets: list[ast.expr] = []
-                if isinstance(statement, ast.AnnAssign):
-                    targets = [statement.target]
-                elif isinstance(statement, ast.Assign):
-                    targets = list(statement.targets)
-                value = getattr(statement, "value", None)
-                if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
-                    continue
-                if any(
-                    isinstance(target, ast.Name) and target.id == REASON_CODE
-                    for target in targets
-                ):
-                    found.add(value.value)
-    for module in sorted((PROJECT_ROOT / "src" / "edullm_platform" / "cli").glob("*.py")):
-        tree = ast.parse(module.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
-                continue
-            if node.func.id != "Refusal":
-                continue
-            found.update(
-                keyword.value.value
-                for keyword in node.keywords
-                if keyword.arg == "code"
-                and isinstance(keyword.value, ast.Constant)
-                and isinstance(keyword.value.value, str)
-            )
-    return found
+    code = UnregisteredRepositoryError.reason_code
+    frontmatter = skill_frontmatter(REGISTERING)
 
-
-def codes_the_skill_tabulates(skill: Path) -> list[str]:
-    """The refusal codes in this skill's own table of them, in the order it lists them."""
-    lines = skill.read_text(encoding="utf-8").splitlines()
-    if CODE_TABLE_HEADER not in lines:
-        return []
-    rows = lines[lines.index(CODE_TABLE_HEADER) + 1 :]
-    found: list[str] = []
-    for line in rows:
-        if not line.startswith("|"):
-            break
-        match = CODE_TABLE_ROW.match(line)
-        if match is not None:
-            found.append(match.group(1))
-    return found
-
-
-def test_the_vocabulary_a_skill_is_held_against_is_not_empty() -> None:
-    """Guards the case below, which would otherwise pass by finding no codes to compare to.
-
-    Mutation: break the walk, by renaming ``Refusal`` or by pointing the glob at nothing.
-    Every code a skill names would then be in a set of nothing and the comparison would be
-    against an empty left side, so the one rule holding these tables to the tree would go
-    quiet without going red.
-    """
-    codes = refusal_codes_the_tree_can_produce()
-
-    assert "unregistered_repository" in codes, "the CLI's own literals are not being read"
-    assert "no_published_image" in codes, "the exception classes are not being read"
-    assert "unprovisioned_compute_profile" in codes, (
-        "a reason_code carried on a class outside the SubmissionRefusedError hierarchy is "
-        "not being read, so a skill naming one is told nothing raises it"
+    assert code in frontmatter["description"], (
+        f"the skill's description never names {code}, so a host matching a refusal against "
+        "it has nothing to match on"
     )
-
-
-@pytest.mark.parametrize("skill", SKILL_DOCUMENTS, ids=lambda path: path.parent.name)
-def test_every_refusal_code_a_skill_tabulates_is_one_the_tree_can_produce(skill: Path) -> None:
-    """Mutation: rename a code in the package and leave the skill's table alone.
-
-    THIS IS THE ONE TABLE AN AGENT ACTS ON WITHOUT CHECKING. The skills tell it to match on
-    the code because the prose gets reworded, so the code is the promise, and a promise
-    nothing holds is the shape this whole file exists to catch. A renamed code leaves a row
-    that matches nothing, and what an agent does with a refusal it has no row for is worse
-    than what it does with no table at all: it reads the detail and improvises.
-    """
-    tabulated = codes_the_skill_tabulates(skill)
-    if not tabulated:
-        pytest.skip(f"{skill.parent.name} tabulates no refusal codes")
-
-    unknown = sorted(set(tabulated) - refusal_codes_the_tree_can_produce())
-
-    assert not unknown, (
-        f"{skill.parent.name} names refusal codes nothing raises: {', '.join(unknown)}"
+    assert code in RESEARCHER_RULE.read_text(encoding="utf-8"), (
+        f"the always-on rule never names {code}, so nothing sends an agent from a refused "
+        "check to the one skill that answers it"
     )
-
-
-def test_some_skill_actually_tabulates_a_code() -> None:
-    """Guards the skip above against becoming the way every skill passes.
-
-    Mutation: reword the table header. Every skill would skip, and the case would report
-    green on a layer whose tables had all gone stale.
-    """
-    assert any(codes_the_skill_tabulates(skill) for skill in SKILL_DOCUMENTS)
 
 
 def test_the_registration_skill_writes_the_three_files_the_verb_does_not() -> None:
@@ -641,28 +541,27 @@ def test_the_registration_skill_resolves_against_the_approved_base_images() -> N
 
 
 # ---------------------------------------------------------------------------------------
-# The two documents that leave this repository, held to the tree they describe.
+# The always-on rule, which is the document that leaves this repository.
 #
 # EVERY CASE BELOW IS A THING THE SHARED ONES ABOVE CANNOT SEE. They hold a document to the
 # binary's vocabulary: verbs it has, flags it takes, codes it can raise, no bound written
 # out. A document can pass all of that and still send somebody to `uv tool install edullm`,
-# describe an approval class no submission reaches, or print a bfloat16 spelling the guard
-# stopped recognising. Those are claims rather than vocabulary, and a claim has to be held
-# against the thing that decides it.
+# or print a bfloat16 spelling the guard stopped recognising. Those are claims rather than
+# vocabulary, and a claim has to be held against the thing that decides it.
 #
-# THEY WERE WRITTEN AGAINST `skills/edullm-platform/SKILL.md` AND NOW POINT AT THE SHIPPED
-# TWO, WHICH IS THE WHOLE OF WHY THAT FILE COULD BE RETIRED WITHOUT LOSING ANYTHING. The
-# coverage was the good half of it. What it did not have was the owner's approval, a reason
-# to exist beside two skills describing the same loop, or a way of reaching anybody.
+# THE TABLES THESE CASES USED TO HOLD ARE GONE ALONG WITH THE DOCUMENTS THAT CARRIED THEM,
+# AND THE LAST CASE IN THIS FILE IS WHY. `submitting-a-run` tabulated the approval classes,
+# the placement verdicts, the check document's keys and the cost arithmetic, and each table
+# had a case here comparing it against the tree. Comparing them was the second-best answer.
+# The best one is not writing them down: `check` prints all four, in the document the rule
+# already tells the agent to read, so the tables were a copy of an artifact sitting next to
+# the artifact. What replaced four comparison cases is one rule saying no document may carry
+# them, which is smaller and cannot go stale.
 # ---------------------------------------------------------------------------------------
 
 
 def researcher_rule() -> str:
     return RESEARCHER_RULE.read_text(encoding="utf-8")
-
-
-def submitting_skill() -> str:
-    return SUBMITTING.read_text(encoding="utf-8")
 
 
 def fenced_lines(text: str) -> list[str]:
@@ -749,226 +648,89 @@ def test_the_always_on_rule_names_the_distribution_rather_than_the_executable() 
     )
 
 
-def test_every_approval_class_the_submitting_skill_tabulates_is_one_the_policy_returns() -> None:
-    """Mutation: keep a class the policy stopped returning, or invent a fourth.
-
-    THE SKILL'S WHOLE ANSWER TO "WHO RELEASES THIS" IS THIS FIELD, WHICH IS THE POINT.
-    ``config/policy.yaml``'s v5 note is a record of the classes being re-cut underneath
-    everybody, and a skill that computed the answer from a threshold instead would have been
-    silently wrong from that merge onwards. Reading ``approval_class`` is right and it only
-    stays right while the values in the table are the values the enum has.
-    """
-    from edullm_platform.contracts.policy import ApprovalClass
-
-    known = {member.value for member in ApprovalClass}
-    tabulated = first_column_under(
-        "| `approval_class` | Who releases the run |", text=submitting_skill()
-    )
-
-    assert tabulated, "the table under that heading has no rows"
-    assert tabulated == known, (
-        f"the skill tabulates {sorted(tabulated)} and ApprovalClass has {sorted(known)}"
-    )
-
-
-def approval_classes_classify_request_can_return() -> set[str]:
-    """The classes a submission can actually be routed into, read off ``classify_request``.
-
-    ``ApprovalClass`` is the wrong question and asking it is what let the defect below sit
-    there. The enum is a vocabulary and it keeps members on purpose -- ``EXCEPTION`` is held
-    for reserved-capacity purchases nothing has built yet, and its own docstring says so. The
-    function is the routing, and the two have not agreed since policy v5.
-    """
-    source = ast.parse(
-        (PROJECT_ROOT / "src" / "edullm_platform" / "contracts" / "policy.py").read_text(
-            encoding="utf-8"
-        )
-    )
-    function = next(
-        node
-        for node in ast.walk(source)
-        if isinstance(node, ast.FunctionDef) and node.name == "classify_request"
-    )
-    return {
-        node.attr
-        for statement in ast.walk(function)
-        if isinstance(statement, ast.Return)
-        for node in ast.walk(statement)
-        if isinstance(node, ast.Attribute)
-        and isinstance(node.value, ast.Name)
-        and node.value.id == "ApprovalClass"
-    }
-
-
-def test_the_routing_reaches_fewer_classes_than_the_enum_carries() -> None:
-    """Guards the case below, and records why it is not asserting the obvious thing.
-
-    Written the other way round -- assert the skill's table equals the classes routing can
-    reach -- this would pass today by deleting the ``exception`` row, and the row is worth
-    keeping: an agent that meets the word anywhere else needs somewhere that explains it.
-    So the rule below is about what the row *says*, and it is only meaningful while some
-    member is unreachable. When capacity blocks are built and ``classify_request`` returns
-    ``EXCEPTION`` again, this goes red and the row's wording is what has to change with it.
-    """
-    reachable = approval_classes_classify_request_can_return()
-
-    assert reachable, "no ApprovalClass member is returned, so the AST walk has broken"
-    assert reachable < {member.name for member in _approval_class()}, (
-        "every member is reachable again, so the skill may no longer say any of them is "
-        "unreachable. Reword the row and delete this pair of cases"
-    )
-
-
-def _approval_class() -> type[Enum]:
-    from edullm_platform.contracts.policy import ApprovalClass
-
-    return ApprovalClass
-
-
-def test_the_skill_says_so_about_an_approval_class_no_submission_reaches() -> None:
-    """**Mutation: leave the row reading "an admin", which is what it read until today.**
-
-    THIS IS THE DEFECT THAT RETIRED THE FOURTH DOCUMENT. Its table said ``exception`` was
-    released by "a platform admin", flatly, as one of three live routes. Under policy v5 no
-    submission classifies into it -- ``classify_request``'s own docstring says the member is
-    kept and the function no longer returns it -- so an agent reading that table could tell a
-    researcher to go and find an admin for a run no admin will ever see.
-
-    THE CASE ABOVE IT PASSED THE WHOLE TIME, AND THAT IS THE LESSON RATHER THAN AN ASIDE.
-    ``test_every_approval_class_the_submitting_skill_tabulates_is_one_the_policy_returns``
-    compares the table against ``ApprovalClass``, and ``ApprovalClass`` still has all three
-    members. A test bound to the vocabulary cannot see a claim about the routing. The layer's
-    founding rule is that a skill reads the generated artifact instead of restating policy,
-    and the corollary nobody wrote down is that a test has to read the same artifact the
-    claim is about.
-    """
-    reachable = approval_classes_classify_request_can_return()
-    unreachable = sorted(
-        member.value for member in _approval_class() if member.name not in reachable
-    )
-
-    text = submitting_skill()
-    for value in unreachable:
-        row = next(
-            (line for line in text.splitlines() if line.startswith(f"| `{value}`")),
-            None,
-        )
-        assert row is not None, f"the skill has no row for {value}"
-        assert "no submission classifies into it" in row, (
-            f"the skill's row for `{value}` describes it as a live route, and "
-            "classify_request cannot return it. Say that no submission reaches it and what "
-            f"the machinery is being kept for.\n  {row}"
-        )
-
-
-def test_the_submitting_skill_names_every_placement_verdict_capacity_can_carry() -> None:
-    """Mutation: promote a fourth verdict and leave the skill reading the file for three.
-
-    ``edullm check`` says nothing at all about whether EC2 will supply a shape, and a job it
-    cannot supply sits in ``RUNNABLE`` with no error against it, which is indistinguishable
-    from being queued. So the skill sends a reader at ``config/capacity.yaml`` in the
-    install's own configuration directory, and a verdict it does not explain is one somebody
-    reads off that file and cannot act on.
-    """
-    from edullm_platform.placement import PLACES_AFTER_A_WAIT, PLACES_RELIABLY, PLACES_UNRELIABLY
-
-    text = submitting_skill()
-    known = {PLACES_RELIABLY, PLACES_AFTER_A_WAIT, PLACES_UNRELIABLY}
-    # Out of the table rather than out of the prose. A verdict named in a sentence and
-    # missing from the table is one a reader meets with no reading against it, which is the
-    # half that decides whether they pick the shape.
-    tabulated = first_column_under("| What `places` says | What it means |", text=text)
-
-    assert tabulated == known, (
-        f"the skill tabulates {sorted(tabulated)} and capacity.yaml can carry {sorted(known)}"
-    )
-    assert "capacity.yaml" in text, "the skill sends nobody at the file that holds the verdicts"
-
-
-def test_the_bfloat16_spelling_the_submitting_skill_prints_is_one_the_guard_reads() -> None:
-    """**THE MOST EXPENSIVE THING THIS SKILL TEACHES, AND THE ONE MOST LIKELY TO ROT.**
+def test_the_bfloat16_spelling_the_rule_prints_is_one_the_guard_reads() -> None:
+    """**THE MOST EXPENSIVE THING THIS LAYER TEACHES, AND THE ONE MOST LIKELY TO ROT.**
 
     ``precision.py`` reads the text of a command and cannot see a dtype the program sets in
-    code, and its own header names OLMo-core's entry point as the miss. So the skill tells an
+    code, and its own header names OLMo-core's entry point as the miss. So the rule tells an
     agent to write the dtype into the command, which turns a job that dies on a Turing card
-    after being priced, released and placed into a refusal that costs nothing.
+    after being priced, released and placed into a refusal that costs nothing. It is one of
+    the lines folded out of ``submitting-a-run`` before that skill was deleted, and it is the
+    only one of them carrying a worked example.
 
     That instruction is worth exactly as much as the spelling beside it. Held by running the
-    detector over the line the skill prints rather than by searching for a word, so a
-    narrowed :data:`~edullm_platform.precision.BFLOAT16_SPELLINGS` or a changed detector
-    fails here instead of leaving a worked example that quietly stopped working.
+    detector over the line the rule prints rather than by searching for a word, so a narrowed
+    :data:`~edullm_platform.precision.BFLOAT16_SPELLINGS` or a changed detector fails here
+    instead of leaving a worked example that quietly stopped working.
     """
     import shlex
 
     from edullm_platform.errors import Bfloat16NotInTheHardwareError
     from edullm_platform.precision import bfloat16_request_in
 
-    text = submitting_skill()
+    text = researcher_rule()
     assert Bfloat16NotInTheHardwareError.reason_code in text, (
-        "the skill never names the refusal this whole section is about"
+        "the rule never names the refusal this whole paragraph is about"
     )
 
+    # Every command the rule shows, whether fenced or in backticks mid-sentence. Both are
+    # read because the dtype example is one clause of a bullet rather than a block of its
+    # own, and a test that only understood fences would pass on a rule that had stopped
+    # printing a command at all.
+    candidates = [*fenced_lines(text), *re.findall(r"`([^`\n]+)`", text)]
     read = [
         found
-        for line in fenced_lines(text)
-        if "bfloat16" in line and not line.lstrip().startswith("#")
-        and (found := bfloat16_request_in(shlex.split(line)))
+        for candidate in candidates
+        if "bfloat16" in candidate and (found := bfloat16_request_in(shlex.split(candidate)))
     ]
 
     assert read, (
-        "no command the skill prints is one bfloat16_request_in reads as a bfloat16 "
-        "request, so the worked example teaches a way of naming the dtype that the guard "
-        "no longer recognises and the refusal it promises would never fire"
+        "no command the rule prints is one bfloat16_request_in reads as a bfloat16 request, "
+        "so the worked example teaches a way of naming the dtype that the guard no longer "
+        "recognises and the refusal it promises would never fire"
     )
 
 
-def test_every_key_the_submitting_skill_tabulates_is_a_key_a_check_emits(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Mutation: rename a field in ``cli/machine.py`` and leave the skill reading the old one.
+#: The four things ``edullm check --json`` prints that a document used to tabulate instead.
+#: Each is a table that existed, was compared against the tree by a case in this file, and was
+#: deleted with the skill that carried it. The header is what is banned rather than the words,
+#: because a document has to be able to *name* ``approval_class`` -- telling the agent to read
+#: it is the entire remedy -- and must not be able to enumerate what it can hold.
+RESTATED_TABLES = (
+    CODE_TABLE_HEADER,
+    "| `approval_class` | Who releases the run |",
+    "| What `places` says | What it means |",
+    "| Key | What it holds |",
+    "maximum_compute_cost_usd =",
+)
 
-    The skill tells an agent to branch on ``refused``, read ``refusals``, price off ``cost``
-    and route off ``approval_class``, and every one of those is a key rather than a word. A
-    renamed key reaches the agent as a ``KeyError`` in the middle of somebody's request, and
-    what it does next is read the paragraphs, which is the one thing the document exists to
-    stop.
 
-    Driven off a real invocation rather than off the source of ``check_document``, so the
-    keys compared are the keys a caller sees.
+@pytest.mark.parametrize("document", AGENT_DOCUMENTS, ids=lambda path: path.name)
+def test_no_document_tabulates_what_a_check_already_prints(document: Path) -> None:
+    """**The founding rule of this layer, enforced forwards instead of by comparison.**
+
+    A skill reads the generated artifact rather than restating policy in prose. Every table
+    banned here was a restatement of something ``check`` prints in the same document the rule
+    already sends the agent to, and each one was individually held against the tree by a case
+    in this file, and one of them was wrong anyway: ``submitting-a-run``'s predecessor said an
+    ``exception`` run is released by a platform admin, and ``classify_request`` has not
+    returned that class since policy v5. The case guarding it compared the table against
+    ``ApprovalClass``, which still carries the member for reserved-capacity purchases, so a
+    test bound to the vocabulary sat green over a false claim about the routing.
+
+    THE LESSON IS THAT COMPARING A COPY IS A WEAKER MOVE THAN NOT KEEPING ONE. A comparison
+    can be bound to the wrong artifact and nothing says so. This rule cannot: there is no
+    table, so there is nothing to be wrong. It is also the cheaper rule to keep true, which is
+    why it is here rather than four cases reinstated against a different document.
     """
-    import json
+    text = document.read_text(encoding="utf-8")
+    written = [table for table in RESTATED_TABLES if table in text]
 
-    from edullm_platform.cli.main import EXIT_OK
-    from tests.cli_support import FakeRunner, git_answers, invoke, write_spec
-
-    write_spec(tmp_path, compute="gpu-1xa10g")
-    code, out, err = invoke(
-        ["check", "--json", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
-        runner=FakeRunner(git_answers(tmp_path)),
-        cwd=tmp_path,
-        monkeypatch=monkeypatch,
-    )
-    assert code == EXIT_OK, out + err
-    document = json.loads(out)
-
-    tabulated = first_column_under("| Key | What it holds |", text=submitting_skill())
-
-    assert tabulated, "the table under that heading has no rows"
-    assert tabulated <= set(document), (
-        f"the skill tabulates keys a check does not emit: {sorted(tabulated - set(document))}"
-    )
-
-    factors = [
-        line for line in fenced_lines(submitting_skill()) if "maximum_compute_cost_usd =" in line
-    ]
-    assert factors, (
-        "the skill no longer writes the product a fan-out multiplies, so nothing tells an "
-        "agent that quoting one cell understates what somebody is approving"
-    )
-    named = set(re.findall(r"[a-z][a-z_]+", factors[0]))
-    assert named == set(document["cost"]), (
-        f"the cost arithmetic names {sorted(named)} and the document carries "
-        f"{sorted(document['cost'])}"
+    assert not written, (
+        f"{document.name} tabulates what edullm check --json already prints: "
+        f"{written}. Tell the agent to read the field out of the document instead. "
+        "A table here is a copy of an artifact sitting next to the artifact, and the last "
+        "one drifted into telling researchers to find an admin for a run no admin sees."
     )
 
 
@@ -1002,20 +764,38 @@ def test_the_page_names_the_directory_each_host_actually_reads() -> None:
     )
 
 
-def test_the_page_tells_nobody_to_curl_a_skill_into_a_path_no_host_reads() -> None:
+def test_the_page_installs_the_skill_where_codex_will_go_on_reading_it() -> None:
     """Guards the case above against being satisfied by a page that says both things.
 
-    Adding the correct table while leaving the old copy lines underneath it would pass every
-    assertion above, and a reader who scrolls to the fenced block rather than reading the
-    prose gets the wrong one. ``~/.codex/skills`` is the specific wrong one, because it looks
-    exactly like the two lines above it that are right.
+    **THE FACT THIS CASE ASSERTS WAS CORRECTED ONCE ALREADY AND THAT IS THE POINT OF IT.**
+    The page used to tell people to put the skill in ``~/.codex/skills``, which was first read
+    here as a path Codex does not read at all -- wrong, and wrong in the direction that would
+    have had somebody delete a working install. Codex does read it, from a path its own source
+    comments mark deprecated and kept for backward compatibility, while ``~/.agents/skills`` is
+    the documented one. So the page may mention the old path, and what it may not do is send
+    anybody there to install: an instruction that works by luck expires without warning.
+
+    Asserted on the copy commands rather than on the prose, because the prose has to be free
+    to explain the deprecation -- that explanation is the reason the next person does not
+    "fix" this back.
     """
     text = SKILLS_README.read_text(encoding="utf-8")
+    installs = [
+        line
+        for line in fenced_lines(text)
+        if any(verb in line for verb in ("cp ", "ln -s", "curl", "mkdir -p"))
+    ]
 
-    assert "~/.codex/skills" not in text, (
-        "the page still sends somebody at ~/.codex/skills, which Codex does not read"
+    assert installs, "the page carries no install commands at all"
+    assert any("~/.agents/skills" in line for line in installs), (
+        "no install command puts the skill in ~/.agents/skills, which is Codex's documented "
+        "user-level path and the only one it will keep reading"
+    )
+    assert not any("~/.codex/skills" in line for line in installs), (
+        "an install command still puts the skill in ~/.codex/skills. Codex reads it today and "
+        "has marked it deprecated, so this works by luck and will stop without warning"
     )
     assert "raw.githubusercontent.com" not in text, (
-        "the page still tells somebody to curl a copy for themselves. Copies made that way "
-        "are the ones nothing holds equal and nothing knows about"
+        "the page tells somebody to curl a copy for themselves. Copies made that way are the "
+        "ones nothing holds equal and nothing knows about"
     )

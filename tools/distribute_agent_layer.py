@@ -1,11 +1,17 @@
-"""Writes the agent layer into a research checkout, and says when a copy has drifted.
+"""Writes the always-on rule into a research checkout, and says when a copy has drifted.
 
-**WHY THE FILES ARE COPIED RATHER THAN LINKED TO.** The three artifacts an agent needs --
-the two skills and the always-on rule -- are only loaded from paths inside the repository
-the agent has open. A researcher working in OLMo-core gets nothing from a file that exists
-only in a platform checkout, which is where all three lived until now, and the observed
-consequence is an agent that writes ``boto3`` against a cluster it cannot reach. So each
-registered repository carries its own copy and there is no arrangement in which it does not.
+**WHAT IS DISTRIBUTED IS THE RULE, AND THE ONE SKILL IS DELIBERATELY NOT.** ``AGENTS.md`` is
+loaded every session without being invoked, it is most of what an agent needs, and it is what
+makes anything else reachable -- so it has to be in the repository the agent has open. A
+researcher working in OLMo-core gets nothing from a file that exists only in a platform
+checkout, which is where it lived until now, and the observed consequence is an agent that
+writes ``boto3`` against a cluster it cannot reach.
+
+``registering-a-repository`` is the opposite case and putting it here would be a category
+error. It fires when a codebase is *not* on the platform, and an unregistered codebase has no
+``AGENTS.md`` either, so committing the skill to the six repositories that are already
+registered installs it in exactly the six places it can never be needed. It belongs at user
+level, and ``skills/README.md`` argues where and how.
 
 **WHAT THEN HOLDS THE COPIES EQUAL.** Copies drift, and prose that has drifted is worse than
 prose that is missing because nothing looks wrong. Two things answer that and neither is
@@ -15,20 +21,12 @@ copy off GitHub and fails when it stops matching the source here. The test is th
 bearing half. A distributor without it is a convention, and a convention is what drift is
 made of.
 
-**WHY THREE PATHS FOR TWO SKILLS.** The hosts disagree and they fail silently when they are
-given the wrong path, so the layout is dictated by the least accommodating of them rather
-than chosen. Codex reads project skills from ``.agents/skills`` and from nowhere else.
-Claude Code reads them from ``.claude/skills`` and from nowhere else. Cursor reads both.
-There is no directory all three read, so ``.claude/skills/<name>`` is a symlink onto the
-copy under ``.agents/skills/<name>``: one file, reachable by two names, and no second text
-that can come to say something different. Claude Code documents following a symlinked skill
-directory, which is what makes this available rather than clever.
-
-**AND WHY THE RULE IS A BLOCK RATHER THAN A FILE.** ``AGENTS.md`` is read whole and a
+**WHY THE RULE IS A BLOCK RATHER THAN A FILE.** ``AGENTS.md`` is read whole and a
 repository's own half of it -- how to run its tests, what its layout means -- is the half
-the platform has no business writing. So the rule is written between two markers and
-everything outside them is left exactly as it was found. The markers are what let this run
-twice.
+the platform has no business writing. OLMo-core's says its trainer sets bfloat16 in code
+where the platform's guard cannot see it, which is knowledge no platform file has. So the
+rule is written between two markers and everything outside them is left exactly as it was
+found. The markers are what let this run twice.
 
 The same asymmetry applies one level up: Cursor and Codex read ``AGENTS.md`` and Claude Code
 reads ``CLAUDE.md`` and has no setting that changes that. Where a repository has no
@@ -49,8 +47,6 @@ from pathlib import Path
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-SKILL_NAMES = ("registering-a-repository", "submitting-a-run")
 
 AGENTS_SOURCE = PROJECT_ROOT / "skills" / "agents-md-block.md"
 REPOSITORIES_YAML = PROJECT_ROOT / "config" / "repositories.yaml"
@@ -104,14 +100,6 @@ def registered_repositories() -> list[str]:
     return sorted(entry["repository"] for entry in entries)
 
 
-def skill_source(name: str) -> Path:
-    return PROJECT_ROOT / ".agents" / "skills" / name / "SKILL.md"
-
-
-def expected_skill_text(name: str) -> str:
-    return skill_source(name).read_text()
-
-
 def expected_agents_block() -> str:
     """The managed region of a research repository's ``AGENTS.md``, markers included."""
     return f"{BEGIN_MARKER}\n{MARKER_NOTE}\n\n{AGENTS_SOURCE.read_text().strip()}\n{END_MARKER}"
@@ -144,41 +132,6 @@ def extract_block(text: str) -> str | None:
 def divergences(checkout: Path) -> list[Divergence]:
     """Everything about ``checkout``'s agent layer that does not match this repository."""
     found: list[Divergence] = []
-
-    for name in SKILL_NAMES:
-        target = checkout / ".agents" / "skills" / name / "SKILL.md"
-        # The symlink is checked whether or not the file is there, which reads like
-        # belt and braces and is not. Written with a ``continue`` on the missing file, this
-        # reported one path per skill on an empty checkout and
-        # ``test_an_untouched_checkout_diverges_on_everything`` caught it: the state where
-        # Claude Code alone has nothing is reached by deleting the link, and that state has
-        # the file present, so the report has to be able to name the link on its own.
-        if not target.exists():
-            found.append(Divergence(str(target.relative_to(checkout)), "missing"))
-        else:
-            actual = target.read_text()
-            expected = expected_skill_text(name)
-            if actual != expected:
-                diff = "\n".join(
-                    difflib.unified_diff(
-                        expected.splitlines(),
-                        actual.splitlines(),
-                        "platform",
-                        "checkout",
-                        lineterm="",
-                    )
-                )
-                found.append(Divergence(str(target.relative_to(checkout)), diff))
-
-        link = checkout / ".claude" / "skills" / name
-        if not link.is_symlink():
-            found.append(
-                Divergence(
-                    str(link.relative_to(checkout)),
-                    "missing, or a real directory rather than a symlink. Claude Code reads "
-                    "nothing but .claude/skills, and a second real copy is a second text.",
-                )
-            )
 
     agents = checkout / "AGENTS.md"
     if not agents.exists():
@@ -217,29 +170,6 @@ def divergences(checkout: Path) -> list[Divergence]:
 def write_into(checkout: Path) -> list[str]:
     """Write the layout into ``checkout``. Returns the paths that changed."""
     changed: list[str] = []
-
-    for name in SKILL_NAMES:
-        target = checkout / ".agents" / "skills" / name / "SKILL.md"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        expected = expected_skill_text(name)
-        if not target.exists() or target.read_text() != expected:
-            target.write_text(expected)
-            changed.append(str(target.relative_to(checkout)))
-
-        link = checkout / ".claude" / "skills" / name
-        link.parent.mkdir(parents=True, exist_ok=True)
-        relative = Path("../..") / ".agents" / "skills" / name
-        if link.is_symlink():
-            if Path.readlink(link) != relative:
-                link.unlink()
-        elif link.exists():
-            raise SystemExit(
-                f"{link} exists and is not a symlink. Remove it by hand and say why in the "
-                "pull request: a real directory there is a second copy of a skill."
-            )
-        if not link.exists() and not link.is_symlink():
-            link.symlink_to(relative, target_is_directory=True)
-            changed.append(str(link.relative_to(checkout)))
 
     agents = checkout / "AGENTS.md"
     existing = agents.read_text() if agents.exists() else ""

@@ -310,12 +310,17 @@ def require_registered_repository(
         return
     registered = ", ".join(entry.repository for entry in repositories.repositories)
     raise UnregisteredRepositoryError(
-        f"run edullm add repository --reason '<why>' to register {repository!r}, which "
-        f"opens the pull request that does it. config/repositories.yaml carries no entry "
-        f"for it, so admission would refuse this run with unregistered_repository whoever "
-        f"released it. That pull request also carries the ECR repository the images go to, "
-        f"created when it merges, and the place on the publisher role that writes them, "
-        f"which is a stack no workflow may deploy. Registered today: {registered}."
+        f"write this repository's own build inputs first, then run edullm add repository "
+        f"--reason '<why>' to register {repository!r}, which opens the pull request that does "
+        f"it. THE ORDER MATTERS: the pull request declares a path to a Dockerfile, and one "
+        f"merged against a repository that has none is registered and can never build an "
+        f"image, which has happened. The registering-a-repository skill writes them; where a "
+        f"coding agent does not have it, edu-llm/platform's skills/README.md says where each "
+        f"host reads one from. config/repositories.yaml carries no entry for this repository, "
+        f"so admission would refuse this run with unregistered_repository whoever released "
+        f"it. That pull request also carries the ECR repository the images go to, created "
+        f"when it merges, and the place on the publisher role that writes them, which is a "
+        f"stack no workflow may deploy. Registered today: {registered}."
     )
 
 

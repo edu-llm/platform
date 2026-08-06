@@ -1,11 +1,15 @@
 # WHETHER THE COPY IN EVERY RESEARCH REPOSITORY IS STILL THE COPY THIS ONE HOLDS.
 #
-# The two skills and the always-on rule cannot be read out of this repository by the people
-# they were written for. No host loads a skill from a checkout the user does not have open,
-# so a file that lives only here loads for somebody working on the platform and for nobody
-# working in OLMo-core -- which is the whole of the defect this layer was rebuilt to fix.
-# Each registered repository therefore carries its own copy, and a copy nothing compares is
-# how one document becomes six that disagree.
+# The always-on rule cannot be read out of this repository by the people it was written for.
+# No host loads an instruction file from a checkout the user does not have open, so a file that
+# lives only here loads for somebody working on the platform and for nobody working in
+# OLMo-core -- which is the whole of the defect this layer was rebuilt to fix. Each registered
+# repository therefore carries its own copy, and a copy nothing compares is how one document
+# becomes six that disagree.
+#
+# THE ONE SKILL IS NOT COMPARED HERE BECAUSE IT IS NOT DISTRIBUTED. registering-a-repository
+# fires when a codebase is not on the platform, so the six repositories that are registered are
+# the six places it can never fire. It is installed at user level, which no workflow can see.
 #
 # tests/test_agent_layer_is_distributed.py holds the distributor's mechanics and is hermetic.
 # It cannot answer this question, because this question is about other repositories. That is
@@ -21,12 +25,11 @@ name: Is the agent layer distributed
 on:
   push:
     branches: [main]
-    # THE PATHS ARE THE SOURCE AND NOT THE CONSUMERS. A push that edits a skill is the push
+    # THE PATHS ARE THE SOURCE AND NOT THE CONSUMERS. A push that edits the rule is the push
     # that puts every repository out of date, and it is the only push that can, since nothing
     # else here is copied anywhere. Listing the distributor too because a change to how the
     # rule is spliced moves the expected bytes without touching the rule.
     paths:
-      - ".agents/skills/**"
       - "skills/agents-md-block.md"
       - "tools/distribute_agent_layer.py"
       - "config/repositories.yaml"
@@ -88,9 +91,8 @@ jobs:
             echo "::group::$repository"
             clone="$RUNNER_TEMP/$repository"
             rm -rf "$clone"
-            # Full checkout of one commit. A sparse or blobless clone would not materialise
-            # the .claude symlinks, and whether those exist is half of what is being asked:
-            # they are the only path Claude Code reads.
+            # Full checkout of one commit. Cheap, and a sparse clone would need a path list
+            # kept in step with the distributor for no gain on repositories this size.
             if ! git clone --quiet --depth 1 \
                 "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository_owner }}/$repository.git" \
                 "$clone"; then
