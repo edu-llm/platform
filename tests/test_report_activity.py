@@ -39,6 +39,7 @@ from report_activity import (
     restrict_to_the_day,
 )
 
+from edullm_platform.cells import said_of_cells
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.substrate import (
@@ -97,6 +98,7 @@ def _facts(run_id: str, submitter: str, usd: str | None, *, hour: int = 9) -> Ru
             AttemptFacts(
                 attempt_id="att_019fa974-10b2-74b7-86dd-0c93bc5cd76c",
                 ordinal=1,
+                scheduler_job_id="00000000-0000-0000-0000-00000000000a",
                 started_at=started,
                 ended_at=datetime(DAY.year, DAY.month, DAY.day, hour + 1, tzinfo=UTC),
                 terminal_state="succeeded",
@@ -104,6 +106,10 @@ def _facts(run_id: str, submitter: str, usd: str | None, *, hour: int = 9) -> Ru
         ),
         state="succeeded",
         state_source="attempt",
+        cells_total=1,
+        cells_succeeded=1,
+        cells_failed=0,
+        cells_said=said_of_cells(total=1, succeeded=1),
         seconds=Decimal(3600),
         cost_usd=None if usd is None else Decimal(usd),
         unpriced_reason=None if usd is not None else "a spot profile is not priced",

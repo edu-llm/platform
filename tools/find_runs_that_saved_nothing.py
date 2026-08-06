@@ -44,17 +44,28 @@ and on an evaluator fetching a file that is not served. Every one of those is re
 failure already, with an exit code, and repeating it here says nothing new while burying the
 run that does.
 
-So the result records scope the question. A run recorded as ``failed`` is listed and not
-judged, and so is one with no result record yet, because it has not finished. This is not
-the same as trusting the record: the outcome decides *whether to ask*, and the prefix still
-decides the answer. A run recorded as a success is read exactly as before, which is the
-whole point, since a success that saved nothing is the failure nothing else reports.
+So the lineage records scope the question. A run recorded as ``failed`` is listed and not
+judged, and so is one nothing has recorded an ending for yet, because it has not finished.
+This is not the same as trusting the record: the outcome decides *whether to ask*, and the
+prefix still decides the answer. A run recorded as a success is read exactly as before,
+which is the whole point, since a success that saved nothing is the failure nothing else
+reports.
 
-**Without the result records it behaves as it did.** They are a separate prefix in the
-lineage bucket, and the audit reader role does hold it, so the scheduled run has them and
-the degradation is for a laptop pointed at a tree that has none. When no ``result/`` tree is
-present every contracted run is judged, as before. Nothing is silently let through by a sync
-that did not happen.
+**IT READS ``attempt/`` FOR THAT AND NOT ``result/``, AND THE SWAP IS A FIX RATHER THAN A
+TIDY-UP.** One result record is written per run *key* and one terminal event is delivered
+per *cell*, so for a fan-out ``result/{run_id}.json`` holds whichever child landed last and
+this reader was scoping the question on a coin toss. It reported 103 succeeded against 81
+failed for a store the substrate read as 104 against 80, for that reason and no other. The
+attempt records are one per cell, they are complete, and
+:func:`~edullm_platform.cells.outcome_of_cells` is the one function both readers now put
+them through. The result record still answers for a run that has one and no attempt beside
+it, which is the job Batch refused to place and the only account of why it stopped.
+
+**Without those records it behaves as it did.** They are separate prefixes in the lineage
+bucket, the audit reader role holds both, so the scheduled run has them and the degradation
+is for a laptop pointed at a tree that has neither. When no ``attempt/`` and no ``result/``
+tree is present every contracted run is judged, as before. Nothing is silently let through
+by a sync that did not happen.
 
 **ONE RUN IN THE ACCOUNT CANNOT BE REPAIRED, AND A PERMANENTLY RED JOB REPORTS NOTHING.**
 ``run_019fbce3-ce4b-7067-b8c7-c2cf25e6b667`` is finished, its prefix is empty, and no
@@ -101,7 +112,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -112,6 +123,7 @@ from pydantic import BeforeValidator, Field, model_validator
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from edullm_platform.cells import CellOutcome, outcome_of_cells
 from edullm_platform.checkpoints import (
     MISSING_OBJECT_CODES,
     CheckpointState,
@@ -123,7 +135,7 @@ from edullm_platform.contracts.admission import IntentRecord
 from edullm_platform.contracts.base import ContractModel, UtcTimestamp, require_ordered_sequence
 from edullm_platform.contracts.bindings import GitHubLogin
 from edullm_platform.contracts.identity import RunId
-from edullm_platform.contracts.lifecycle import AttemptTerminalState
+from edullm_platform.contracts.lifecycle import AttemptTerminalState, SchedulerAttempt
 from edullm_platform.contracts.results import ResultManifest, output_prefix
 from edullm_platform.contracts.workload import WorkloadCatalog
 
@@ -424,11 +436,18 @@ class RunCheckpointState:
     objects: int
     state: CheckpointState
     detail: str
-    #: What the run's result record says it ended as, or ``None`` for a run with no result
-    #: record. ``None`` also covers the case where no result records were read at all.
-    outcome: AttemptTerminalState | None = None
-    #: Whether the outcome above was looked for. False means no ``result/`` tree was present,
-    #: which is not the same as a run having no result record, and the two must not be
+    #: How the run's cells ended, or ``None`` for a run with nothing recorded about how it
+    #: ended. ``None`` also covers the case where no records were read at all.
+    #:
+    #: A :class:`~edullm_platform.cells.CellOutcome` rather than one terminal word, because
+    #: for a fan-out one word was never available. ``result/{run_id}.json`` is written once
+    #: per *cell event* under a per-*run* key, so for an array it holds one arbitrary
+    #: child's ``attempt_id``, exit code and prefix -- last writer wins by arrival order.
+    #: That is why this reader and the substrate reported 103 against 81 and 104 against 80
+    #: for one store, and both now derive the answer from the attempt records instead.
+    outcome: CellOutcome | None = None
+    #: Whether the outcome above was looked for. False means no record tree was present,
+    #: which is not the same as a run having no record, and the two must not be
     #: collapsed: one is an absent permission and the other is a run that has not finished.
     outcome_known: bool = False
     #: Why this run's prefix has been adjudicated, or ``None`` for the ordinary case of a run
@@ -441,13 +460,18 @@ class RunCheckpointState:
     def judged(self) -> bool:
         """Whether this run's prefix is held against it.
 
-        A run is judged when the platform recorded it as a success, which is the state this
-        report exists to contradict. With no result records read at all, every run is judged,
-        because a report that quietly stopped asking would be the failure it looks for.
+        A run is judged when something in it succeeded, which is the state this report
+        exists to contradict. With no records read at all, every run is judged, because a
+        report that quietly stopped asking would be the failure it looks for.
+
+        ANY CELL, NOT EVERY CELL. A sweep where forty-seven of forty-eight cells finished
+        is forty-seven containers that were supposed to write a checkpoint, and letting the
+        one failure excuse the prefix would hide the case this report is for behind the
+        smallest possible fan-out failure.
         """
         if not self.outcome_known:
             return True
-        return self.outcome is AttemptTerminalState.SUCCEEDED
+        return self.outcome is not None and self.outcome.succeeded > 0
 
     @property
     def held_against_the_build(self) -> bool:
@@ -530,17 +554,8 @@ def _load_intents(directory: Path) -> list[IntentRecord]:
     return records
 
 
-def _load_outcomes(directory: Path) -> dict[str, AttemptTerminalState] | None:
-    """How each run ended, or ``None`` when the result records were not read at all.
-
-    ``None`` rather than an empty mapping, because the two mean opposite things. An empty
-    mapping is "these runs finished and none of them succeeded"; ``None`` is "nobody looked",
-    and a report that treated the second as the first would pass every night by knowing less.
-    """
-    root = directory / "result"
-    if not root.is_dir():
-        return None
-    outcomes: dict[str, AttemptTerminalState] = {}
+def _documents(root: Path) -> Iterator[dict[str, Any]]:
+    """Every stored record under one prefix, unwrapped from the string some are held as."""
     for path in sorted(root.rglob("*.json")):
         try:
             loaded = json.loads(path.read_text(encoding="utf-8"))
@@ -548,17 +563,87 @@ def _load_outcomes(directory: Path) -> dict[str, AttemptTerminalState] | None:
             raise ReportInputError(f"{path} is not readable JSON: {error}") from error
         if isinstance(loaded, str):
             loaded = json.loads(loaded)
-        if not isinstance(loaded, dict):
-            continue
-        try:
-            record = ResultManifest.model_validate(loaded)
-        except ValueError:
-            # Left out rather than guessed at. A result this tree cannot read says nothing
-            # about how the run ended, and the run stays unjudged, which is the safe way to
-            # be wrong here: it is listed and reported on, just not held against the build.
-            continue
-        outcomes[record.run_id] = AttemptTerminalState(record.outcome)
+        if isinstance(loaded, dict):
+            yield loaded
+
+
+def _load_outcomes(directory: Path) -> dict[str, CellOutcome] | None:
+    """How each run's cells ended, or ``None`` when no record of that was read at all.
+
+    ``None`` rather than an empty mapping, because the two mean opposite things. An empty
+    mapping is "these runs finished and none of them succeeded"; ``None`` is "nobody looked",
+    and a report that treated the second as the first would pass every night by knowing less.
+
+    **THE ATTEMPT RECORDS ANSWER THIS AND THE RESULT RECORD ONLY LOOKED AS THOUGH IT DID.**
+    One attempt record is written per cell, under a per-cell key, and they are the complete
+    per-cell facts. ``result/{run_id}.json`` is one key for the whole run and every cell's
+    terminal event overwrites it, so for a fan-out it holds whichever child's event landed
+    last -- which is how this reader came to say ``succeeded`` about a run whose cells went
+    three failed and one succeeded, and ``failed`` about one that went five and one the
+    other way. Both readings are in the store today and neither was chosen by anybody.
+
+    So the aggregate comes from ``attempt/`` through
+    :func:`~edullm_platform.cells.outcome_of_cells`, which is the same function the
+    substrate calls, and the two cannot come to disagree again. The result record still
+    answers for a run that has one and no attempt beside it: ``ResultManifest.attempt_id``
+    is nullable precisely for the job Batch refused to place, where there is no attempt to
+    aggregate and the result is the only account of why it stopped.
+    """
+    attempts = directory / "attempt"
+    results = directory / "result"
+    if not attempts.is_dir() and not results.is_dir():
+        return None
+
+    cells: dict[str, list[tuple[str, int, str]]] = {}
+    if attempts.is_dir():
+        for document in _documents(attempts):
+            try:
+                record = SchedulerAttempt.model_validate(document)
+            except ValueError:
+                # Left out rather than guessed at, for the reason the result records below
+                # are: a record this tree cannot read says nothing about how the run ended.
+                continue
+            cells.setdefault(record.run_id, []).append(
+                (record.scheduler_job_id, record.attempt_ordinal, record.run_state.value)
+            )
+
+    outcomes: dict[str, CellOutcome] = {}
+    for run_id, seen in cells.items():
+        aggregated = outcome_of_cells(seen)
+        if aggregated is not None:
+            outcomes[run_id] = aggregated
+
+    if results.is_dir():
+        for document in _documents(results):
+            try:
+                result = ResultManifest.model_validate(document)
+            except ValueError:
+                # Left out rather than guessed at. A result this tree cannot read says nothing
+                # about how the run ended, and the run stays unjudged, which is the safe way to
+                # be wrong here: it is listed and reported on, just not held against the build.
+                continue
+            if result.run_id in outcomes:
+                continue
+            succeeded = int(AttemptTerminalState(result.outcome) is AttemptTerminalState.SUCCEEDED)
+            outcomes[result.run_id] = CellOutcome(
+                state=AttemptTerminalState(result.outcome).value,
+                total=1,
+                succeeded=succeeded,
+                failed=1 - succeeded,
+            )
     return outcomes
+
+
+def _recorded_as(outcome: CellOutcome | None) -> str:
+    """How a run ended, as one cell of a table.
+
+    A fan-out says its counts rather than its one word, which is the whole reason the counts
+    are carried: ``partly_succeeded`` in a column headed "Recorded as" tells a reader that
+    something is odd and nothing about what.
+    """
+    if outcome is None:
+        return "no record of how it ended"
+    return outcome.state if outcome.total == 1 else outcome.said
 
 
 def _load_acknowledgements(path: Path) -> CheckpointAcknowledgements:
@@ -591,7 +676,7 @@ def checkpoint_states(
     store: CheckpointStore | None = None,
     profile: str | None = None,
     region: str | None = None,
-    outcomes: Mapping[str, AttemptTerminalState] | None = None,
+    outcomes: Mapping[str, CellOutcome] | None = None,
     acknowledgements: Mapping[str, str] | None = None,
 ) -> list[RunCheckpointState]:
     """One entry per run whose profile promised checkpoints, newest last.
@@ -845,9 +930,11 @@ def render(
     if unjudged:
         explanation = (
             "These never reached the state this report is about. A run the platform recorded "
-            "as failed has already said so, with an exit code, and one with no result record "
-            "has not finished. Neither is a checkpoint that went missing, and an empty prefix "
-            "under a run that died before its first interval is the expected shape."
+            "as failed has already said so, with an exit code, and one with no record of how "
+            "it ended has not finished. Neither is a checkpoint that went missing, and an "
+            "empty prefix under a run that died before its first interval is the expected "
+            "shape. A fan-out is here only when every one of its cells failed, because one "
+            "cell that finished is one container that was supposed to write."
         )
         lines += [
             "## Not asked about",
@@ -859,7 +946,7 @@ def render(
         ]
         lines += [
             f"| `{state.run_id}` | {state.team} | "
-            f"{state.outcome.value if state.outcome else 'no result record'} | "
+            f"{_recorded_as(state.outcome)} | "
             f"{state.objects} |"
             for state in unjudged
         ]

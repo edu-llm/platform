@@ -30,6 +30,7 @@ from edullm_platform.activity import (
     render_launch_window,
     render_section,
 )
+from edullm_platform.cells import outcome_of_cells
 from edullm_platform.substrate import (
     SOURCE_EMPTY,
     SOURCE_NOT_READ,
@@ -86,11 +87,15 @@ def _facts(
             AttemptFacts(
                 attempt_id=f"att_019fa974-10b2-74b7-86dd-0c93bc5cd7{hour:02x}",
                 ordinal=1,
+                scheduler_job_id=f"00000000-0000-0000-0000-0000000000{hour:02x}",
                 started_at=started,
                 ended_at=datetime(day.year, day.month, day.day, hour + 1, tzinfo=UTC),
                 terminal_state=state,
             ),
         )
+    )
+    cells = outcome_of_cells(
+        (one.scheduler_job_id, one.ordinal, one.terminal_state) for one in attempts
     )
     return RunFacts(
         run_id=run_id,
@@ -112,6 +117,10 @@ def _facts(
         attempts=attempts,
         state=state,
         state_source=state_source,
+        cells_total=None if cells is None else cells.total,
+        cells_succeeded=None if cells is None else cells.succeeded,
+        cells_failed=None if cells is None else cells.failed,
+        cells_said=None if cells is None else cells.said,
         seconds=Decimal(seconds),
         cost_usd=None if usd is None else Decimal(usd),
         unpriced_reason=None if usd is not None else "a spot profile is not priced",

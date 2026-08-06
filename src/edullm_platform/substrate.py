@@ -50,6 +50,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Final
 
+from edullm_platform.cells import CellOutcome, outcome_of_cells
 from edullm_platform.contracts.admission import IntentRecord
 from edullm_platform.contracts.lifecycle import SchedulerAttempt
 from edullm_platform.contracts.workload import ComputeProfile
@@ -86,7 +87,13 @@ __all__ = [
 #: unconditionally and a version 1 document has no value for it. A reader that defaulted it
 #: to the empty string would put every older run into one cohort of the run history and
 #: report the result as a measurement.
-SUBSTRATE_FORMAT_VERSION: Final = 2
+#: 3 since a run carries its cell counts and every attempt carries the scheduler job it
+#: belongs to. Moved for the same reason and a sharper one: a version 2 document has no
+#: ``scheduler_job_id`` on an attempt, so nothing can tell one cell of a fan-out from
+#: another in it. A reader that defaulted the key would read every fan-out as a single
+#: container and reproduce, from a file, exactly the reading this format version exists to
+#: end.
+SUBSTRATE_FORMAT_VERSION: Final = 3
 
 #: What ``state_source`` may say. ``live`` is a Batch reading, ``attempt`` a terminal lineage
 #: record, ``intent`` a submission with nothing after it, and ``unread`` the case where the
@@ -172,7 +179,14 @@ class AttemptFacts:
     """One attempt of one run, as the lineage store recorded it after it ended."""
 
     attempt_id: str
+    #: Which try of :attr:`scheduler_job_id` this was, and nothing wider. Batch's retry
+    #: counter, begun again at 1 inside every cell of an array, which is why it orders
+    #: nothing on its own. See :mod:`edullm_platform.cells`.
     ordinal: int
+    #: The Batch job this attempt belongs to, which for a fan-out is one cell and is spelled
+    #: ``<parent>:<index>``. The only place a cell's index exists, and the field that makes
+    #: the ordinal beside it mean something.
+    scheduler_job_id: str
     started_at: datetime
     ended_at: datetime
     terminal_state: str
@@ -217,6 +231,25 @@ class RunFacts:
     attempts: tuple[AttemptFacts, ...]
     state: str
     state_source: str
+    #: How many cells this run actually had, counted as scheduler jobs rather than as
+    #: attempt records, so a cell that retried is still one cell. ``None`` for a run with no
+    #: attempt record: zero cells is not a fan-out that lost everything, and it is not a
+    #: denominator anybody should be shown.
+    #:
+    #: ``fanout_size`` above is the neighbouring field and answers a different question --
+    #: what the submitter asked for, from the manifest, before anything ran. These three are
+    #: what happened. A sweep of twenty whose parent placed eighteen has both figures and
+    #: they are both true.
+    cells_total: int | None
+    cells_succeeded: int | None
+    #: Every cell that did not succeed, which is how Batch's own ``statusSummary`` counts
+    #: them: a job this platform terminates comes back ``FAILED`` carrying the submitter's
+    #: reason, so a cancelled cell is already inside that figure.
+    cells_failed: int | None
+    #: The counts as the runs channel already says them -- ``all 20 cells succeeded``,
+    #: ``19 of 20 cells succeeded, 1 failed`` -- so that a view rendering this record and a
+    #: message rendering a Batch event print one sentence. ``None`` alongside the counts.
+    cells_said: str | None
     seconds: Decimal
     cost_usd: Decimal | None
     unpriced_reason: str | None
@@ -302,10 +335,23 @@ class Substrate:
         )
 
 
+def _cells(attempts: Sequence[AttemptFacts]) -> CellOutcome | None:
+    """How this run's cells ended, through the one function that decides that.
+
+    Delegated rather than computed here. Two implementations of this rule is how the
+    substrate came to report 104 succeeded against 80 failed while the result records
+    reported 103 against 81 about the same store.
+    """
+    return outcome_of_cells(
+        (attempt.scheduler_job_id, attempt.ordinal, attempt.terminal_state)
+        for attempt in attempts
+    )
+
+
 def _state(
     *,
     run_id: str,
-    attempts: Sequence[AttemptFacts],
+    cells: CellOutcome | None,
     live_states: Mapping[str, str] | None,
     attempts_read: bool,
 ) -> tuple[str, str]:
@@ -313,16 +359,21 @@ def _state(
 
     Batch wins where it was read, because it is the only source that can name a state a run
     is still in: the lineage attempt record is written when an attempt ends, so it can say
-    how a run finished and never that one is running. Where Batch was not read, the last
-    attempt's terminal state is the best available, and where the attempts were not read
-    either, the state is unknown and says so rather than defaulting to submitted.
+    how a run finished and never that one is running. Where Batch was not read, the
+    attempts say how it ended, and where the attempts were not read either, the state is
+    unknown and says so rather than defaulting to submitted.
+
+    THIS TOOK ``max(attempts, key=ordinal)`` AND THAT IS THE DEFECT THIS SHAPE REMOVES. The
+    ordinal is a retry counter scoped to one scheduler job, so a fan-out's cells all carry
+    1, the ``max`` was a tie, and the answer came out of the order S3 listed the prefix in.
+    :mod:`edullm_platform.cells` holds the whole reading.
     """
     if live_states is not None and run_id in live_states:
         return live_states[run_id], "live"
     if not attempts_read:
         return UNKNOWN_STATE, "unread"
-    if attempts:
-        return max(attempts, key=lambda attempt: attempt.ordinal).terminal_state, "attempt"
+    if cells is not None:
+        return cells.state, "attempt"
     return "submitted", "intent"
 
 
@@ -357,6 +408,7 @@ def normalise(
             AttemptFacts(
                 attempt_id=attempt.attempt_id,
                 ordinal=attempt.attempt_ordinal,
+                scheduler_job_id=attempt.scheduler_job_id,
                 started_at=attempt.started_at,
                 ended_at=attempt.ended_at,
                 terminal_state=attempt.run_state.value,
@@ -373,11 +425,22 @@ def normalise(
     runs: dict[str, RunFacts] = {}
     for intent in every_intent:
         manifest = intent.manifest
-        run_attempts = tuple(sorted(by_run.get(intent.run_id, ()), key=lambda facts: facts.ordinal))
+        # ORDERED BY CELL AND THEN BY RETRY, WHICH IS A TOTAL ORDER WHERE THE ORDINAL ALONE
+        # IS NOT. Sorting on the ordinal by itself ties across a fan-out's cells, and
+        # Python's sort is stable, so what came back was the store's listing order wearing
+        # the appearance of an ordering -- the same defect ``_state`` had, left in the field
+        # a reader iterates.
+        run_attempts = tuple(
+            sorted(
+                by_run.get(intent.run_id, ()),
+                key=lambda facts: (facts.scheduler_job_id, facts.ordinal),
+            )
+        )
         cost = priced.get(intent.run_id)
+        cells = _cells(run_attempts)
         state, source = _state(
             run_id=intent.run_id,
-            attempts=run_attempts,
+            cells=cells,
             live_states=live_states,
             attempts_read=attempts_read,
         )
@@ -409,6 +472,10 @@ def normalise(
             attempts=run_attempts,
             state=state,
             state_source=source,
+            cells_total=None if cells is None else cells.total,
+            cells_succeeded=None if cells is None else cells.succeeded,
+            cells_failed=None if cells is None else cells.failed,
+            cells_said=None if cells is None else cells.said,
             seconds=seconds,
             cost_usd=usd,
             unpriced_reason=reason,
@@ -492,6 +559,7 @@ def as_document(substrate: Substrate) -> dict[str, Any]:
                     {
                         "attempt_id": attempt.attempt_id,
                         "ordinal": attempt.ordinal,
+                        "scheduler_job_id": attempt.scheduler_job_id,
                         "started_at": attempt.started_at.isoformat(),
                         "ended_at": attempt.ended_at.isoformat(),
                         "terminal_state": attempt.terminal_state,
@@ -500,6 +568,10 @@ def as_document(substrate: Substrate) -> dict[str, Any]:
                 ],
                 "state": facts.state,
                 "state_source": facts.state_source,
+                "cells_total": facts.cells_total,
+                "cells_succeeded": facts.cells_succeeded,
+                "cells_failed": facts.cells_failed,
+                "cells_said": facts.cells_said,
                 "seconds": str(facts.seconds),
                 "cost_usd": _money(facts.cost_usd),
                 "unpriced_reason": facts.unpriced_reason,
@@ -548,6 +620,7 @@ def from_document(document: Mapping[str, Any]) -> Substrate:
                     AttemptFacts(
                         attempt_id=str(attempt["attempt_id"]),
                         ordinal=int(attempt["ordinal"]),
+                        scheduler_job_id=str(attempt["scheduler_job_id"]),
                         started_at=datetime.fromisoformat(str(attempt["started_at"])),
                         ended_at=datetime.fromisoformat(str(attempt["ended_at"])),
                         terminal_state=str(attempt["terminal_state"]),
@@ -556,6 +629,10 @@ def from_document(document: Mapping[str, Any]) -> Substrate:
                 ),
                 state=str(facts["state"]),
                 state_source=str(facts["state_source"]),
+                cells_total=facts["cells_total"],
+                cells_succeeded=facts["cells_succeeded"],
+                cells_failed=facts["cells_failed"],
+                cells_said=facts["cells_said"],
                 seconds=Decimal(str(facts["seconds"])),
                 cost_usd=None if facts["cost_usd"] is None else Decimal(str(facts["cost_usd"])),
                 unpriced_reason=facts["unpriced_reason"],

@@ -85,6 +85,14 @@ class RunRow:
     #: Which source the state came from. Printed, because "succeeded" from a terminal record
     #: and "unknown" from a prefix nobody could list are not the same kind of statement.
     state_source: str
+    #: How a fan-out's cells went, worded as the runs channel words it, and ``None`` for
+    #: every run of one cell.
+    #:
+    #: NONE FOR ONE CELL RATHER THAN ``all 1 cells succeeded``, which is the same argument
+    #: ``cells.said_of_cells`` makes about a zero: a clause every row carries and no row
+    #: needs is a clause nobody reads, and the rows that need it are the nineteen in a
+    #: hundred and eighty-four where one word is not the answer.
+    cells_said: str | None
     seconds: Decimal
     cost_usd: Decimal | None
     unpriced_reason: str | None
@@ -99,6 +107,7 @@ class RunRow:
             compute_profile=facts.compute_profile,
             state=facts.state,
             state_source=facts.state_source,
+            cells_said=None if (facts.cells_total or 1) == 1 else facts.cells_said,
             seconds=facts.seconds,
             cost_usd=facts.cost_usd,
             unpriced_reason=facts.unpriced_reason,
@@ -348,6 +357,8 @@ def render_section(activity: DayActivity) -> str:
     for row in activity.rows:
         experiment = row.experiment or ("not read" if not activity.experiments_read else "none")
         state = row.state if row.state_source != "unread" else f"{row.state} (not read)"
+        if row.cells_said is not None:
+            state = f"{state} ({row.cells_said})"
         lines.append(
             f"| `{row.run_id}` | {row.submitter} | {row.team} | {experiment} "
             f"| {row.compute_profile} | {state} | {_duration(row.seconds)} "

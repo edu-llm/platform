@@ -467,21 +467,36 @@ jobs:
 
       # The whole intent tree, because the report is handed no list of run ids and an
       # intent record is what says a run was submitted under a profile promising
-      # checkpoints. The result tree beside it says how each run ended, which is what
-      # decides whether its prefix is held against anything.
+      # checkpoints. The attempt tree beside it says how each of a run's cells ended, which
+      # is what decides whether its prefix is held against anything, and the result tree
+      # answers for the runs Batch never placed and that therefore have no attempt.
+      #
+      # attempt/ AND NOT result/ ALONE, BECAUSE result/ IS ONE KEY PER RUN AND ONE TERMINAL
+      # EVENT ARRIVES PER CELL. Every child of an array overwrites the same object, so for
+      # a fan-out that record is whichever cell landed last -- which had this job scoping
+      # its question by arrival order on nineteen runs.
       - name: Fetch the intent records
         env:
           LINEAGE_BUCKET: sbsandbox-intern-edullm-lineage
         run: |
           set -euo pipefail
           aws s3 sync "s3://${LINEAGE_BUCKET}/intent/" lineage/intent/ --only-show-errors
-          # All of them or none. A half-synced result tree reads as runs that never
+          # All of them or none, per prefix. A half-synced tree reads as runs that never
           # finished, which would quietly stop asking about the runs that did, so a refusal
           # here removes the directory and the report judges every run as it did before.
-          # The audit reader role does not hold result/ until the stack in infra/README.md
-          # is applied from a laptop, so a denial is the expected answer for now.
+          #
+          # Written out twice rather than looped, and that is load-bearing.
+          # tests/test_audit_workflow.py reads the prefixes this job syncs straight out of
+          # this body and holds them against the grants in infra/iam/audit-reader-role.yaml,
+          # so a shell variable in the URL costs the comparison that stops a sync being
+          # merged ahead of the permission it needs.
+          if ! aws s3 sync "s3://${LINEAGE_BUCKET}/attempt/" lineage/attempt/ --only-show-errors
+          then
+            echo "note: could not read attempt/, so every contracted run will be judged"
+            rm -rf lineage/attempt
+          fi
           if ! aws s3 sync "s3://${LINEAGE_BUCKET}/result/" lineage/result/ --only-show-errors; then
-            echo "note: could not read result/, so every contracted run will be judged"
+            echo "note: could not read result/, so the runs Batch never placed are judged"
             rm -rf lineage/result
           fi
 
