@@ -2214,9 +2214,19 @@ def test_the_recorder_role_writes_lineage_and_cannot_make_anything_happen() -> N
     enumerates every team's output and the claim above would be false. The prefix pattern
     is the one ``checkpoints_under`` sends, which is the path of ``EDULLM_CHECKPOINT_DIR``.
 
-    ``s3:GetObject`` is absent, and it is the read the exact list still refuses. The
-    projection reads keys, sizes and write times and never an object's contents, so the
-    grant would buy nothing and would let the recorder read what every run produced.
+    ``s3:GetObjectAttributes`` is the second read and is bounded the same way, by resource
+    rather than by condition: it names the checkpoint path under the outputs bucket and no
+    other key. It answers with an object's size, its parts and the checksum S3 computed when
+    the object was written, which is how ``CheckpointManifest.payload`` can say two runs
+    hold different bytes without anything downloading 762 MB to find out. It returns no byte
+    of the object, so the sentence above is unchanged: it starts no job, changes no state,
+    and nothing downstream can tell that it was called.
+
+    ``s3:GetObject`` is absent, and it is the read the exact list still refuses -- including
+    now that a checksum is wanted, which is the grant that would have been the easy way to
+    get one. The projection reads keys, sizes, write times and what S3 attests, and never an
+    object's contents, so the grant would buy nothing this tree uses and would let the
+    recorder read every weight every team produced.
     """
     actions = role_actions(LIFECYCLE_ROLE_PATH, LIFECYCLE_ROLE_NAME)
     s3_actions = [action for action in actions if action.startswith("s3:")]
@@ -2226,8 +2236,18 @@ def test_the_recorder_role_writes_lineage_and_cannot_make_anything_happen() -> N
         for statement in policy["PolicyDocument"]["Statement"]
         if "s3:ListBucket" in statement_actions(statement)
     ]
+    attributes = [
+        statement
+        for policy in role_named(LIFECYCLE_ROLE_PATH, LIFECYCLE_ROLE_NAME)["Policies"]
+        for statement in policy["PolicyDocument"]["Statement"]
+        if "s3:GetObjectAttributes" in statement_actions(statement)
+    ]
 
-    assert s3_actions == ["s3:PutObject", "s3:ListBucket"]
+    assert s3_actions == ["s3:PutObject", "s3:ListBucket", "s3:GetObjectAttributes"]
+    assert len(attributes) == 1
+    assert resource_arns(attributes[0]["Resource"]) == [
+        f"arn:${{AWS::Partition}}:s3:::{OUTPUTS_BUCKET}/teams/*/runs/*/checkpoints/*"
+    ]
     assert "sqs:ReceiveMessage" in actions
     assert "sqs:DeleteMessage" in actions
     assert len(listing) == 1

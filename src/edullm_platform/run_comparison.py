@@ -45,14 +45,29 @@ so it is read here, and a directory in it is a finding rather than a family with
 Measured on ``run_019fd2c9`` and ``run_019fd2ca``, which each wrote 762 MB into ``step-20/``
 and compared clean over ten named differences with no checkpoint field among them.
 
-**What is still not compared, and is now said rather than implied.**
-``result.checkpoints[].checksum`` is the only digest in the record and it is not a digest of
-the payload. Every checkpoint the lifecycle recorder writes takes it from
-``described_listing_checksum``, a SHA-256 over the names and sizes a listing returned, because
-the recorder holds ``s3:ListBucket`` and nothing that could open the ``_SUCCESS`` beside the
-payload. So two runs whose payloads genuinely differ record the same value in the one field
-named for a digest, and a comparison that stopped there would report the two checkpoints as
-agreeing. It says so instead.
+**The payload is compared now, and the field this paragraph used to be about is still not the
+one that does it.** ``result.checkpoints[].checksum`` reads as the digest and is a SHA-256 over
+the names and sizes a listing returned, so two runs whose payloads differ in every byte record
+one identical value in it -- measured on ``run_019fd3a1`` and ``run_019fd3a2``, whose 762 MB
+checkpoints differ across 94 per cent of their length. ``payload`` is the field that answers,
+carrying a digest per object taken from what S3 attests, and it is compared leaf by leaf like
+anything else.
+
+**A difference in it is information and is not a finding, which is the one thing here most
+worth not getting wrong.** Two runs of one submission on one dataset are expected to hold
+different weights, because the order a GPU reduces in is not fixed across two executions. So
+the digest has a named cause and moves no exit code, and nothing anywhere refuses, retries or
+warns because of it. What the platform proves is the code, the data and the machine shape, and
+never the output bytes; the ruling is in ``docs-frank/reference/decisions.md``. The object's
+name and size are a different matter and are required to match, because a checkpoint that lost
+a shard or wrote a shorter one is a truncated write.
+
+**Absence is split in two, because only one half is a hole.** A record with no payload reading
+at all predates the field, which is every result record written before 2026-08-05, and the
+report says so and exits as it would have. A record that carries the reading and says it read
+no digest reports UNVERIFIED, on the same argument as a required field neither record carries:
+nothing was compared, and reporting nothing as agreement is the defect this module exists to
+remove.
 """
 
 from __future__ import annotations
@@ -69,6 +84,7 @@ from pydantic import BeforeValidator, Field, model_validator
 
 from edullm_platform.contracts.base import ContractModel, require_ordered_sequence
 from edullm_platform.contracts.identity import RunId
+from edullm_platform.contracts.results import PayloadDigestOutcome
 from edullm_platform.evidence import (
     DigestBearingStr,
     EvidenceEnvironment,
@@ -93,6 +109,7 @@ __all__ = [
     "RequiredFieldCoverage",
     "TwoRunComparison",
     "TwoRunEvidence",
+    "UnattestedPayload",
     "UnreadableCheckpoint",
     "VarianceCause",
     "agreed_required_fields",
@@ -111,13 +128,18 @@ RECORD_PREFIXES: Final[tuple[str, ...]] = ("intent", "decision", "result")
 #: The leaf a survey uses to name a directory under the checkpoint prefix that no layout
 #: matched. Asked of the flattened records rather than of a contract model, because
 #: everything else here reads a path and this has to read the same way.
-UNPARSED_DIRECTORY: Final = re.compile(
-    r"^result\.checkpoint_survey\.unparsed_directories\[\d+\]$"
-)
+UNPARSED_DIRECTORY: Final = re.compile(r"^result\.checkpoint_survey\.unparsed_directories\[\d+\]$")
 
 #: The leaf that names one recorded checkpoint, counted so a report can say how many
 #: checkpoints it had to work with rather than leaving a reader to infer it from the table.
 CHECKPOINT_URI: Final = re.compile(r"^result\.checkpoints\[\d+\]\.uri$")
+
+#: The payload outcomes under which a digest of the bytes is actually in the record.
+#: Derived from the contract rather than spelled again, so a source added there cannot be
+#: silently unrecognised here and counted as an absence.
+_READ_PAYLOAD_OUTCOMES: Final[frozenset[str]] = frozenset(
+    one.value for one in PayloadDigestOutcome if one.is_read
+)
 
 
 class RecordField(ContractModel):
@@ -188,32 +210,64 @@ class UnreadableCheckpoint(ContractModel):
     directory: str = Field(min_length=1, max_length=256)
 
 
+class UnattestedPayload(ContractModel):
+    """One checkpoint whose record carries a payload reading that read no digest.
+
+    NOT THE SAME THING AS A RECORD WITH NO PAYLOAD READING AT ALL, and the whole reason
+    this is separate from ``payloads_absent``. A record written before
+    :class:`~edullm_platform.contracts.results.CheckpointPayload` existed says nothing
+    about the bytes because nothing could; a record that carries the field and says
+    ``refused`` describes a live run whose bytes this platform was not able to read. The
+    first is history and the second is a hole, and only the second moves an exit code.
+    """
+
+    run_id: RunId
+    checkpoint: str = Field(min_length=1, max_length=512)
+    #: The outcome the record gave, verbatim: ``refused``, ``not_attempted`` or
+    #: ``too_many_objects``. Kept as the record's own word rather than mapped to a sentence,
+    #: because which one it is says who has to fix it.
+    outcome: str = Field(min_length=1, max_length=64)
+
+
 @dataclass(frozen=True)
 class CheckpointCoverage:
     """What the checkpoint half of a comparison did, as distinct from what its table shows.
 
-    **Both members exist because a checkpoint row that is not there reads exactly like two
-    runs agreeing about checkpoints, and there are two different reasons for it.**
+    **Every member exists because a checkpoint row that is not there reads exactly like two
+    runs agreeing about checkpoints, and there are several different reasons for it.**
 
     ``unreadable`` is the one that is a defect. The run wrote objects into a directory the
     recorder could not read a step out of, so the record describes no checkpoint, so every
     member of the checkpoint families is absent from both sides and nothing is compared.
     That is the case the whole spine exists to catch and it produced no output at all.
 
-    ``compared`` is how many checkpoint entries the comparison did walk. It is reported
-    even when it is the good number, because the sentence that goes with it is a caveat
-    that holds every time: the digest of the bytes is not in the record, so a checkpoint
-    was compared on its size, its step and a description of its listing, and not on what is
-    in it.
+    ``compared`` is how many checkpoint entries the comparison did walk.
+
+    **The other three are the payload, and they are three because the caveat that used to
+    go with ``compared`` was unconditional and is not any more.** The record now carries a
+    digest of what is in a checkpoint, so a comparison can say which of these it is.
+    ``payloads_read`` is the good one: both records carry a digest of the bytes and the
+    table above says whether they matched. ``payloads_absent`` counts entries written
+    before the field existed, which is a statement about history and not about the runs.
+    ``unattested`` is a record that carries the field and says it read nothing -- the only
+    one of the three that is a hole in a live run, and the only one that reports UNVERIFIED.
     """
 
     compared: int
     unreadable: tuple[UnreadableCheckpoint, ...]
+    payloads_read: int = 0
+    payloads_absent: int = 0
+    unattested: tuple[UnattestedPayload, ...] = ()
 
     @property
     def is_blocked(self) -> bool:
         """Whether a checkpoint comparison was prevented rather than merely limited."""
         return bool(self.unreadable)
+
+    @property
+    def payloads_unverified(self) -> bool:
+        """Whether a record said in so many words that it did not read the bytes."""
+        return bool(self.unattested)
 
 
 @dataclass(frozen=True)
@@ -294,9 +348,30 @@ VARIANCE_CAUSES: Final[tuple[VarianceCause, ...]] = (
             "payloads differ record the same value here, which is measured on "
             "run_019fd2c9 and run_019fd2ca. What does move it is a checkpoint whose "
             "objects were named or sized differently, which is worth excusing between two "
-            "runs of one submission for the same reason the size of a shard is. The "
-            "payload's own digest is in the _SUCCESS beside it and is not in this record, "
-            "so CheckpointCoverage says so rather than letting this row stand in for it."
+            "runs of one submission for the same reason the size of a shard is. The digest "
+            "of the payload is in the `payload` field beside this one as of 2026-08-05, "
+            "and 'the bytes a GPU wrote' is its cause; this row must not be read as "
+            "standing in for that one."
+        ),
+    ),
+    VarianceCause(
+        name="the bytes a GPU wrote",
+        pattern=re.compile(r"^result\.checkpoints\[\d+\]\.payload\.objects\[\d+\]\.digest$"),
+        detail=(
+            "A DIFFERENCE HERE IS THE INFORMATION THIS FIELD WAS ADDED TO CARRY, AND IT IS "
+            "NOT A FAULT. contracts/results.py::CheckpointPayload records a digest of the "
+            "payload -- S3's attested CRC32C where the recorder may read it, the listing's "
+            "entity tag otherwise -- so two runs holding different weights now say so, "
+            "where the checksum beside it says nothing because it hashes the listing. Two "
+            "runs of one submission on one dataset are EXPECTED to differ here: the order a "
+            "GPU reduces a sum in is not fixed across two executions, so identical code on "
+            "identical data produces different bytes, and the platform proves the code, the "
+            "data and the machine shape rather than the output. That is the ruling in "
+            "docs-frank/reference/decisions.md. Named as a cause so it appears in the table "
+            "and moves no exit code -- the change adds information and adds no gate. What "
+            "is NOT excused by it is the object's name or its size, which are in "
+            "REQUIRED_FIELD_FAMILIES: a checkpoint missing a shard or holding a shorter one "
+            "is a truncated write and is a finding."
         ),
     ),
     VarianceCause(
@@ -371,6 +446,14 @@ REQUIRED_FIELD_FAMILIES: Final[tuple[re.Pattern[str], ...]] = (
     re.compile(r"^intent\.manifest\.command\[\d+\]$"),
     re.compile(r"^decision\.(cost|authorization)\.[a-z_]+$"),
     re.compile(r"^result\.checkpoints\[\d+\]\.(step|epoch|size_bytes)$"),
+    # The payload reading, minus the digest. ``outcome`` is here because a CRC32C and an
+    # entity tag are different functions of the same bytes: two runs read by different
+    # sources cannot be compared at all, and a digest row between them would be noise
+    # presented as a finding. ``name`` and ``size_bytes`` are here because a checkpoint that
+    # lost a shard or wrote a shorter one is a truncated write, which is the finding the
+    # digest's cause deliberately does not excuse.
+    re.compile(r"^result\.checkpoints\[\d+\]\.payload\.outcome$"),
+    re.compile(r"^result\.checkpoints\[\d+\]\.payload\.objects\[\d+\]\.(name|size_bytes)$"),
 )
 
 #: The leaves that must be present on both sides and equal, as one set of patterns to ask a
@@ -399,9 +482,9 @@ class TwoRunComparison(ContractModel):
     left: RunId
     right: RunId
     compared_at: datetime = Field(strict=False)
-    differences: Annotated[
-        tuple[ComparedField, ...], BeforeValidator(require_ordered_sequence)
-    ] = Field(default=(), strict=False)
+    differences: Annotated[tuple[ComparedField, ...], BeforeValidator(require_ordered_sequence)] = (
+        Field(default=(), strict=False)
+    )
     #: Required fields NEITHER run carries, so nothing about them was compared. Recorded
     #: here and not only printed, because this document is what a reader has months later,
     #: and a document listing differences alone cannot distinguish a comparison that found
@@ -417,6 +500,14 @@ class TwoRunComparison(ContractModel):
     #: and that is the half the done-condition this tool serves is actually about.
     unreadable_checkpoints: Annotated[
         tuple[UnreadableCheckpoint, ...], BeforeValidator(require_ordered_sequence)
+    ] = Field(default=(), strict=False)
+    #: The checkpoints whose record carries a payload reading that read no digest. Defaulted
+    #: for the same reason ``CheckpointManifest.payload`` is: the comparison documents
+    #: already committed were written before this existed and must still read. An empty
+    #: tuple here means no record said it failed to read the bytes -- not that every record
+    #: read them, which is what ``payloads_read`` in the printed report is for.
+    unattested_payloads: Annotated[
+        tuple[UnattestedPayload, ...], BeforeValidator(require_ordered_sequence)
     ] = Field(default=(), strict=False)
 
     @property
@@ -654,20 +745,64 @@ def checkpoint_coverage(left: RecordedRun, right: RecordedRun) -> CheckpointCove
     THE COUNT IS OVER THE UNION AND NOT THE INTERSECTION, DELIBERATELY. A checkpoint one
     run recorded and the other did not is already a row against ``<absent>``, so counting
     it here as compared is not a second claim -- it is the number of checkpoint entries the
-    walk covered, which is what the caveat about the payload digest is scoped to.
+    walk covered, which is what the payload tally below is scoped to.
+
+    **The payload tally is per entry and asks both records, because a digest one run
+    recorded and the other did not compares nothing.** An entry counts as read only when
+    both sides carry a payload outcome that got a digest; anything less lands in
+    ``payloads_absent`` or, if a record named a reason, in ``unattested``.
     """
+    entries = sorted(
+        path
+        for path in set(left.field_map()) | set(right.field_map())
+        if CHECKPOINT_URI.fullmatch(path)
+    )
+    read = 0
+    absent = 0
+    unattested: list[UnattestedPayload] = []
+    for uri_path in entries:
+        stem = uri_path.removesuffix(".uri")
+        outcomes = {
+            run.run_id: run.field_map().get(f"{stem}.payload.outcome") for run in (left, right)
+        }
+        for run in (left, right):
+            recorded = outcomes[run.run_id]
+            if recorded is None or _is_read_outcome(recorded):
+                continue
+            unattested.append(
+                UnattestedPayload(
+                    run_id=run.run_id,
+                    checkpoint=run.field_map().get(uri_path, stem).strip('"'),
+                    outcome=recorded.strip('"'),
+                )
+            )
+        if all(value is not None and _is_read_outcome(value) for value in outcomes.values()):
+            read += 1
+        elif all(value is None for value in outcomes.values()):
+            absent += 1
     return CheckpointCoverage(
-        compared=sum(
-            1
-            for path in set(left.field_map()) | set(right.field_map())
-            if CHECKPOINT_URI.fullmatch(path)
-        ),
+        compared=len(entries),
         unreadable=tuple(
             UnreadableCheckpoint(run_id=run.run_id, directory=name)
             for run in (left, right)
             for name in _unparsed_directories(run)
         ),
+        payloads_read=read,
+        payloads_absent=absent,
+        unattested=tuple(unattested),
     )
+
+
+def _is_read_outcome(encoded: str) -> bool:
+    """Whether a recorded payload outcome is one a digest actually arrived under.
+
+    Asked of the JSON-encoded leaf rather than of the enum, because everything in this
+    module reads a flattened record and a record is the only thing here that can be older
+    than the code reading it. An outcome this version has never heard of is treated as not
+    read, which is the safe direction: it reports UNVERIFIED rather than quietly counting
+    an unknown word as a digest.
+    """
+    return encoded.strip('"') in _READ_PAYLOAD_OUTCOMES
 
 
 def required_field_coverage(left: RecordedRun, right: RecordedRun) -> RequiredFieldCoverage:

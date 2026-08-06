@@ -40,10 +40,51 @@ LISTING_CHECKSUM = described_listing_checksum(
 )
 
 
-def checkpoint(run_id: str) -> dict[str, object]:
-    """One checkpoint entry as the lifecycle recorder writes it from a listing."""
-    prefix = f"s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/{run_id}/checkpoints/"
+#: The entity tags S3 actually holds for the two spine runs' checkpoint objects, read off the
+#: live bucket. Real values rather than invented ones, because the fact these fixtures have to
+#: carry is that two runs of one submission write different bytes, and a made-up pair proves
+#: only that two different strings are different.
+PAYLOAD_TAG = {
+    LEFT: "40ee0a84119a1c6824f00ca379acdeec",
+    RIGHT: "623eac7baa354bd41dd4ffb295779e18",
+}
+MARKER_TAG = {
+    LEFT: "5f6cfd2edd4d490e0218352d7ef8d069",
+    RIGHT: "1a99ad19ddbdf5014e9d37a7dcc9d130",
+}
+
+
+def payload_reading(run_id: str) -> dict[str, object]:
+    """A payload reading as the recorder derives one from the listing it already makes."""
     return {
+        "schema_version": 1,
+        "outcome": "listing_etag",
+        "objects": [
+            {
+                "schema_version": 1,
+                "name": "_SUCCESS",
+                "size_bytes": MARKER_BYTES,
+                "digest": f"etag:{MARKER_TAG[run_id]}",
+            },
+            {
+                "schema_version": 1,
+                "name": "model.pt",
+                "size_bytes": PAYLOAD_BYTES,
+                "digest": f"etag:{PAYLOAD_TAG[run_id]}",
+            },
+        ],
+    }
+
+
+def checkpoint(run_id: str, *, payload: dict[str, object] | None = None) -> dict[str, object]:
+    """One checkpoint entry as the lifecycle recorder writes it from a listing.
+
+    ``payload`` defaults to absent, which is how the result records already in the store are
+    shaped and is therefore the case most of this file needs. A test that is about the payload
+    passes :func:`payload_reading` or a hand-built one.
+    """
+    prefix = f"s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/{run_id}/checkpoints/"
+    entry: dict[str, object] = {
         "schema_version": 1,
         "uri": f"{prefix}step20/",
         "step": 20,
@@ -53,6 +94,10 @@ def checkpoint(run_id: str) -> dict[str, object]:
         "checksum": LISTING_CHECKSUM,
         "success_marker_uri": f"{prefix}step20/_SUCCESS",
     }
+    if payload is not None:
+        entry["payload"] = payload
+    return entry
+
 
 #: The two runs happen at two times. Written as an explicit mapping rather than derived from
 #: the ids, because both of these real run ids end in the same character and a fixture that
@@ -361,9 +406,7 @@ def test_the_only_digest_in_the_record_is_equal_for_two_checkpoints_that_are_not
         [("_SUCCESS", 227, "listing"), ("model.pt", 762258865, "listing")]
     )
     assert not [one for one in differences if one.path.endswith(".checksum")]
-    assert checkpoint_coverage(
-        read_run(tmp_path, LEFT), read_run(tmp_path, RIGHT)
-    ).compared == 1
+    assert checkpoint_coverage(read_run(tmp_path, LEFT), read_run(tmp_path, RIGHT)).compared == 1
 
 
 def test_every_required_field_is_named_or_belongs_to_a_family_and_never_both() -> None:

@@ -108,7 +108,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Final, Protocol
+from typing import Any, Final, Protocol, runtime_checkable
 from urllib.parse import urlparse
 
 from .contracts.identity import (
@@ -134,11 +134,15 @@ from .contracts.lifecycle import (
     is_valid_run_transition,
 )
 from .contracts.results import (
+    PAYLOAD_OBJECT_CEILING,
     UNPARSED_DIRECTORY_SAMPLE,
     WANDB_NAME_PATTERN,
     CheckpointListingOutcome,
     CheckpointManifest,
+    CheckpointPayload,
     CheckpointSurvey,
+    PayloadDigestOutcome,
+    PayloadObject,
     ResultManifest,
     WandbRunRef,
 )
@@ -161,6 +165,7 @@ __all__ = [
     "STEP_DIRECTORY",
     "WANDB_ENTITY_VARIABLE",
     "WANDB_PROJECT_VARIABLE",
+    "CheckpointAttributesReader",
     "CheckpointLister",
     "LifecycleProjection",
     "UnmappedBatchStatusError",
@@ -272,6 +277,11 @@ MARKER_OBJECT: Final = "_SUCCESS"
 MAXIMUM_LISTING_PAGES: Final = 20
 
 _WANDB_NAME = re.compile(WANDB_NAME_PATTERN)
+
+#: What an S3 entity tag looks like once its quotes are off: an MD5, optionally followed by
+#: the part count a multipart upload appends. Matched rather than trusted, so that a store
+#: answering with something else puts no digest in the record instead of an arbitrary string.
+_ENTITY_TAG = re.compile(r"^[0-9a-f]{32}(-\d{1,5})?$")
 
 #: Every status Batch reports for a job, and nothing else. A status outside this set is an
 #: error rather than a default, which is what makes an eighth one detectable.
@@ -506,13 +516,43 @@ class CheckpointLister(Protocol):
     One call and not four. :func:`~edullm_platform.checkpoints.inspect_checkpoint` reads a
     marker and heads a payload as well, which is what lets it verify a digest; doing that
     here would need ``s3:GetObject`` across every team's output, and a recorder able to read
-    what runs wrote is a wider thing than one able to see that they wrote. A listing carries
-    the key, the size and the write time, which is everything
-    :class:`~edullm_platform.contracts.results.CheckpointManifest` needs except a digest of
-    the payload, and :func:`described_listing_checksum` is what stands in for that.
+    what runs wrote is a wider thing than one able to see that they wrote.
+
+    A LISTING SAYS MORE THAN THIS DOCSTRING USED TO CREDIT IT WITH, AND THE DIFFERENCE IS A
+    FIELD. It carries the key, the size and the write time -- and the ``ETag``, which is a
+    function of the payload and which this projection discarded for as long as it claimed a
+    digest of the bytes was out of reach without ``s3:GetObject``. It is not out of reach and
+    it never was: :class:`~edullm_platform.contracts.results.CheckpointPayload` is built from
+    the answer to this one call. :func:`described_listing_checksum` still fills ``checksum``,
+    and is still a digest of the listing rather than of the payload, which is why the two
+    fields both exist.
     """
 
     def list_objects_v2(self, **arguments: Any) -> Any: ...
+
+
+@runtime_checkable
+class CheckpointAttributesReader(Protocol):
+    """``GetObjectAttributes``, which is S3 saying what it attests without sending bytes.
+
+    THE SECOND CALL, AND IT IS OPTIONAL FOR A REASON THAT IS NOT CONVENIENCE. A listing
+    already carries an entity tag per object, so a payload-derived digest is in hand with
+    the grant the recorder is deployed with today and with no extra call at all. What a
+    listing does not carry is the CRC32C, even though it says one exists -- ``Contents[]``
+    returns ``ChecksumAlgorithm: ["CRC32C"]`` and ``ChecksumType: FULL_OBJECT`` and no
+    value. Reading the value needs ``s3:GetObjectAttributes``, which is a grant narrower
+    than ``s3:GetObject`` -- it returns the checksum, the size and the part layout and
+    cannot return a byte of the object -- and which the deployed role does not yet hold.
+
+    So this is a seam the handler passes when it can and omits when it cannot, and the
+    record names which source answered either way. Until the grant is deployed the payload
+    reading says ``listing_etag``; the day it is deployed the same code says
+    ``object_attributes`` and nothing else changes. Jobs running comes first and the record
+    follows: the weaker reading ships now rather than waiting on an IAM deploy that only a
+    laptop with the owner's session can perform.
+    """
+
+    def get_object_attributes(self, **arguments: Any) -> Any: ...
 
 
 def container_variable(detail: Mapping[str, Any], name: str) -> str | None:
@@ -644,7 +684,10 @@ def _listed(lister: CheckpointLister, *, bucket: str, key: str) -> list[Mapping[
 
 
 def checkpoints_under(
-    lister: CheckpointLister, *, prefix: str
+    lister: CheckpointLister,
+    *,
+    prefix: str,
+    attributes: CheckpointAttributesReader | None = None,
 ) -> tuple[tuple[CheckpointManifest, ...], CheckpointSurvey]:
     """What a run wrote under its checkpoint prefix, and what the listing itself saw.
 
@@ -659,15 +702,16 @@ def checkpoints_under(
     read and was bare from one that was never read at all.
 
     WHAT A LISTING CAN SAY AND WHAT IT CANNOT, because the gap is the reason this reads the
-    way it does. A listing gives the key, the size and the write time of every object, so
-    the step comes off the directory name, the size is the sum, the instant is the newest
-    write in it, and the marker is there or it is not. It does not give the contents of a
-    marker, so a prefix written by :func:`~edullm_platform.checkpoints.commit_checkpoint`
-    directly -- a payload and a ``_SUCCESS`` at the checkpoint directory itself, with the
-    step recorded inside the marker -- is not recorded here at all. Recording one would mean
-    inventing a step number, and a step of zero in an immutable record is worse than an
-    absence. Closing that needs ``s3:GetObject`` on the outputs bucket, which is a wider
-    grant than this whole change asks for.
+    way it does. A listing gives the key, the size, the write time and the entity tag of
+    every object, so the step comes off the directory name, the size is the sum, the instant
+    is the newest write in it, the marker is there or it is not, and the tags become the
+    payload reading. It does not give the contents of a marker, so a prefix written by
+    :func:`~edullm_platform.checkpoints.commit_checkpoint` directly -- a payload and a
+    ``_SUCCESS`` at the checkpoint directory itself, with the step recorded inside the
+    marker -- is not recorded here at all. Recording one would mean inventing a step number,
+    and a step of zero in an immutable record is worse than an absence. Closing THAT needs
+    ``s3:GetObject``, and is the one thing here that still does: a checksum is something S3
+    will attest about an object, and the contents of a marker this platform wrote are not.
 
     ``success_marker_uri`` is what separates a directory a resume would load from one a
     reclaimed attempt left half written, and OLMo-core writes no marker of ours -- so these
@@ -697,7 +741,7 @@ def checkpoints_under(
         # record now says a refusal happened rather than presenting it as an empty prefix.
         return (), _survey(CheckpointListingOutcome.REFUSED)
     try:
-        return _describe_checkpoint_directories(contents, bucket, key)
+        return _describe_checkpoint_directories(contents, bucket, key, attributes)
     except Exception:  # noqa: BLE001
         return (), _survey(CheckpointListingOutcome.REFUSED)
 
@@ -722,6 +766,7 @@ def _describe_checkpoint_directories(
     contents: Sequence[Mapping[str, Any]],
     bucket: str,
     key: str,
+    attributes: CheckpointAttributesReader | None = None,
 ) -> tuple[tuple[CheckpointManifest, ...], CheckpointSurvey]:
     """Describe one layout's directories, and say what the listing saw either way.
 
@@ -737,7 +782,7 @@ def _describe_checkpoint_directories(
     objects_seen = 0
     bytes_seen = 0
     directories: set[str] = set()
-    per_layout: list[dict[int, dict[str, tuple[int, datetime]]]] = [
+    per_layout: list[dict[int, dict[str, tuple[int, datetime, str | None]]]] = [
         {} for _ in CHECKPOINT_DIRECTORIES
     ]
     for entry in contents:
@@ -761,11 +806,21 @@ def _describe_checkpoint_directories(
         for index, (pattern, _) in enumerate(CHECKPOINT_DIRECTORIES):
             matched = pattern.fullmatch(directory)
             if matched is not None:
-                per_layout[index].setdefault(int(matched.group(1)), {})[member] = (size, written)
+                per_layout[index].setdefault(int(matched.group(1)), {})[member] = (
+                    size,
+                    written,
+                    _entity_tag(entry.get("ETag")),
+                )
                 break
 
     for index, (pattern, template) in enumerate(CHECKPOINT_DIRECTORIES):
-        manifests = _manifests_for(per_layout[index], bucket=bucket, key=key, template=template)
+        manifests = _manifests_for(
+            per_layout[index],
+            bucket=bucket,
+            key=key,
+            template=template,
+            attributes=attributes,
+        )
         if not manifests:
             continue
         unparsed = sorted(name for name in directories if pattern.fullmatch(name) is None)
@@ -784,22 +839,136 @@ def _describe_checkpoint_directories(
     )
 
 
+def _entity_tag(value: object) -> str | None:
+    """A listing's ``ETag`` as a bare hex digest, or None because it was not usable.
+
+    S3 returns the tag quoted and boto3 hands the quotes straight through. A multipart
+    upload's tag ends ``-N``, which is kept: it is still a function of the payload, and
+    dropping the suffix would let two objects with the same part digests and different part
+    counts read as one value.
+    """
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip('"')
+    return stripped if _ENTITY_TAG.fullmatch(stripped) else None
+
+
+def _attested_digests(
+    attributes: CheckpointAttributesReader | None,
+    *,
+    bucket: str,
+    keys: Mapping[str, str],
+) -> dict[str, str] | None:
+    """S3's own CRC32C per object, or None because that reading is not available.
+
+    None rather than a partial dictionary when nothing answered at all, so the caller can
+    fall back to the entity tags rather than record a source that produced nothing. A reader
+    that answers for some objects and not others returns what it has, and the objects it
+    skipped carry no digest -- which is the per-object half of the honest-silence rule.
+
+    THE FIRST REFUSAL STOPS THE LOOP, WHICH IS WHAT KEEPS THE UNDEPLOYED CASE CHEAP. The
+    grant is held or it is not, per bucket, so a role without it would otherwise pay one
+    AccessDenied per object on every Batch state change for a checkpoint it was never going
+    to read -- up to :data:`~edullm_platform.contracts.results.PAYLOAD_OBJECT_CEILING` of
+    them, inside a Lambda. An object that simply has no CRC32C for S3 to attest answers
+    successfully with no value, so it does not look like a refusal and does not stop it.
+
+    Never raises. This runs inside the projection of an event, and an exception here loses
+    the entire lineage record of a run that happened in order to fail to add a checksum to
+    it. That trade is the settled one: jobs running comes first and the record follows.
+    """
+    if attributes is None:
+        return None
+    found: dict[str, str] = {}
+    for name, full_key in sorted(keys.items()):
+        try:
+            answer = attributes.get_object_attributes(
+                Bucket=bucket, Key=full_key, ObjectAttributes=["Checksum"]
+            )
+        except Exception:  # noqa: BLE001
+            # Broad for the reason the listing's handler is broad: botocore's exception
+            # classes are not importable here and the ways a read can be refused are open.
+            break
+        checksum = answer.get("Checksum") if isinstance(answer, Mapping) else None
+        value = checksum.get("ChecksumCRC32C") if isinstance(checksum, Mapping) else None
+        if isinstance(value, str) and value:
+            found[name] = f"crc32c:{value}"
+    return found or None
+
+
+def _payload_reading(
+    members: Mapping[str, tuple[int, datetime, str | None]],
+    *,
+    bucket: str,
+    directory_key: str,
+    attributes: CheckpointAttributesReader | None,
+) -> CheckpointPayload:
+    """A digest of what is in a checkpoint, from the best source that answered.
+
+    THE ENTITY TAGS ARE THE FLOOR AND NOT THE FALLBACK OF LAST RESORT. They come back in
+    the listing this projection already makes, so the record gains a payload-derived value
+    with no extra call, no extra grant and no extra second on a Lambda that runs on every
+    Batch state change. The attested CRC32C is strictly better and needs a deploy, so it is
+    an upgrade rather than a precondition.
+    """
+    if len(members) > PAYLOAD_OBJECT_CEILING:
+        return CheckpointPayload(schema_version=1, outcome=PayloadDigestOutcome.TOO_MANY_OBJECTS)
+    attested = _attested_digests(
+        attributes,
+        bucket=bucket,
+        keys={name: f"{directory_key}{name}" for name in members},
+    )
+    digests = (
+        attested
+        if attested is not None
+        else {name: f"etag:{tag}" for name, (_, _, tag) in members.items() if tag is not None}
+    )
+    if not digests:
+        return CheckpointPayload(
+            schema_version=1,
+            outcome=(
+                PayloadDigestOutcome.REFUSED
+                if attributes is not None
+                else PayloadDigestOutcome.NOT_ATTEMPTED
+            ),
+        )
+    return CheckpointPayload(
+        schema_version=1,
+        outcome=(
+            PayloadDigestOutcome.OBJECT_ATTRIBUTES
+            if attested is not None
+            else PayloadDigestOutcome.LISTING_ETAG
+        ),
+        objects=tuple(
+            PayloadObject(
+                schema_version=1,
+                name=name,
+                size_bytes=members[name][0],
+                digest=digests.get(name),
+            )
+            for name in sorted(members)
+        ),
+    )
+
+
 def _manifests_for(
-    under: Mapping[int, Mapping[str, tuple[int, datetime]]],
+    under: Mapping[int, Mapping[str, tuple[int, datetime, str | None]]],
     *,
     bucket: str,
     key: str,
     template: str,
+    attributes: CheckpointAttributesReader | None = None,
 ) -> tuple[CheckpointManifest, ...]:
     manifests: list[CheckpointManifest] = []
     for step in sorted(under):
         members = under[step]
-        total = sum(size for size, _ in members.values())
+        total = sum(size for size, _, _ in members.values())
         if total <= 0:
             # A directory of empty objects is a write that started and produced nothing, and
             # the contract requires a positive size. Left out rather than recorded as zero.
             continue
-        uri = f"s3://{bucket}/{key}{template.format(step=step)}"
+        directory = f"{key}{template.format(step=step)}"
+        uri = f"s3://{bucket}/{directory}"
         manifests.append(
             CheckpointManifest(
                 schema_version=1,
@@ -808,12 +977,18 @@ def _manifests_for(
                 # A listing cannot say which epoch a step belongs to, and the directory name
                 # does not carry one. None is the honest answer rather than a derived guess.
                 epoch=None,
-                created_at=max(written for _, written in members.values()),
+                created_at=max(written for _, written, _ in members.values()),
                 size_bytes=total,
                 checksum=described_listing_checksum(
-                    [(name, size, "listing") for name, (size, _) in members.items()]
+                    [(name, size, "listing") for name, (size, _, _) in members.items()]
                 ),
                 success_marker_uri=f"{uri}{MARKER_OBJECT}" if MARKER_OBJECT in members else None,
+                payload=_payload_reading(
+                    members,
+                    bucket=bucket,
+                    directory_key=directory,
+                    attributes=attributes,
+                ),
             )
         )
     return tuple(manifests)
@@ -866,6 +1041,13 @@ def _checkpoints_written(
     The three refusals here are separated in the survey rather than collapsed, because they
     have different owners. Nothing to list with is this platform's own wiring, no declared
     prefix is the job definition, and a prefix in somebody else's bucket is the submission.
+
+    THE LISTER IS ALSO PASSED AS THE ATTRIBUTES READER, WHICH IS ONE CLIENT AND TWO CALLS.
+    A boto3 S3 client satisfies both protocols, so the day ``s3:GetObjectAttributes`` is
+    added to the lifecycle role the payload reading upgrades from the entity tags to S3's
+    attested CRC32C with no code change. Until then the first refusal costs one call and
+    the record says ``listing_etag``, which is a true statement about a real digest rather
+    than an absence.
     """
     if checkpoint_lister is None:
         return (), _survey(CheckpointListingOutcome.NOT_ATTEMPTED)
@@ -874,7 +1056,12 @@ def _checkpoints_written(
         return (), _survey(CheckpointListingOutcome.NO_PREFIX_DECLARED)
     if not prefix.startswith(f"s3://{output_bucket}/"):
         return (), _survey(CheckpointListingOutcome.PREFIX_NOT_OURS)
-    return checkpoints_under(checkpoint_lister, prefix=prefix)
+    # A boto3 S3 client is both. A test's lister that only implements the listing is not, and
+    # gets the entity tags -- which is the same answer the deployed role gets today.
+    attributes = (
+        checkpoint_lister if isinstance(checkpoint_lister, CheckpointAttributesReader) else None
+    )
+    return checkpoints_under(checkpoint_lister, prefix=prefix, attributes=attributes)
 
 
 def project_batch_state_change(

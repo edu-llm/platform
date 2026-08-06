@@ -13,7 +13,8 @@ Four exit codes, because there are four answers and no two of them may read alik
     about the runs.
 2   The tree could not be read. Not a finding about the runs.
 3   The runs agree about everything that was compared, and something required was not compared:
-    a field neither record carries. Not a finding about the runs either, and not a pass.
+    a field neither record carries, or a checkpoint whose record says it read no digest of the
+    payload. Not a finding about the runs either, and not a pass.
 
 **Exit 3 is here because the check for the fields that must be equal could not fail in the case
 it was written for.** It gathered the paths the two records carried and required the required
@@ -247,21 +248,47 @@ def checkpoint_section(checkpoints: CheckpointCoverage) -> list[str]:
         ]
     if not checkpoints.compared:
         return []
-    return [
-        "",
-        "### The checkpoint payloads were not compared, and could not have been",
-        "",
-        (
-            f"{checkpoints.compared} checkpoint(s) were compared on step, size and "
-            "`checksum`. That last one is not a digest of the payload. The lifecycle "
-            "recorder holds a listing grant and nothing that can open an object, so the "
-            "field carries a SHA-256 over the names and sizes the listing returned, and "
-            "two runs whose payloads differ in every byte record the same value in it. "
-            "The digest of the bytes is in the `_SUCCESS` beside each payload and is not "
-            "in the lineage record, so a table with no `checksum` row in it is not a "
-            "statement that the two checkpoints hold the same weights."
-        ),
-    ]
+    lines = ["", "### What the checkpoint comparison saw of the bytes", ""]
+    if checkpoints.payloads_read:
+        lines.append(
+            f"{checkpoints.payloads_read} of {checkpoints.compared} checkpoint(s) carry a "
+            "digest of the payload on both sides, so the table above compared what is in "
+            "them and not only what they are called. A `payload.objects[].digest` row is "
+            "two runs holding different bytes, which is ORDINARY between two runs of one "
+            "submission -- the order a GPU reduces in is not fixed, so identical code on "
+            "identical data writes different bytes. It is named as a cause, it changes no "
+            "exit code, and nothing in this platform retries or refuses because of it. "
+            "What is not excused is a difference in an object's name or size: that is a "
+            "truncated write and it is a finding."
+        )
+    if checkpoints.payloads_absent:
+        lines.append(
+            f"{checkpoints.payloads_absent} of {checkpoints.compared} checkpoint(s) carry "
+            "no payload reading at all, because both records were written before "
+            "`CheckpointManifest.payload` existed. Those were compared on step, size and "
+            "`checksum`, and `checksum` is a SHA-256 over the names and sizes the listing "
+            "returned rather than over the bytes -- so for those entries a table with no "
+            "`checksum` row in it is still not a statement that the two checkpoints hold "
+            "the same weights. Re-running the recorder over the same prefix is what closes "
+            "it; nothing rewrites a record that is already written."
+        )
+    if checkpoints.unattested:
+        lines.append(
+            "The following checkpoint(s) carry a payload reading that read no digest, so "
+            "what is in them was NOT compared and their silence is not agreement:"
+        )
+        lines += [
+            f"- `{one.run_id}` at `{one.checkpoint}` reports `{one.outcome}`"
+            for one in checkpoints.unattested
+        ]
+        lines.append(
+            "`refused` is the live answer until the lifecycle role holds "
+            "`s3:GetObjectAttributes`; `not_attempted` is a projection built with no store "
+            "behind it; `too_many_objects` is a checkpoint wider than the record's ceiling. "
+            "None of the three is a fault of the run, and none of them is agreement either, "
+            "which is why this exits UNVERIFIED rather than matched."
+        )
+    return lines
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -320,6 +347,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         unverified=coverage.unverified,
         unreadable_checkpoints=checkpoints.unreadable,
+        unattested_payloads=checkpoints.unattested,
     )
     print(render(comparison, coverage=coverage, checkpoints=checkpoints), end="")
     if options.output:
@@ -335,7 +363,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     # the done-condition therefore did not happen. See the module docstring.
     if unexplained(differences) or coverage.missing or checkpoints.is_blocked:
         return EXIT_DIFFERED
-    if coverage.unverified:
+    # A record that carries a payload reading and says it read no digest is the same shape
+    # of gap as a required field neither record carries: something the comparison claims to
+    # cover was not covered, and reporting it as agreement is the one thing this tool must
+    # not do. A record with no payload reading AT ALL is deliberately not here -- that is
+    # every record written before the field existed, and failing to verify history that
+    # could not have been recorded is not a finding about anything.
+    if coverage.unverified or checkpoints.payloads_unverified:
         return EXIT_UNVERIFIED
     return EXIT_MATCHED
 

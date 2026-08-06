@@ -202,7 +202,59 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
     # side, so say which it is in the text. The lasting fix for that particular gap is not
     # here: tests/test_phase2_infrastructure.py now measures the rendered policy against
     # IAM's cap, so a document the account will refuse fails before anybody deploys it.
-    amendments: tuple[PendingAmendment, ...] = ()
+    #
+    # THE ENTRY BELOW IS THE ORDINARY CASE AND IS ALSO THE MILDEST ONE THIS REGISTRY HAS
+    # HELD, WHICH IS WORTH SAYING PLAINLY BECAUSE EVERY OTHER RECORD HERE DESCRIBED
+    # SOMETHING BROKEN UNTIL IT WAS DEPLOYED. Five GPU profiles were unsubmittable for two
+    # days behind one of them. This one blocks nothing: the payload digest it would improve
+    # is already being recorded from the entity tag the listing returns, so an undeployed
+    # grant costs the difference between S3's attested CRC32C and an ETag, and both of them
+    # answer the question the field exists for. If it is never applied, the lineage record
+    # says listing_etag forever and is not wrong about anything.
+    amendments: tuple[PendingAmendment, ...] = (
+        PendingAmendment(
+            role_name="sbsandbox-intern-edullm-lifecycle-lambda",
+            reason=(
+                "infra/iam/lifecycle-lambda-role.yaml adds s3:GetObjectAttributes on the "
+                "outputs bucket, scoped to the same teams/*/runs/*/checkpoints/* shape the "
+                "s3:ListBucket condition beside it uses. It is what lets the recorder put "
+                "S3's own attested CRC32C into CheckpointManifest.payload instead of the "
+                "ETag the listing already returns."
+                "\n\n"
+                "NOTHING IS BROKEN WHILE THIS IS OPEN, WHICH IS UNUSUAL FOR A RECORD HERE. "
+                "lifecycle_projection._attested_digests catches the refusal, stops asking "
+                "after the first one rather than paying an AccessDenied per object, and "
+                "falls back to the entity tags. The record then says listing_etag, which is "
+                "a true statement about a real payload-derived digest -- weaker only in "
+                "that an ETag is a function of how the object was uploaded as well as of "
+                "its bytes. Two runs holding different weights are visible either way, "
+                "which is the whole point of the field."
+                "\n\n"
+                "It is s3:GetObjectAttributes and deliberately not s3:GetObject. The former "
+                "returns the checksum, the size and the part layout and cannot return a "
+                "byte of the object, so the recorder gains the ability to say what a "
+                "checkpoint hashes to without gaining the ability to read what any team's "
+                "run produced. The template's own comment argues that line at length and "
+                "this record is the other half of it."
+            ),
+            cleared_by=(
+                "deploy sbsandbox-intern-edullm-phase3-lifecycle-iam from a laptop with the "
+                "owner's SSO session, then re-capture the Phase 3 roles"
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'record-what-batch-reported'",
+                    detail=(
+                        "the template declares a statement the deployed role does not: "
+                        "Allow Action [s3:GetObjectAttributes] Resource "
+                        "[arn:<partition>:s3:::sbsandbox-intern-edullm-outputs/teams/*/runs/"
+                        "*/checkpoints/*]"
+                    ),
+                ),
+            ),
+        ),
+    )
     declared = declared_role_templates()
     for amendment in amendments:
         if amendment.role_name not in declared:

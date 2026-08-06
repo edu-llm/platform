@@ -313,7 +313,14 @@
       "module": "edullm_platform.contracts.results",
       "name": "CheckpointManifest",
       "schema_version": "1",
-      "structural_digest": "sha256:4a27e4581c4d888b09d99e81d2236353fd5cf012198b4b520e95eb0406077237"
+      "structural_digest": "sha256:24bca2c9f4cdd4658c686a51b154ae9977106e0b02c8e3f29402f5915cba5a6b"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.results",
+      "name": "CheckpointPayload",
+      "schema_version": "1",
+      "structural_digest": "sha256:e2ec1fe537baed931fe10c8b434c8a040c6e768478d01da985a5780fc25895cb"
     },
     {
       "base": false,
@@ -325,9 +332,16 @@
     {
       "base": false,
       "module": "edullm_platform.contracts.results",
+      "name": "PayloadObject",
+      "schema_version": "1",
+      "structural_digest": "sha256:aeb2f8cb7fa9cf4000d242f1df6d9e3ce24d3719a46353a5548ac508b41db0c8"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.results",
       "name": "ResultManifest",
       "schema_version": "1",
-      "structural_digest": "sha256:47ba07791dc06f0b05512ffdcc18ad5b953a650c88e68b30a7b40d93ac1f39e4"
+      "structural_digest": "sha256:6b0339b52ec43729d830902ae50f7de7c531cb6cdf0c053d5a5ff6726ee1871b"
     },
     {
       "base": false,
@@ -985,14 +999,21 @@
       "module": "edullm_platform.run_comparison",
       "name": "TwoRunComparison",
       "schema_version": "1",
-      "structural_digest": "sha256:5446c3db520e70321ee0b2cb3b80c9afa9d335791632c5e6a1a0d9146c089869"
+      "structural_digest": "sha256:32b6cbc23d1cadf704b8c1f45e74d9ca25f3682b2adb96d364389873672c9988"
     },
     {
       "base": false,
       "module": "edullm_platform.run_comparison",
       "name": "TwoRunEvidence",
       "schema_version": "1",
-      "structural_digest": "sha256:6b94c1fb7264a2953131b94e565ad61b7ad925e8f1726816f8238ebb492646d0"
+      "structural_digest": "sha256:224e53ad38617358e7d87a6c890c08a01b4194b25c1129f533064bba3fdfda5e"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.run_comparison",
+      "name": "UnattestedPayload",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:b2804b9216f9e6fbea1b094d65a81f296e72ee96539c11dc3e57ea2b19e711c5"
     },
     {
       "base": false,
