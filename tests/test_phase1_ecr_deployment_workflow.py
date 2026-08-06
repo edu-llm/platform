@@ -1,6 +1,7 @@
 import re
 from typing import Any
 
+from infrastructure_support import ACCOUNT_LITERAL
 from workflow_support import (
     WORKFLOWS_ROOT,
     aws_commands,
@@ -156,7 +157,7 @@ def test_workflow_verifies_exact_repository_and_lifecycle_semantics_without_uri_
         ],
     ]
 
-    assert not re.search(r"(?<!\d)\d{12}(?!\d)", verify_script)
+    assert not ACCOUNT_LITERAL.search(verify_script)
     assert not {"repositoryarn", "repositoryuri", "registryid"} & set(
         re.findall(r"[a-zA-Z][a-zA-Z0-9]*", verify_script.lower())
     )

@@ -16,7 +16,42 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INFRA_ROOT = PROJECT_ROOT / "infra"
 IAM_ROOT = INFRA_ROOT / "iam"
 
-ACCOUNT_LITERAL = re.compile(r"(?<!\d)\d{12}(?!\d)")
+# AN ACCOUNT ID IN SOURCE TEXT, WHICH IS NOT THE SAME QUESTION AS ONE IN A CAPTURED VALUE.
+#
+# This was `(?<!\d)\d{12}(?!\d)` until 2026-08-06: twelve decimal digits with no digit either
+# side, asked of whole files. That says nothing about hexadecimal, and twelve consecutive
+# decimal digits turn up inside hexadecimal constantly -- about one 64-character digest in six
+# carries a run of them. Source text is full of hexadecimal: commit SHAs, content digests, lock
+# hashes, and the UUIDv7 run ids this platform mints, whose final group is twelve hex
+# characters and so is all decimal digits about one time in sixteen.
+#
+# The cost was paid on 2026-08-06, when `run_019fd520-999e-70d8-9003-183311915247` in a test
+# file blocked a pull request for a night while reading as this account's real id, which it was
+# not. **A guard that produces false positives is a guard people learn to route around**, and
+# routing around this one means deleting the assertion that catches the real thing.
+#
+# So the question is asked about the token rather than about the twelve digits, by two
+# lookbehinds that are both fixed-width, which is what lets them be lookbehinds at all:
+#
+# Not inside a longer hexadecimal run. Nothing in the middle of a digest says where an account
+# id would begin or end, so a run of digits there is not one.
+#
+# Not the final group of a UUID, which is preceded by eight hex characters and three groups of
+# four, each with a hyphen -- twenty-four characters exactly, so it is expressible. A hyphen is
+# not excluded generally, because CDK writes its asset bucket with the account id between
+# hyphens and this organisation deploys with CDK; excluding hyphens wholesale would trade this
+# false positive for a false negative in the place an account id is most likely to be committed
+# by accident. ``tests/test_evidence.py`` proves that shape is still caught.
+#
+# **This deliberately does not narrow ``AWS_ACCOUNT_ID_PATTERN``, which guards values.** That
+# one is an ``AfterValidator`` on the evidence contracts, where a UUID's final group holding an
+# account id is a leak rather than an identifier -- a CloudTrail event id is a UUID, and
+# ``test_a_field_that_could_hold_an_account_id_refuses_one`` proves that field refuses one
+# dressed as a UUID tail. No captured field legitimately holds a run id, so nothing there pays
+# for the paranoia, and the two layers are left asking the two different questions.
+UUID_FINAL_GROUP = r"(?<![0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-)"
+INSIDE_A_HEX_RUN = r"(?<![0-9A-Fa-f])"
+ACCOUNT_LITERAL = re.compile(UUID_FINAL_GROUP + INSIDE_A_HEX_RUN + r"\d{12}(?![0-9A-Fa-f])")
 BOUNDARY = {
     "Fn::Sub": ("arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary")
 }

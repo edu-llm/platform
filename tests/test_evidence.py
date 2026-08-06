@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from infrastructure_support import ACCOUNT_LITERAL
 from pydantic import ValidationError
 
 from edullm_platform.config import load_yaml
@@ -110,23 +111,24 @@ def suspicious_account_id_int(value: int) -> bool:
 
 
 def forbidden_account_id_substrings(source: str) -> list[str]:
-    # BARE_SHA256_HEX is the third place this exemption has been needed and the first where
-    # it fires against a tracked file. redact_content_digests masks `sha256:<hex>` and a
-    # 40-character commit SHA, and a release record writes the digest as a YAML value --
-    # `sha256: 84edb3e8...` -- where the space means the prefix form does not match.
-    #
-    # A 64-character hex digest carries twelve consecutive decimal digits about one time in
-    # six, so without this a Lambda release lands on a red suite roughly every sixth time,
-    # for a reason that has nothing to do with the release and reads as an account id leak.
-    # It happened on 2026-08-01 and cost a diagnosis.
-    #
-    # Nothing an account id could hide behind is given up. An account id leaks inside an ARN
-    # or a JSON field, where it is bounded by a colon, a quote or whitespace; the lookarounds
-    # here mean only a run of digits sitting inside a longer hexadecimal token is skipped.
+    """Account ids in the text of a file, as opposed to in a value a contract carries.
+
+    ``ACCOUNT_LITERAL`` rather than ``AWS_ACCOUNT_ID_PATTERN``, and the difference is the whole
+    point: this reads source, where hexadecimal is everywhere, and that one guards captured
+    values, where it is not. ``tests/infrastructure_support.py`` argues the split.
+
+    The two masks below are kept even though the pattern no longer needs either of them.
+    ``BARE_SHA256_HEX`` and ``redact_content_digests`` were added on 2026-08-01, after a
+    64-character digest -- which carries twelve consecutive decimal digits about one time in
+    six -- turned a Lambda release into a red suite that read as an account id leak. A pattern
+    that asks about the token subsumes both, and the tests prove a digest and a commit SHA are
+    passed with them or without them, but removing a mask is a second change with its own way
+    of being wrong and this one is already load-bearing enough.
+    """
     masked = BARE_SHA256_HEX.sub("<sha256-hex>", redact_content_digests(source))
     return [
         match.group(0)
-        for match in AWS_ACCOUNT_ID_PATTERN.finditer(masked)
+        for match in ACCOUNT_LITERAL.finditer(masked)
         if match.group(0) != AWS_EXAMPLE_ACCOUNT_ID
     ]
 
@@ -987,6 +989,101 @@ def test_digit_runs_inside_content_digests_are_not_account_ids() -> None:
     inside_commit_sha = "a8727f150891357935b660adafba82b94046dc28"
     assert forbidden_account_id_substrings(inside_sha256) == []
     assert forbidden_account_id_substrings(inside_commit_sha) == []
+
+
+#: The shape that cost a pull request a night on 2026-08-06. A UUIDv7's final group is twelve
+#: hexadecimal characters, so about one run id in sixteen has a group that is all decimal
+#: digits, and this platform mints a run id per submission. It is not an account id, it is not
+#: a digest, and the three masks that had been added for the three shapes found before it did
+#: not cover it, which is the argument against fixing this one mask at a time.
+UUIDV7_RUN_ID_WITH_A_DIGIT_TAIL = "run_019fd520-999e-70d8-9003-183311915247"
+
+#: Taken off the run id above rather than written out, because a bare twelve-digit literal in
+#: this file is a twelve-digit literal in a tracked file, and the tree-wide half of this guard
+#: reads tracked files. Spelling it twice failed that check while these tests were being
+#: written, which is the guard working: quoted digits are exactly the shape it is looking for.
+DIGIT_TAIL_OF_THAT_RUN_ID = UUIDV7_RUN_ID_WITH_A_DIGIT_TAIL.rsplit("-", maxsplit=1)[-1]
+
+
+@pytest.mark.parametrize(
+    ("shape", "text"),
+    [
+        ("a UUIDv7 run id", UUIDV7_RUN_ID_WITH_A_DIGIT_TAIL),
+        ("the same run id with no prefix", UUIDV7_RUN_ID_WITH_A_DIGIT_TAIL.removeprefix("run_")),
+        ("a 40-character commit sha", "38bf831a6c3f445e394784018441fd59288b876c"),
+        ("a bare 64-character digest", "a" * 26 + DIGIT_TAIL_OF_THAT_RUN_ID + "b" * 26),
+        ("a lock file hash", "sha256:" + "c" * 20 + DIGIT_TAIL_OF_THAT_RUN_ID + "d" * 32),
+    ],
+)
+def test_twelve_digits_inside_a_larger_token_are_not_an_account_id(shape: str, text: str) -> None:
+    """Neither half of the guard may fire on any of these, and the reason is the same one.
+
+    A run of digits in the middle of a hexadecimal token is not an account id, because nothing
+    in the token says where an account id would start or stop. Asking that question of the
+    token rather than of the digits is what makes the masks unnecessary rather than merely
+    sufficient for the shapes somebody has already been bitten by.
+    """
+    # Not asserted through ``scan_for_secrets``: a 40-character commit sha and a 64-character
+    # digest are also runs of the base64 alphabet long enough to be a secret access key or a
+    # long credential, so that function refuses them for reasons that have nothing to do with
+    # account ids and would make this test pass or fail for the wrong reason.
+    assert ACCOUNT_LITERAL.search(text) is None, shape
+    assert forbidden_account_id_substrings(text) == [], shape
+
+
+@pytest.mark.parametrize(
+    ("where", "text"),
+    [
+        ("an IAM ARN", "arn:aws:iam::{account}:role/sbsandbox-intern-edullm-batch-workload"),
+        ("a bare JSON value", '{{"account": "{account}"}}'),
+        ("an ECR registry host", "{account}.dkr.ecr.us-east-1.amazonaws.com/olmo-core"),
+        # The reason a hyphen is not excluded wholesale even though the UUID that started this
+        # is hyphen-delimited. CDK writes its asset bucket with the account id between hyphens,
+        # and this organisation deploys with CDK, so a guard blind to this shape would be blind
+        # in the one place an account id is most likely to be committed by accident.
+        ("a CDK asset bucket name", "cdk-hnb659fds-assets-{account}-us-east-1"),
+    ],
+)
+def test_an_account_id_that_is_its_own_token_is_still_caught(where: str, text: str) -> None:
+    """The direction that must not be traded away to fix the direction above.
+
+    A synthetic id rather than the real one, because this file is committed to a public
+    repository and a test proving an account id is detectable must not be the thing that
+    discloses one.
+    """
+    synthetic = AWS_EXAMPLE_ACCOUNT_ID[::-1]
+    assert synthetic != AWS_EXAMPLE_ACCOUNT_ID
+    populated = text.format(account=synthetic)
+    assert ACCOUNT_LITERAL.search(populated) is not None, where
+    assert forbidden_account_id_substrings(populated) == [synthetic], where
+
+
+def test_the_value_guard_is_stricter_than_the_source_guard_on_purpose() -> None:
+    """The split, pinned, because it looks like an inconsistency until you know why.
+
+    ``ACCOUNT_LITERAL`` reads files. Source is full of hexadecimal it does not own -- commit
+    SHAs, digests, lock hashes, run ids -- so a run of digits inside a larger token is an
+    identifier and treating it as a leak blocks work, which it did.
+
+    ``AWS_ACCOUNT_ID_PATTERN`` is an ``AfterValidator`` on captured evidence. A CloudTrail event
+    id is a UUID, and no evidence field legitimately carries a run id, so nothing there pays for
+    refusing a UUID tail while a leak dressed as one would otherwise be published.
+    Narrowing both would have taken the cost out of the layer that was not paying it.
+    """
+    dressed_as_a_uuid = f"{'a' * 8}-aaaa-4aaa-baaa-{AWS_EXAMPLE_ACCOUNT_ID}"
+    assert ACCOUNT_LITERAL.search(dressed_as_a_uuid) is None
+    assert AWS_ACCOUNT_ID_PATTERN.search(dressed_as_a_uuid) is not None
+
+
+def test_a_run_id_beside_a_leaked_account_id_does_not_hide_it() -> None:
+    """The two shapes together, because separating them apart proves less than together.
+
+    A lineage record carries a run id on every line, so if the run id were what suppressed the
+    finding rather than its own shape, this is where it would go unnoticed.
+    """
+    synthetic = AWS_EXAMPLE_ACCOUNT_ID[::-1]
+    together = f"{UUIDV7_RUN_ID_WITH_A_DIGIT_TAIL} ran as arn:aws:iam::{synthetic}:role/x"
+    assert forbidden_account_id_substrings(together) == [synthetic]
 
 
 def test_the_digest_exemption_still_reports_a_bare_account_id() -> None:
