@@ -1048,24 +1048,14 @@ def test_the_build_records_the_images_own_creation_time_before_it_pushes(
         f'  echo "{PUBLISHED_IMAGE_CREATED}"\n'
         "fi\n",
     )
+    _write_tooling_stub(stub_bin)
 
     result = run_step_script(
         script,
         cwd=tmp_path,
-        env={
-            "RUNNER_TEMP": str(tmp_path),
-            "REGISTRY": "123456789012.dkr.ecr.us-east-1.amazonaws.com",
-            "ECR_REPOSITORY": "sbsandbox-intern-edullm-olmo-core",
-            "IMAGE_TAG": "a" * 12,
-            "BASE_REFERENCE": PUBLISHED_BASE_REFERENCE,
-            "DOCKERFILE_PATH": ".edullm/Dockerfile",
-            "BUILD_CONTEXT": ".",
-            "COMMIT_SHA": "a" * 40,
-            # The ordinary value on a first build: nothing published to import from.
-            "CACHE_FROM": "",
-            "SOURCE_URL": "https://example.invalid/edu-llm/OLMo-core",
-            "RUN_URL": "https://example.invalid/runs/1",
-        },
+        # The ordinary value of CACHE_FROM on a first build: nothing published to import
+        # from.
+        env=_build_environment(tmp_path, ""),
         stub_bin=stub_bin,
     )
 
@@ -1074,6 +1064,59 @@ def test_the_build_records_the_images_own_creation_time_before_it_pushes(
         f"{PUBLISHED_IMAGE_CREATED}\n"
     )
     assert script.index("docker image inspect") < script.index("docker push")
+
+
+def test_the_accelerator_gate_stands_between_the_build_and_the_push() -> None:
+    """A CPU-only torch is the one way an image can be wrong and cost a full run.
+
+    It has to be refused before the push and not after: the tag is immutable, so an image
+    rejected once it is in the registry is a commit that can never be published correctly.
+
+    Mutation: move the gate below `docker push`, or into a step of its own -- a separate
+    step can only run after this one, and the push is this step's last line.
+    """
+    build = step(_job("publish"), "Build and push image")
+    script = build["run"]
+
+    assert "tools/verify_image_accelerator.py" in script
+    assert script.index("verify_image_accelerator.py") < script.index("docker push")
+    # The gate reads the built image, so it must come after the build rather than merely
+    # before the push.
+    assert script.index("docker build") < script.index("verify_image_accelerator.py")
+    # Named in the step environment like every other value this script reads, rather than
+    # reached for out of the runner context inside the body.
+    assert build["env"]["PLATFORM_TOOLING"] == "${{ github.workspace }}/platform"
+
+
+@pytest.mark.slow
+def test_an_image_whose_torch_cannot_reach_a_card_is_never_pushed(tmp_path: Path) -> None:
+    """Executed rather than read. Mutation: let the gate advise instead of refuse.
+
+    A gate whose non-zero exit does not stop the step publishes the image it rejected, and
+    the refusal becomes a line in a log nobody reads until the bill arrives.
+    """
+    stub_bin = tmp_path / "bin"
+    write_stub(
+        stub_bin,
+        "docker",
+        'printf "%s\\n" "$*" >> "${RUNNER_TEMP}/docker-calls.txt"\n'
+        'if [[ "${1-} ${2-}" == "image inspect" ]]; then\n'
+        f'  echo "{PUBLISHED_IMAGE_CREATED}"\n'
+        "fi\n",
+    )
+    write_stub(stub_bin, "uv", 'echo "cpu_only_torch" >&2\nexit 1\n')
+
+    result = run_step_script(
+        step(_job("publish"), "Build and push image")["run"],
+        cwd=tmp_path,
+        env=_build_environment(tmp_path, ""),
+        stub_bin=stub_bin,
+    )
+
+    assert result.returncode == 1
+    calls = (tmp_path / "docker-calls.txt").read_text(encoding="utf-8")
+    assert "build" in calls
+    assert "push" not in calls
 
 
 @pytest.mark.slow
@@ -1221,9 +1264,15 @@ def _build_environment(tmp_path: Path, cache_from: str) -> dict[str, str]:
         "BUILD_CONTEXT": ".",
         "COMMIT_SHA": "a" * 40,
         "CACHE_FROM": cache_from,
+        "PLATFORM_TOOLING": str(tmp_path),
         "SOURCE_URL": "https://example.invalid/edu-llm/OLMo-core",
         "RUN_URL": "https://example.invalid/runs/1",
     }
+
+
+def _write_tooling_stub(stub_bin: Path) -> None:
+    """A ``uv`` that records the accelerator gate ran, without a locked environment."""
+    write_stub(stub_bin, "uv", 'printf "%s\\n" "$*" >> "${RUNNER_TEMP}/uv-calls.txt"\n')
 
 
 def _run_build(tmp_path: Path, cache_from: str) -> str:
@@ -1236,6 +1285,7 @@ def _run_build(tmp_path: Path, cache_from: str) -> str:
         f'  echo "{PUBLISHED_IMAGE_CREATED}"\n'
         "fi\n",
     )
+    _write_tooling_stub(stub_bin)
     result = run_step_script(
         step(_job("publish"), "Build and push image")["run"],
         cwd=tmp_path,
