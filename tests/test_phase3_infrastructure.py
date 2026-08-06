@@ -1969,9 +1969,17 @@ def test_the_recorder_is_attached_by_an_event_source_mapping_and_not_by_a_permis
     deliberately: "the deployer creates the validator but may neither run it nor change who
     may run it". Option 2 of D6 adds a capability instead of removing a restriction, and the
     queue buys real retry and dead-letter semantics as a side effect.
+
+    The rule carries two targets since the notifier arrived on it, so the recorder's is
+    picked by ``Id`` rather than by being the only one. Which targets exist at all is
+    asserted as an exact set in ``tests/test_notifications_infrastructure.py``, so an
+    unnoticed third is still caught, and it is caught in the file that names why there are
+    two. What this test still holds is the claim in its own name: the recorder is reached
+    through a queue and nothing here grants anybody the right to invoke it.
     """
     template = load_template(EVENTS_PATH)
     targets = properties_of(EVENTS_PATH, "AWS::Events::Rule")["Targets"]
+    recorder = [target for target in targets if target["Id"] == "lifecycle-queue"]
     mapping = properties_of(EVENTS_PATH, "AWS::Lambda::EventSourceMapping")
 
     assert not [
@@ -1979,8 +1987,8 @@ def test_the_recorder_is_attached_by_an_event_source_mapping_and_not_by_a_permis
         for logical_id, resource in template["Resources"].items()
         if resource["Type"] == "AWS::Lambda::Permission"
     ]
-    assert len(targets) == 1
-    assert targets[0]["Arn"] == {"Fn::GetAtt": ["LifecycleQueue", "Arn"]}
+    assert len(recorder) == 1
+    assert recorder[0]["Arn"] == {"Fn::GetAtt": ["LifecycleQueue", "Arn"]}
     assert mapping["EventSourceArn"] == {"Fn::GetAtt": ["LifecycleQueue", "Arn"]}
     assert mapping["Enabled"] is True
     # One event per invocation, so the retry unit is the event -- which is the unit the

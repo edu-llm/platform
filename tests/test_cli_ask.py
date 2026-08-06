@@ -34,14 +34,29 @@ TEMPLATE_DIR = Path(__file__).resolve().parents[1] / ".github" / "ISSUE_TEMPLATE
 ISSUE_URL = "https://github.com/edu-llm/platform/issues/301"
 
 
-def declared_labels() -> set[str]:
-    """Every label the intake forms put on an issue, read out of the forms."""
+def declared_kinds() -> set[str]:
+    """Every kind the intake forms offer, read out of the forms.
+
+    READ FROM THE DROPDOWN RATHER THAN FROM ``labels:``, WHICH IS WHERE IT USED TO BE. Four
+    forms meant one kind per form, so a form's unconditional label was its kind. One triage
+    form cannot work that way: ``labels:`` is unconditional, so a single form declaring a kind
+    would file every ask under it. The kind is now what the requester picks and the label is
+    what whoever triages puts on, and this is the seam that keeps the two vocabularies equal.
+
+    Still read across every form in the directory rather than out of ask.yml by name, so a
+    second form reintroduced beside the triage one and offering a kind of its own widens this
+    set and fails the comparison. A second form offering no kind at all is invisible here and
+    is caught by test_triage_form.py, which is where the one-form property lives.
+    """
     found: set[str] = set()
     for path in sorted(TEMPLATE_DIR.glob("*.yml")):
         if path.name == "config.yml":
             continue
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
-        found.update(str(label) for label in document.get("labels", ()))
+        for entry in document.get("body", ()):
+            if entry.get("type") != "dropdown" or entry.get("id") != "kind":
+                continue
+            found.update(str(option) for option in entry["attributes"]["options"])
     return found
 
 
@@ -65,16 +80,21 @@ def test_ask_is_no_longer_declared_unbuilt() -> None:
     assert "ask" not in NOT_BUILT_YET
 
 
-def test_the_kinds_this_verb_offers_are_the_labels_the_forms_declare() -> None:
-    """Mutation: add a kind here that no template declares, or drop one that does.
+def test_the_kinds_this_verb_offers_are_the_kinds_the_forms_offer() -> None:
+    """Mutation: add a kind here that the form does not offer, or drop one that it does.
 
-    THIS IS THE TEST THAT LETS TWO PLANS PROCEED WITHOUT WAITING ON EACH OTHER. An installed
-    wheel carries no .github/, so the vocabulary has to live in the package. What must never
-    happen is that it drifts from the forms, because an ask filed under a label the counter
-    does not read is an ask nobody counts, and countability is the whole reason one place
-    exists. The collapse to a single triage form turns this red rather than silent.
+    THIS IS THE TEST THAT LET TWO PLANS PROCEED WITHOUT WAITING ON EACH OTHER, AND IT HAS NOW
+    DONE IT. An installed wheel carries no .github/, so the vocabulary has to live in the
+    package. What must never happen is that it drifts from the forms, because an ask filed
+    under a label the counter does not read is an ask nobody counts, and countability is the
+    whole reason one place exists.
+
+    The collapse to a single triage form turned this red rather than silent, exactly as the
+    comment above ASK_KINDS said it would, and what moved is where the kind is written: from a
+    label per form to a dropdown on the one form. The vocabulary itself did not move, so every
+    ask already filed still counts under the label it carries.
     """
-    assert set(ASK_KINDS) == declared_labels()
+    assert set(ASK_KINDS) == declared_kinds()
 
 
 def test_an_ask_is_filed_with_its_kind_as_the_label(

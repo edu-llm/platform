@@ -183,6 +183,33 @@ Resources:
           # is derived from, so that a redelivery computes the same S3 key and the
           # conditional write refuses it. Reshaping the event here would move that
           # derivation into a template nobody unit-tests.
+        # THE SECOND TARGET, AND IT IS A SECOND TARGET RATHER THAN A SECOND RULE.
+        #
+        # The pattern above is sixteen job queue ARNs written out, each created in a compute
+        # template with nothing connecting the two, and a rule scoped to a queue that has been
+        # renamed deploys perfectly and matches nothing forever. A second copy of that pattern
+        # would be a second thing to keep right, and the one that goes stale is the one nobody
+        # is watching. EventBridge takes several targets, so this costs one entry.
+        #
+        # Its own queue, because SQS gives a message to one consumer: two functions polling
+        # one queue would each get roughly half the events. Its own dead-letter queue, because
+        # the two failures mean different things. A lineage record that was never written is a
+        # hole in an audit trail that cannot be corrected afterwards. A message nobody received
+        # is a message nobody received.
+        #
+        # Both queues are created by infra/notifications.yaml and named here rather than
+        # imported, so there is no export to create and no deletion order to get right. That
+        # stack is deployed before this one; the deploy workflow orders them and infra/README.md
+        # says so for a hand deploy.
+        #
+        # No InputTransformer, as above. The notifier is handed the whole event, and every
+        # value on a message comes out of it.
+        - Id: notifier-queue
+          Arn:
+            Fn::Sub: arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:sbsandbox-intern-edullm-notifier
+          DeadLetterConfig:
+            Arn:
+              Fn::Sub: arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:sbsandbox-intern-edullm-notifier-dlq
 
   # ------------------------------------------------------------------------------------
   # The recorder

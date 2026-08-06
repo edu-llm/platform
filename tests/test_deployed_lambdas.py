@@ -37,6 +37,7 @@ TOOL = PROJECT_ROOT / "tools" / "verify_deployed_lambdas.py"
 VALIDATOR = "sbsandbox-intern-edullm-admission-validator"
 RECORDER = "sbsandbox-intern-edullm-lifecycle-recorder"
 JANITOR = "sbsandbox-intern-edullm-expiry-janitor"
+NOTIFIER = "sbsandbox-intern-edullm-notifier"
 
 #: A digest of the right shape that is not either recorded one. Written out rather than
 #: derived, so a test that stopped comparing anything cannot pass by comparing a value to
@@ -370,18 +371,14 @@ def test_a_disagreement_outranks_a_call_that_could_not_be_made(
     A reader who has one function to repair has to repair it whatever happened to the
     other, and the other is on the line above rather than hidden behind the exit code.
     """
-    answer_lambda_with(
-        monkeypatch,
-        module,
-        {
-            VALIDATOR: (0, as_aws_reports_it(SOME_OTHER_DIGEST) + "\n", ""),
-            RECORDER: (255, "", DENIED),
-            # The third function's answer is the boring one deliberately: this test is about
-            # which of two findings decides the exit code, and a third finding would make the
-            # precedence it asserts a statement about three.
-            JANITOR: (0, as_aws_reports_it(recorded[JANITOR]) + "\n", ""),
-        },
-    )
+    # Every function but the two under test answers the boring way deliberately: this test is
+    # about which of two findings decides the exit code, and a third finding would make the
+    # precedence it asserts a statement about three. Built from `agreeing` rather than listed,
+    # so a fifth function added later joins the quiet majority instead of failing this.
+    replies = agreeing(recorded)
+    replies[VALIDATOR] = (0, as_aws_reports_it(SOME_OTHER_DIGEST) + "\n", "")
+    replies[RECORDER] = (255, "", DENIED)
+    answer_lambda_with(monkeypatch, module, replies)
 
     code, _, err = run_main(module, capsys)
 
@@ -521,7 +518,7 @@ def _raising(module: Any, reason: str, code: int) -> Callable[..., str]:
 
 
 def test_the_deployed_name_is_read_from_the_template_that_declares_it(module: Any) -> None:
-    """Mutation: spell the two function names in this tool as well.
+    """Mutation: spell the three function names in this tool as well.
 
     The template is what tells CloudFormation the name, so it is the one place the name is
     decided. A second spelling here would let a rename deploy cleanly and leave this check
@@ -533,7 +530,7 @@ def test_the_deployed_name_is_read_from_the_template_that_declares_it(module: An
         for function in module.FUNCTIONS.values()
     }
 
-    assert names == {VALIDATOR, RECORDER, JANITOR}
+    assert names == {VALIDATOR, RECORDER, JANITOR, NOTIFIER}
 
 
 @pytest.mark.parametrize(
@@ -586,12 +583,14 @@ def test_a_template_that_does_not_name_one_function_is_unusable(
 
 
 def test_every_function_the_release_tool_can_release_is_checked(module: Any) -> None:
-    """Mutation: list the two functions here instead of importing them.
+    """Mutation: list the three functions here instead of importing them.
 
     `tools/release_lambda.py` already declares each function's template and release
-    record, and it is what a third Lambda would be added to. Reading its table means the
-    third one is verified from the day it can be released, rather than from the day
-    somebody remembers this file.
+    record, and it is what a further Lambda would be added to. Reading its table means the
+    next one is verified from the day it can be released, rather than from the day
+    somebody remembers this file. That prediction has already been paid off once: the
+    notifier arrived and every case in this module covered it without an edit, except the
+    two that name the functions on purpose.
 
     Imported by bare name, which is the spelling the tool itself uses and therefore the
     one that resolves to the same module object; `tools.release_lambda` is a second entry
@@ -600,7 +599,7 @@ def test_every_function_the_release_tool_can_release_is_checked(module: Any) -> 
     import release_lambda
 
     assert module.FUNCTIONS is release_lambda.FUNCTIONS
-    assert set(module.FUNCTIONS) == {"validator", "recorder", "janitor"}
+    assert set(module.FUNCTIONS) == {"validator", "recorder", "janitor", "notifier"}
 
 
 def test_the_object_version_comparison_is_owned_by_the_release_tripwires() -> None:

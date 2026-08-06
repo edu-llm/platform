@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: What a lane machine may do, which is answer Systems Manager and read and write the working tier.
+
+# THE ONE PRINCIPAL HERE WHOSE BEHAVIOUR NOBODY REVIEWS. Every other role in this repository is
+# worn by a pipeline or by a container running a submitted command that a lead released. This one
+# is worn by a machine somebody is experimenting on, and the whole point of the exploration route
+# is that nothing about what happens there is reviewed. So it holds what a session and a file sync
+# need and not one action more.
+#
+# IT IS NOT THE RESEARCHER'S ROLE AND THE DIFFERENCE MATTERS. edullm-researcher is what the person
+# assumes, and it is broad because a researcher's session is broad. This is what the instance
+# assumes, and anything the instance can do is something any process on that machine can do,
+# including one that arrived with a package somebody installed while exploring.
+#
+# WHY THE AGENT GRANT IS THE AWS MANAGED POLICY. AmazonSSMManagedInstanceCore is what the agent
+# needs and AWS maintains it against whatever the agent starts calling next. A hand-written copy
+# would be correct the day it was typed, and the failure mode is a machine that boots, bills and
+# never answers a session. edullm-eval-smoke in this account carries exactly this policy and is
+# the role on the one instance in the platform's VPC that Systems Manager reports as Online.
+#
+# An AWS managed policy is fine here and a customer-managed one would not be.
+# infra/README.md, "Why customer-managed policies must never be used here", is about policies this
+# account creates: InternSandboxBoundary denies iam:CreatePolicyVersion, so a customer-managed
+# policy is create-once and the first amendment fails permanently. Attaching an AWS-owned ARN
+# creates nothing.
+#
+# APPLIED BY HAND. infra/README.md, "Why IAM is laptop-only". The stack is
+# sbsandbox-intern-edullm-lane-instance-iam and it is recorded in that file's stack table and in
+# tools/verify_deployed_stacks.py.
+
+Resources:
+  LaneInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: edullm-lane-instance
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          # EC2 and nothing else. A person able to assume this directly would hold the machine's
+          # grants without the machine, which is the same working-tier access their own role
+          # already gives them and with none of the tags that say whose it is.
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: working-tier
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # The whole bucket rather than one prefix, and that is deliberate. The machine syncs
+              # into whichever <team>/<person>/<project>/ the person who started it named, and the
+              # instance profile has no way to know which that is: a tag is not a condition key on
+              # the instance's own calls. The boundary between two people lives on the researcher's
+              # role, where the source identity is available, and this one is bounded by the bucket.
+              #
+              # ListBucket is on the bucket ARN and the object actions are on the object ARNs,
+              # because s3:ListBucket authorizes against the bucket and an object action against
+              # the object. A single Resource covering both is the mistake that makes a sync report
+              # an empty prefix rather than a denial.
+              - Sid: TheWorkingTierAndNothingElse
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - arn:aws:s3:::edullm-work
+                  - arn:aws:s3:::edullm-work/*
+
+  LaneInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      # The name run_instances_argv passes as --iam-instance-profile Name=. A rename on either
+      # side is a launch that fails after a machine has already been priced.
+      InstanceProfileName: edullm-lane-instance
+      Roles:
+        - Ref: LaneInstanceRole
+
+Outputs:
+  RoleName:
+    Value:
+      Ref: LaneInstanceRole
+  InstanceProfileName:
+    Value:
+      Ref: LaneInstanceProfile

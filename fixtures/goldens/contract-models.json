@@ -16,6 +16,13 @@
     },
     {
       "base": false,
+      "module": "edullm_platform.cli.lane",
+      "name": "WorkingTierSettings",
+      "schema_version": "1",
+      "structural_digest": "sha256:fa904f34c762ce299b1e400a9e9cbc8ab4304642658e2cffb55593bf97fd3759"
+    },
+    {
+      "base": false,
       "module": "edullm_platform.contracts.admission",
       "name": "DecisionRecord",
       "schema_version": "1",

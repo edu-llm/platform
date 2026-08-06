@@ -1,0 +1,201 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Service role the notifier runs as while it turns Batch state changes into messages.
+
+Resources:
+  NotifierLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-notifier-lambda
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      # Inline rather than a customer managed policy. InternSandboxBoundary denies
+      # iam:CreatePolicyVersion on every policy, so a managed policy could be created once
+      # and never amended.
+      Policies:
+        - PolicyName: say-what-batch-reported
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # THE QUEUE READ. The event source mapping polls as this role, so receive,
+              # delete and the attribute read are all needed. Without DeleteMessage a posted
+              # message is redelivered until it dead-letters, which sends the same line to
+              # the channel five times and then alarms.
+              #
+              # The dead-letter queue is deliberately absent. Nothing reads it automatically,
+              # and a notifier that could drain its own dead-letter queue could erase the
+              # evidence that it stopped talking.
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:sbsandbox-intern-edullm-notifier
+              # THE WEBHOOK, AND WHY IT IS A SECRET RATHER THAN A TEMPLATE VARIABLE.
+              #
+              # A Slack incoming webhook carries its whole credential in the URL path, so a
+              # Lambda environment variable holding one is plaintext in the template, in the
+              # console and in get-function-configuration. It cannot be a repository secret
+              # either: test_the_repository_holds_no_secret_a_branch_could_read forbids one
+              # by name, because a repository secret is readable by a workflow on any branch.
+              #
+              # THE SIX-CHARACTER SUFFIX IS WRITTEN OUT RATHER THAN WILDCARDED, WHICH IS
+              # NARROWER THAN HOW THE W&B KEY IS GRANTED. Secrets Manager appends that suffix
+              # at creation, so `...-runs-webhook-*` is the pattern a template written before
+              # the secret existed has to use. This one was written after: the secret was
+              # created by hand on 2026-08-05 and its ARN ends `-wL0CYM`, so the exact name is
+              # available and a trailing `-*` here would be a wildcard nobody needs. It would
+              # reach any secret whose name begins with this one, which is the class of grant
+              # a later `...-runs-webhook-staging` would fall into silently.
+              #
+              # THE COST OF THE NARROWNESS, SAID HERE SO IT IS NOT A SURPRISE. Deleting and
+              # recreating the secret mints a new suffix and this grant then matches nothing.
+              # Rotating the *value* does not: `put-secret-value` keeps the ARN, which is why
+              # the handler re-reads the secret on every invocation rather than caching it,
+              # and why rotation needs no deploy. infra/README.md carries both commands.
+              #
+              # A SECOND READER IS COMING AND IT IS NOT GRANTED HERE. The instruments work
+              # reuses this same secret rather than creating a second webhook, so a second
+              # stack will name this ARN in a role of its own. That is the right shape: one
+              # secret, one grant per principal, each in the stack that owns the principal.
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-runs-webhook-wL0CYM
+              # WHETHER A FAILED RUN SAVED ANYTHING, WHICH IS THE HALF OF THAT MESSAGE THAT
+              # MATTERS.
+              #
+              # A failure that saved a checkpoint and a failure that saved nothing carry the
+              # same status and the same exit code. Only a listing of the run's own checkpoint
+              # prefix distinguishes them. Without this grant the listing is refused, the
+              # reader records `unknown`, and the message says so rather than claiming the
+              # work is gone.
+              #
+              # s3:ListBucket AUTHORIZES AGAINST THE BUCKET ARN AND NOT AN OBJECT ONE, so the
+              # Resource cannot narrow it and this condition is the whole of the narrowing.
+              # Drop it and this enumerates every key in the outputs bucket, which is every
+              # team's output. The pattern is the value the reader actually sends, which is
+              # the path of EDULLM_CHECKPOINT_DIR, and it is the same grant with the same
+              # condition that infra/iam/lifecycle-lambda-role.yaml already carries.
+              #
+              # NO s3:GetObject ON THIS BUCKET, and the one granted below is on a different
+              # one. A listing says whether anything is there, which is the whole question a
+              # failure message asks. Reading the bytes here would let a notifier read what
+              # every team's runs produced.
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-outputs
+                Condition:
+                  StringLike:
+                    s3:prefix: "teams/*/runs/*/checkpoints/*"
+              # WHO SUBMITTED THE RUN, WHICH IS THE FIRST WORD OF EVERY MESSAGE AND IS IN NO
+              # EVENT.
+              #
+              # The Batch state-change detail carries a `tags` key whose whole content is a
+              # resourceArn, so the edullm:submitter tag execution.py sets is not in it. The
+              # only person-shaped value in the envelope is WANDB_USERNAME, and
+              # config/organization.yaml records one for thirty of the thirty-five members
+              # against a github_login and a display_name for all thirty-five.
+              #
+              # intent/{run_id}.json answers for all thirty-five. IntentRecord.submitter is a
+              # GitHub login, the run id is the job name the event already carries, and
+              # WriteIntent runs before SubmitJob in infra/admission-state-machine.yaml, so
+              # the record exists before Batch has a job to report a state change about.
+              # Measured 2026-08-05 against the live bucket: present for all 149 runs holding
+              # an attempt record, and ahead of the terminal event by 3.7 minutes at the
+              # closest.
+              #
+              # ONE PREFIX AND NO LISTING. The key is derived from the run id, so this is a
+              # GetObject against a name this function already holds. s3:ListBucket over this
+              # bucket is what would let an event-driven function enumerate every run the
+              # platform has ever admitted, and it buys nothing.
+              #
+              # attempt/ IS DELIBERATELY ABSENT AND THE REASON IS A RACE RATHER THAN A
+              # POLICY. Those records carry the real per-attempt windows and run_costs.py
+              # already prices runs from them. The recorder writes them in answer to the same
+              # event that starts this function, from a second target on the same rule with
+              # nothing ordering the two. Measured 2026-08-05 over forty terminal events: the
+              # attempt record lands 1 to 4 seconds after the envelope's own time, median 1
+              # second, so a reader here finds nothing. Granting it would buy an empty prefix
+              # and a capability.
+              #
+              # decision/, binding/, events/, result/, conflicts/ and submission-failure/ are
+              # absent because no message asks what is in them.
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/intent/*
+              # WHAT A FAN-OUT SPENT, WHICH IS THE ONE FIGURE NO EVENT AND NO READABLE RECORD
+              # CARRIES.
+              #
+              # An array parent's terminal event carries arrayProperties.size and a
+              # statusSummary and an empty attempts array, so the ceiling is derivable and the
+              # spend is not. The cells' own windows are in Batch, and there is no race on
+              # reading them: Batch moves an array parent to a terminal status only once every
+              # child is already terminal.
+              #
+              # ListJobs AND NOT DescribeJobs. Verified 2026-08-05 against
+              # 7a856522-b170-4d06-8a17-0a0b0f10887f: `batch:ListJobs --array-job-id
+              # <parent> --job-status SUCCEEDED` returned all three children with startedAt
+              # and stoppedAt on the summary itself, matching the lineage attempt records to
+              # the millisecond. A describe would add the tags, which would answer the
+              # submitter, and the intent grant above already answers that from a narrower
+              # read of a record nobody can edit. So the describe buys nothing here and is
+              # refused.
+              #
+              # THE WILDCARD RESOURCE IS FORCED AND THE REGION CONDITION IS THE WHOLE OF THE
+              # BOUND. batch:ListJobs has no resource type. The service authorization
+              # reference gives it an empty resource column and no service condition keys, so
+              # although the call takes an arrayJobId, IAM has nothing to match a resource ARN
+              # against and a policy naming one denies the call outright. Confining this to
+              # the sixteen queues is not a narrowing somebody declined to write, it is not
+              # expressible.
+              #
+              # #227 settled that argument on 2026-08-05 for
+              # sbsandbox-intern-edullm-nightly-reader, under the Sid
+              # ReadTheQueuesThePlacementVerdictNeeds, with the reasoning written beside the
+              # grant. This takes the same shape and half the actions. What it discloses is
+              # the job records of this region: ids, names, statuses and timestamps, for every
+              # job in the account rather than only this platform's.
+              #
+              # THE ADJACENT WRITES STAY ABSENT AND ARE NAMED SO A TEST CAN HOLD THEM THERE.
+              # batch:SubmitJob, batch:CancelJob and batch:TerminateJob. A notifier that could
+              # cancel a job could stop the run it is about to report on, and something
+              # reached by a delivery is the worst place in this account to put that.
+              - Sid: ReadTheCellsAFanOutSpent
+                Effect: Allow
+                Action: batch:ListJobs
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion:
+                      Fn::Sub: ${AWS::Region}
+              # Lambda creates the function's own group on first invocation using this role.
+              # Without it the function runs and logs nowhere, which is the failure mode
+              # hardest to notice. Scoped to this function's group so it can write no other.
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/sbsandbox-intern-edullm-notifier:*
+
+Outputs:
+  RoleName:
+    Value:
+      Ref: NotifierLambdaRole
+  RoleArn:
+    Value:
+      Fn::GetAtt:
+        - NotifierLambdaRole
+        - Arn

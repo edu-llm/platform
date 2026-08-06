@@ -6,8 +6,13 @@ name: Submit a run
 # carry is what the dispatch already said, which is enough to pick a run out of the list by
 # eye: who, which repository, and which experiment. The id-to-workflow-run join is written
 # by the index-the-run job below, at the moment the second half of it exists.
+#
+# The separator is a middle dot rather than an em dash, which is the house standard in
+# docs-frank/reference/writing-releases-and-docs.md and the one this line arrived breaking.
+# It is also the separator every notification the runs channel posts already uses, so a
+# submission title and the message about how that submission ended now read as one voice.
 run-name: >-
-  ${{ inputs.repository }} by ${{ github.actor }}${{ inputs.experiment && format(' — {0}',
+  ${{ inputs.repository }} by ${{ github.actor }}${{ inputs.experiment && format(' · {0}',
   inputs.experiment) || '' }}
 
 # The admission role trust policy pins job_workflow_ref to

@@ -202,6 +202,14 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
     # side, so say which it is in the text. The lasting fix for that particular gap is not
     # here: tests/test_phase2_infrastructure.py now measures the rendered policy against
     # IAM's cap, so a document the account will refuse fails before anybody deploys it.
+    #
+    # ONE RECORD FOR THIS ROLE AND NOT TWO, BECAUSE TWO PLANS AMENDED IT IN THE SAME WEEK.
+    # The expiry janitor and the notifier each add a Lambda to a stack CI deploys, and
+    # lambda:CreateFunction takes a role ARN the caller must be allowed to pass, so both
+    # widened the same iam:PassRole statements; the janitor also needs the EventBridge
+    # Scheduler verbs. This registry is keyed by role, and the drift a capture reports is the
+    # sum of both, so splitting it into two records would describe an account state that
+    # never exists. Applying the deployer stack once clears all of it.
     amendments: tuple[PendingAmendment, ...] = (
         PendingAmendment(
             role_name="sbsandbox-intern-edullm-ecr-publisher",
@@ -347,20 +355,24 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
         PendingAmendment(
             role_name=DEPLOYER_ROLE_NAME,
             reason=(
-                "The expiry janitor's stack is deployed by deploy-phase3-batch.yml and needs "
-                "two things this role does not hold yet: iam:PassRole on the two janitor "
-                "roles, because lambda:CreateFunction takes a role ARN, and the EventBridge "
-                "Scheduler verbs, because the schedule is a schedule rather than a rule. It "
-                "is a schedule because a rule targeting a Lambda needs an "
-                "AWS::Lambda::Permission and therefore lambda:AddPermission, which this role "
-                "withholds deliberately -- infra/batch-events.yaml met the same fork and "
-                "recorded the rule: a capability added rather than a restriction removed."
+                "Two stacks deployed by deploy-phase3-batch.yml need grants this role does "
+                "not hold yet. The expiry janitor needs iam:PassRole on its two roles and the "
+                "EventBridge Scheduler verbs, because the schedule is a schedule rather than "
+                "a rule: a rule targeting a Lambda needs an AWS::Lambda::Permission and "
+                "therefore lambda:AddPermission, which this role withholds deliberately -- "
+                "infra/batch-events.yaml met the same fork and recorded the rule, a "
+                "capability added rather than a restriction removed. The notifier needs "
+                "iam:PassRole on sbsandbox-intern-edullm-notifier-lambda for the same "
+                "CreateFunction reason. All of it is committed and the account has not caught "
+                "up, because this stack is applied from a laptop."
             ),
             cleared_by=(
-                "Applying sbsandbox-intern-edullm-infra-deployer-iam from a laptop with an SSO "
-                "session, per infra/README.md under 'The expiry janitor's stacks', and "
-                "re-taking the Phase 1 role capture. Until it is applied the CI deploy of "
-                "sbsandbox-intern-edullm-janitor is refused on CreateFunction, and the "
+                "Applying sbsandbox-intern-edullm-notifier-iam and then "
+                "sbsandbox-intern-edullm-infra-deployer-iam from a laptop with an SSO "
+                "session, per infra/README.md under 'The expiry janitor's stacks' and 'The "
+                "notifier', and re-taking the Phase 1 role capture. Until it is applied the "
+                "CI deploys of sbsandbox-intern-edullm-janitor and "
+                "sbsandbox-intern-edullm-notifier are refused on CreateFunction, and the "
                 "refusal reads like a broken template rather than a missing grant."
             ),
             findings=(
@@ -371,6 +383,14 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
                         "the template declares resources the deployed role does not: "
                         "arn:<partition>:iam::<account>:role/sbsandbox-intern-edullm-janitor-lambda, "
                         "arn:<partition>:iam::<account>:role/sbsandbox-intern-edullm-janitor-schedule"
+                    ),
+                ),
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'deploy-phase3-batch-stacks' statement 16 resources",
+                    detail=(
+                        "the template declares resources the deployed role does not: "
+                        "arn:<partition>:iam::<account>:role/sbsandbox-intern-edullm-notifier-lambda"
                     ),
                 ),
                 RoleDriftFinding(
@@ -477,6 +497,10 @@ RELEASABLE_FUNCTIONS: Final[dict[str, ReleasableFunction]] = {
     "janitor": ReleasableFunction(
         display="expiry janitor",
         release_record="infra/expiry-janitor-release.yaml",
+    ),
+    "notifier": ReleasableFunction(
+        display="notifier",
+        release_record="infra/notifier-release.yaml",
     ),
 }
 

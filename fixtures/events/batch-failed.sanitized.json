@@ -1,0 +1,41 @@
+{
+  "version": "0",
+  "id": "2fe33cde-04ae-72ff-c9ff-af25c6f096c2",
+  "detail-type": "Batch Job State Change",
+  "source": "aws.batch",
+  "account": "<aws-account-id>",
+  "time": "2026-08-05T21:30:01Z",
+  "region": "us-east-1",
+  "detail": {
+    "jobName": "run_019fd3cc-79a0-70f5-aa29-6db4a2061a61",
+    "jobId": "66a5dc79-5c1a-4e45-b43f-bea3d7f4434c",
+    "jobQueue": "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu",
+    "status": "FAILED",
+    "statusReason": "Essential container in task exited",
+    "createdAt": 1785965051628,
+    "startedAt": 1785965337885,
+    "stoppedAt": 1785967857885,
+    "timeout": {"attemptDurationSeconds": 7200},
+    "retryStrategy": {"attempts": 1},
+    "attempts": [
+      {
+        "container": {"exitCode": 1},
+        "startedAt": 1785965337885,
+        "stoppedAt": 1785967857885,
+        "statusReason": "Essential container in task exited"
+      }
+    ],
+    "container": {
+      "environment": [
+        {"name": "EDULLM_RUN_ID", "value": "run_019fd3cc-79a0-70f5-aa29-6db4a2061a61"},
+        {"name": "EDULLM_TEAM", "value": "scratch"},
+        {"name": "EDULLM_OUTPUT_PREFIX", "value": "s3://sbsandbox-intern-edullm-outputs/teams/scratch/runs/run_019fd3cc-79a0-70f5-aa29-6db4a2061a61/"},
+        {"name": "EDULLM_CHECKPOINT_DIR", "value": "s3://sbsandbox-intern-edullm-outputs/teams/scratch/runs/run_019fd3cc-79a0-70f5-aa29-6db4a2061a61/checkpoints/"},
+        {"name": "WANDB_ENTITY", "value": "eduLLM"},
+        {"name": "WANDB_PROJECT", "value": "plan-b-phase0"},
+        {"name": "WANDB_RUN_GROUP", "value": "plan-b-phase0-100m-superbpe-eval"},
+        {"name": "WANDB_USERNAME", "value": "aryan-jaden-verma"}
+      ]
+    }
+  }
+}

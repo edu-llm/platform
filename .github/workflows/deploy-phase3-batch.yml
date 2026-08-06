@@ -75,6 +75,7 @@ on:
       - infra/batch-compute-gpu-shapes.yaml
       - infra/batch-events.yaml
       - infra/expiry-janitor.yaml
+      - infra/notifications.yaml
       - infra/admission-state-machine.yaml
 
 permissions:
@@ -259,6 +260,12 @@ jobs:
             --template-url https://s3.${AWS_REGION}.amazonaws.com/sbsandbox-intern-edullm-artifacts/cloudformation-templates/batch-compute-gpu-shapes.yaml
           aws s3api put-object \
             --bucket sbsandbox-intern-edullm-artifacts \
+            --key cloudformation-templates/notifications.yaml \
+            --body infra/notifications.yaml
+          aws cloudformation validate-template \
+            --template-url https://s3.${AWS_REGION}.amazonaws.com/sbsandbox-intern-edullm-artifacts/cloudformation-templates/notifications.yaml
+          aws s3api put-object \
+            --bucket sbsandbox-intern-edullm-artifacts \
             --key cloudformation-templates/batch-events.yaml \
             --body infra/batch-events.yaml
           aws cloudformation validate-template \
@@ -371,6 +378,21 @@ jobs:
           aws cloudformation deploy \
             --stack-name sbsandbox-intern-edullm-phase4-gpu-shapes \
             --template-file infra/batch-compute-gpu-shapes.yaml \
+            --s3-bucket sbsandbox-intern-edullm-artifacts \
+            --s3-prefix cloudformation-templates/checksummed \
+            --no-fail-on-empty-changeset
+
+      # BEFORE THE EVENTS STACK, BECAUSE THE RULE'S SECOND TARGET NAMES A QUEUE THIS CREATES.
+      # EventBridge does not check that an SQS target exists at PutTargets time, so the wrong
+      # order deploys perfectly and drops every notification until somebody notices a channel
+      # that has gone quiet, which is the exact failure this whole stack exists to detect.
+      - name: Deploy the notifier stack
+        if: inputs.describe_run == ''
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name sbsandbox-intern-edullm-notifications \
+            --template-file infra/notifications.yaml \
             --s3-bucket sbsandbox-intern-edullm-artifacts \
             --s3-prefix cloudformation-templates/checksummed \
             --no-fail-on-empty-changeset

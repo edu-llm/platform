@@ -1,0 +1,24 @@
+# What is actually deployed as the notifier, recorded beside the template that names it.
+#
+# WHY A NOTIFIER NEEDS THIS AT ALL, WHICH IS LESS OBVIOUS THAN FOR THE OTHER TWO. The
+# validator's failure is loud: a submission is refused with a reason correct for the deployed
+# bytes and wrong about the account. The recorder's is silent but permanent: a lineage record
+# written by code this tree does not describe looks exactly like a correct one.
+#
+# This one is silent and temporary, which is a third thing. A notifier running old code posts
+# a message that is wrong about the money, and nothing anywhere compares it to anything. The
+# only reader is a person who reads it once and believes it. The lineage record beside it is
+# correct, so even a careful reader has no reason to look.
+#
+# All three functions are entry points into one package, so a change to a shared contract moves
+# every digest. This one carries three reviewed configuration files as well, so a roster edit
+# moves it too, and that is correct rather than churn: a roster edit changes which name appears
+# on a message.
+#
+# The build is deterministic, so a rebuild that changed nothing produces the same digest and
+# needs no edit here. Releasing means running the procedure in infra/README.md and updating
+# both fields below in the same commit as the change that caused them to move.
+schema_version: 1
+s3_key: notifier/notifier.zip
+s3_object_version: REPLACE_WITH_THE_UPLOADED_OBJECT_VERSION
+sha256: 0207c0bf55eb8edd2990d8904900af35cb064d5d85de2510cf59c5d3632ee276

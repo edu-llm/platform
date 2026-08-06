@@ -927,12 +927,14 @@ measured 2026-07-31.
 
 ## Releasing a Lambda
 
-Two functions now ship this way, and the procedure is the same for both.
+Every function ships this way, and the procedure is the same for all of them.
 
 | Function | Template | Builder | Artifact key |
 | --- | --- | --- | --- |
 | `…-admission-validator` | `infra/admission-state-machine.yaml` | `tools/build_admission_lambda.py` | `admission-validator/admission-validator.zip` |
 | `…-lifecycle-recorder` | `infra/batch-events.yaml` | `tools/build_lifecycle_lambda.py` | `lifecycle-recorder/lifecycle-recorder.zip` |
+| `…-expiry-janitor` | `infra/expiry-janitor.yaml` | `tools/build_janitor_lambda.py` | `expiry-janitor/expiry-janitor.zip` |
+| `…-notifier` | `infra/notifications.yaml` | `tools/build_notifier_lambda.py` | `notifier/notifier.zip` |
 
 ### Releasing the admission validator
 
@@ -967,7 +969,7 @@ aws s3api put-object \
 **`tools/release_lambda.py` does all three steps in one call, and should be preferred.**
 
 ```bash
-uv run python tools/release_lambda.py            # both functions
+uv run python tools/release_lambda.py            # every function
 uv run python tools/release_lambda.py --dry-run  # digests only, uploads nothing
 ```
 
@@ -976,7 +978,7 @@ template, and then runs the tripwire test with its exit code read directly. It u
 zip before editing any file, because a record naming a zip that failed to upload is worse
 than no record — the tripwire would then pass against a lie.
 
-It selects both functions by default, because working out which ones a change under
+It selects every function by default, because working out which ones a change under
 `src/edullm_platform` reaches is not something to be doing at the point of release. That is
 free because **a function whose freshly built digest already matches its release record is
 skipped** — nothing uploaded, neither file edited. Without that skip the default would store
@@ -1019,10 +1021,11 @@ the template and the release record by hand in a reviewed pull request, so the p
 rule above protects — the deploy sits on the far side of a diff somebody read — is
 unchanged. What moved is only which machine holds the credential.
 
-Both functions are released together whenever a change reaches both, which since
+Functions are released together whenever a change reaches more than one, which since
 2026-08-04 means a change to `src/edullm_platform` rather than a change under `config/`.
-Each builder now names the config files its own handler reads: the validator's seven, and
-none at all for the recorder. A catalog edit is the validator's release alone.
+Each builder names the config files its own handler reads: the validator's seven, none at
+all for the recorder, and three for the notifier. A catalog edit reaches the validator and
+the notifier and not the recorder.
 
 The step lives inside an existing deploy workflow rather than in a `release-lambda.yml` of
 its own, and that is the trust policy talking rather than a preference. The deployer role
@@ -1130,9 +1133,9 @@ CI deploy. Same reason as the validator: without the version pinned, a new zip u
 same key leaves the resource's properties byte-identical, the change set comes back empty,
 and `deploy --no-fail-on-empty-changeset` reports success while the old code keeps running.
 
-Both functions package parts of the same `src/edullm_platform` tree, so a contract change
-may reach both and both then need releasing — but only the modules each entry point
-actually imports are carried, so many changes reach one and not the other.
+Every function packages part of the same `src/edullm_platform` tree, so a contract change
+may reach several and each then needs releasing, but only the modules each entry point
+actually imports are carried, so many changes reach one and not the rest.
 `tools/build_lifecycle_lambda.py` prints the `sha256` of what it built for exactly this
 reason: if neither digest moved, there is nothing to release.
 
@@ -1836,3 +1839,311 @@ uv run --frozen python tools/verify_deployed_lambdas.py --profile sbsandbox --re
 
 `CodeSha256` is base64 and the release record is hex, so the last command is how they are
 compared rather than by eye.
+
+## The notifier
+
+| # | Stack | Template | Roles or resources | Applied from |
+| --- | --- | --- | --- | --- |
+| 1 | `sbsandbox-intern-edullm-notifier-iam` | `infra/iam/notifier-lambda-role.yaml` | `…-notifier-lambda` | laptop |
+| 2 | `sbsandbox-intern-edullm-infra-deployer-iam` | `infra/iam/infra-deployer-role.yaml` (amended) | `…-infra-deployer` gains one `iam:PassRole` ARN | laptop |
+| 3 | `sbsandbox-intern-edullm-notifications` | `infra/notifications.yaml` | queue, dead-letter queue, function, event source mapping, three alarms | laptop first, CI after |
+
+The order is not a preference. `lambda:CreateFunction` takes a role ARN and fails on a role
+that does not exist or that the caller may not pass, so stack 3 needs both of the stacks above
+it. The deployer amendment is a single ARN added to the Phase 3 `iam:PassRole` statement,
+which is what lets `lambda:CreateFunction` in stack 3 pass the role from stack 1. Without it
+the deploy fails at `CreateFunction` with an `AccessDenied` naming `PassRole`, which reads
+like a broken template.
+
+Stack 3 is applied from a laptop the first time because the function's zip has to be uploaded
+and its object version pinned in the template before CloudFormation can create it, and because
+adding a target to a rule the lifecycle recorder depends on is a change worth watching happen.
+After that `deploy-phase3-batch.yml` owns it, before the events stack for the reason that
+workflow's comment gives.
+
+### The secret, which is created by hand and is in no template
+
+A Slack incoming webhook carries its whole credential in the URL path, so a Lambda environment
+variable holding one is plaintext in the template, in the console and in
+`get-function-configuration`, and this repository is public. It cannot be a repository secret
+either, because a repository secret is readable by a workflow on any branch and
+`test_the_repository_holds_no_secret_a_branch_could_read` forbids one by name.
+
+**It already exists.** `sbsandbox-intern-edullm-runs-webhook` was created by hand on
+2026-08-05 and points at `#edullm-runs`. Its ARN ends `-wL0CYM`, which is the six-character
+suffix Secrets Manager appends at creation. This is the command that made it, with the URL
+redacted, kept because a procedure nobody can repeat is not one:
+
+```bash
+aws secretsmanager create-secret \
+  --name sbsandbox-intern-edullm-runs-webhook \
+  --description "Webhook the notifier posts run-ended messages to. Created by hand so the URL is in no template. A Slack incoming webhook carries its whole credential in the URL path." \
+  --secret-string 'https://REPLACE-WITH-THE-WEBHOOK-URL' \
+  --profile sbsandbox --region us-east-1
+```
+
+### Rotating it, which needs no deploy and no code change
+
+```bash
+aws secretsmanager put-secret-value \
+  --secret-id sbsandbox-intern-edullm-runs-webhook \
+  --secret-string 'https://REPLACE-WITH-THE-NEW-WEBHOOK-URL' \
+  --profile sbsandbox --region us-east-1
+```
+
+That is the whole of it. `put-secret-value` keeps the ARN, so the role's grant still matches
+and no stack changes, and the handler reads the secret on **every invocation** rather than
+caching it in a warm container, so the next run to end uses the new URL.
+`test_the_webhook_is_read_again_on_every_invocation` is what holds it to that, because the
+caching version of this fails invisibly: Slack answers a retired webhook with a 404 rather
+than a timeout, so a warm container would go on dead-lettering quietly against a URL somebody
+believed they had already replaced.
+
+**Do not delete and recreate it.** That mints a new six-character suffix, and the role's grant
+names the current one exactly rather than ending in `-*`. Recreating means editing
+`infra/iam/notifier-lambda-role.yaml` and applying the role stack by hand again.
+
+### A second reader is coming, and it is not granted here
+
+The instruments work reuses this same secret rather than creating a second webhook, so a
+second stack will name this same ARN in a role of its own. That is the intended shape: one
+secret, one grant per principal, each written in the stack that owns the principal. Nothing in
+this stack grants it, and a second stack touching this secret's ARN is not a duplicate to be
+tidied away.
+
+### Two grants that will look odd to a later reader
+
+**The notifier reads one prefix of the lineage store.** `s3:GetObject` on
+`sbsandbox-intern-edullm-lineage/intent/*`, and no listing of that bucket. Every message names
+the person who submitted the run, and the Batch event does not carry one: its `tags` key holds
+a resource ARN, and the only person-shaped value in the envelope is `WANDB_USERNAME`, recorded
+for thirty of the thirty-five members. `IntentRecord.submitter` is a GitHub login and
+`config/organization.yaml` carries `github_login` for all thirty-five. The run id is the job
+name the event already carries, so the key is derived and nothing has to be searched for,
+which is why there is no `s3:ListBucket` here.
+
+`attempt/` was considered and refused, and the reason is timing rather than policy: the
+lifecycle recorder writes those records in answer to the same event that starts the notifier,
+from a second target on the same rule, so a notifier reading them finds nothing. The other six
+prefixes answer questions no message asks.
+
+**The notifier asks Batch what a fan-out's cells cost.** `batch:ListJobs` on `Resource: "*"`
+under an `aws:RequestedRegion` condition. An array parent's terminal event carries the array
+size and a status summary and an empty attempts array, so the authorised ceiling is derivable
+from it and the spend is not. The cells' own windows are on the `ListJobs` summary, as
+`startedAt` and `stoppedAt`, and there is no race on reading them because Batch moves an array
+parent to a terminal status only once every child already is.
+
+`batch:ListJobs` has no resource type, so `"*"` is the narrowest resource that exists and the
+region condition is the whole of the bound. That argument was settled for this account by
+[#227](https://github.com/edu-llm/platform/pull/227), which granted the same action to
+`sbsandbox-intern-edullm-nightly-reader` under the same condition; it is not restated here.
+This role takes half of what that one took: no `batch:DescribeJobs`, because the intent record
+above already answers the person from a narrower grant, and no `SubmitJob`, `CancelJob` or
+`TerminateJob`, because a component that says what happened must not be able to make something
+happen.
+
+### Deploying it
+
+Stacks 1 and 2, in that order. The deployer template is past CloudFormation's 51,200-byte
+inline limit, so it needs `--s3-bucket` and the role stack does not.
+
+```bash
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-notifier-iam \
+  --template-file infra/iam/notifier-lambda-role.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --no-fail-on-empty-changeset \
+  --profile sbsandbox --region us-east-1
+
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-infra-deployer-iam \
+  --template-file infra/iam/infra-deployer-role.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --s3-bucket sbsandbox-intern-edullm-artifacts \
+  --s3-prefix cloudformation-templates/checksummed \
+  --no-fail-on-empty-changeset \
+  --profile sbsandbox --region us-east-1
+```
+
+The second is an update to a stack CI depends on. Read the change set summary before it
+applies and confirm the only difference is the one `Resource` entry.
+
+Then ask the account what the role may actually do, rather than trusting the template. A
+template that deployed is not the same fact as a grant that evaluates, because
+`InternSandboxBoundary` caps every role created here.
+
+```bash
+ROLE=arn:aws:iam::$(aws --profile sbsandbox sts get-caller-identity --query Account --output text):role/sbsandbox-intern-edullm-notifier-lambda
+
+aws iam simulate-principal-policy \
+  --policy-source-arn "$ROLE" \
+  --action-names s3:GetObject \
+  --resource-arns arn:aws:s3:::sbsandbox-intern-edullm-lineage/intent/run_019fd3cc-79a0-70f5-aa29-6db4a2061a61.json \
+  --query 'EvaluationResults[].EvalDecision' --output text \
+  --profile sbsandbox --region us-east-1
+
+aws iam simulate-principal-policy \
+  --policy-source-arn "$ROLE" \
+  --action-names batch:ListJobs batch:DescribeJobs batch:TerminateJob \
+  --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text \
+  --profile sbsandbox --region us-east-1
+```
+
+`allowed` for the object read, `allowed` for `batch:ListJobs`, and `implicitDeny` for both
+`batch:DescribeJobs` and `batch:TerminateJob`. The last two are the point of running this: a
+role that answers `allowed` to either has a statement wider than the one that was reviewed.
+
+Then stack 3. Build, upload, pin, apply, and apply the events stack after it.
+
+```bash
+uv run python tools/build_notifier_lambda.py --output /tmp/notifier.zip
+
+aws s3api put-object \
+  --bucket sbsandbox-intern-edullm-artifacts \
+  --key notifier/notifier.zip \
+  --body /tmp/notifier.zip \
+  --content-type application/zip \
+  --profile sbsandbox --region us-east-1 \
+  --query VersionId --output text
+```
+
+Put that version id into `S3ObjectVersion` in `infra/notifications.yaml` and into
+`s3_object_version` in `infra/notifier-release.yaml`, in place of
+`REPLACE_WITH_THE_UPLOADED_OBJECT_VERSION` in both. The `sha256` in the release record is
+already the digest this tree builds, so it needs editing only if the tree has moved since.
+
+```bash
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-notifications \
+  --template-file infra/notifications.yaml \
+  --no-fail-on-empty-changeset \
+  --profile sbsandbox --region us-east-1
+
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-phase3-events \
+  --template-file infra/batch-events.yaml \
+  --no-fail-on-empty-changeset \
+  --profile sbsandbox --region us-east-1
+```
+
+The order matters and EventBridge will not tell you if you get it wrong. It does not check
+that an SQS target exists at `PutTargets` time, so the events stack applied first deploys
+perfectly and drops every notification until somebody notices a channel that has gone quiet.
+
+### Verifying after the deploy
+
+```bash
+aws events list-targets-by-rule \
+  --rule sbsandbox-intern-edullm-batch-lifecycle \
+  --query 'Targets[].Id' --output json \
+  --profile sbsandbox --region us-east-1
+
+uv run python tools/verify_deployed_stacks.py --profile sbsandbox --region us-east-1
+uv run python tools/verify_deployed_lambdas.py --function notifier --profile sbsandbox --region us-east-1
+```
+
+The rule must carry `["lifecycle-queue", "notifier-queue"]`. Both verifications must report no
+findings. A digest mismatch on the second means the uploaded zip is not the one this tree
+builds: rebuild, re-upload, re-pin, redeploy, and do not edit the release record to match the
+account.
+
+**Until all three stacks are applied, the nightly audit reports them as declared and not
+deployed.** That is the check working rather than breaking, and it is the list of what is
+outstanding.
+
+### Read the name on the first message, not just the line
+
+The submitter comes from the intent record and the fallback comes from the envelope, and both
+produce a plausible name, so a refused `s3:GetObject` looks exactly like a working one for
+anybody on the roster with a W&B account recorded. It stops naming the five who have none, and
+nothing else changes.
+
+```bash
+aws logs filter-log-events \
+  --log-group-name /aws/lambda/sbsandbox-intern-edullm-notifier \
+  --filter-pattern AccessDenied --query 'length(events)' --output text \
+  --profile sbsandbox --region us-east-1
+```
+
+Anything other than `0` means every message is coming from the fallback.
+## The exploration route's stacks, in dependency order
+
+| # | Stack | Template | Roles or resources | Applied from |
+| --- | --- | --- | --- | --- |
+| 1 | `sbsandbox-intern-edullm-work` | `infra/work-bucket.yaml` | the `edullm-work` bucket | laptop |
+| 2 | `sbsandbox-intern-edullm-lane-instance-iam` | `infra/iam/lane-instance-role.yaml` | `edullm-lane-instance` and its instance profile | laptop |
+
+Both from a laptop, and the first one is not an IAM stack.
+`sbsandbox-intern-edullm-infra-deployer` scopes every S3 grant it holds to
+`arn:aws:s3:::sbsandbox-intern-edullm-*`, and the bucket is `edullm-work`, so CI is denied at
+`CreateBucket`. Widening that scope is itself a hand-applied IAM change, to let a pipeline create
+one bucket that is created once.
+
+Stack 1 goes first because stack 2 grants against the bucket's ARN. IAM does not require the
+resource of a grant to exist, so the order is not forced, and creating the target first costs
+nothing and getting it wrong is hard to see.
+
+### Deploying stack 1, the bucket
+
+```bash
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-work \
+  --template-file infra/work-bucket.yaml \
+  --profile sbsandbox \
+  --region us-east-1
+```
+
+Then read the account back rather than the template:
+
+```bash
+aws s3api get-bucket-lifecycle-configuration \
+  --bucket edullm-work \
+  --profile sbsandbox --region us-east-1
+
+aws s3api get-public-access-block \
+  --bucket edullm-work \
+  --profile sbsandbox --region us-east-1
+```
+
+Two rules must come back, `expire-working-objects` and `abort-incomplete-multipart-uploads`, and
+all four public-access flags must be true. No `--capabilities` flag, because the stack creates no
+named IAM resource.
+
+### Deploying stack 2, the lane instance role
+
+```bash
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-lane-instance-iam \
+  --template-file infra/iam/lane-instance-role.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --profile sbsandbox \
+  --region us-east-1
+```
+
+`CAPABILITY_NAMED_IAM` rather than `CAPABILITY_IAM`, because the role and the instance profile are
+both named and CloudFormation refuses a named IAM resource without it.
+
+Then read the role back, as after every deploy above:
+
+```bash
+aws iam get-role \
+  --role-name edullm-lane-instance \
+  --profile sbsandbox --region us-east-1
+
+aws iam list-attached-role-policies \
+  --role-name edullm-lane-instance \
+  --profile sbsandbox --region us-east-1
+
+aws iam get-instance-profile \
+  --instance-profile-name edullm-lane-instance \
+  --profile sbsandbox --region us-east-1
+```
+
+`PermissionsBoundary` must name `InternSandboxBoundary`. `AttachedPolicies` must hold exactly
+`AmazonSSMManagedInstanceCore` and nothing else, because a second attachment on the one principal
+nobody reviews is the widening least likely to be noticed. The instance profile must carry the
+role, and the profile name must be the one `run_instances_argv` passes as
+`--iam-instance-profile Name=`; a mismatch there fails a launch after a machine has been priced.
+Any bucket other than `edullm-work` in the inline policy means the machine reaches past the
+working tier and the role should be narrowed rather than left.

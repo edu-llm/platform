@@ -32,7 +32,7 @@ Two lists, and you need both. They are separate systems, which is the most confu
 | `members` in `config/organization.yaml` | Admission | Your submission is refused when it compiles, before any lead is asked, naming the file |
 | A W&B account on the `eduLLM` team, recorded on the roster | Attribution only | The run works and logs as the platform rather than as you. Nothing warns you |
 
-Ask for all three through the [access request](https://github.com/edu-llm/platform/issues/new?template=access-request.yml) template.
+Ask for all three through the [ask](https://github.com/edu-llm/platform/issues/new?template=ask.yml) form, picking `access-request` as the kind, or run `edullm ask --kind access-request`.
 
 ## The submission form
 

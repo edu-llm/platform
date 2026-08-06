@@ -1,0 +1,89 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: The working tier. Where the exploration route puts a person's files, and where the platform's data flow starts.
+
+# WHY THIS IS A BUCKET AND NOT A PREFIX, WHICH REVERSES AN EARLIER POSITION.
+# docs-frank/reference/decisions.md records the reversal and its three reasons, each sufficient
+# alone: runs/* in the outputs bucket is human-writable, so a prefix there would be a naming
+# convention enforced by nobody; a bucket carries its own lifecycle rule, independent of the
+# outputs bucket's thirty-day noncurrent expiry; and a bucket is discoverable by name where a
+# prefix is not. The evidence for the last one is that the designed teams/<team>/scratch/ prefixes
+# hold zero objects while five personal buckets exist.
+#
+# APPLIED BY HAND, AND NOT FOR THE REASON EVERY OTHER HAND-APPLIED STACK HERE IS.
+# This creates no IAM role. sbsandbox-intern-edullm-infra-deployer scopes every S3 grant it holds
+# to arn:aws:s3:::sbsandbox-intern-edullm-*, and this bucket is edullm-work, so CI is denied at
+# CreateBucket. Widening that scope is itself an IAM change applied by hand, to let a pipeline
+# create one bucket that is created once, which is a worse trade than applying this once.
+#
+# THE NAME IS THE OVERVIEW'S AND A PERSON TYPES IT. That is the same argument
+# infra/iam/researcher-role.yaml makes about edullm-researcher carrying no prefix, and it has the
+# same consequence: no pipeline here can touch it, which is correct.
+#
+# WHAT LIVES HERE AND WHAT DOES NOT. Whatever a researcher puts under <team>/<person>/, and what
+# the lane syncs there. Not the checkpoints of a recorded run, which go to the outputs bucket
+# under teams/<team>/runs/<run_id>/. Not a corpus asking to be sealed, which goes to
+# edullm-landing and is judged there. system-overview.md, "Where data lives", draws all three and
+# the arrows between them.
+
+Resources:
+  WorkBucket:
+    Type: AWS::S3::Bucket
+    # Retained, for the reason infra/outputs-bucket.yaml gives and one more. That bucket holds a
+    # team's job output; this one holds work in progress that exists nowhere else by design, and a
+    # stack delete that took it would be data loss for people who were not party to the rollback.
+    # The cost is that deleting and recreating this stack fails at CreateBucket until the orphan
+    # is removed by hand.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: edullm-work
+      # NO VERSIONING, AND IT IS A DECISION RATHER THAN AN OMISSION. The outputs bucket versions
+      # because a retried attempt overwrites its own keys and the first attempt's partial output
+      # would otherwise be gone with no trace. Nothing retries in the lane. Versioning here would
+      # double the stored bytes to protect a property nobody has, and the expiry rule below would
+      # need a noncurrent clause to match.
+      LifecycleConfiguration:
+        Rules:
+          # NINETY DAYS, AND THE NUMBER IS config/reports/working-tier.yaml'S RATHER THAN THIS
+          # FILE'S. tests/test_work_bucket_template.py holds the two equal, so changing one
+          # without the other is a red test rather than a deployed rule that disagrees with what
+          # the CLI tells a researcher. The tier is "yours until you promote it" and a promotion
+          # is a copy into landing, so nothing here is the only copy of anything that matters.
+          - Id: expire-working-objects
+            Status: Enabled
+            ExpirationInDays: 90
+          # Invisible in a listing and billed. A machine reclaimed partway through syncing a large
+          # file is exactly how one is left behind, and on this bucket a machine going away
+          # mid-write is the normal case rather than the exception.
+          - Id: abort-incomplete-multipart-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  # No bucket policy, and the direction it differs from the sealed buckets in is deliberate. The
+  # lineage bucket carries an explicit Deny because its guarantee, first write wins, has to
+  # survive any identity policy anybody adds later. This bucket has no such guarantee. The
+  # boundary between two people here is on the identity side, in the researcher role's write
+  # statement, and it is a fence rather than an authorization: the source identity it keys on is
+  # self-asserted, which docs-frank/reference/aws-spend-controls.md records under "What the lane
+  # does not cover". Reads are open to everybody in the lane, which matches runs/* and is what
+  # makes looking at somebody else's working set possible at all.
+
+Outputs:
+  BucketName:
+    Value:
+      Ref: WorkBucket
+  BucketArn:
+    Value:
+      Fn::GetAtt:
+        - WorkBucket
+        - Arn

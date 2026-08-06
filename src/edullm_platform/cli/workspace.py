@@ -82,6 +82,7 @@ class CommandRunner(Protocol):
         *,
         cwd: Path | None = None,
         timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> CommandResult: ...
 
 
@@ -98,6 +99,10 @@ class SubprocessRunner:
     answer. The one caller that passes it is the version probe, which is a courtesy the
     submission must not wait on. A timeout reads as a failed command rather than as an
     exception, for the same reason a non-zero exit does.
+
+    ``env`` is what the lane verbs pass the credential they assumed in, rather than writing an
+    AWS profile into a file the researcher then has to know the name of. It is unset for every
+    ``git`` and ``gh`` call, which is every call this binary made before the lane existed.
     """
 
     def __call__(
@@ -106,6 +111,7 @@ class SubprocessRunner:
         *,
         cwd: Path | None = None,
         timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> CommandResult:
         if shutil.which(argv[0]) is None:
             raise ToolMissingError(
@@ -121,6 +127,10 @@ class SubprocessRunner:
                 cwd=None if cwd is None else str(cwd),
                 check=False,
                 timeout=timeout,
+                # OVERLAID ON THE AMBIENT ENVIRONMENT RATHER THAN REPLACING IT. A replaced
+                # environment loses PATH, HOME and the AWS region, and the failure is an aws
+                # binary that cannot be found by a call that was about credentials.
+                env=None if env is None else {**os.environ, **env},
             )
         except subprocess.TimeoutExpired as expired:
             return CommandResult(

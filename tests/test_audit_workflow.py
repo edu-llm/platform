@@ -79,6 +79,10 @@ BOARD_JOB = "visibility-board"
 PLACEMENT_JOB = "placement-verdicts"
 CAPTURE_JOB = "substrate-capture"
 HISTORY_JOB = "substrate-history"
+ASKS_JOB = "open-asks"
+#: The first job in the file and the one the informational check had never covered. Found by
+#: the sweep below on the morning a tenth job was added, which is what the sweep is for.
+DOCKERFILES_JOB = "registered-dockerfiles"
 
 RECONCILE_TOOL = "tools/find_runs_that_saved_nothing.py"
 WANDB_TOOL = "tools/verify_wandb_credential.py"
@@ -87,6 +91,7 @@ STACKS_TOOL = "tools/verify_deployed_stacks.py"
 BOARD_TOOL = "tools/visibility_board.py"
 PLACEMENT_TOOL = "tools/verify_placement_verdicts.py"
 CAPTURE_TOOL = "tools/read_substrate.py"
+ASKS_TOOL = "tools/report_asks.py"
 
 RECONCILE_STEP = "Reconcile what those runs actually wrote"
 WANDB_STEP = "Ask W&B whether it would accept the stored key"
@@ -98,6 +103,8 @@ PLACEMENT_STEP = "Recompute each placement verdict from the sixteen queues"
 CAPTURE_STEP = "Read the account and write today down"
 CAPTURE_UPLOAD_STEP = "Publish the reading"
 HISTORY_STEP = "Keep the reading on the machine/substrate branch"
+ASKS_STEP = "Count the open asks"
+DOCKERFILES_STEP = "Check every registration against the repository it names"
 GUARD_STEP = "Check the audit reader role is deployed"
 
 #: Where a reading is kept, and what it is called there. Both are spelled here because the
@@ -121,12 +128,13 @@ CREDENTIALED_JOBS = (
 
 #: The functions the release check reads, and the templates that name them to
 #: CloudFormation. Read from the templates rather than spelled here, because the IAM grant
-#: is written against these names and a rename that missed one of the three places would be
-#: an access denial at 05:00 rather than a failure at review.
+#: is written against these names and a rename that missed one of the places would be an
+#: access denial at 05:00 rather than a failure at review.
 LAMBDA_TEMPLATES = (
     "admission-state-machine.yaml",
     "batch-events.yaml",
     "expiry-janitor.yaml",
+    "notifications.yaml",
 )
 
 #: What the repository variable is called, and what the role it names is called. Spelled here
@@ -1270,6 +1278,47 @@ def test_the_history_job_commits_nothing_when_no_reading_was_published(
     assert "git push" not in finished.stderr
 
 
+# ----------------------------------------------------------------------------------------
+# Counting the asks, which is the only job here that reads no AWS
+# ----------------------------------------------------------------------------------------
+
+
+def test_the_asks_job_assumes_nothing_and_needs_no_repository_variable(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: give it the credential preamble the neighbouring jobs carry.
+
+    Every other job in this file can fail before it asks its question -- the role variable can
+    be unset, the role can be undeployed, the assume can be refused -- and each carries a guard
+    step saying so. This one reads this repository's own issues on the token the runner already
+    holds, so it has no role to assume and nothing to be misconfigured. Copying the preamble in
+    would give the cheapest job on the schedule three new ways to go red about something other
+    than asks.
+    """
+    job = workflow["jobs"][ASKS_JOB]
+    rendered = json.dumps(job)
+
+    assert job["permissions"] == {"contents": "read", "issues": "read"}
+    assert ROLE_VARIABLE not in rendered
+    assert "aws-actions/configure-aws-credentials" not in rendered
+    assert GUARD_STEP not in [item.get("name") for item in job["steps"]]
+
+
+def test_the_asks_job_writes_its_answer_where_a_person_will_see_it(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: drop the redirect and let it print to the log.
+
+    The output is a table somebody reads to decide what to build next, and a scheduled run's
+    log is not somewhere anybody looks unless it is red. This job is never red on a finding by
+    construction, so the step summary is the only place its answer is seen at all.
+    """
+    body = step(workflow["jobs"][ASKS_JOB], ASKS_STEP)["run"]
+
+    assert ASKS_TOOL in body
+    assert 'GITHUB_STEP_SUMMARY' in body
+
+
 @pytest.mark.parametrize(
     ("job_id", "step_name"),
     [
@@ -1280,6 +1329,8 @@ def test_the_history_job_commits_nothing_when_no_reading_was_published(
         (BOARD_JOB, BOARD_STEP),
         (PLACEMENT_JOB, PLACEMENT_STEP),
         (CAPTURE_JOB, CAPTURE_STEP),
+        (ASKS_JOB, ASKS_STEP),
+        (DOCKERFILES_JOB, DOCKERFILES_STEP),
     ],
 )
 def test_nothing_in_any_of_these_jobs_is_allowed_to_be_informational(
@@ -1301,6 +1352,59 @@ def test_nothing_in_any_of_these_jobs_is_allowed_to_be_informational(
     body = step(job, step_name)["run"]
     assert "|| true" not in body
     assert "exit 0" not in body
+
+
+#: The one job above excused from the per-job check, and why. substrate-history has
+#: `needs: substrate-capture` by design -- it publishes what the capture read -- so the
+#: "a failure elsewhere must not skip this" assertion cannot hold for it. Named here rather
+#: than simply left out, so that the sweep below can tell an excused job from a forgotten one.
+NEEDS_ITS_PREDECESSOR = (HISTORY_JOB,)
+
+
+def test_every_job_in_this_file_is_either_checked_above_or_excused_by_name(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: add a job and do not add it to the list above.
+
+    The list above is written out, and a written-out list of things to check gets weaker every
+    time the file grows past it -- a job added and not added there is unchecked and looks
+    exactly like a job that passed. This is what makes forgetting loud. An excused job goes in
+    NEEDS_ITS_PREDECESSOR with the reason beside it, which is a decision rather than an
+    omission.
+    """
+    checked = {
+        RECONCILE_JOB,
+        WANDB_JOB,
+        RELEASE_JOB,
+        STACKS_JOB,
+        BOARD_JOB,
+        PLACEMENT_JOB,
+        CAPTURE_JOB,
+        ASKS_JOB,
+        DOCKERFILES_JOB,
+    }
+    unaccounted = set(workflow["jobs"]) - checked - set(NEEDS_ITS_PREDECESSOR)
+
+    assert not unaccounted, (
+        f"{sorted(unaccounted)} run on the audit schedule and nothing checks that they are "
+        "allowed to fail. Add each to the parametrized list above, or to "
+        "NEEDS_ITS_PREDECESSOR with the reason it cannot be checked that way."
+    )
+
+
+def test_no_job_anywhere_in_this_file_is_allowed_to_continue_on_error(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: put `continue-on-error: true` on the one job the list above excuses.
+
+    Held over every job including the excused one, because the reason substrate-history is
+    excused is its `needs`, not its right to be informational. A reader that cannot fail
+    reports nothing and looks exactly like a reader that found nothing.
+    """
+    for job_id, job in workflow["jobs"].items():
+        assert "continue-on-error" not in job, job_id
+        for item in job["steps"]:
+            assert "continue-on-error" not in item, f"{job_id}: {item.get('name')}"
 
 
 # ----------------------------------------------------------------------------------------
