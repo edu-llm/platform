@@ -604,15 +604,15 @@ def compile_submission(
         checkpoint=manifest.checkpoint,
     )
 
-    # THE THIRD RULE ABOUT THE TEXT OF A COMMAND, AND THE ONE WHOSE COST LANDS ON THE DEVICE
-    # RATHER THAN IN THE RECORD. The two above refuse a command that would waste a machine or
-    # lose its state; this refuses one the machine cannot run at all, because bfloat16 is
+    # THE LAST RULE ABOUT THE TEXT OF A COMMAND, AND THE ONE WHOSE COST LANDS ON THE DEVICE
+    # RATHER THAN IN THE RECORD. The ones above refuse a command that would waste a machine
+    # or lose its state; this refuses one the machine cannot run at all, because bfloat16 is
     # absent from Turing's silicon and the only shape above four cards this account can
-    # obtain is eight T4s. It is beside them for the reason they are beside each other: all
-    # three need the manifest's resolved compute profile, and reading them in one place is
-    # what stops a fourth being added somewhere else.
+    # obtain is eight T4s. It is beside them for the reason they are beside each other: every
+    # one of them needs the manifest's resolved compute profile, and reading them in one
+    # place is what stops the next being added somewhere else.
     #
-    # It takes the catalog, which the two above do not, because the answer comes from the
+    # It takes the catalog, which the others do not, because the answer comes from the
     # instance type the catalog declares rather than from the profile's name. That is the
     # whole of why this rule survives a shape being added: config/workload-catalog.yaml is
     # the only place the set of shapes is written down.
