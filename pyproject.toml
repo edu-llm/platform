@@ -17,7 +17,7 @@ name = "edullm-platform"
 #
 # 0.2.0 rather than 0.1.1 because 0.1.0 was never released and nothing was ever installed
 # from a tag; the first tag this repository has should not look like the second.
-version = "3.4.6"
+version = "3.4.7"
 requires-python = ">=3.12"
 dependencies = [
   "pydantic>=2,<3",
@@ -66,7 +66,7 @@ reader = [
 # needs on day one -- `docs-frank/reference/system-overview.md` counts twelve of the
 # fourteen surfaces that reach a researcher as this one command:
 #
-#   uv tool install --force git+https://github.com/edu-llm/platform@v3.4.6
+#   uv tool install --force git+https://github.com/edu-llm/platform@v3.4.7
 #
 # THAT LINE IS TESTED RATHER THAN PROOFREAD, by tests/test_cli_install_command.py, which
 # holds it to the one in `edullm_platform.cli.release`. What used to be written here was
