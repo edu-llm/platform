@@ -682,53 +682,28 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # the roster as it was, which is the same reporting gap the entry above describes and not
     # a second kind of hazard.
     #
-    # THE EIGHTH IS CLEARED BY THE RELEASE THAT CARRIES THIS DELETION AND THE NINTH IS NOT,
-    # WHICH IS THE FIRST TIME THIS REGISTER HAS BEEN PARTLY CLEARED. The validator zip was
-    # built from 77e5af9, uploaded as object version CEH5XuEEq7XCVbt4GX7eqmgQFLtH_57_, and
-    # infra/admission-validator-release.yaml and infra/admission-state-machine.yaml both now
-    # name da7313e1. The notifier entry below stands: releasing it is a second upload against
-    # a second template and a second stack deploy, and doing it in the same change as the
-    # first would put two unverified digests in one diff where the account can only confirm
-    # them one at a time.
+    # THE EIGHTH WAS CLEARED BY ONE RELEASE AND THE NINTH BY THE ONE THAT CARRIES THIS
+    # DELETION, WHICH IS THE FIRST TIME THIS REGISTER HAS BEEN CLEARED IN TWO PASSES. The
+    # validator zip was built from 77e5af9, uploaded as object version
+    # CEH5XuEEq7XCVbt4GX7eqmgQFLtH_57_, and both its files name da7313e1. Splitting them was
+    # right: two unverified digests in one diff is two claims the account can only confirm one
+    # at a time, and the second pass had the first already answered by
+    # tools/verify_deployed_lambdas.py before it began.
+    #
+    # The ninth is the notifier, moved by the same roster edit through NOTIFIER_CONFIG in
+    # tools/build_notifier_lambda.py, released 2026-08-06 as object version
+    # yfZX9j6aaYvhNyGNgaBr8pWxkJOd93pV, with infra/notifier-release.yaml and
+    # infra/notifications.yaml both now naming 3b54966b. What it changes is who a run is
+    # reported to, so the window it closes was notifications addressed by the roster as it
+    # was, and no authorization moved in either direction.
     #
     # A RELEASE IS A STAGING STEP AND THE DEPLOYED BYTES DO NOT MOVE UNTIL THE STACK DOES.
-    # The upload and the template edit are all this deletion rests on; what makes the account
-    # run da7313e1 is deploy-phase2-admission.yml, which fires on a push to main touching
-    # infra/admission-state-machine.yaml. So the digest worth reading is the one Lambda
-    # answers with after that, and tools/verify_deployed_lambdas.py is what reads it. A
-    # workflow log saying the upload succeeded is not the same claim.
-    releases: tuple[PendingRelease, ...] = (
-        PendingRelease(
-            function="notifier",
-            reason=(
-                "THE SAME ROSTER EDIT AS THE VALIDATOR ENTRY ABOVE, REACHING A SECOND ZIP. "
-                "NOTIFIER_CONFIG in tools/build_notifier_lambda.py names organization.yaml "
-                "alongside workload-catalog.yaml and execution-targets.yaml, so binding "
-                "Intern-langming.xing-sbsandbox to meric233 and excluding the two "
-                "Intern-p3math-* task roles moves this function's packaged bytes by the same "
-                "mechanism it moves the validator's."
-                "\n\n"
-                "IT WAS UNRECORDED FOR AN HOUR AND THE REASON IS WORTH KEEPING. The validator "
-                "entry was written when the notifier was the one function of the four with no "
-                "digest comparison, so the author saw one moved zip where there were two. "
-                "tests/test_released_zips.py, parametrized over release_lambda.FUNCTIONS, "
-                "found the second at the merge and printed the record to write. This entry "
-                "exists because that check exists."
-                "\n\n"
-                "It grants nothing. The roster edit binds a second AWS role to a login "
-                "already admitted and excludes two roles whose trust policies name a service "
-                "rather than the credential broker, so no authorization moves in either "
-                "function. What this one reads the roster for is deciding who to notify "
-                "about a run, so the window is a notification addressed by the roster as it "
-                "was -- the same reporting gap the validator entry describes, not a second "
-                "kind of hazard."
-            ),
-            cleared_by="uv run python tools/release_lambda.py --function notifier",
-            builds_to="3b54966b1ac2e52ad4296c7ec212ba2024f18d732d725fe40d9ea164cb3323c2",
-            released="5bb5c9d1b63696fc9ef23573456a8b54263a3015f1dc61dcd5bb81846a0953ec",
-            recorded_on=date(2026, 8, 6),
-        ),
-    )
+    # The upload and the two template edits are all this deletion rests on; what makes the
+    # account run 3b54966b is deploy-phase3-batch.yml, which fires on a push to main touching
+    # infra/notifications.yaml. So the digest worth reading is the one Lambda answers with
+    # after that, and tools/verify_deployed_lambdas.py is what reads it. A workflow log saying
+    # the upload succeeded is not the same claim.
+    releases: tuple[PendingRelease, ...] = ()
     return one_record_per_function(releases)
 
 
