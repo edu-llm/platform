@@ -384,13 +384,33 @@ jobs:
           role-to-assume: ${{ vars.AWS_AUDIT_READER_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      # WHAT THIS CATCHES IS A ROTATION, NOT A TRAINING BUG. The value before the one
-      # stored now was a good key with the literal word `api` glued to the front, which is
-      # what pasting W&B's netrc line as a single token produces. W&B refused it outright
-      # and nothing on this platform went red, because a training run does not fail when
-      # W&B declines it -- the run trains, logs nowhere, and exits zero. The check resolves
-      # the key against W&B rather than only measuring it, because the shape was very
-      # nearly right and only W&B's answer settles it.
+      # WHAT THIS CATCHES IS A ROTATION, AND IT IS ALSO A TRAINING BUG. The value before
+      # the one stored now was a good key with the literal word `api` glued to the front,
+      # which is what pasting W&B's netrc line as a single token produces. W&B refused it
+      # outright. The check resolves the key against W&B rather than only measuring it,
+      # because the shape was very nearly right and only W&B's answer settles it.
+      #
+      # THIS COMMENT USED TO SAY THAT A TRAINING RUN DOES NOT FAIL WHEN W&B DECLINES IT --
+      # "the run trains, logs nowhere, and exits zero" -- AND THAT IS THE OPPOSITE OF WHAT
+      # HAPPENED. The bad value was current from 2026-07-31T02:22:37Z to
+      # 2026-08-01T11:47:47Z. Every run that reached wandb.init() inside that window died
+      # there: eight runs across nine attempts on 2026-08-01, between 06:26:38Z and
+      # 11:24:41Z, each already admitted, priced, released by a lead, queued, placed on a
+      # g5.xlarge and given an image pull. None trained a step. Read from both Batch log
+      # groups over their full retention with `filter @message like /user is not logged in/
+      # | stats count(*) by @logStream`, and each stream resolved to a run before being
+      # counted. It is the largest single named cause of failure this platform has.
+      #
+      # It read as silent for five days because OLMo-core's async checkpoint thread raises
+      # `ProcessGroup is not registered` on the way down, seconds later, so the terminating
+      # exception in every one of those streams named the checkpoint save.
+      #
+      # WHY IT WILL BE SILENT IN FUTURE, WHICH IS A DIFFERENT CLAIM. OLMo-core #55 stops
+      # wandb.init() ending the run, so this failure becomes a run that trains, logs
+      # nowhere and exits zero -- the thing this comment wrongly asserted was already true.
+      # That makes this job the only place the fault is visible, which is the argument for
+      # it rather than against: the refusal that saves the money is this one, before
+      # dispatch, and not one on the instance after the GPU is allocated.
       #
       # It never prints the key. The output is a length, a truncated digest and the entity
       # W&B resolved it to.
@@ -414,12 +434,25 @@ jobs:
           uv run --frozen python tools/verify_wandb_credential.py > "${report}" || status=$?
           cat "${report}"
           if [[ "${status}" -ne 0 ]]; then
-            echo "wandb_credential_would_be_refused" >&2
-            echo "The looks_wrong list above names the fault. The secret is set from a" >&2
-            echo "laptop and from nowhere else, so repairing it is a person rather than a" >&2
-            echo "re-run of this job." >&2
-            echo "Submissions are refused while this stands, because submit-run.yml reads" >&2
-            echo "this verdict. Repair the key, then dispatch this workflow again." >&2
+            # TWO FAULTS EXIT 1 AND ONLY ONE OF THEM STOPS SUBMISSIONS, so the verdict is
+            # read rather than inferred from the exit code. Saying "submissions are
+            # refused" over a key W&B accepts would send somebody to repair a gate that is
+            # not closed, at five in the morning.
+            if [[ "$(jq -r '.verdict // "none"' "${report}")" == "refused" ]]; then
+              echo "wandb_credential_would_be_refused" >&2
+              echo "The looks_wrong list above names the fault. The secret is set from a" >&2
+              echo "laptop and from nowhere else, so repairing it is a person rather than a" >&2
+              echo "re-run of this job." >&2
+              echo "Submissions are refused while this stands, because submit-run.yml reads" >&2
+              echo "this verdict. Repair the key, then dispatch this workflow again." >&2
+              exit 1
+            fi
+            echo "wandb_key_attributes_to_a_person" >&2
+            echo "The attribution_looks_wrong list above names the fault. W&B accepts this" >&2
+            echo "key, so nothing is refused and every run still logs -- under one person's" >&2
+            echo "name rather than the team service account, with every wandb_username in" >&2
+            echo "config/organization.yaml ignored. Replace the stored value with the" >&2
+            echo "service account's key, then dispatch this workflow again." >&2
             exit 1
           fi
 
