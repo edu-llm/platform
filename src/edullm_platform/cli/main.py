@@ -118,6 +118,7 @@ from edullm_platform.cli.lane import (
     WorkingTierSettings,
     agent_online_argv,
     assume_lane_argv,
+    command_line,
     credentials_environment,
     expires_at,
     find_machine_argv,
@@ -1573,7 +1574,7 @@ def _run(
     )
     print(file=out)
 
-    command = " ".join(arguments.command)
+    command = command_line(arguments.command)
     runner(
         ("aws", "s3", "sync", str(cwd), uri, "--exclude", ".git/*", "--only-show-errors"),
         env=session.environment,

@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -61,6 +61,7 @@ __all__ = [
     "WorkingTierSettings",
     "agent_online_argv",
     "assume_lane_argv",
+    "command_line",
     "credentials_environment",
     "expires_at",
     "find_machine_argv",
@@ -614,6 +615,23 @@ def notebook_forward_argv(
             }
         ),
     )
+
+
+def command_line(tokens: Sequence[str]) -> str:
+    """The tokens after a bare ``--``, back as one line of shell that means the same thing.
+
+    **A PLAIN ``" ".join`` LOSES THE QUOTING THE RESEARCHER'S OWN SHELL ALREADY TOOK OFF, AND
+    THAT IS NOT A CORNER CASE.** ``edullm run -- python -c 'print(1+1)'`` arrives here as three
+    tokens, the third being ``print(1+1)`` with no quotes left on it, and joined with a space it
+    reaches the machine as ``python -c print(1+1)`` -- where the parentheses are shell syntax
+    and bash refuses the whole script before anything runs. Measured on 2026-08-06; the machine
+    printed a bash parse error naming the entire remote script and the verb reported only that
+    the session had ended without saying what the command did.
+
+    ``shlex.join`` puts back exactly the quoting that makes each token one word again, which is
+    the property the researcher had when they typed it and expects to still have.
+    """
+    return shlex.join(tokens)
 
 
 def under_a_shell(script: str) -> str:

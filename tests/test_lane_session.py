@@ -16,6 +16,7 @@ from pathlib import Path
 from edullm_platform.cli.lane import (
     SESSION_PLUGIN,
     agent_online_argv,
+    command_line,
     load_working_tier_settings,
     missing_plugin_refusal,
     notebook_forward_argv,
@@ -95,6 +96,31 @@ def test_the_parameters_document_is_serialised_rather_than_interpolated() -> Non
     argv = remote_command_argv(INSTANCE, command=script)
 
     assert json.loads(argv[-1])["command"] == [under_a_shell(script)]
+
+
+def test_the_tokens_after_the_dashes_keep_the_quoting_the_researcher_typed() -> None:
+    """**THE FOURTH WAY A RUN CAME BACK SAYING NOTHING, AND THE LIKELIEST TO BE HIT.**
+    Mutation: join the tokens with a space.
+
+    ``edullm run -- python -c 'print(1+1)'`` arrives as three tokens with the quotes already
+    taken off by the researcher's own shell, so a space join sends ``python -c print(1+1)`` to
+    the machine, where the parentheses are shell syntax. bash refused the entire remote script
+    before running any of it, printed a parse error naming the whole line, and the verb reported
+    only that the session had ended without saying what the command did. Measured on 2026-08-06.
+
+    Round-tripped through shlex.split rather than compared to a string, because the property is
+    that the machine sees the same words the researcher typed, and there is more than one
+    correct quoting of most of them.
+    """
+    tokens = ["python", "-c", "print(1+1)"]
+
+    assert shlex.split(command_line(tokens)) == tokens
+    assert command_line(["echo", "one two"]) != "echo one two"
+    assert shlex.split(command_line(["sh", "-c", "echo a; exit 7"])) == [
+        "sh",
+        "-c",
+        "echo a; exit 7",
+    ]
 
 
 def test_a_command_is_wrapped_for_a_shell_because_the_document_runs_none() -> None:
