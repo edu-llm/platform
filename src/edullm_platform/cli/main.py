@@ -94,6 +94,7 @@ from edullm_platform.cli.actions import (
     read_run_facts,
     read_submission_runs,
     report_ceiling_seconds,
+    submit_ceiling_seconds,
 )
 from edullm_platform.cli.configuration import (
     ConfigurationUnreadableError,
@@ -1968,7 +1969,36 @@ def _submit(
         return EXIT_OK
     identifier = int(run["id"])
     print(str(run.get("html_url") or ""), file=out)
-    compiled = actions.compiled_submission(identifier)
+    # SAID BEFORE THE WAIT, FOR THE REASON ``_drive_the_run_report`` SAYS IT BEFORE ITS OWN.
+    # This is the only other place the binary makes anybody wait, and it is a wait long enough
+    # that a reader who was told nothing concludes it hung.
+    #
+    # The typical duration is deliberately not here. It was, and
+    # ``test_no_bound_is_written_into_a_string_the_cli_prints`` refused it, which is the right
+    # refusal twice over: a runner's speed is not this repository's to promise, and a reader
+    # given a typical duration reads the ceiling as the anomaly rather than as the bound. The
+    # ceiling is the only number the code can stand behind, and it is derived.
+    print(
+        "\n".join(
+            _wrapped(
+                "waiting for the compile job to mint the run id, and giving up after "
+                f"{_submit_ceiling_said()}. A line every minute says it is still waiting, "
+                "and --no-wait skips this.",
+                indent="",
+            )
+        ),
+        file=err,
+    )
+    waiting = _SignOfLife(err)
+    outcome = actions.wait_for_the_compiled_submission(identifier, waiting=waiting)
+    compiled = outcome.compiled
+    if compiled is None and outcome.published_nothing:
+        print(
+            "the workflow finished and published no compiled submission, so no run id was "
+            "minted. The page above carries which job stopped it.",
+            file=out,
+        )
+        return EXIT_OK
     if compiled is None:
         print(
             "compiling. The run id is issued by the compile job; edullm status will carry "
@@ -2497,6 +2527,12 @@ def _ceiling_said() -> str:
     poll it describes. Rounded up, because the promise a ceiling makes is an upper one.
     """
     minutes = -(-int(report_ceiling_seconds()) // 60)
+    return f"{minutes} minutes" if minutes != 1 else f"{minutes} minute"
+
+
+def _submit_ceiling_said() -> str:
+    """The same, for ``submit``'s own wait, which is a different pair of loops."""
+    minutes = -(-int(submit_ceiling_seconds()) // 60)
     return f"{minutes} minutes" if minutes != 1 else f"{minutes} minute"
 
 

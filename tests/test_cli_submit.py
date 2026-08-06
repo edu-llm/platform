@@ -14,8 +14,10 @@ submission refused locally must not be dispatched, and the way to assert that is
 
 from __future__ import annotations
 
+import itertools
 import json
 import shlex
+import time
 from pathlib import Path
 
 import pytest
@@ -56,22 +58,35 @@ def submitting(
     *,
     compiled: dict[str, object] | None = None,
     release: object | None = None,
+    compiled_after: int = 0,
+    run_status: str | None = None,
     **spec: object,
 ) -> tuple[Path, FakeRunner]:
-    """A checkout that can submit, with GitHub answering as it does after a dispatch."""
+    """A checkout that can submit, with GitHub answering as it does after a dispatch.
+
+    ``compiled_after`` is how many times the artifact download fails before it succeeds,
+    which is the only way to express the thing that actually happens: the compile job takes
+    about two minutes and the artifact does not exist until it has finished. The default of
+    zero -- available on the first ask -- is a state no real submission is ever in.
+    """
     write_spec(tmp_path, **spec)  # type: ignore[arg-type]
     answers = dict(git_answers(tmp_path))
     answers[("gh", "workflow", "run")] = ok("")
     answers[("gh", "api")] = ok(json.dumps({"workflow_runs": [WORKFLOW_RUN]}))
+    if run_status is not None:
+        answers[("gh", "api", f"repos/{PLATFORM_REPOSITORY}/actions/runs/{WORKFLOW_RUN['id']}")] = (
+            ok(json.dumps({"status": run_status, "conclusion": "failure"}))
+        )
     # The suite runs from a checkout, where ``installed_version`` finds no distribution and
     # nothing can be stale. Answering the probe with the current release by default keeps
     # every other test in this file about the thing it is about.
     answers[RELEASES] = release if release is not None else ok(_current_release())
+    asked = itertools.count()
 
     def download(argv: tuple[str, ...]) -> object:
-        if compiled is None:
-            from tests.cli_support import failed
+        from tests.cli_support import failed
 
+        if compiled is None or next(asked) < compiled_after:
             return failed("no artifact matches")
         directory = Path(argv[argv.index("--dir") + 1])
         directory.mkdir(parents=True, exist_ok=True)
@@ -304,6 +319,106 @@ def test_the_run_id_the_compile_job_issued_is_read_back_and_printed(
     assert code == EXIT_OK, out + err
     assert "run_019fd2a1-4e07-7a3c-9d55-1b2f8c0e6a41" in out
     assert "waiting at run-approval-lead" in out
+
+
+def test_submit_waits_for_the_run_id_the_way_its_help_says_it_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: ask the compile job once and print "compiling" on ``None``, which shipped.
+
+    ``submit --help`` says it waits for the run id the compile job mints unless ``--no-wait``
+    says not to. It asked once, immediately after finding the workflow run, and the compile
+    job takes about two minutes -- so three real submissions returned in 3.8s, 7.5s and 8.4s
+    with no run id, and ``--no-wait`` was a flag that changed nothing.
+
+    What is lost is not only the id. The approval sentence below it -- which gate holds the
+    run and how many people can release it -- is printed on the same branch, so on every real
+    submission the submitter was told neither what their run was called nor whether anybody
+    had to release it.
+
+    ``compiled_after`` is the point of the case. The shipped test for this line had the
+    artifact available on the first ask, which is a state no submission is ever in, so it
+    passed and could not have failed.
+    """
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    root, runner = submitting(
+        tmp_path,
+        compiled_after=3,
+        compiled={
+            "run_id": "run_019fd2a1-4e07-7a3c-9d55-1b2f8c0e6a41",
+            "approval_class": "routine",
+            "approving_environment": "run-approval-lead",
+        },
+    )
+
+    code, out, err = invoke(
+        ["submit", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "run_019fd2a1-4e07-7a3c-9d55-1b2f8c0e6a41" in out
+    assert "waiting at run-approval-lead" in out
+    assert "compiling." not in out
+    # Asked more than once, which is the whole of the fix.
+    assert len(runner.ran("gh", "run", "download")) > 1
+
+
+def test_no_wait_still_returns_without_asking_the_compile_job_anything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: wait whatever ``--no-wait`` says.
+
+    The flag was documented and inert, and making the default wait is what gives it a
+    meaning. It has to keep the one it was given: dispatch, say where to look, return. An
+    agent in a loop and a submitter dispatching forty sweep arms both depend on it, and a
+    two minute wait forty times over is an hour and twenty minutes of nothing.
+    """
+    root, runner = submitting(tmp_path, compiled_after=3, compiled={"run_id": "run_0198"})
+
+    code, out, err = invoke(
+        ["submit", "--no-wait", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "not waiting" in out
+    assert runner.ran("gh", "run", "download") == []
+
+
+def test_a_compile_job_that_published_nothing_is_not_waited_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: poll the whole window whenever the artifact is absent.
+
+    ``compiled_submission`` answers ``None`` while the compile job is running and ``None``
+    where it refused, so a poll that reads only the artifact spends its entire ceiling on a
+    submission that was turned away in twenty seconds -- and then reports it as still
+    compiling, which is the opposite of what happened.
+
+    The run's own status settles it. The artifact is published by a job inside the run, so a
+    run that has reached ``completed`` with no artifact is one that is never going to have
+    one. Said as what is known -- nothing was published -- rather than as a reason, because
+    a cancelled run reaches the same place and was not refused.
+    """
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    root, runner = submitting(tmp_path, compiled=None, run_status="completed")
+
+    code, out, err = invoke(
+        ["submit", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "published no" in out + err
+    # Two asks at most: one before the status was known, one to learn it.
+    assert len(runner.ran("gh", "run", "download")) <= 2
 
 
 def test_an_automatic_submission_is_told_nobody_is_waiting_on_a_person(
