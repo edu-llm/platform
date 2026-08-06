@@ -58,12 +58,12 @@ from pathlib import Path
 from typing import Final, Protocol
 
 __all__ = [
+    "WINDOWS",
     "CommandResult",
     "CommandRunner",
     "GitFacts",
     "SubprocessRunner",
     "ToolMissingError",
-    "WINDOWS",
     "gh_config_directory",
     "github_interop_diagnostic",
     "github_login",
