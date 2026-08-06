@@ -145,8 +145,12 @@ function Get-BrokerProfiles {
         else {
             $program = ($value -split '\s+')[0]
         }
+        # Parenthesised rather than chained. `-replace` and `-eq` sit at one precedence level
+        # and this is a file nobody here can run, so the one line whose meaning depends on
+        # remembering that correctly is the one line to spell out.
         $base = [System.IO.Path]::GetFileName($program.Replace('/', '\'))
-        if ($base.ToLowerInvariant() -replace '\.exe$', '' -eq $Broker) { $found.Add($section) }
+        $base = ($base.ToLowerInvariant() -replace '\.exe$', '')
+        if ($base -eq $Broker) { $found.Add($section) }
     }
     return @($found)
 }
