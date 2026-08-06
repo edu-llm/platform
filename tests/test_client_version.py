@@ -263,11 +263,10 @@ def test_every_recorded_defect_names_a_phrase_its_refusal_really_carries() -> No
 def test_the_install_line_is_the_one_release_py_spells_and_not_a_second_copy() -> None:
     """``cli/release.py`` records what the second copy of this command cost when it existed.
 
-    The word this refuses is the one uv answers ``Nothing to upgrade`` to for a tool
-    installed from git, so a reader who reached for it would be told they are current while
-    running the binary that unquoted their command.
-    ``tests/test_cli_install_command.py`` scans the tracked tree for it; asserted here too,
-    on the composed sentence rather than on the source, because that is what a person reads.
+    The word this refuses is the one a reader would reach for instead of the line, and
+    ``cli/release.py`` is where what it does and does not do is written down. Asserted here
+    on the composed sentence rather than on the source, because the sentence is what somebody
+    meets at the moment they are deciding what to type next.
     """
     note = defect_note(lost_its_quotes(), client=read_client_version("3.4.7"), install=INSTALL)
 
