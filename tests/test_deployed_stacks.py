@@ -1181,12 +1181,19 @@ def workflow_deploys() -> set[tuple[str, str]]:
     ``aws`` is not a top-level command, which is right for the step it is reading and wrong
     as a filter over the whole directory -- one workflow calls the CLI inside a loop to dump
     stack events after a failure, and that step is not a deploy.
+
+    ``steps`` is read with a default because a job that calls a reusable workflow declares
+    ``uses:`` and may not declare steps at all, so the key is absent rather than empty. That
+    is safe here rather than a hole for the same reason it is safe in
+    ``tests/test_phase2_submit_run_workflow.py``: such a job runs no script, so there is no
+    ``cloudformation deploy`` for this to miss, and the called file is itself one of the
+    workflows this glob walks -- so a deploy moved into a reusable workflow is still read.
     """
     return {
         (command[command.index("--stack-name") + 1], command[command.index("--template-file") + 1])
         for path in sorted(WORKFLOWS_ROOT.glob("*.yml"))
         for job in load_workflow(path)["jobs"].values()
-        for item in job["steps"]
+        for item in job.get("steps") or ()
         if "cloudformation deploy" in str(item.get("run", ""))
         for command in aws_commands(str(item["run"]))
         if command[:3] == ["aws", "cloudformation", "deploy"]

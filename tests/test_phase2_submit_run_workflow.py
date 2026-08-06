@@ -169,9 +169,27 @@ def _job(name: str) -> dict[str, Any]:
     return job
 
 
+def _steps(job: dict[str, Any]) -> list[dict[str, Any]]:
+    """The steps of a job, and none for a job that calls a reusable workflow.
+
+    A ``uses:`` job may not declare ``steps:`` at all, so the key is absent rather than
+    empty. Answering with nothing is safe here rather than a hole, because the absence is
+    asserted: ``test_the_job_that_asks_for_a_lead_holds_no_shell_in_this_file`` refuses that
+    job any ``steps`` or ``run``, so there is no script for the walkers below to miss. What
+    the called file contains is held by ``tests/test_notify_approval_workflow.py``, which
+    makes the same checks over it.
+    """
+    steps = job.get("steps")
+    assert steps is not None or "uses" in job, (
+        "a job with neither steps nor uses does nothing, and every walker in this module "
+        "would report it as clean"
+    )
+    return list(steps or ())
+
+
 def _run_bodies() -> Iterator[tuple[str, str]]:
     for job_name, job in _load()["jobs"].items():
-        for candidate in job["steps"]:
+        for candidate in _steps(job):
             script = candidate.get("run")
             if script is not None:
                 yield f"{job_name}:{candidate.get('name')}", script
@@ -319,7 +337,7 @@ def test_the_three_jobs_carry_exactly_these_permission_maps() -> None:
     assert "needs" not in workflow["jobs"]["deny-unapproved"]
 
 
-def test_the_workflow_declares_these_six_jobs_and_orders_them_this_way() -> None:
+def test_the_workflow_declares_these_seven_jobs_and_orders_them_this_way() -> None:
     # The inventory, re-armed at five when the identify job arrived. A job added to this
     # file inherits the two trust policies that pin job_workflow_ref to it, so a new one is
     # a new principal for both the admission role and the image resolver -- which is why
@@ -339,6 +357,17 @@ def test_the_workflow_declares_these_six_jobs_and_orders_them_this_way() -> None
     # so a token it could also mint would give one job both a credential into the account
     # and the ability to rewrite the record of what that credential did. Asserted just
     # below rather than argued here.
+    #
+    # ANNOUNCE-THE-GATE IS THE THIRD AND IT IS THE FIRST ONE THAT DOES HOLD `id-token:
+    # write`, so the sentence at the top of this comment needs a different answer for it
+    # rather than the same one. It is not a new principal under either trust policy, because
+    # it declares `uses:` and a job that calls a reusable workflow presents the *called*
+    # file as its job_workflow_ref -- both policies pin this file with StringEquals, so the
+    # token minted under that permission is refused by both. It is also the only job here
+    # whose credential-free guarantee does not depend on a permission being absent: a
+    # `uses:` job may not carry `steps:`, so there is no shell in this file that can request
+    # a token at all. test_the_job_that_asks_for_a_lead_holds_no_shell_in_this_file asserts
+    # both halves, and tests/test_notify_approval_workflow.py holds the called file.
     workflow = _load()
 
     assert list(workflow["jobs"]) == [
@@ -346,6 +375,7 @@ def test_the_workflow_declares_these_six_jobs_and_orders_them_this_way() -> None
         "resolve",
         "compile",
         "index-the-run",
+        "announce-the-gate",
         "deny-unapproved",
         "submit",
     ]
@@ -359,6 +389,78 @@ def test_the_workflow_declares_these_six_jobs_and_orders_them_this_way() -> None
     assert workflow["jobs"]["resolve"]["needs"] == ["identify"]
     assert "needs" not in workflow["jobs"]["identify"]
     assert "environment" not in workflow["jobs"]["resolve"]
+
+
+NOTIFY_WORKFLOW = "./.github/workflows/notify-approval-requested.yml"
+
+
+def test_the_job_that_asks_for_a_lead_holds_no_shell_in_this_file() -> None:
+    """Mutation: inline the send steps into this job instead of calling a workflow.
+
+    That spelling works, and it is the one this change was first written as. What it costs is
+    two widenings at once. The job would hold ``id-token: write`` with a
+    ``job_workflow_ref`` of ``submit-run.yml``, which both the admission role and the image
+    resolver pin -- so it becomes a principal under each of them. And the role it needs would
+    be assumable by ``resolve`` and ``deny-unapproved``, because a trust policy cannot
+    distinguish jobs within a workflow and those two present the same claims.
+
+    Calling a reusable workflow closes both, because GitHub sets ``job_workflow_ref`` to the
+    called file. The absence of ``steps`` is the part worth asserting rather than assuming:
+    it is what makes "no shell in this file can request a token" true by construction rather
+    than by the permission being withheld, which is how every other credential-free job here
+    is argued.
+    """
+    job = _job("announce-the-gate")
+
+    assert job["uses"] == NOTIFY_WORKFLOW
+    assert "steps" not in job, (
+        "a job with steps is a job whose shell can request a token under the permission "
+        "below, and this job carries id-token: write"
+    )
+    assert "run" not in job
+    assert job["permissions"] == {"contents": "read", "id-token": "write"}
+    # No environment, so the subject is ref-scoped and the admission role refuses it even
+    # before job_workflow_ref is compared. Deliberate on both sides: this message is sent
+    # while a lead is being asked, so a job waiting on that gate could not announce it.
+    assert "environment" not in job
+    assert job["needs"] == ["compile"]
+
+
+def test_the_called_workflow_is_this_repository_at_this_commit() -> None:
+    """Mutation: name the workflow by ``owner/repo/.github/...@ref`` instead of a local path.
+
+    A local path is resolved at the caller's own commit, which for a dispatch of this file is
+    the commit the compile job ran from. An owner-qualified reference is resolved at whatever
+    the named ref says, so the envelope could be built by a tree other than the one that
+    compiled the document -- and pinning it to a tag or a branch would put the send step
+    outside the review that guards this file.
+    """
+    job = _job("announce-the-gate")
+
+    assert job["uses"].startswith("./"), job["uses"]
+    assert "@" not in job["uses"], "a ref here is a version of the send step nobody reviewed"
+    assert (PROJECT_ROOT / job["uses"].removeprefix("./")).is_file()
+
+
+def test_nobody_is_asked_to_release_a_run_that_releases_itself() -> None:
+    """Mutation: drop either half of the condition.
+
+    Without the class test, the automatic gate -- which carries a branch policy and no
+    reviewers -- produces a message naming a lead who was never going to be consulted, which
+    is the same defect as the approver-login step running for that gate. Without the ref
+    test, a dispatch from a branch is routed to run-approval-preview, which also has no
+    reviewers, and the role trust pins refs/heads/main so the job would go red at the
+    credential step rather than skip. A red job on the one path that exists for trying a
+    change before merging is worse than a message nobody was owed.
+
+    The class is read off the compile job's output rather than recomputed, which is the same
+    value and the same expression the submit job reads it by.
+    """
+    condition = _job("announce-the-gate")["if"]
+
+    assert "needs.compile.outputs.approval_class != 'automatic'" in condition
+    assert "github.ref == 'refs/heads/main'" in condition
+    assert "approval_class" in _load()["jobs"]["compile"]["outputs"]
 
 
 def test_the_job_that_turns_a_branch_into_a_commit_cannot_reach_aws_at_all() -> None:
@@ -537,7 +639,7 @@ def test_every_action_is_pinned_to_a_commit() -> None:
     used = [
         candidate["uses"]
         for job in _load()["jobs"].values()
-        for candidate in job["steps"]
+        for candidate in _steps(job)
         if "uses" in candidate
     ]
 
@@ -630,14 +732,44 @@ def test_the_compiled_submission_crosses_the_gate_as_an_artifact() -> None:
     assert "${RUNNER_TEMP}/compiled-submission/compiled-submission.json" in verify["run"]
 
 
+#: The five expressions that make a job run after something it depends on did not succeed.
+#: A condition on a job is skipped when a `needs` dependency fails *unless* it names one of
+#: these, so this is the list that matters rather than the presence of a condition at all.
+#: See tests/test_notify_approval_workflow.py, which makes the same check over the file the
+#: announce job calls.
+STATUS_FUNCTIONS = ("always(", "failure(", "cancelled(", "success(", "!cancelled(")
+
+
 def test_nothing_lets_the_submit_job_run_after_a_gate_has_failed() -> None:
-    # `needs` alone only orders the jobs. A single `if: always()` would keep both
-    # dependencies and still submit after a refused compile or a probe that found the
-    # admission role assumable without an approval.
+    """Mutation: add ``if: always()`` anywhere, which keeps every ``needs`` and defeats it.
+
+    ``needs`` alone only orders the jobs. A single ``always()`` would keep both dependencies
+    and still submit after a refused compile or a probe that found the admission role
+    assumable without an approval.
+
+    THIS USED TO READ ``assert "if" not in job`` FOR EVERY JOB, AND THAT IS NOT THE PROPERTY.
+    It was accurate for as long as no job here had a reason to carry a condition, and the
+    announce job has one: a message asking a lead to release a run is owed only where a lead
+    is being asked, so it is skipped for the automatic gate and off ``main``. Relaxing the
+    rule to "no condition except on that job" would have exempted exactly one job from the
+    guard by name. What the guard is actually about is the status functions, because a
+    condition that names none of them is still skipped when a dependency fails -- so every
+    job is now checked for those, which is a stronger statement over more jobs than the
+    version this replaces made over any.
+    """
     workflow = _load()
 
     for name, job in workflow["jobs"].items():
-        assert "if" not in job, name
+        condition = str(job.get("if", ""))
+        found = [function for function in STATUS_FUNCTIONS if function in condition]
+        assert not found, (
+            f"{name} runs after a dependency has failed, because its condition names "
+            f"{found}. `needs` no longer orders this job behind anything."
+        )
+    # The jobs that must not be conditional at all, because each one is a refusal or a
+    # record and a submission that skipped it would be a submission nothing checked.
+    for name in ("identify", "resolve", "compile", "index-the-run", "deny-unapproved", "submit"):
+        assert "if" not in workflow["jobs"][name], name
     assert "continue-on-error" not in str(workflow)
 
 

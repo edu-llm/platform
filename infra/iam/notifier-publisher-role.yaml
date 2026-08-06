@@ -1,0 +1,121 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: GitHub Actions role that puts one approval request on the notifier queue when a submission reaches the gate.
+
+Resources:
+  NotifierPublisherRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-notifier-publisher
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      # THE THIRD WRITER ON THE NOTIFIER QUEUE, AND THE FIRST ONE THAT IS NOT A SERVICE.
+      #
+      # The other two are EventBridge rules and are admitted by the queue policy in
+      # infra/notifications.yaml under the events.amazonaws.com service principal, each pinned
+      # to one rule ARN. This is a GitHub Actions job holding an IAM identity in the same
+      # account as the queue, so an identity-based allow is sufficient on its own and no
+      # statement is added to that resource policy. Worth saying explicitly, because the
+      # obvious symmetry -- three writers, three statements -- is wrong here and a fourth
+      # statement admitting this role would widen the queue to every principal in the account
+      # that could assume it rather than narrowing anything.
+      #
+      # WHY THE TRUST PINS A FILE THAT IS NOT submit-run.yml, WHICH IS THE ONLY SURPRISING
+      # LINE BELOW. The job that uses this role is dispatched as part of a run of
+      # submit-run.yml, and the natural reading is that job_workflow_ref should therefore name
+      # that file. It must not, and the reason is the sentence in
+      # infra/iam/image-resolver-role.yaml: a trust policy cannot distinguish jobs within a
+      # workflow, so a condition naming submit-run.yml would make this role assumable by every
+      # job in it that holds `id-token: write` -- today `resolve` and `deny-unapproved`, and
+      # tomorrow whatever is added. It would also work the other way, since a job added to
+      # that file to use this role becomes a new principal under the admission role's own
+      # job_workflow_ref pin.
+      #
+      # The job lives in a called workflow instead, and GitHub sets job_workflow_ref to the
+      # called file rather than the calling one. So the pin below names exactly the file that
+      # holds the SendMessage step, and the two roles that matter in submit-run.yml keep the
+      # principal set they were reviewed with. The same shape, and the same one-file argument,
+      # as infra/iam/run-canceller-role.yaml.
+      #
+      # RENAMING .github/workflows/notify-approval-requested.yml REVOKES THIS SILENTLY, and
+      # the failure arrives as an AssumeRole denial that reads like a broken role ARN. Change
+      # this file in the same commit or do not rename that one.
+      #
+      # The sub prefix carries owner and repository ids because this organization issues
+      # immutable subject claims, verified as
+      # `gh api repos/edu-llm/platform/actions/oidc/customization/sub` reporting
+      # sub_claim_prefix repo:edu-llm@306859726/platform@1311508598.
+      #
+      # The subject is ref-scoped rather than environment-scoped because the job declares no
+      # `environment:`. That is deliberate on both sides: this message is sent *while* a lead
+      # is being asked, so a job waiting on the same gate it is announcing would deadlock, and
+      # a ref-scoped subject is the one the admission role refuses.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated:
+                Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:job_workflow_ref: edu-llm/platform/.github/workflows/notify-approval-requested.yml@refs/heads/main
+                token.actions.githubusercontent.com:repository_owner_id: "306859726"
+                token.actions.githubusercontent.com:repository_id: "1311508598"
+                token.actions.githubusercontent.com:sub: repo:edu-llm@306859726/platform@1311508598:ref:refs/heads/main
+      # Inline rather than managed, for the reason every role here is: InternSandboxBoundary
+      # denies iam:CreatePolicyVersion, so a customer managed policy could be created once and
+      # never amended, and the first permission change would fail the stack update.
+      Policies:
+        - PolicyName: put-one-approval-request-on-the-notifier-queue
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # ONE ACTION AND ONE QUEUE. The queue is named in full rather than reached by an
+              # sbsandbox-intern-edullm-* prefix, and the difference is the dead-letter queue
+              # beside it: a prefix would cover -notifier-dlq as well, which is where a
+              # message that could not be posted goes to be found by a person. A role that
+              # could write into it could manufacture the evidence of a failure that never
+              # happened, in the one place somebody looks when they have been told the
+              # notifier stopped working.
+              #
+              # DELIBERATELY ABSENT, each for its own reason rather than as a list.
+              #
+              # sqs:GetQueueUrl, because the URL of a queue is its region, its account and its
+              # name, and the calling job holds all three -- the region as a repository
+              # variable, the account off its own credentials step, and the name as a literal
+              # a test holds against infra/notifications.yaml. A grant to look up something
+              # already known is a grant that also enumerates.
+              #
+              # sqs:ReceiveMessage and sqs:DeleteMessage. The notifier is the consumer, and a
+              # producer that could receive would be able to take a message off the queue
+              # before the function saw it -- which is a notification nobody gets, reported by
+              # nothing, because a queue whose depth returns to zero looks exactly like a
+              # queue that was drained correctly.
+              #
+              # sqs:PurgeQueue, which is the same failure for every message at once.
+              #
+              # sqs:SetQueueAttributes, so this cannot change the redrive policy, the
+              # visibility timeout or the queue policy that admits the two EventBridge rules.
+              #
+              # Every other service. No lambda: -- this cannot invoke the notifier directly,
+              # which is the shape the queue exists to avoid and which would also bypass the
+              # dead-letter queue. No secretsmanager:, so the webhook URL is out of reach of
+              # everything except the function that posts with it. No batch:, no states:, no
+              # s3:, no ecr:, no logs:, no iam:. The reach of this role is the line below.
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:sbsandbox-intern-edullm-notifier
+
+Outputs:
+  RoleName:
+    Value:
+      Ref: NotifierPublisherRole
+  RoleArn:
+    Value:
+      Fn::GetAtt:
+        - NotifierPublisherRole
+        - Arn

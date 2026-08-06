@@ -868,6 +868,52 @@ jobs:
         # the only place a person reading the branch history sees which submission a commit
         # was for.
 
+  # THE MESSAGE THAT ASKS A LEAD TO RELEASE THIS, AND THE REASON ITS BODY IS SOMEWHERE ELSE.
+  #
+  # notifier_handler has been able to render an approval request since #337 and nothing sent
+  # it one, so what a lead actually received was GitHub's own deployment notification, whose
+  # title is the workflow run name and which carries no cost, no machine, no hours and no
+  # cell count. This is the producer. It fires here, between the compile job that classified
+  # the submission and the submit job that is parked at the gate, because that window is the
+  # whole of the time the message is worth anything.
+  #
+  # A `uses:` JOB RATHER THAN STEPS, AND THAT IS THE NARROWING RATHER THAN A STYLE. This job
+  # entry carries `id-token: write`, and a reader who stopped there would conclude that a
+  # seventh principal has just been added to the two trust policies pinning job_workflow_ref
+  # to this file. It has not. A job that calls a reusable workflow presents the *called*
+  # file as its job_workflow_ref, so the token minted under this permission names
+  # notify-approval-requested.yml and is refused by both the admission role and the image
+  # resolver. And because a `uses:` job may not declare `steps:`, there is no shell in *this*
+  # file that can request a token from this permission at all -- which is a stronger
+  # statement than the compile job's, whose guarantee rests on the permission being absent.
+  # tests/test_phase2_submit_run_workflow.py asserts both halves. The called file carries the
+  # argument in full.
+  #
+  # WHAT THE CONDITION IS FOR, BOTH HALVES. `approval_class != automatic` because the
+  # automatic gate carries no reviewers, so there is nobody to ask and a message asking
+  # somebody would name a person who was never consulted -- the same reasoning, and the same
+  # job output, as the "Read who released the gate" step below. `github.ref` because a
+  # dispatch from a branch is routed to run-approval-preview, which also has no reviewers;
+  # the role's trust pins refs/heads/main, so a branch dispatch would fail at the credential
+  # step rather than skip, and a red job on the one path that exists to be tried before
+  # merging is worse than a message nobody was owed.
+  #
+  # ONE MESSAGE PER ATTEMPT, WHICH IS NOT THE SAME AS ONE PER RUN AND IS THE RIGHT ONE. A
+  # re-run of this workflow re-requests the approval, so a second message is correct; the
+  # event id carries github.run_attempt so the two are distinguishable rather than mistaken
+  # for a redelivery. A re-run of only the failed jobs leaves a job that succeeded alone, so
+  # the ordinary repair of a later failure sends nothing.
+  announce-the-gate:
+    name: Ask a lead to release this submission
+    needs: [compile]
+    if: >-
+      github.ref == 'refs/heads/main'
+      && needs.compile.outputs.approval_class != 'automatic'
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/notify-approval-requested.yml
+
   # This job exists in this file rather than in a file of its own, and it has to. The
   # admission role trust policy pins job_workflow_ref to this exact path with
   # StringEquals, so the same attempt made from another workflow would be refused because
