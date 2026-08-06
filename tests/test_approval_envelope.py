@@ -35,6 +35,8 @@ from edullm_platform.run_history import load_run_history
 from tools.build_approval_envelope import (
     EXIT_NOT_OWED,
     EXIT_UNUSABLE,
+    KNOWN_FIELDS,
+    RECORDED_BUT_NOT_SAID,
     SUBMISSION_FIELDS,
     URL_FIELD,
     EnvelopeError,
@@ -147,10 +149,14 @@ def test_the_builder_names_exactly_the_fields_the_compiler_writes(tmp_path: Path
     held the two lists against each other. Compared in both directions: a field the compiler
     writes and this does not name is dropped from the message silently, and a field this names
     and the compiler does not write makes every envelope unbuildable at the first dispatch.
+
+    Against both lists, because a field may be known and deliberately left off the message.
+    The two are disjoint, so a field cannot be said and unsaid at once.
     """
     document = compiled(tmp_path)
 
-    assert set(document) == set(SUBMISSION_FIELDS), (
+    assert set(SUBMISSION_FIELDS).isdisjoint(RECORDED_BUT_NOT_SAID)
+    assert set(document) == set(KNOWN_FIELDS), (
         "tools/compile_submission.py and tools/build_approval_envelope.py disagree about "
         "what a compiled submission carries"
     )
@@ -168,9 +174,29 @@ def test_the_detail_is_the_compiled_document_plus_the_url(tmp_path: Path) -> Non
 
     detail = built(document)["detail"]
 
-    assert set(detail) == set(document) | {URL_FIELD}
+    assert set(detail) == set(document) - set(RECORDED_BUT_NOT_SAID) | {URL_FIELD}
     for field in SUBMISSION_FIELDS:
         assert detail[field] == document[field], field
+
+
+def test_a_field_recorded_and_not_said_reaches_the_artifact_and_not_the_lead(
+    tmp_path: Path,
+) -> None:
+    """Mutation: move ``edullm_version`` into ``SUBMISSION_FIELDS`` to get past the guard.
+
+    That is the move the guard used to force, because it asked whether a lead should see a
+    new field and accepted only yes. A lead reads the cost, the machine, the hours and the
+    cells and then releases or does not; which install typed the submission changes none of
+    it, and a stale install that produced a valid submission produced a valid submission.
+    The value is on the artifact for whoever wants to count installs, and off the message.
+    """
+    document = compiled(tmp_path, command=["python", "-c", "print(1)"])
+
+    detail = built(document)["detail"]
+
+    assert "edullm_version" in document
+    assert "edullm_version" in RECORDED_BUT_NOT_SAID
+    assert "edullm_version" not in detail
 
 
 def test_a_field_nobody_has_reviewed_is_refused_rather_than_dropped(tmp_path: Path) -> None:

@@ -1309,6 +1309,7 @@ def test_the_install_is_named_above_the_refusal_and_not_below_it(tmp_path: Path)
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        check=False,
     )
 
     assert result.returncode == EXIT_REFUSED
