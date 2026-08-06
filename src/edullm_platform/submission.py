@@ -66,7 +66,6 @@ from edullm_platform.contracts.manifest import (
     RunManifest,
 )
 from edullm_platform.contracts.policy import (
-    EXCEPTION_RATE_CEILING_USD_PER_HOUR,
     ApprovalClass,
     ApprovalPolicy,
     RequestFacts,
@@ -97,12 +96,12 @@ from edullm_platform.manifest_helpers import (
     compute_manifest_cost_inputs,
 )
 from edullm_platform.precision import require_bfloat16_only_where_the_hardware_has_it
+from edullm_platform.run_history import RunHistory, history_for
 
 __all__ = [
     "CompiledSubmission",
     "SubmissionInputs",
     "compile_submission",
-    "exceeded_routine_bounds",
     "render_approver_context",
     "require_a_dataset_release_that_is_current",
     "require_registered_repository",
@@ -676,14 +675,7 @@ def compile_submission(
             f"{', '.join(tripped)}"
         )
 
-    # The rate beside the facts, for the reason recorded above
-    # EXCEPTION_RATE_CEILING_USD_PER_HOUR: policy gates an expensive instance type whatever
-    # the run's total cost is, and RequestFacts cannot carry the rate. cost is not optional
-    # here -- an unregistered profile was refused above -- so unlike admission there is no
-    # placeholder.
-    approval_class = classify_request(
-        facts, policy.thresholds, hourly_rate_usd=cost.hourly_rate_usd
-    )
+    approval_class = classify_request(facts, policy.thresholds)
     return CompiledSubmission(
         run_id=run_id,
         manifest=manifest,
@@ -695,91 +687,6 @@ def compile_submission(
         resolved_image=resolved_image,
         experiment=inputs.experiment,
     )
-
-
-def exceeded_routine_bounds(
-    facts: RequestFacts,
-    policy: ApprovalPolicy,
-    *,
-    hourly_rate_usd: Decimal | None = None,
-) -> tuple[str, ...]:
-    """Which bounds this request is over, said in words.
-
-    A cost figure on its own invites a rubber stamp. Which bound was exceeded is the single
-    most decision-relevant thing an approver can be told, so it is stated rather than left
-    to be inferred from a table of numbers.
-
-    Takes the facts rather than a :class:`CompiledSubmission`, and is named rather than
-    underscored, because ``edullm check`` prints the same sentences before the submission
-    is dispatched and has no compiled submission to give it -- the image digest is the one
-    field a laptop cannot resolve. Two spellings of "which bound did this cross" would
-    disagree the first time a threshold moved, and the reader who would find out is an
-    approver reading a run the CLI described differently.
-
-    **THE RATE IS THE FIFTH BOUND AND IT WAS THE ONE NOTHING REPORTED.**
-    :func:`~edullm_platform.contracts.policy.classify_request` has always tested
-    ``hourly_rate_usd`` against ``EXCEPTION_RATE_CEILING_USD_PER_HOUR`` beside the four
-    thresholds, and this function tested only the four. So a submission that was an
-    exception *purely* on rate produced no reason at all, and
-    :func:`render_approver_context` fell through to a sentence saying one of its inputs was
-    not registered -- which is false, and sends the approver looking for a registration
-    problem that does not exist. Every ``gpu-8xa100`` dispatch is above the ceiling and
-    every one lands on the same admin, so that was the reason they would read most often.
-
-    ``hourly_rate_usd`` is keyword-only and optional, which is the one asymmetry against
-    ``classify_request``, where it is required so that a caller who has not decided what to
-    pass gets a ``TypeError`` rather than a routine classification. The failure that guards
-    against is a run released by the wrong person; the failure here is a sentence missing
-    from a page that names the class either way, and ``edullm check`` already composes its
-    own rate line from the cost inputs it holds. ``None`` therefore means "this caller has
-    no rate to test", not "the rate is fine".
-    """
-    limits = policy.thresholds
-    exceeded: list[str] = []
-    if facts.estimated_cost_usd > limits.routine_maximum_cost_usd:
-        exceeded.append(
-            f"worst-case cost ${_plain(facts.estimated_cost_usd)} exceeds the routine "
-            f"ceiling of ${_plain(limits.routine_maximum_cost_usd)}"
-        )
-    if facts.maximum_runtime_hours > limits.routine_maximum_runtime_hours:
-        exceeded.append(
-            f"runtime bound of {_plain(facts.maximum_runtime_hours)}h exceeds the routine "
-            f"ceiling of {_plain(limits.routine_maximum_runtime_hours)}h"
-        )
-    if facts.maximum_attempts > limits.routine_maximum_attempts:
-        exceeded.append(
-            f"attempt bound of {facts.maximum_attempts} exceeds the routine ceiling of "
-            f"{limits.routine_maximum_attempts}"
-        )
-    if facts.fanout_size > limits.routine_maximum_fanout_size:
-        exceeded.append(
-            f"fan-out size of {facts.fanout_size} exceeds the routine ceiling of "
-            f"{limits.routine_maximum_fanout_size}"
-        )
-    # NOTHING BUILT FROM A MANIFEST REACHES THIS BRANCH ANY MORE. build_request_facts
-    # stopped supplying fanout_parallelism when FanOut.max_parallel was removed, so a
-    # submission always arrives here declaring one. Kept rather than deleted because the
-    # threshold it reads is still in config/policy.yaml and removing a bound changes who
-    # may release a run, which is a policy_version decision rather than a consequence of
-    # this refactor. Delete the two together or neither.
-    if facts.fanout_parallelism > limits.routine_maximum_parallelism:
-        exceeded.append(
-            f"fan-out parallelism of {facts.fanout_parallelism} exceeds the routine ceiling "
-            f"of {limits.routine_maximum_parallelism}"
-        )
-    # Last, in the order ``classify_request`` tests them, and the only one whose ceiling is
-    # not in ``policy.thresholds`` -- see EXCEPTION_RATE_CEILING_USD_PER_HOUR for why it is
-    # a constant in contracts/policy.py instead. It says "rate ceiling" rather than "routine
-    # ceiling" for the same reason: the four above bound the size of one request and this
-    # one bounds the machine, and calling it routine would make an approver read the total
-    # beside it as the thing that crossed a line when the total is comfortably under one.
-    if hourly_rate_usd is not None and hourly_rate_usd > EXCEPTION_RATE_CEILING_USD_PER_HOUR:
-        exceeded.append(
-            f"hourly rate of ${_plain(hourly_rate_usd)} exceeds the rate ceiling of "
-            f"${_plain(EXCEPTION_RATE_CEILING_USD_PER_HOUR)}, whatever the run's total "
-            "cost is"
-        )
-    return tuple(exceeded)
 
 
 def _routing_note(inventory: OrganizationInventory, *, claimed_team: str) -> str:
@@ -859,6 +766,7 @@ def render_approver_context(
     wandb_username: str | None = None,
     placement_note: str | None = None,
     scan_note: str | None = None,
+    run_history: RunHistory | None = None,
 ) -> str:
     """What the reviewer reads before deciding, as GitHub step-summary markdown.
 
@@ -879,19 +787,36 @@ def render_approver_context(
     the same reason: the verdict needs the summary, the findings and the exception registry,
     and this function is given loaded configuration and reads no file.
 
+    ``run_history`` is the reading ``config/run-history.json`` carries, passed in for that
+    reason too, and ``None`` means no reading was available rather than that this shape has
+    never run. :func:`~edullm_platform.run_history.history_for` is what tells those apart in
+    words, and the section is printed either way.
+
     **IT IS REQUIRED READING RATHER THAN A NOTE, WHICH IS WHY IT HAS A SECTION AND THE
     PLACEMENT WARNING DOES NOT.** Until policy v4 an unreviewed digest was denied outright
     and no approver could release one, so there was nothing for a person to decide and
-    nothing to show them. It is an exception now, which means an admin can release it, and
-    an approval given without the findings in front of the approver is worse than the gate
-    that refused everybody. The sentence names which of the four scan verdicts happened,
+    nothing to show them. v4 made it an admin's call and v5 makes it a team lead's, and at
+    each step the section matters more rather than less: an approval given without the
+    findings in front of the approver is worse than the gate that refused everybody, and
+    v5 widened who is asked. The sentence names which of the four scan verdicts happened,
     because only one of them is a judgement anybody can make: a scan that has not finished
     and a set of findings this platform failed to read are both "come back later" rather
     than "decide".
+
+    **THERE IS NO "WHY THIS IS AN EXCEPTION" SECTION AND THERE WAS ONE.** It listed which
+    routine ceiling a request had crossed, and under v5 there are no routine ceilings and
+    no run classifies as an exception. What replaced it is the pair of sections above: the
+    worst case, which is what is being authorised, and what runs of this shape have
+    actually taken, which is what the worst case overstates.
     """
     manifest = submission.manifest
     cost = submission.cost
     short_sha = manifest.commit_sha[:12]
+    # Answered even when no reading was passed, because the answer to "what have runs like
+    # this taken" is a sentence in every case and one of the cases is that nobody has
+    # measured. A section that appeared only when there was a figure would let an approver
+    # read its absence as a reassurance.
+    history = history_for(manifest, history=run_history)
     lines = [
         f"# Run submission `{submission.run_id}`",
         "",
@@ -943,34 +868,21 @@ def render_approver_context(
         "",
         (
             "This is the ceiling, not an estimate. It is what the run may cost if every "
-            "attempt runs to its full time bound."
+            "attempt runs to its full time bound, and it is what routed this request to "
+            "you."
+        ),
+        "",
+        "## What runs of this shape have taken",
+        "",
+        history.said,
+        "",
+        (
+            "Measured from the lineage store's attempt records, over runs that succeeded. "
+            "It decides nothing: what you are releasing is the ceiling above, because that "
+            "is what the submission is authorised to spend."
         ),
         "",
     ]
-
-    if submission.approval_class is ApprovalClass.EXCEPTION:
-        # The rate beside the facts, for the reason recorded above
-        # EXCEPTION_RATE_CEILING_USD_PER_HOUR: RequestFacts cannot carry it, and it is the
-        # only thing that makes a gpu-8xa100 dispatch an exception. Omitted here, the
-        # fallback below would claim a registration problem on every one of them.
-        exceeded = exceeded_routine_bounds(
-            submission.facts, policy, hourly_rate_usd=cost.hourly_rate_usd
-        )
-        lines.append("## Why this is an exception")
-        lines.append("")
-        if exceeded:
-            lines.extend(f"- {reason}" for reason in exceeded)
-        elif scan_note is None:
-            lines.append(
-                "- No routine ceiling is exceeded; the submission is an exception because "
-                "one of its inputs is not registered."
-            )
-        if not submission.facts.image_scan_reviewed:
-            lines.append(
-                "- The image carries registry scan findings with no recorded review, which "
-                "is the section below."
-            )
-        lines.append("")
 
     if scan_note is not None:
         lines.extend(
@@ -981,10 +893,17 @@ def render_approver_context(
                 "",
                 (
                     "**Read this before releasing.** Until policy v4 this was refused "
-                    "outright and no approver could release it. Releasing it now is your "
-                    "judgement about this digest, recorded against your name. The sentence "
-                    "above says what would clear it instead, and three of the four things "
-                    "it can say are that nobody can review anything yet."
+                    "outright and no approver could release it, and until v5 only an admin "
+                    "could. Releasing it now is your judgement about this digest, recorded "
+                    "against your name. The sentence above says what would clear it "
+                    "instead, and three of the four things it can say are that nobody can "
+                    "review anything yet."
+                ),
+                "",
+                (
+                    "This section is also the reason the run is in front of you at all. A "
+                    "digest carrying unreviewed findings is never released automatically, "
+                    "whatever it costs."
                 ),
                 "",
             ]

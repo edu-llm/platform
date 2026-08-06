@@ -13,7 +13,7 @@ them would invent a shape rather than publish one.
 ``approving_environment``, ``manifest_sha256``, ``manifest`` and ``experiment`` into the
 artifact ``status`` reads back. Those are the names, spelled the same way, so that a caller
 holding a compiled submission and a caller holding a ``check`` are reading one vocabulary.
-What is added is ``refusals``, ``deferred``, ``cost`` and the envelope.
+What is added is ``refusals``, ``deferred``, ``cost``, ``history`` and the envelope.
 
 **THE ENVELOPE IS PINNED RATHER THAN DERIVED, AND TWO OTHER TOOLS ARE WHY.**
 ``docker ps --format json`` emits one object per line rather than an array, and the
@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from decimal import Decimal
 from typing import Any, Final, TextIO
 
 from edullm_platform.cli.actions import RunFacts, SubmissionRun
@@ -49,6 +50,7 @@ from edullm_platform.cli.configuration import ReviewedConfiguration
 from edullm_platform.cli.preflight import DEFERRED_TO_SUBMIT, Preflight, Refusal
 from edullm_platform.cli.presentation import plain_decimal
 from edullm_platform.cli.release import installed_version
+from edullm_platform.run_history import RUNGS
 
 __all__ = [
     "FORMAT_VERSION",
@@ -63,7 +65,12 @@ __all__ = [
 #: The version of the envelope below, bumped when a field changes meaning or goes away.
 #: Adding a field does not move it, which is the promise a reader needs: a caller reading
 #: ``refusals`` today keeps reading it after a field is added beside it.
-FORMAT_VERSION: Final = 1
+#:
+#: 2 because ``exceeded`` went away with policy v5. It listed which routine ceiling a
+#: request had crossed and there are no routine ceilings, so it could only ever be an empty
+#: list, and a key that is always empty is one every caller keeps checking for nothing.
+#: ``history`` arrived in the same document and would not have moved this on its own.
+FORMAT_VERSION: Final = 2
 
 
 def envelope(verb: str) -> dict[str, Any]:
@@ -136,9 +143,41 @@ def check_document(
             if preflight.approving_environment is None
             else preflight.approving_environment.value
         ),
-        "exceeded": list(preflight.exceeded),
         "cost": _cost_of(preflight),
+        "history": _history_of(preflight),
     }
+
+
+def _history_of(preflight: Preflight) -> dict[str, Any] | None:
+    """What runs of this shape have taken, as counts rather than as the sentence.
+
+    ``said`` is carried too, because a caller printing one line to a person should print the
+    same line this tool prints rather than composing a second one from the counts. What a
+    caller must not do is branch on it: the counts are the structure and the sentence is
+    prose that will be reworded.
+
+    ``cohort`` is ``None`` when there is no reading packaged and when nothing of this shape
+    has ever succeeded, and ``said`` is what tells those apart. Both are honest answers and
+    neither is a number.
+    """
+    answer = preflight.history
+    if answer is None:
+        return None
+    cohort = answer.cohort
+    return {
+        "said": answer.said,
+        "matched_on": None if cohort is None else list(RUNGS[cohort.rung][0]),
+        "succeeded": None if cohort is None else cohort.succeeded,
+        "failed": None if cohort is None else cohort.failed,
+        "fastest_seconds": None if cohort is None else _seconds(cohort.fastest_seconds),
+        "median_seconds": None if cohort is None else _seconds(cohort.median_seconds),
+        "slowest_seconds": None if cohort is None else _seconds(cohort.slowest_seconds),
+    }
+
+
+def _seconds(value: Decimal | None) -> str | None:
+    """Text and never a JSON number, for the reason money is text two functions down."""
+    return None if value is None else str(value)
 
 
 def _manifest_of(preflight: Preflight) -> dict[str, Any] | None:

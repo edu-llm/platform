@@ -41,7 +41,6 @@ from edullm_platform.phase2_evidence import (
     LeadTeamMembership,
     ProtectedEnvironment,
 )
-from tests.policy_support import ROUTINE_RATE
 from tests.test_authorization import (
     load_approval_policy,
     load_organization_inventory,
@@ -169,7 +168,7 @@ def test_a_researcher_cannot_release_their_own_run(
             facts_for(inventory, login, estimated_cost_usd="5000"),
         ):
             decision = evaluate_authorization(
-                login, login, facts, policy, inventory, hourly_rate_usd=ROUTINE_RATE
+                login, login, facts, policy, inventory
             )
 
             assert decision.granted is False, login
@@ -200,40 +199,36 @@ def test_a_lead_can_release_their_own_run(
             lead,
             facts_for(inventory, lead),
             policy,
-            inventory,
-            hourly_rate_usd=ROUTINE_RATE,
+            inventory
         )
 
         assert decision.granted is True, lead
         assert decision.reason is AuthorizationReason.ROUTINE_SELF_AUTHORIZED, lead
 
 
-def test_an_administrator_can_release_their_own_exception(
+def test_the_admin_gate_still_lets_an_administrator_release_their_own_run(
     inventory: OrganizationInventory,
-    policy: ApprovalPolicy,
     environments: EnvironmentInventory,
 ) -> None:
-    # The exception gate only. An admin who is not also a lead reviews neither the lead
-    # gate nor the team behind it, so their own routine run waits on a lead. Admission
-    # authorizes it as routine_self_authorized either way, which is why that gap is
-    # invisible from the roster alone.
+    """The gate is unchanged and no run reaches it, which are two facts and not one.
+
+    This asked ``evaluate_authorization`` for a five-thousand-dollar submission and got
+    ``exception_self_approved_by_admin``. Policy v5 classifies that as routine, so the
+    question can no longer be put through a request, and a version of this test that kept
+    asking would be asserting the lead path under an admin's name.
+
+    What is left to check is the environment, which is a real GitHub setting that a person
+    can change and that nothing else in this module reads for the admin gate. It carries the
+    two admins as reviewers and does not prevent self-review, so the day a capacity block
+    classifies as an exception, an admin can release their own.
+
+    Mutation: turn ``prevent_self_review`` on for ``run-approval-admin``. This fails, and
+    the failure it prevents is a capacity block that nobody can release, discovered on the
+    first one.
+    """
     gate = gate_for(environments, ApprovalClass.EXCEPTION)
     named = {reviewer.name.lower() for reviewer in gate.reviewers if reviewer.kind == "User"}
 
     assert gate.prevent_self_review is False
     for admin in inventory.admins:
         assert admin.lower() in named, admin
-        decision = evaluate_authorization(
-            admin,
-            admin,
-            facts_for(inventory, admin, estimated_cost_usd="5000"),
-            policy,
-            inventory,
-            # Under the ceiling, so the exception is earned by the $5,000 above and not by the
-            # profile. A gated rate would reach the same reason for a different cause, which
-            # is the one thing a test about self-approval must not let happen.
-            hourly_rate_usd=ROUTINE_RATE,
-        )
-
-        assert decision.granted is True, admin
-        assert decision.reason is AuthorizationReason.EXCEPTION_SELF_APPROVED_BY_ADMIN, admin

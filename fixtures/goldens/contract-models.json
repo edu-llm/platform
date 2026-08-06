@@ -320,14 +320,14 @@
       "module": "edullm_platform.contracts.policy",
       "name": "ApprovalPolicy",
       "schema_version": "unversioned",
-      "structural_digest": "sha256:05d9f749d85b945e788a7222bccfa558f77e4920261ae7cb75fd83efe121e442"
+      "structural_digest": "sha256:2b192a089c89fdff053729f88309e7f49901c9c1e65fcf94aa2c33dbbc7c328c"
     },
     {
       "base": false,
       "module": "edullm_platform.contracts.policy",
       "name": "PolicyThresholds",
       "schema_version": "unversioned",
-      "structural_digest": "sha256:f772cd00d6ae1c97fd494f7a268074d4119e522f25366ee66e5a4e0b8fa51ea1"
+      "structural_digest": "sha256:117dbe14b6ec7380ff25723615eca6d7c65d247fac7a096f11b4a8879b3176a0"
     },
     {
       "base": false,

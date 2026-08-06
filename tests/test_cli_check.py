@@ -162,19 +162,22 @@ def test_a_clean_submission_is_cleared_and_priced_from_the_catalog(
     # gpu-1xa10g at $1.006 for olmo-core-train's 24h ceiling and two attempts, which is
     # the arithmetic config/workload-catalog.yaml and config/policy.yaml between them fix.
     assert "$1.006/hour x 1 node x 24h x 2 attempts x 1 cell = $48.29" in out
-    assert "routine -> run-approval-lead" in out
+    # AUTOMATIC, AND IT PRINTED "routine -> run-approval-lead" UNTIL POLICY v5. Forty-eight
+    # dollars in one cell is a tenth of the one bound, so a full day of training on one card
+    # is now released by nobody. That is the change a submitter notices first.
+    assert "automatic -- one cell, under $500. Nobody releases this." in out
     assert f"team              {SUBMITTER_TEAM}" in out
 
 
-def test_a_short_cheap_single_cell_run_is_told_nobody_releases_it(
+def test_a_cheap_single_cell_run_is_told_nobody_releases_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The automatic class, and the bounds printed as the policy file states them.
+    """The automatic class, with the bound printed as the policy file states it.
 
-    Mutation: hard-code the four hours ``grant-matherne-scarce-shape-v2.md`` prints.
-    ``decisions.md`` records the four-hour bound as *not ruled* and one hour as what the
-    configuration says, so a CLI printing four would be telling a researcher a submission
-    at ninety minutes releases itself when it goes to a lead.
+    Mutation: write ``$500`` into ``presentation.py`` rather than interpolating
+    ``automatic_below_cost_usd``. ``test_cli_no_hardcoded_bounds.py`` is what normally
+    catches that; this catches the half of it that reads the wrong field, because the value
+    printed here has to be the one ``classify_request`` compared against.
     """
     root, runner = checkout(tmp_path, workload="olmo-core-check", compute="gpu-1xt4")
 
@@ -194,7 +197,7 @@ def test_a_short_cheap_single_cell_run_is_told_nobody_releases_it(
     )
 
     assert code == EXIT_OK, out + err
-    assert "automatic -- under $5 and under 1h. Nobody releases this." in out
+    assert "automatic -- one cell, under $500. Nobody releases this." in out
 
 
 def test_a_mistyped_dataset_release_is_refused_with_the_list_it_should_have_named(

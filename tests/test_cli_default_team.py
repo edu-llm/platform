@@ -240,8 +240,7 @@ def test_the_claim_a_default_makes_is_authorized_exactly_as_a_typed_one_is() -> 
         None,
         facts,
         configuration.policy,
-        configuration.inventory,
-        hourly_rate_usd=Decimal("2.00"),
+        configuration.inventory
     )
 
     assert decision.granted

@@ -11,7 +11,6 @@ from edullm_platform.contracts.decision_matrix import AuthorizationScenario
 from edullm_platform.contracts.policy import ApprovalClass, ApprovalScope
 from edullm_platform.manifest_helpers import compute_manifest_maximum_cost
 from edullm_platform.operational_inventory import request_facts_from_manifest
-from tests.policy_support import ROUTINE_RATE
 from tests.test_lifecycle import reverse_mapping_order
 from tests.test_manifest import (
     PROJECT_ROOT,
@@ -31,16 +30,24 @@ AUTHORIZATION_FIXTURE_FILENAMES = tuple(
     sorted(path.name for path in AUTHORIZATION_FIXTURES_DIR.glob("*.yaml"))
 )
 
+# THE THREE THINGS THAT CAN HAPPEN TO A SUBMISSION UNDER POLICY v5. Nobody releases it, the
+# submitter releases it because they hold the role, or somebody else does. The admin row
+# that stood here is gone with the exception class, and what took its place is the automatic
+# one, which the matrix had never covered.
 REVIEWED_SCENARIO_REASONS = {
-    "admin-exception.yaml": AuthorizationReason.EXCEPTION_APPROVED_BY_ADMIN,
     "lead-self-authorization.yaml": AuthorizationReason.ROUTINE_SELF_AUTHORIZED,
     "member-approval.yaml": AuthorizationReason.ROUTINE_APPROVED_BY_LEAD_OR_ADMIN,
+    "released-by-nobody.yaml": AuthorizationReason.AUTOMATIC_BELOW_APPROVAL_THRESHOLDS,
 }
 
+# Two scenarios read the same manifest, which is v5 rather than an oversight. The only
+# reviewed manifest a person still releases is the fan-out, because every other one is a
+# single cell under five hundred dollars, so both rows about a person releasing something
+# have to be about that shape.
 SCENARIO_SOURCE_MANIFESTS = {
-    "admin-exception.yaml": "gpu-exception.yaml",
     "lead-self-authorization.yaml": "multiseed-routine.yaml",
-    "member-approval.yaml": "olmo-branch-routine.yaml",
+    "member-approval.yaml": "multiseed-routine.yaml",
+    "released-by-nobody.yaml": "gpu-exception.yaml",
 }
 
 SCENARIO_IDS = list(REVIEWED_SCENARIO_REASONS)
@@ -82,14 +89,7 @@ def test_authorization_fixture_validates_against_the_scenario_contract(filename:
 @pytest.mark.parametrize("filename", SCENARIO_IDS, ids=SCENARIO_IDS)
 def test_authorization_fixture_produces_exactly_its_expected_reason(filename: str) -> None:
     scenario = load_scenario(filename)
-    # Under the rate ceiling, so each fixture's expected approval class is still reached by
-    # the request bounds the fixture states. A fixture is about who may release a run; the
-    # ceiling is about which machine, and this suite does not vary that.
-    decision = scenario.decide(
-        load_approval_policy(),
-        load_organization_inventory(),
-        hourly_rate_usd=ROUTINE_RATE,
-    )
+    decision = scenario.decide(load_approval_policy(), load_organization_inventory())
     assert decision.reason is REVIEWED_SCENARIO_REASONS[filename]
     assert decision.reason is scenario.expected.reason
     assert decision.granted is scenario.expected.granted
@@ -156,12 +156,25 @@ def test_the_lead_scenario_records_no_second_approver() -> None:
     assert scenario.expected.reason is AuthorizationReason.ROUTINE_SELF_AUTHORIZED
 
 
-def test_the_exception_scenario_is_approved_by_an_admin_who_leads_no_team() -> None:
-    scenario = load_scenario("admin-exception.yaml")
-    assert scenario.approver is not None
-    assert scenario.approver.admin is True
-    assert scenario.approver.team_lead is False
-    assert scenario.expected.approval_class is ApprovalClass.EXCEPTION
+def test_the_automatic_scenario_records_no_approver_and_is_still_granted() -> None:
+    """The row that replaced the admin one, and the two halves of it that matter.
+
+    Mutation: give the fixture an ``approver``. The first assertion fails, and the reason it
+    has to is that a run at ``run-approval-automatic`` passes a gate with no reviewer, so an
+    approver on the record would name somebody who was never asked.
+
+    Second mutation: move the automatic branch of ``evaluate_authorization`` below the
+    self-approval test. This submitter is neither a lead nor an admin, so the fall-through
+    reads the absent approver as self-approval and refuses with
+    ``self_approval_not_permitted_for_member``. ``granted`` goes false and the cheapest runs
+    on the platform go from unattended to impossible.
+    """
+    scenario = load_scenario("released-by-nobody.yaml")
+    assert scenario.approver is None
+    assert scenario.submitter.admin is False
+    assert scenario.submitter.team_lead is False
+    assert scenario.expected.approval_class is ApprovalClass.AUTOMATIC
+    assert scenario.expected.granted is True
 
 
 @pytest.mark.parametrize("filename", AUTHORIZATION_FIXTURE_FILENAMES)

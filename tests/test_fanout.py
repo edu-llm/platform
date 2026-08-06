@@ -31,7 +31,6 @@ from tests.test_policy import (
     load_approval_policy,
     load_dataset_registry,
     load_repository_registry,
-    numeric_bound_violations,
 )
 
 CPU_HOURLY_RATE_USD = Decimal("1.428")
@@ -302,38 +301,45 @@ def test_the_multiseed_fixture_is_not_priced_one_seed_at_a_time() -> None:
     assert manifest_cost(manifest) != manifest_cost(one_seed) * manifest.fanout.size
 
 
-def test_the_multiseed_fixture_stays_within_the_routine_ceilings() -> None:
+def test_the_multiseed_fixture_reaches_a_lead_because_it_fans_out_and_not_because_it_costs() -> (
+    None
+):
+    """The shipped fan-out, and the reason it is the only reviewed manifest a person sees.
+
+    Mutation: drop the ``fanout_size`` test from ``classify_request``. The last assertion
+    fails while the first two still pass, which is the point of asserting the cost against
+    the bound rather than only asserting the class: twenty dollars is a fortieth of the
+    bound, so nothing about the money is what puts this in front of a lead.
+    """
     manifest = multiseed_fixture()
     thresholds = shipped_thresholds()
     facts = facts_for(manifest)
-    assert facts.fanout_size <= thresholds.routine_maximum_fanout_size
-    assert numeric_bound_violations(facts, thresholds) == frozenset()
-    assert classify_request(
-        facts, thresholds, hourly_rate_usd=rate_for(manifest)
-    ) is ApprovalClass.ROUTINE
+
+    assert facts.fanout_size == 5
+    assert facts.estimated_cost_usd < thresholds.automatic_below_cost_usd
+    assert classify_request(facts, thresholds) is ApprovalClass.ROUTINE
 
 
 @pytest.mark.parametrize("filename", REPRESENTATIVE_MANIFEST_FILENAMES)
 def test_shipped_fixture_manifests_keep_their_classification(filename: str) -> None:
     manifest = load_representative_manifest(filename)
     expected = expected_manifest_classification(filename)
-    assert (
-        classify_request(
-            facts_for(manifest), shipped_thresholds(), hourly_rate_usd=rate_for(manifest)
-        )
-        is expected
-    )
+    assert classify_request(facts_for(manifest), shipped_thresholds()) is expected
 
 
-def test_a_request_without_a_fanout_classifies_exactly_as_before() -> None:
+def test_the_same_work_without_a_fanout_is_released_by_nobody() -> None:
+    """One cell of what the sweep runs, which is the comparison the fan-out rule is about.
+
+    Mutation: drop the ``fanout_size`` test from ``classify_request``. This row is unchanged
+    and the sweep above it becomes automatic too, so the two together are what say the rule
+    is about the shape rather than the price.
+    """
     manifest = sweep_manifest(fanout=None)
     facts = facts_for(manifest)
+
     assert facts.fanout_size == 1
-    assert facts.fanout_parallelism == 1
-    assert numeric_bound_violations(facts, shipped_thresholds()) == frozenset()
-    assert classify_request(
-        facts, shipped_thresholds(), hourly_rate_usd=rate_for(manifest)
-    ) is ApprovalClass.ROUTINE
+    assert facts.estimated_cost_usd < shipped_thresholds().automatic_below_cost_usd
+    assert classify_request(facts, shipped_thresholds()) is ApprovalClass.AUTOMATIC
 
 
 def test_request_facts_carry_the_fanout_shape_declared_by_the_manifest() -> None:
@@ -341,36 +347,44 @@ def test_request_facts_carry_the_fanout_shape_declared_by_the_manifest() -> None
     assert facts.fanout_size == 12
 
 
-def test_no_manifest_can_raise_the_parallelism_a_request_is_classified_on() -> None:
-    """The bound survives its only input, and a reader should find that written down.
+def test_the_parallelism_fact_survives_the_bound_that_read_it_and_constrains_nothing() -> None:
+    """The threshold went in v5 and the fact stayed, which is deliberate and asymmetric.
 
-    ``PolicyThresholds.routine_maximum_parallelism`` and
-    ``RequestFacts.fanout_parallelism`` are both still here and ``classify_request`` still
-    compares them, but ``FanOut.max_parallel`` was the only thing that ever set the fact.
-    So every submission now classifies at one however wide it fans out, and a request that
-    used to be an exception on parallelism alone is routine.
+    ``FanOut.max_parallel`` was the only thing that ever set ``fanout_parallelism``, and it
+    was removed when Batch turned out to accept ``arrayProperties.size`` and no concurrency
+    cap. ``routine_maximum_parallelism`` therefore bounded nothing, and the v5 bump is where
+    it was deleted, because dropping a threshold widens what a lead may approve and that
+    belongs in a version somebody reviewed.
 
-    That is a loosening of who may release a run, and it is recorded as a test rather than
-    a comment because the tidy follow-up is to delete the threshold, which is a
-    policy_version bump somebody has to decide on. Until then this is the honest
-    description of what the bound does.
+    The fact is still on ``RequestFacts`` because a fact with a default constrains nobody,
+    where a threshold that bounds nothing reads as a control. What actually bounds
+    concurrency is the compute environment's MaxvCpus divided by what one cell reserves.
+
+    Mutation: give ``RequestFacts.fanout_parallelism`` a source again without deciding what
+    it means. The second assertion fails on the widest sweep this platform accepts, which is
+    where somebody would notice.
     """
     widest = sweep_manifest(fanout=fanout_payload(size=64))
     facts = facts_for(widest)
 
     assert facts.fanout_size == 64
     assert facts.fanout_parallelism == 1
-    assert facts.fanout_parallelism <= shipped_thresholds().routine_maximum_parallelism
+    assert not hasattr(shipped_thresholds(), "routine_maximum_parallelism")
 
 
 def test_a_sweep_is_priced_as_one_submission_so_it_cannot_hide_behind_cheap_cells() -> None:
     """Guards the decomposition bypass that the fan-out contract exists to close.
 
-    Forty ten-hour CPU runs cost $14.28 each and every one of them is routine. The same
-    forty runs submitted as one sweep cost $571.20, which is over the routine ceiling, so
-    the sweep must be an exception. If policy ever priced the cell instead of the
-    submission, an arbitrarily expensive experiment could be waved through as routine
-    simply by declaring it as a fan-out.
+    Forty ten-hour CPU runs cost $14.28 each and under v5 every one of them is released by
+    nobody. The same forty runs submitted as one sweep cost $571.20, which is over the one
+    bound, so a team lead sees the sweep. If policy ever priced the cell instead of the
+    submission, an arbitrarily expensive experiment could be waved through with no approver
+    at all simply by declaring it as a fan-out.
+
+    Mutation: price the cell rather than the submission, by dropping ``cells`` from
+    ``compute_maximum_compute_cost_usd``. The sweep's total drops to $14.28, the final
+    assertion returns routine on the fan-out rule alone, and the equality against the sum of
+    the hand-split runs fails first, which is where the arithmetic is.
     """
     thresholds = shipped_thresholds()
     cells = 40
@@ -386,11 +400,9 @@ def test_a_sweep_is_priced_as_one_submission_so_it_cannot_hide_behind_cheap_cell
     )
     for index, cell in enumerate(hand_split_manifests):
         assert manifest_cost(cell) == cell_cost
-        assert classify_request(
-            facts_for(cell), thresholds, hourly_rate_usd=rate_for(cell)
-        ) is ApprovalClass.ROUTINE, (
-            f"hand-split run {index} is individually routine at {cell_cost} USD, which is "
-            "exactly why the sweep must not be priced one cell at a time"
+        assert classify_request(facts_for(cell), thresholds) is ApprovalClass.AUTOMATIC, (
+            f"hand-split run {index} is individually released by nobody at {cell_cost} USD, "
+            "which is exactly why the sweep must not be priced one cell at a time"
         )
 
     sweep = sweep_manifest(fanout=fanout_payload(size=cells), maximum_runtime_hours="10")
@@ -402,17 +414,25 @@ def test_a_sweep_is_priced_as_one_submission_so_it_cannot_hide_behind_cheap_cell
         "review changes"
     )
     assert sweep_cost == cell_cost * cells == Decimal("571.20")
-    assert sweep_cost > thresholds.routine_maximum_cost_usd
-    assert numeric_bound_violations(sweep_facts, thresholds) == frozenset({"cost"})
-    assert classify_request(
-        sweep_facts, thresholds, hourly_rate_usd=rate_for(sweep)
-    ) is ApprovalClass.EXCEPTION, (
-        "forty individually routine runs bundled into one submission cost more than the "
-        "routine ceiling and have to be reviewed once, as one thing"
+    assert sweep_cost > thresholds.automatic_below_cost_usd
+    assert classify_request(sweep_facts, thresholds) is ApprovalClass.ROUTINE, (
+        "forty runs nobody would have released individually cost more than the bound when "
+        "they are bundled, and have to be read once, as one thing"
     )
 
 
-def test_a_hundred_trivial_cells_is_an_exception_on_count_alone() -> None:
+def test_a_hundred_trivial_cells_reaches_a_lead_on_its_shape_alone() -> None:
+    """A hundred one-minute jobs are cheap and are still a hundred machines starting.
+
+    Under v4 this was an exception on ``routine_maximum_fanout_size``, which stopped at
+    sixty-four. There is no count ceiling now and this is routine rather than an exception,
+    which is a narrowing of who is asked and not of whether anybody is: the fan-out rule
+    catches every size, where the count ceiling only caught the ones above sixty-four.
+
+    Mutation: drop the ``fanout_size`` test from ``classify_request``. Seven dollars is a
+    seventieth of the bound, so this returns automatic and a hundred machines start with
+    nobody having seen the total.
+    """
     thresholds = shipped_thresholds()
     sweep = sweep_manifest(
         fanout=fanout_payload(size=100),
@@ -421,50 +441,29 @@ def test_a_hundred_trivial_cells_is_an_exception_on_count_alone() -> None:
     facts = facts_for(sweep)
 
     assert facts.estimated_cost_usd == Decimal("7.14")
-    assert facts.estimated_cost_usd < thresholds.routine_maximum_cost_usd
-    assert numeric_bound_violations(facts, thresholds) == frozenset({"fanout_size"})
-    assert classify_request(
-        facts, thresholds, hourly_rate_usd=rate_for(sweep)
-    ) is ApprovalClass.EXCEPTION, (
-        "a hundred one-minute jobs are cheap and still an operational event; the count "
-        "ceiling bounds what the cost ceiling cannot"
-    )
+    assert facts.estimated_cost_usd < thresholds.automatic_below_cost_usd
+    assert classify_request(facts, thresholds) is ApprovalClass.ROUTINE
 
 
-def test_a_fanout_at_the_count_ceiling_stays_routine() -> None:
-    """Routine, and specifically not automatic, which is now a property rather than luck.
+def test_a_sixty_four_cell_sweep_is_routine_and_specifically_not_automatic() -> None:
+    """The trap stated rather than merely avoided, at the width the old count ceiling ended.
 
-    This sweep satisfies both auto-approve bounds on the numbers alone: sixty-four cells at
-    the count ceiling is $4.57 over 0.05 hours, because the estimate already multiplies by
-    cells. Cost and runtime are asserted against the bounds below so that the test states
-    the trap rather than merely avoiding it. What keeps a lead in front of it is the
-    fan-out exclusion in classify_request and nothing else.
+    Sixty-four cells of a three-minute job is $4.57, which is under a hundredth of the one
+    bound. Cost is asserted against the bound below so the test says why this is
+    interesting: nothing about the money keeps a person in front of it, and the fan-out
+    exclusion in ``classify_request`` is the whole of what does.
 
-    Mutation: drop ``facts.fanout_size == 1`` from the automatic branch. This classifies as
+    Mutation: drop ``facts.fanout_size > 1`` from ``classify_request``. This classifies as
     automatic, and sixty-four machines start with nobody having seen the total. The rule was
     written to take a person out of a twenty-step smoke test, not out of a sweep.
-
-    There was a second test beside this one asserting that a fan-out over
-    ``routine_maximum_parallelism`` was an exception. It went when the field feeding it did:
-    a submitter can no longer state a concurrency cap, so no manifest can violate that
-    bound. The threshold survives in config/policy.yaml with nothing to compare against,
-    which is recorded there rather than quietly dropped, because removing a bound changes
-    who may release a run.
     """
     thresholds = shipped_thresholds()
-    sweep = sweep_manifest(
-        fanout=fanout_payload(size=thresholds.routine_maximum_fanout_size),
-        maximum_runtime_hours="0.05",
-    )
+    sweep = sweep_manifest(fanout=fanout_payload(size=64), maximum_runtime_hours="0.05")
     facts = facts_for(sweep)
 
     assert facts.fanout_size == 64
-    assert numeric_bound_violations(facts, thresholds) == frozenset()
     assert facts.estimated_cost_usd < thresholds.automatic_below_cost_usd
-    assert facts.maximum_runtime_hours < thresholds.automatic_below_runtime_hours
-    assert classify_request(
-        facts, thresholds, hourly_rate_usd=rate_for(sweep)
-    ) is ApprovalClass.ROUTINE
+    assert classify_request(facts, thresholds) is ApprovalClass.ROUTINE
 
 
 def test_fanout_manifest_round_trips_through_canonical_json() -> None:

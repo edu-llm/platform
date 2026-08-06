@@ -9,6 +9,11 @@ approver:
   admin: false
   team_lead: true
 request:
+  # THESE FACTS CAME FROM olmo-branch-routine.yaml AND THEY COME FROM multiseed-routine.yaml
+  # NOW, WHICH IS POLICY v5 RATHER THAN A CHANGE OF SUBJECT. This scenario is about a member
+  # whose run somebody else releases, and under v5 a six-dollar single-cell run is released
+  # by nobody at all. The only shapes a person still sees are a fan-out and a run at or over
+  # five hundred dollars, and a fan-out is the one a reviewed manifest carries.
   claimed_team: memory-split
   repository_registered: true
   dataset_registered: true
@@ -17,10 +22,10 @@ request:
   immutable_revision: true
   immutable_image: true
   image_scan_reviewed: true
-  estimated_cost_usd: "6.04"
-  maximum_runtime_hours: "6"
+  estimated_cost_usd: "20.12"
+  maximum_runtime_hours: "4"
   maximum_attempts: 1
-  fanout_size: 1
+  fanout_size: 5
   fanout_parallelism: 1
 expected:
   granted: true

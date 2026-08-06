@@ -316,13 +316,11 @@ def admit(
     try:
         cost = compute_manifest_cost_inputs(manifest, catalog)
         estimated_cost_usd = cost.maximum_compute_cost_usd
-        hourly_rate_usd = cost.hourly_rate_usd
     except ValueError:
-        # The profile is not in the catalog, so it has no rate. The request is already
-        # denied outright below; the placeholders never reach a record.
+        # The profile is not in the catalog, so it has no rate and no total. The request is
+        # already denied outright below; the placeholder never reaches a record.
         cost = None
         estimated_cost_usd = Decimal(0)
-        hourly_rate_usd = Decimal(0)
 
     facts = build_request_facts(
         manifest,
@@ -339,18 +337,16 @@ def admit(
         image_scan_summary=image_scan_summary,
         image_scan_findings=image_scan_findings,
     )
-    # The rate is passed beside the facts because RequestFacts cannot carry it. Policy gates
-    # a profile whose hourly rate is above a ceiling, whatever the run's total cost is; see
-    # EXCEPTION_RATE_CEILING_USD_PER_HOUR in contracts/policy.py for why the number is not a
-    # sixth field on PolicyThresholds and not a field here.
-    approval_class = classify_request(facts, policy.thresholds, hourly_rate_usd=hourly_rate_usd)
+    # RE-DERIVED HERE AND NOT TAKEN FROM THE RUNNER, WHICH IS THE POINT OF THIS FUNCTION.
+    # The rate that used to be passed beside the facts is gone with the ceiling that read
+    # it, so the class is a function of the facts and the deployed thresholds alone.
+    approval_class = classify_request(facts, policy.thresholds)
     authorization = evaluate_authorization(
         submitter=submitter,
         approver=approver,
         request=facts,
         policy=policy,
         inventory=inventory,
-        hourly_rate_usd=hourly_rate_usd,
     )
 
     tripped = denied_outright_conditions(facts, policy)

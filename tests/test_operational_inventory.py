@@ -407,9 +407,17 @@ def test_representative_manifests_fails_when_the_registry_stops_listing_their_da
 
 
 def test_representative_manifests_fails_on_classification_mismatch() -> None:
+    """Mutation: stop comparing the derived class against the reviewed one.
+
+    THE BREAK IS FOUR ATTEMPTS AND IT WAS ONE HOUR. Shortening the run used to move
+    ``gpu-exception.yaml`` off the runtime ceiling and therefore off its class. Policy v5
+    has no runtime ceiling, so the only way to move a fixture's class is to move its worst
+    case across five hundred dollars: $141.80 at one attempt becomes $567.20 at four, which
+    is a lead's to release where the reviewed expectation says nobody releases it.
+    """
     inputs = loaded_inputs()
     manifest = load_manifest(PROJECT_ROOT / "fixtures" / "manifests" / "gpu-exception.yaml")
-    broken_manifest = manifest.model_copy(update={"maximum_runtime_hours": Decimal(1)})
+    broken_manifest = manifest.model_copy(update={"maximum_attempts": 4})
     manifests = tuple(
         (filename, broken_manifest if filename == "gpu-exception.yaml" else current)
         for filename, current in inputs.manifests
@@ -649,5 +657,5 @@ def test_representative_manifest_classifications_match_policy_expectations() -> 
         # constant would let a fixture naming a profile above the ceiling keep classifying as
         # routine here while admission called it an exception.
         assert classify_request(
-            facts, policy.thresholds, hourly_rate_usd=cost.hourly_rate_usd
+            facts, policy.thresholds
         ) == expected_manifest_classification(filename)

@@ -37,8 +37,20 @@ from edullm_platform.manifest_helpers import load_manifest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_FIXTURES_DIR = PROJECT_ROOT / "fixtures" / "manifests"
 
-ROUTINE_MANIFEST = "cpu-routine.yaml"
-EXCEPTION_MANIFEST = "gpu-exception.yaml"
+# THE MODULE'S DEFAULT SUBMISSION IS THE FAN-OUT NOW, AND IT WAS cpu-routine.yaml. Policy
+# v5 releases a single cell under five hundred dollars by nobody, so the CPU fixture stopped
+# being a submission a lead sees and the only reviewed manifest that still is one is the
+# five-cell sweep. Nearly every test here is about a gate, an approver or a record, so the
+# default has to be a shape that reaches a person.
+ROUTINE_MANIFEST = "multiseed-routine.yaml"
+
+#: The same fixture the default was, kept as the automatic case rather than dropped. It is
+#: what a submission looks like when nobody releases it, which is now the ordinary path.
+AUTOMATIC_MANIFEST = "cpu-routine.yaml"
+
+#: A second manifest that is not the default, for the two tests that swap one for another
+#: after approval. Which one it is does not matter to them; that it hashes differently does.
+OTHER_MANIFEST = "gpu-exception.yaml"
 
 ADMIN = "philote-dev"
 LEAD = "ericrcwu001"
@@ -55,9 +67,9 @@ UNMATCHED_DIGEST = "sha256:" + "0" * 64
 #: the account id every capture tool then has to redact.
 ACCOUNT_ID = "123456789012"
 
-#: The profile the exception fixture names. Priced, and not backed by anything Phase 3
+#: The profile ``OTHER_MANIFEST`` names. Priced, and not backed by anything Phase 3
 #: deploys, which is a refusal in its own right -- see the note on ``backed_by_a_target``.
-EXCEPTION_COMPUTE_PROFILE = "gpu-4xa10g"
+OTHER_COMPUTE_PROFILE = "gpu-4xa10g"
 
 UNREGISTERED_DATASET = "dolma-2026-99"
 UNREGISTERED_REPOSITORY = "not-a-registered-repository"
@@ -256,7 +268,7 @@ REJECTED_SUBMISSIONS: tuple[tuple[AdmissionReason, dict[str, object]], ...] = (
     ),
     (
         AdmissionReason.APPROVAL_ENVIRONMENT_MISMATCH,
-        {"manifest_name": EXCEPTION_MANIFEST, "submitter": LEAD, "approver": ADMIN},
+        {"manifest_name": OTHER_MANIFEST, "submitter": LEAD, "approver": ADMIN},
     ),
     (
         AdmissionReason.AUTHORIZATION_DENIED,
@@ -280,28 +292,41 @@ def test_a_correct_submission_through_the_right_gate_is_admitted() -> None:
     assert decision.authorization.granted is True
     assert decision.authorization.reason is AuthorizationReason.ROUTINE_APPROVED_BY_LEAD_OR_ADMIN
     assert decision.cost is not None
-    assert decision.cost.maximum_compute_cost_usd == Decimal("2.86")
+    assert decision.cost.maximum_compute_cost_usd == Decimal("20.12")
     assert decision.run_id == RUN_ID
     assert decision.manifest_sha256 == digest_of(manifest_payload())
 
 
-def test_an_exception_released_by_an_admin_through_the_admin_gate_is_admitted() -> None:
-    catalog, targets = backed_by_a_target(EXCEPTION_COMPUTE_PROFILE)
+def test_a_submission_nobody_released_is_admitted_through_the_automatic_gate() -> None:
+    """The row that replaced the admin one, and the ordinary path under policy v5.
+
+    ``cpu-routine.yaml`` is $2.86 in one cell, so it reaches ``run-approval-automatic``,
+    which is a real environment with a branch policy and no reviewer. There is no approver
+    on the record because nobody was asked.
+
+    Mutation: move the automatic branch of ``evaluate_authorization`` below the
+    self-approval test. ``GMatherne`` is neither a lead nor an admin, so the absent approver
+    reads as self-approval and the run is refused with
+    ``self_approval_not_permitted_for_member``. The cheapest submissions on the platform go
+    from unattended to impossible, which is the whole of what that ordering protects.
+    """
     outcome = admit_submission(
-        manifest_name=EXCEPTION_MANIFEST,
-        submitter=LEAD,
-        approver=ADMIN,
-        approving_environment=ApprovalEnvironment.ADMIN,
-        catalog=catalog,
-        execution_targets=targets,
+        manifest_name=AUTOMATIC_MANIFEST,
+        approver=None,
+        approving_environment=ApprovalEnvironment.AUTOMATIC,
     )
     decision = outcome.decision
 
     assert decision.accepted is True
-    assert decision.approval_class is ApprovalClass.EXCEPTION
-    assert decision.approving_environment is ApprovalEnvironment.ADMIN
+    assert decision.approval_class is ApprovalClass.AUTOMATIC
+    assert decision.approving_environment is ApprovalEnvironment.AUTOMATIC
     assert decision.authorization is not None
-    assert decision.authorization.reason is AuthorizationReason.EXCEPTION_APPROVED_BY_ADMIN
+    assert decision.authorization.approver is None
+    assert decision.authorization.reason is (
+        AuthorizationReason.AUTOMATIC_BELOW_APPROVAL_THRESHOLDS
+    )
+    assert decision.cost is not None
+    assert decision.cost.maximum_compute_cost_usd == Decimal("2.86")
 
 
 @pytest.mark.parametrize("policy_version", ["v1", "v2", "v41"])
@@ -343,7 +368,7 @@ def test_a_manifest_that_does_not_hash_to_what_was_approved_is_refused() -> None
 def test_a_manifest_swapped_for_another_after_approval_is_refused() -> None:
     approved = digest_of(manifest_payload(ROUTINE_MANIFEST))
     outcome = admit_submission(
-        manifest_name=EXCEPTION_MANIFEST,
+        manifest_name=OTHER_MANIFEST,
         approved_manifest_sha256=approved,
         submitter=LEAD,
         approver=ADMIN,
@@ -351,7 +376,7 @@ def test_a_manifest_swapped_for_another_after_approval_is_refused() -> None:
     )
 
     assert outcome.decision.reason is AdmissionReason.MANIFEST_HASH_MISMATCH
-    assert outcome.intent.manifest == load_manifest_fixture(EXCEPTION_MANIFEST)
+    assert outcome.intent.manifest == load_manifest_fixture(OTHER_MANIFEST)
 
 
 def test_the_hash_is_checked_before_any_fact_is_derived_from_the_manifest() -> None:
@@ -399,26 +424,32 @@ def test_a_mismatched_hash_outranks_every_finding_the_manifest_would_have_produc
     assert condition not in decision.detail
 
 
-def test_an_exception_released_by_the_lead_gate_is_refused() -> None:
+def test_a_run_a_lead_should_have_seen_is_refused_when_the_automatic_gate_released_it() -> (
+    None
+):
+    """The mismatch that matters most under policy v5, and it points the other way now.
+
+    Under v4 the dangerous direction was an exception released by the lead gate, because a
+    lead was the weaker approver. There is no weaker approver than the automatic gate, which
+    has no reviewer at all, so the submission worth refusing is a fan-out that arrived
+    through it. Nothing in the workflow can produce that today; admission refuses it anyway,
+    because the subject claim says which gate was passed and not that it was the right one.
+
+    Mutation: read the class off the gate rather than re-deriving it in ``admit``. This is
+    accepted, and a five-cell sweep runs with nobody having looked at it.
+    """
     outcome = admit_submission(
-        manifest_name=EXCEPTION_MANIFEST,
-        submitter=LEAD,
-        approver=ADMIN,
-        approving_environment=ApprovalEnvironment.LEAD,
+        approver=None,
+        approving_environment=ApprovalEnvironment.AUTOMATIC,
     )
     decision = outcome.decision
 
     assert decision.accepted is False
     assert decision.reason is AdmissionReason.APPROVAL_ENVIRONMENT_MISMATCH
-    assert decision.approval_class is ApprovalClass.EXCEPTION
-    assert decision.approving_environment is ApprovalEnvironment.LEAD
-    assert "run-approval-admin" in decision.detail
+    assert decision.approval_class is ApprovalClass.ROUTINE
+    assert decision.approving_environment is ApprovalEnvironment.AUTOMATIC
     assert "run-approval-lead" in decision.detail
-    assert decision.authorization is not None
-    assert decision.authorization.granted is True, (
-        "an admin did approve this run; routing it to the weaker gate is refused anyway, "
-        "because the subject claim says which gate was passed and not that it was the right one"
-    )
+    assert "run-approval-automatic" in decision.detail
 
 
 def test_a_routine_submission_released_by_the_admin_gate_is_refused() -> None:
@@ -438,20 +469,23 @@ def test_a_routine_submission_released_by_the_admin_gate_is_refused() -> None:
 def test_the_class_is_re_derived_rather_than_read_from_the_gate_that_released_it(
     approving_environment: ApprovalEnvironment,
 ) -> None:
-    catalog, targets = backed_by_a_target(EXCEPTION_COMPUTE_PROFILE)
+    """One submission through all three gates, and only one of them is its own.
+
+    The fan-out classifies as routine whichever environment says it released it, and only
+    ``run-approval-lead`` is accepted. Parametrised over the whole enum rather than over the
+    two interesting values, so a fourth environment cannot be added without a row for it.
+
+    Mutation: take the class from ``approving_environment`` instead of calling
+    ``classify_request``. Every row is accepted, and the gate a run passed becomes the
+    definition of the gate it needed.
+    """
     outcome = admit_submission(
-        manifest_name=EXCEPTION_MANIFEST,
-        submitter=LEAD,
-        approver=ADMIN,
+        approver=None if approving_environment is ApprovalEnvironment.AUTOMATIC else ADMIN,
         approving_environment=approving_environment,
-        catalog=catalog,
-        execution_targets=targets,
     )
 
-    assert outcome.decision.approval_class is ApprovalClass.EXCEPTION
-    assert outcome.decision.accepted is (
-        approving_environment is ApprovalEnvironment.ADMIN
-    )
+    assert outcome.decision.approval_class is ApprovalClass.ROUTINE
+    assert outcome.decision.accepted is (approving_environment is ApprovalEnvironment.LEAD)
 
 
 @pytest.mark.parametrize(
@@ -472,10 +506,18 @@ def test_an_input_that_cannot_be_resolved_is_denied_outright_and_the_condition_n
     assert decision.accepted is False
     assert decision.reason is AdmissionReason.DENIED_OUTRIGHT
     assert condition in decision.detail
-    assert decision.approval_class is ApprovalClass.EXCEPTION
+    # THE CLASS ON A DENIED RECORD IS ROUTINE UNDER v5 AND WAS EXCEPTION UNDER v4. Nothing
+    # classifies as an exception any more, and what an unresolvable input must never be is
+    # automatic: "released by nobody" is the wrong sentence for a request nobody may
+    # release, and it is the sentence a reader of this record would take away.
+    #
+    # Mutation: drop the ``INPUTS_THAT_MUST_RESOLVE`` test from ``classify_request``. All
+    # three rows here are cheap enough to be automatic, so the class flips and the refusal
+    # goes on being correct while the record beside it says no approver was needed.
+    assert decision.approval_class is ApprovalClass.ROUTINE
     assert decision.approving_environment is ApprovalEnvironment.LEAD, (
-        "this submission is also at the wrong gate for its class, and it is still denied "
-        "outright: an unresolvable input is not an expensive request somebody may approve"
+        "an unresolvable input is denied outright before the gate is compared at all, so "
+        "the environment on the record is whichever one released it"
     )
 
 
@@ -535,68 +577,76 @@ def scan_sentence(
     )
 
 
-def test_an_unreviewed_image_is_an_exception_an_admin_can_release_rather_than_a_wall() -> None:
-    """Policy v4. Mutation: put image_scan_findings_unreviewed back in denied_outright.
+def unreviewed_criticals() -> tuple[ScanFinding, ...]:
+    """Four CRITICAL findings the registry reports and nobody has recorded a review for."""
+    return tuple(
+        ScanFinding(vulnerability_id=identifier, package_name="perl")
+        for identifier in REVIEWED_CVES
+    )
 
-    Denied outright means refusable by nobody, so a wrong answer costs the whole route and
-    the remedy on offer is editing a security file. It fired twice, both times against the
+
+def a_scan_reporting(findings: tuple[ScanFinding, ...]) -> ImageScanSummary:
+    return ImageScanSummary(
+        schema_version=1,
+        status=ImageScanStatus.COMPLETE,
+        scanned_at=RECORDED_AT,
+        critical=len(findings),
+    )
+
+
+def test_an_unreviewed_image_is_a_lead_release_rather_than_a_wall() -> None:
+    """Policy v5. Mutation: put image_scan_findings_unreviewed back in denied_outright.
+
+    Denied outright meant refusable by nobody, so a wrong answer cost the whole route and
+    the remedy on offer was editing a security file. It fired twice, both times against the
     owner self-approving as admin, and config/image-exceptions.yaml holds zero exceptions
-    against sixteen reviewed findings, so nobody was ever going to write one.
+    against sixteen reviewed findings, so nobody was ever going to write one. v4 made it an
+    admin's call and v5 makes it a lead's.
 
-    What the softening keeps is asserted beside what it drops. The digest still classifies
-    as an exception, so no lead can release it and the run reaches the admin gate; the
-    findings still come from the registry rather than from the submitter. What is new is
-    that the admin gate can say yes.
+    What the softening keeps is asserted beside what it drops. The findings still come from
+    the registry rather than from the submitter, the run still reaches a person, and the
+    person can now say yes.
     """
-    findings = tuple(
-        ScanFinding(vulnerability_id=identifier, package_name="perl")
-        for identifier in REVIEWED_CVES
-    )
-    outcome = admit_submission(
-        approver=ADMIN,
-        approving_environment=ApprovalEnvironment.ADMIN,
-        image_scan_registry=ImageScanExceptionRegistry(schema_version=1),
-        image_scan_summary=ImageScanSummary(
-            schema_version=1,
-            status=ImageScanStatus.COMPLETE,
-            scanned_at=RECORDED_AT,
-            critical=len(findings),
-        ),
-        image_scan_findings=findings,
-    )
-
-    assert outcome.decision.approval_class is ApprovalClass.EXCEPTION
-    assert outcome.decision.accepted is True
-    assert outcome.decision.reason is AdmissionReason.ACCEPTED
-
-
-def test_a_lead_still_cannot_release_an_image_whose_findings_nobody_reviewed() -> None:
-    """The half of the gate the softening does not touch.
-
-    ``classify_request`` refuses to call an unreviewed digest routine, so the lead gate is
-    the wrong gate for it and admission says so. Without this, "an approver can release it"
-    would quietly mean any approver.
-    """
-    findings = tuple(
-        ScanFinding(vulnerability_id=identifier, package_name="perl")
-        for identifier in REVIEWED_CVES
-    )
+    findings = unreviewed_criticals()
     outcome = admit_submission(
         approver=LEAD,
         approving_environment=ApprovalEnvironment.LEAD,
         image_scan_registry=ImageScanExceptionRegistry(schema_version=1),
-        image_scan_summary=ImageScanSummary(
-            schema_version=1,
-            status=ImageScanStatus.COMPLETE,
-            scanned_at=RECORDED_AT,
-            critical=len(findings),
-        ),
+        image_scan_summary=a_scan_reporting(findings),
         image_scan_findings=findings,
     )
 
+    assert outcome.decision.approval_class is ApprovalClass.ROUTINE
+    assert outcome.decision.accepted is True
+    assert outcome.decision.reason is AdmissionReason.ACCEPTED
+
+
+def test_an_unreviewed_image_is_never_released_by_nobody_however_cheap_the_run_is() -> None:
+    """The half of the gate neither softening touches, and the one v5 made load-bearing.
+
+    ``cpu-routine.yaml`` is $2.86 in one cell, so every other test of it reaches
+    ``run-approval-automatic``. With unreviewed CRITICAL findings behind the digest it
+    reaches a lead instead, and admission refuses the automatic gate for it.
+
+    Mutation: drop ``image_scan_reviewed`` from ``classify_request``. This is accepted, the
+    container starts, and the findings ``render_approver_context`` prints are printed to
+    nobody. Under v4 the same mutation only downgraded the approver, which is why the
+    version of this test that asked about the lead gate would now pass against it.
+    """
+    findings = unreviewed_criticals()
+    outcome = admit_submission(
+        manifest_name=AUTOMATIC_MANIFEST,
+        approver=None,
+        approving_environment=ApprovalEnvironment.AUTOMATIC,
+        image_scan_registry=ImageScanExceptionRegistry(schema_version=1),
+        image_scan_summary=a_scan_reporting(findings),
+        image_scan_findings=findings,
+    )
+
+    assert outcome.decision.approval_class is ApprovalClass.ROUTINE
     assert outcome.decision.accepted is False
     assert outcome.decision.reason is AdmissionReason.APPROVAL_ENVIRONMENT_MISMATCH
-    assert ApprovalEnvironment.ADMIN.value in outcome.decision.detail
+    assert ApprovalEnvironment.LEAD.value in outcome.decision.detail
 
 
 def test_a_scan_this_platform_did_not_read_in_full_says_so_rather_than_blaming_a_reviewer(
@@ -769,7 +819,7 @@ def test_a_denied_submission_whose_profile_is_registered_still_states_its_cost()
 
     assert outcome.decision.reason is AdmissionReason.DENIED_OUTRIGHT
     assert outcome.decision.cost is not None
-    assert outcome.decision.cost.maximum_compute_cost_usd == Decimal("2.86")
+    assert outcome.decision.cost.maximum_compute_cost_usd == Decimal("20.12")
 
 
 @pytest.mark.parametrize(
@@ -797,18 +847,33 @@ def test_a_submission_its_approver_may_not_release_is_refused(
     assert expected_reason.value in decision.detail
 
 
-def test_an_exception_at_the_right_gate_still_needs_an_approver_who_may_release_it() -> None:
+def test_the_gate_being_right_is_not_the_same_as_the_approver_being_allowed() -> None:
+    """Two questions, asked separately, and this one is the second.
+
+    A member releasing their own fan-out through the lead gate has the right gate for the
+    class and the wrong person behind it. Admission compares the environment first and the
+    approver second, so this is refused on authorization rather than on routing.
+
+    It asked the same thing of an exception at the admin gate until policy v5, which is a
+    class no run reaches now. The property is unchanged and only the class it is asked of
+    moved.
+
+    Mutation: accept a submission whose environment matches without evaluating the
+    authorization. This is admitted and a member releases their own five-cell sweep.
+    """
     outcome = admit_submission(
-        manifest_name=EXCEPTION_MANIFEST,
         submitter=MEMBER,
-        approver=LEAD,
-        approving_environment=ApprovalEnvironment.ADMIN,
+        approver=MEMBER,
+        approving_environment=ApprovalEnvironment.LEAD,
     )
     decision = outcome.decision
 
+    assert decision.approval_class is ApprovalClass.ROUTINE
     assert decision.reason is AdmissionReason.AUTHORIZATION_DENIED
     assert decision.authorization is not None
-    assert decision.authorization.reason is AuthorizationReason.APPROVER_LACKS_ADMIN_ROLE
+    assert decision.authorization.reason is (
+        AuthorizationReason.SELF_APPROVAL_NOT_PERMITTED_FOR_MEMBER
+    )
 
 
 @pytest.mark.parametrize(

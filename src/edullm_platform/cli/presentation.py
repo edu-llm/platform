@@ -90,6 +90,7 @@ def render_preflight(preflight: Preflight, *, configuration: ReviewedConfigurati
     blocks = [
         _manifest_block(preflight),
         _cost_block(preflight),
+        _history_block(preflight),
         _approval_block(preflight, configuration.policy, configuration.inventory),
         _deferred_block(),
         "no refusals. edullm submit will dispatch this.",
@@ -318,8 +319,27 @@ def _cost_block(preflight: Preflight) -> str:
         f"{cost.cells} {cells} = ${plain_decimal(cost.maximum_compute_cost_usd)}\n"
         "  This is the ceiling, not an estimate. It is also what routes the run, so "
         "lowering\n"
-        "  --hours is what moves a short run under the automatic bound."
+        "  --hours is what moves a run under the automatic bound. What it is likely to\n"
+        "  cost is the block below."
     )
+
+
+def _history_block(preflight: Preflight) -> str:
+    """What runs of this shape have taken, printed under the ceiling that overstates it.
+
+    UNDER THE CEILING AND NOT INSTEAD OF IT, WHICH IS THE WHOLE ARRANGEMENT. The worst case
+    is what is being authorised and is what routes the run, so it goes first and keeps its
+    words. This is what the worst case overstates, it decides nothing, and a reader has both
+    numbers rather than a choice between them.
+
+    Printed on every priced submission, including the ones with no history at all. A block
+    that vanished when the answer was "nothing has run this" would leave a reader unable to
+    tell that from a version of the tool that does not print durations.
+    """
+    answer = preflight.history
+    if answer is None:
+        return ""
+    return "what it has taken\n" + "\n".join(f"  {line}" for line in _wrap(answer.said))
 
 
 def _approval_block(
@@ -333,21 +353,12 @@ def _approval_block(
     lines = ["approval"]
     if approval_class is ApprovalClass.AUTOMATIC:
         lines.append(
-            f"  automatic -- under ${plain_decimal(limits.automatic_below_cost_usd)} and under "
-            f"{plain_decimal(limits.automatic_below_runtime_hours)}h. Nobody releases this."
+            f"  automatic -- one cell, under ${plain_decimal(limits.automatic_below_cost_usd)}. "
+            "Nobody releases this."
         )
         return "\n".join(lines)
 
     lines.append(f"  {approval_class.value} -> {preflight.approving_environment.value}")
-    if approval_class is ApprovalClass.EXCEPTION:
-        # Every reason comes from ``exceeded_routine_bounds``, including the rate, which
-        # this block used to word for itself because that function reported four bounds and
-        # not the fifth. It reports five now and ``run_preflight`` hands it the rate, so a
-        # sentence composed here would be a second spelling of one an approver reads on the
-        # page this verb is previewing.
-        lines.extend(f"  {reason}" for reason in preflight.exceeded)
-        return "\n".join(lines)
-
     lines.extend(
         f"  {reason}"
         for reason in _why_not_automatic(
@@ -365,16 +376,17 @@ def _why_not_automatic(
 ) -> list[str]:
     """The sentence a routine run earns, which is always "here is what to change".
 
-    Sixty-seven cents is the case this exists for. ``gpu-4xa10g``'s cheapest possible
-    submission lands just over the automatic bound, so every submission on it costs a
-    lead's attention -- and a submitter who is told the figure and the bound can see that
-    at a glance where one told only the class cannot.
+    There are two reasons a run reaches a lead under v5 and this names whichever holds. A
+    submitter told the figure and the bound can see how far over they are; one told only the
+    class cannot.
 
-    The last line is unreachable today and is kept, derived, for when it is not. A routine
-    class means the automatic test failed, and every way it can fail is one of the three
-    above -- but that is a property of ``classify_request`` rather than of this function, and
-    the version of this fallback that wrote a count down was wrong at one of the two gates
-    from the day it was written.
+    The last line is the fallback and it is reachable, unlike the version of this that
+    preceded v5. ``classify_request`` also holds back a digest whose registry scan findings
+    carry no recorded review, and this verb cannot know that: it builds its facts with no
+    scan policy, because the image digest it holds is a placeholder, and
+    ``DEFERRED_TO_SUBMIT`` says so. So a run that reaches a lead for that reason reaches
+    this line, and what it prints is who may release it rather than a reason this verb
+    cannot stand behind.
     """
     cost = preflight.cost
     assert cost is not None  # only called with a priced submission
@@ -386,11 +398,6 @@ def _why_not_automatic(
         reasons.append(
             f"over the automatic bound: ${plain_decimal(cost.maximum_compute_cost_usd)} is not "
             f"under ${plain_decimal(limits.automatic_below_cost_usd)}"
-        )
-    if cost.maximum_runtime_hours >= limits.automatic_below_runtime_hours:
-        reasons.append(
-            f"over the automatic bound: {plain_decimal(cost.maximum_runtime_hours)}h is not under "
-            f"{plain_decimal(limits.automatic_below_runtime_hours)}h"
         )
     return reasons or [approvers_said(inventory, environment)]
 

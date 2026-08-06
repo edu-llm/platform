@@ -1,13 +1,14 @@
 import hashlib
 import json
-from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
 
 from edullm_platform.canonical import canonical_json_bytes, sha256_digest
 from edullm_platform.config import load_yaml
+from edullm_platform.contracts import authorization as authorization_module
 from edullm_platform.contracts.authorization import (
     GRANTING_REASONS,
     AuthorizationDecision,
@@ -29,7 +30,6 @@ from edullm_platform.operational_inventory import (
     expected_manifest_classification,
     request_facts_from_manifest,
 )
-from tests.policy_support import ROUTINE_RATE
 from tests.test_manifest import (
     REPRESENTATIVE_MANIFEST_FILENAMES,
     load_representative_manifest,
@@ -108,7 +108,12 @@ def request_facts_payload(**overrides: object) -> dict[str, object]:
         "immutable_revision": True,
         "immutable_image": True,
         "image_scan_reviewed": True,
-        "estimated_cost_usd": "100",
+        # SIX HUNDRED, WHICH WAS A HUNDRED UNTIL POLICY v5. A hundred dollars in one cell is
+        # released by nobody now, so the base fixture of a module about approvers had to
+        # move above the bound or every row about who releases what would have been a row
+        # about nobody releasing anything, passing or failing for reasons unrelated to its
+        # subject.
+        "estimated_cost_usd": "600",
         "maximum_runtime_hours": "6",
         "maximum_attempts": 2,
     }
@@ -121,19 +126,24 @@ def routine_facts(**overrides: object) -> RequestFacts:
 
 
 def exception_facts(**overrides: object) -> RequestFacts:
+    """What used to classify as an exception, which is now a large routine run.
+
+    Kept, and kept at five thousand dollars, because the rows it feeds are about an admin
+    releasing something and the facts are what those rows were reviewed against. Nothing
+    about these facts reaches the exception class any more, so they are passed to
+    :func:`decide_an_exception`, which injects it and says why.
+    """
     return routine_facts(**{"estimated_cost_usd": "5000", **overrides})
 
 
 def automatic_facts(**overrides: object) -> RequestFacts:
-    """Cheap, short and a single cell, so classify_request answers automatic.
+    """Under the bound and a single cell, so classify_request answers automatic.
 
-    Built from the same base as :func:`routine_facts` and moving only the two bounds the
-    automatic class turns on, so a test using this differs from its routine sibling in
-    nothing else.
+    Built from the same base as :func:`routine_facts` and moving only the cost, so a test
+    using this differs from its routine sibling in nothing else. It moved the runtime too
+    until v5 retired ``automatic_below_runtime_hours``.
     """
-    return routine_facts(
-        **{"estimated_cost_usd": "0.75", "maximum_runtime_hours": "0.25", **overrides}
-    )
+    return routine_facts(**{"estimated_cost_usd": "0.75", **overrides})
 
 
 def two_team_inventory_payload(
@@ -212,11 +222,6 @@ def decide(
     *,
     policy: ApprovalPolicy | None = None,
     inventory: OrganizationInventory | None = None,
-    # Under the ceiling, and defaulted rather than passed at every call below. This module is
-    # about who may release a run: every case varies the submitter, the approver or the
-    # roster, and none of them varies the profile. A rate above the ceiling would turn every
-    # routine row into an exception and the module would be measuring something else.
-    hourly_rate_usd: Decimal = ROUTINE_RATE,
 ) -> AuthorizationDecision:
     return evaluate_authorization(
         submitter,
@@ -224,8 +229,37 @@ def decide(
         request,
         policy if policy is not None else load_approval_policy(),
         inventory if inventory is not None else load_organization_inventory(),
-        hourly_rate_usd=hourly_rate_usd,
     )
+
+
+def decide_an_exception(
+    submitter: str,
+    approver: str | None,
+    request: RequestFacts,
+    *,
+    policy: ApprovalPolicy | None = None,
+    inventory: OrganizationInventory | None = None,
+) -> AuthorizationDecision:
+    """The same funnel with the class forced, because no request can reach it any more.
+
+    **THE CLASS IS INJECTED AND THAT IS THE ONLY HONEST WAY TO TEST THIS BRANCH.**
+    ``classify_request`` answers automatic or routine under policy v5 and nothing else, so
+    every row below that is about an admin releasing an exception would otherwise be a row
+    about a lead releasing a routine run, silently, and would go green for the wrong reason.
+    That is the shape of bug this repository has met seven times.
+
+    The branch is not dead and is not deleted. It is what a capacity block will route
+    through, ``exception_approver_roles`` in ``config/policy.yaml`` names the role it asks
+    for, and four of the reasons it returns are parsed back out of nineteen decision records
+    written under v2 to v4. What these rows assert is the property that has to survive until
+    something classifies as an exception again: only an admin may release one.
+    """
+    with patch.object(
+        authorization_module, "classify_request", return_value=ApprovalClass.EXCEPTION
+    ):
+        return decide(
+            submitter, approver, request, policy=policy, inventory=inventory
+        )
 
 
 def test_real_roster_supplies_the_actor_matrix_this_module_assumes() -> None:
@@ -241,14 +275,22 @@ def test_real_roster_supplies_the_actor_matrix_this_module_assumes() -> None:
         assert inventory.is_team_lead(member) is False
 
 
-def test_fixture_requests_classify_as_routine_and_exception() -> None:
+def test_no_fixture_in_this_module_can_reach_the_exception_class() -> None:
+    """Says out loud what :func:`decide_an_exception` is working around.
+
+    ``exception_facts`` is five thousand dollars, which was an exception under v4 and is a
+    team lead's to release under v5. Every row in this module that reads as an admin
+    approval is reaching that branch by injection, and a reader who did not know that would
+    take those rows as evidence that a five-thousand-dollar run still needs an admin.
+
+    Mutation: return ``ApprovalClass.EXCEPTION`` from any branch of ``classify_request``.
+    The second assertion fails, and the injection in ``decide_an_exception`` should then be
+    replaced by the facts that reach it.
+    """
     thresholds = load_approval_policy().thresholds
-    assert classify_request(
-        routine_facts(), thresholds, hourly_rate_usd=ROUTINE_RATE
-    ) is ApprovalClass.ROUTINE
-    assert classify_request(
-        exception_facts(), thresholds, hourly_rate_usd=ROUTINE_RATE
-    ) is ApprovalClass.EXCEPTION
+
+    assert classify_request(routine_facts(), thresholds) is ApprovalClass.ROUTINE
+    assert classify_request(exception_facts(), thresholds) is ApprovalClass.ROUTINE
 
 
 @pytest.mark.parametrize(
@@ -410,7 +452,7 @@ def test_exception_actor_matrix_under_organization_scope(
     granted: bool,
     reason: AuthorizationReason,
 ) -> None:
-    decision = decide(submitter, approver, exception_facts())
+    decision = decide_an_exception(submitter, approver, exception_facts())
     assert decision.reason is reason
     assert decision.granted is granted
     assert decision.approval_class is ApprovalClass.EXCEPTION
@@ -445,20 +487,20 @@ def test_plain_member_routine_run_approved_by_another_plain_member_is_denied() -
 
 
 def test_lead_may_not_approve_an_exception() -> None:
-    decision = decide(PLAIN_MEMBER, LEAD_WITHOUT_ADMIN, exception_facts())
+    decision = decide_an_exception(PLAIN_MEMBER, LEAD_WITHOUT_ADMIN, exception_facts())
     assert decision.granted is False
     assert decision.reason is AuthorizationReason.APPROVER_LACKS_ADMIN_ROLE
 
 
 def test_admin_approves_someone_elses_exception() -> None:
-    decision = decide(PLAIN_MEMBER, ADMIN_WITHOUT_LEAD, exception_facts())
+    decision = decide_an_exception(PLAIN_MEMBER, ADMIN_WITHOUT_LEAD, exception_facts())
     assert decision.granted is True
     assert decision.reason is AuthorizationReason.EXCEPTION_APPROVED_BY_ADMIN
 
 
 @pytest.mark.parametrize("approver", [None, ADMIN_AND_LEAD])
 def test_admin_may_approve_their_own_exception_as_an_accepted_risk(approver: str | None) -> None:
-    decision = decide(ADMIN_AND_LEAD, approver, exception_facts())
+    decision = decide_an_exception(ADMIN_AND_LEAD, approver, exception_facts())
     assert decision.granted is True
     assert decision.reason is AuthorizationReason.EXCEPTION_SELF_APPROVED_BY_ADMIN
     assert decision.approval_class is ApprovalClass.EXCEPTION
@@ -488,7 +530,7 @@ def test_unknown_submitter_and_unknown_approver_are_denied_for_distinct_reasons(
     ["BritishAmericqn", "britishamericqn", "BRITISHAMERICQN", "bRiTiShAmEriCqn"],
 )
 def test_case_variants_of_an_admin_login_resolve_to_the_same_person(spelling: str) -> None:
-    approved = decide(PLAIN_MEMBER, spelling, exception_facts())
+    approved = decide_an_exception(PLAIN_MEMBER, spelling, exception_facts())
     assert approved.granted is True
     assert approved.reason is AuthorizationReason.EXCEPTION_APPROVED_BY_ADMIN
     self_authorized = decide(spelling, None, routine_facts())
@@ -524,7 +566,7 @@ def test_case_variants_of_an_admin_login_are_recognized_as_self_approval(
     submitter: str,
     approver: str,
 ) -> None:
-    decision = decide(submitter, approver, exception_facts())
+    decision = decide_an_exception(submitter, approver, exception_facts())
     assert decision.granted is True
     assert decision.reason is AuthorizationReason.EXCEPTION_SELF_APPROVED_BY_ADMIN
 
@@ -536,7 +578,7 @@ def test_case_variants_of_a_lead_login_are_recognized_as_self_authorization() ->
 
 
 def test_decision_preserves_authored_login_casing() -> None:
-    decision = decide("CaIiRiS", "bRiTiShAmEriCqn", exception_facts())
+    decision = decide_an_exception("CaIiRiS", "bRiTiShAmEriCqn", exception_facts())
     assert decision.granted is True
     assert decision.submitter == "CaIiRiS"
     assert decision.approver == "bRiTiShAmEriCqn"
@@ -558,7 +600,6 @@ def test_flipping_approval_scope_alone_turns_a_grant_into_a_denial() -> None:
         request,
         ApprovalPolicy.model_validate(organization_payload),
         inventory,
-        hourly_rate_usd=ROUTINE_RATE,
     )
     under_team_scope = evaluate_authorization(
         MEMORY_SPLIT_MEMBER,
@@ -566,7 +607,6 @@ def test_flipping_approval_scope_alone_turns_a_grant_into_a_denial() -> None:
         request,
         ApprovalPolicy.model_validate(team_payload),
         inventory,
-        hourly_rate_usd=ROUTINE_RATE,
     )
 
     assert under_organization_scope.granted is True
@@ -618,7 +658,7 @@ def test_team_scope_bounds_lead_authority_but_not_admin_authority() -> None:
 
 
 def test_team_scope_does_not_restrict_exception_approval() -> None:
-    decision = decide(
+    decision = decide_an_exception(
         MEMORY_SPLIT_MEMBER,
         TEAMLESS_ADMIN,
         exception_facts(claimed_team=MEMORY_SPLIT_TEAM),
@@ -731,7 +771,6 @@ def test_no_evaluation_against_the_shipped_roster_reaches_the_claimed_team_reaso
                     request,
                     policy,
                     inventory,
-                    hourly_rate_usd=ROUTINE_RATE,
                 )
                 assert (
                     decision.reason is not AuthorizationReason.SUBMITTER_NOT_IN_CLAIMED_TEAM
@@ -775,7 +814,6 @@ def test_an_ordinary_member_may_run_an_automatic_submission_with_no_approver() -
         automatic_facts(),
         load_approval_policy(),
         load_organization_inventory(),
-        hourly_rate_usd=ROUTINE_RATE,
     )
 
     assert decision.approval_class is ApprovalClass.AUTOMATIC
@@ -800,7 +838,6 @@ def test_an_off_roster_submitter_is_refused_an_automatic_submission() -> None:
         automatic_facts(),
         load_approval_policy(),
         load_organization_inventory(),
-        hourly_rate_usd=ROUTINE_RATE,
     )
 
     assert decision.approval_class is ApprovalClass.AUTOMATIC
@@ -825,7 +862,6 @@ def test_an_automatic_submission_claiming_a_foreign_team_runs_and_records_the_cl
         automatic_facts(claimed_team=CURRICULUM_TEAM),
         load_approval_policy(),
         load_organization_inventory(),
-        hourly_rate_usd=ROUTINE_RATE,
     )
 
     assert decision.granted is True
@@ -846,7 +882,6 @@ def test_a_run_over_the_automatic_bounds_still_needs_the_approver_it_always_did(
         routine_facts(),
         load_approval_policy(),
         load_organization_inventory(),
-        hourly_rate_usd=ROUTINE_RATE,
     )
 
     assert decision.approval_class is ApprovalClass.ROUTINE
@@ -930,8 +965,8 @@ def test_canonical_json_records_a_missing_approver_as_null() -> None:
 
 
 def test_decisions_differing_only_in_outcome_have_different_digests() -> None:
-    granted = decide(PLAIN_MEMBER, ADMIN_WITHOUT_LEAD, exception_facts())
-    denied = decide(PLAIN_MEMBER, LEAD_WITHOUT_ADMIN, exception_facts())
+    granted = decide_an_exception(PLAIN_MEMBER, ADMIN_WITHOUT_LEAD, exception_facts())
+    denied = decide_an_exception(PLAIN_MEMBER, LEAD_WITHOUT_ADMIN, exception_facts())
     assert granted.granted is True
     assert denied.granted is False
     assert sha256_digest(granted) != sha256_digest(denied)
@@ -971,7 +1006,7 @@ def test_admin_authority_is_never_narrower_for_routine_than_for_exception() -> N
         (MEMORY_SPLIT_MEMBER, MEMORY_SPLIT_TEAM),
         (CURRICULUM_MEMBER, CURRICULUM_TEAM),
     ):
-        exception = decide(
+        exception = decide_an_exception(
             submitter,
             TEAMLESS_ADMIN,
             exception_facts(claimed_team=team),
@@ -1178,13 +1213,13 @@ def test_an_admin_attributing_a_run_elsewhere_is_recorded_rather_than_refused() 
     assert {team.team_id for team in inventory.teams_for_member(TEAMLESS_ADMIN)} == {
         MEMORY_SPLIT_TEAM
     }
-    own_team = decide(
+    own_team = decide_an_exception(
         TEAMLESS_ADMIN,
         None,
         exception_facts(claimed_team=MEMORY_SPLIT_TEAM),
         inventory=inventory,
     )
-    foreign_team = decide(
+    foreign_team = decide_an_exception(
         TEAMLESS_ADMIN,
         None,
         exception_facts(claimed_team=CURRICULUM_TEAM),
@@ -1211,13 +1246,12 @@ def test_attribution_changes_no_classification_outcome(filename: str) -> None:
         dataset_registry=load_dataset_registry(),
         estimated_cost_usd=cost.maximum_compute_cost_usd,
     )
-    rate = cost.hourly_rate_usd
     expected = expected_manifest_classification(filename)
     assert facts.claimed_team == manifest.team
-    assert classify_request(facts, thresholds, hourly_rate_usd=rate) is expected
+    assert classify_request(facts, thresholds) is expected
     for claimed_team in (MEMORY_SPLIT_TEAM, CURRICULUM_TEAM, UNBOUND_TEAM):
         reattributed = facts.model_copy(update={"claimed_team": claimed_team})
-        assert classify_request(reattributed, thresholds, hourly_rate_usd=rate) is expected, (
+        assert classify_request(reattributed, thresholds) is expected, (
             f"{filename} classified differently once attributed to {claimed_team!r}; "
             "attribution is not a cost input"
         )

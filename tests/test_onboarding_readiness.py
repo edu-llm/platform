@@ -58,7 +58,6 @@ from edullm_platform.config import load_yaml
 from edullm_platform.contracts.authorization import evaluate_authorization
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalPolicy, RequestFacts
-from tests.policy_support import ROUTINE_RATE
 
 #: Three people rather than thirty-five, and each one carries a different case. Frank has
 #: done everything and leads a group. Hiya leads a group too, so the two lead directions can
@@ -476,8 +475,7 @@ def test_the_step_is_not_a_gate_because_admission_admits_the_person_it_describes
             maximum_attempts=1,
         ),
         load_yaml(PROJECT_ROOT / "config" / "policy.yaml", ApprovalPolicy),
-        roster,
-        hourly_rate_usd=ROUTINE_RATE,
+        roster
     )
 
     assert roster.teams_for_member("aryanjverma") == ()

@@ -9,7 +9,7 @@ from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.image_scan import ImageScanSeverity
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import (
-    EXCEPTION_RATE_CEILING_USD_PER_HOUR,
+    INPUTS_THAT_MUST_RESOLVE,
     ApprovalClass,
     ApprovalPolicy,
     PolicyThresholds,
@@ -17,12 +17,12 @@ from edullm_platform.contracts.policy import (
     classify_request,
 )
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
+from edullm_platform.contracts.workload import compute_maximum_compute_cost_usd
 from edullm_platform.manifest_helpers import compute_manifest_cost_inputs
 from edullm_platform.operational_inventory import (
     expected_manifest_classification,
     request_facts_from_manifest,
 )
-from tests.policy_support import GATED_RATE, ROUTINE_RATE
 from tests.test_manifest import (
     PROJECT_ROOT,
     REPRESENTATIVE_MANIFEST_FILENAMES,
@@ -35,24 +35,6 @@ from tests.test_manifest import (
 
 def expected_classification(filename: str) -> ApprovalClass:
     return expected_manifest_classification(filename)
-
-
-def numeric_bound_violations(
-    facts: RequestFacts,
-    thresholds: PolicyThresholds,
-) -> frozenset[str]:
-    violations: set[str] = set()
-    if facts.estimated_cost_usd > thresholds.routine_maximum_cost_usd:
-        violations.add("cost")
-    if facts.maximum_runtime_hours > thresholds.routine_maximum_runtime_hours:
-        violations.add("runtime")
-    if facts.maximum_attempts > thresholds.routine_maximum_attempts:
-        violations.add("attempts")
-    if facts.fanout_size > thresholds.routine_maximum_fanout_size:
-        violations.add("fanout_size")
-    if facts.fanout_parallelism > thresholds.routine_maximum_parallelism:
-        violations.add("parallelism")
-    return frozenset(violations)
 
 
 def load_organization_inventory() -> OrganizationInventory:
@@ -71,6 +53,19 @@ def load_repository_registry() -> RepositoryRegistry:
     return load_yaml(PROJECT_ROOT / "config" / "repositories.yaml", RepositoryRegistry)
 
 
+def rate_of(profile_name: str) -> Decimal:
+    """One compute profile's hourly rate, read out of the shipped catalog.
+
+    Read rather than written down, because every figure this module quotes about the v5
+    reasoning is a product of a catalog price and a repricing has to move the test with it.
+    """
+    rates = {
+        profile.name: profile.hourly_rate_usd
+        for profile in load_workload_catalog().compute_profiles
+    }
+    return rates[profile_name]
+
+
 def assert_validation_error(
     error: ValidationError,
     *,
@@ -87,15 +82,7 @@ def assert_validation_error(
 
 
 def thresholds_payload() -> dict[str, object]:
-    return {
-        "routine_maximum_cost_usd": "500",
-        "routine_maximum_runtime_hours": "24",
-        "routine_maximum_attempts": 2,
-        "routine_maximum_fanout_size": 64,
-        "routine_maximum_parallelism": 8,
-        "automatic_below_cost_usd": "5",
-        "automatic_below_runtime_hours": "1",
-    }
+    return {"automatic_below_cost_usd": "500"}
 
 
 def request_facts_payload(**overrides: object) -> dict[str, object]:
@@ -117,33 +104,22 @@ def request_facts_payload(**overrides: object) -> dict[str, object]:
 
 
 def thresholds() -> PolicyThresholds:
-    return PolicyThresholds(
-        routine_maximum_cost_usd=Decimal(500),
-        routine_maximum_runtime_hours=Decimal(24),
-        routine_maximum_attempts=2,
-        routine_maximum_fanout_size=64,
-        routine_maximum_parallelism=8,
-        automatic_below_cost_usd=Decimal(5),
-        automatic_below_runtime_hours=Decimal(1),
-    )
+    return PolicyThresholds(automatic_below_cost_usd=Decimal(500))
 
 
-def routine_facts(**overrides: object) -> RequestFacts:
+def facts(**overrides: object) -> RequestFacts:
+    """A submission every input resolves for, under the bound, in one cell.
+
+    Every test below moves exactly one thing about it and asserts what that costs, so a
+    failure names what moved rather than the fixture.
+    """
     return RequestFacts.model_validate(request_facts_payload(**overrides))
 
 
 def policy_payload() -> dict[str, object]:
     return {
         "policy_version": "v1",
-        "thresholds": {
-            "routine_maximum_cost_usd": "500",
-            "routine_maximum_runtime_hours": "12",
-            "routine_maximum_attempts": 2,
-            "routine_maximum_fanout_size": 64,
-            "routine_maximum_parallelism": 8,
-            "automatic_below_cost_usd": "5",
-            "automatic_below_runtime_hours": "1",
-        },
+        "thresholds": {"automatic_below_cost_usd": "500"},
         "image_scan": {"blocking_severities": ["CRITICAL"]},
         "approval_scope": "organization",
         "routine_approver_role": "team_lead",
@@ -158,369 +134,276 @@ def policy_payload() -> dict[str, object]:
     }
 
 
-def test_registered_request_within_all_bounds_is_routine() -> None:
-    assert classify_request(routine_facts(), thresholds(), hourly_rate_usd=ROUTINE_RATE) is (
-        ApprovalClass.ROUTINE
-    )
-
-
-def test_any_policy_violation_is_exception() -> None:
-    facts = RequestFacts(
-        claimed_team="memory-split",
-        repository_registered=True,
-        dataset_registered=True,
-        dataset_is_a_corpus=True,
-        compute_profile_registered=True,
-        immutable_revision=True,
-        immutable_image=False,
-        image_scan_reviewed=True,
-        estimated_cost_usd=Decimal(1),
-        maximum_runtime_hours=Decimal(1),
-        maximum_attempts=1,
-    )
-    assert classify_request(facts, thresholds(), hourly_rate_usd=ROUTINE_RATE) is (
-        ApprovalClass.EXCEPTION
-    )
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("repository_registered", False),
-        ("dataset_registered", False),
-        ("compute_profile_registered", False),
-        ("immutable_revision", False),
-        ("immutable_image", False),
-    ],
-)
-def test_unregistered_or_mutable_facts_classify_as_exception(
-    field: str,
-    value: bool,
-) -> None:
-    facts = routine_facts(**{field: value})
-    assert classify_request(facts, thresholds(), hourly_rate_usd=ROUTINE_RATE) is (
-        ApprovalClass.EXCEPTION
-    )
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("estimated_cost_usd", Decimal("500.01")),
-        ("maximum_runtime_hours", Decimal("24.01")),
-        ("maximum_attempts", 3),
-        ("fanout_size", 65),
-        ("fanout_parallelism", 9),
-    ],
-)
-def test_numeric_bound_violations_classify_as_exception(
-    field: str,
-    value: object,
-) -> None:
-    facts = routine_facts(**{field: value})
-    assert classify_request(facts, thresholds(), hourly_rate_usd=ROUTINE_RATE) is (
-        ApprovalClass.EXCEPTION
-    )
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("estimated_cost_usd", Decimal(500)),
-        ("maximum_runtime_hours", Decimal(24)),
-        ("maximum_attempts", 2),
-        ("fanout_size", 64),
-        ("fanout_parallelism", 8),
-    ],
-)
-def test_numeric_values_at_threshold_remain_routine(
-    field: str,
-    value: object,
-) -> None:
-    facts = routine_facts(**{field: value})
-    assert classify_request(facts, thresholds(), hourly_rate_usd=ROUTINE_RATE) is (
-        ApprovalClass.ROUTINE
-    )
-
-
 # --------------------------------------------------------------------------------------
-# The rate ceiling, which is the fifth bound and the only one not in config/policy.yaml
+# The one bound, pinned from both sides
 # --------------------------------------------------------------------------------------
 
 
-def test_a_rate_above_the_ceiling_is_an_exception_with_every_other_bound_satisfied() -> None:
-    """The case the four request bounds cannot express, and the reason the ceiling exists.
-
-    Mutation: drop the rate comparison from ``classify_request``. These facts are routine on
-    every axis policy states -- a cheap, short, single-attempt run -- so without the ceiling
-    this classifies as routine and a team lead may release a p4d.24xlarge.
-    """
-    facts = routine_facts(estimated_cost_usd="21.96", maximum_runtime_hours="1", maximum_attempts=1)
-
-    assert numeric_bound_violations(facts, thresholds()) == frozenset()
-    assert classify_request(facts, thresholds(), hourly_rate_usd=GATED_RATE) is (
-        ApprovalClass.EXCEPTION
-    )
-
-
-def test_a_rate_at_the_ceiling_is_still_routine() -> None:
-    """The boundary, which is inclusive like the four bounds beside it.
-
-    Mutation: change ``<=`` to ``<``. A profile priced at exactly the ceiling would become an
-    exception, and the ceiling would then mean something different from the other bounds in
-    the same expression.
-    """
-    assert classify_request(
-        routine_facts(),
-        thresholds(),
-        hourly_rate_usd=EXCEPTION_RATE_CEILING_USD_PER_HOUR,
-    ) is ApprovalClass.ROUTINE
-
-
-def test_the_ceiling_sits_between_the_dearest_routine_shape_and_the_cheapest_gated_one() -> None:
-    """What the number is for, read out of the catalog rather than restated here.
-
-    The ceiling is only correct relative to the prices it was drawn between, and those live
-    in config/workload-catalog.yaml where a repricing will move them. A profile that drifts
-    across the line changes who may approve it with nothing else in the tree changing, so the
-    two shapes either side are asserted by name.
-    """
-    rates = {profile.name: profile.hourly_rate_usd for profile in load_workload_catalog().compute_profiles}
-
-    assert rates["gpu-8xa10g"] < EXCEPTION_RATE_CEILING_USD_PER_HOUR
-    assert rates["gpu-8xa100"] > EXCEPTION_RATE_CEILING_USD_PER_HOUR
-    assert rates["gpu-8xh100"] > EXCEPTION_RATE_CEILING_USD_PER_HOUR
-    # gpu-8xl40s joined the two the gate was added for, and it is the first shape to reach
-    # the gate by being priced above the line rather than by being one of the two P shapes
-    # the line was drawn around. That is the rate doing what a list of names could not, and
-    # it is why the ceiling is a rate. Every other provisioned GPU shape stays routine.
-    assert rates["gpu-8xl40s"] > EXCEPTION_RATE_CEILING_USD_PER_HOUR
-    # The three rate assertions above read the catalog's prices and hold whatever the
-    # provisioned flag says, which is the point of asserting them separately from the set
-    # below. gpu-8xh100 was demoted on 2026-08-04 for a capacity shortage and is still priced
-    # at $55.04, so it is still on the wrong side of the line and would still need an admin
-    # the moment it is offerable again. The set is filtered by the flag because it is about
-    # what a submitter can currently reach.
-    above = {
-        profile.name
-        for profile in load_workload_catalog().compute_profiles
-        if profile.provisioned and profile.hourly_rate_usd > EXCEPTION_RATE_CEILING_USD_PER_HOUR
-    }
-    assert above == {"gpu-8xa100", "gpu-8xl40s"}
-
-
-# --------------------------------------------------------------------------------------
-# The automatic class, and the three limits that bound it
-# --------------------------------------------------------------------------------------
-#
-# Every limit is pinned from both sides, because a boundary tested from one side only says
-# which comparison was written rather than which was meant. The two automatic bounds are
-# strictly-under and the rate ceiling is inclusive, which is a deliberate difference and the
-# reason each of the three carries its own at-the-value test.
-
-
-def automatic_facts(**overrides: object) -> RequestFacts:
-    """Facts that satisfy both automatic bounds with room to spare, before overrides.
-
-    Cheap, short and a single cell. Every test below moves exactly one of those and asserts
-    what it costs, so a failure names the bound that moved rather than the fixture.
-    """
-    payload: dict[str, object] = {
-        "estimated_cost_usd": "4.99",
-        "maximum_runtime_hours": "0.99",
-    }
-    payload.update(overrides)
-    return routine_facts(**payload)
-
-
-def test_a_cheap_short_single_cell_run_is_automatic() -> None:
-    """The case the whole class exists for, and the baseline the boundaries move off.
-
-    A twenty-step smoke test costs under a dollar and finishes in minutes. Before this class
-    it waited for a team lead, which is the friction that sent researchers to Colab.
-    """
-    assert classify_request(
-        automatic_facts(), thresholds(), hourly_rate_usd=ROUTINE_RATE
-    ) is ApprovalClass.AUTOMATIC
+def test_a_single_cell_under_the_bound_is_released_by_nobody() -> None:
+    """The case the whole automatic class exists for, and the baseline the rest move off."""
+    assert classify_request(facts(), thresholds()) is ApprovalClass.AUTOMATIC
 
 
 @pytest.mark.parametrize(
     ("estimated_cost_usd", "expected"),
     [
-        ("4.99", ApprovalClass.AUTOMATIC),
-        ("5", ApprovalClass.ROUTINE),
-        ("5.01", ApprovalClass.ROUTINE),
+        ("499.99", ApprovalClass.AUTOMATIC),
+        ("500", ApprovalClass.ROUTINE),
+        ("500.01", ApprovalClass.ROUTINE),
     ],
 )
-def test_the_cost_bound_is_strictly_under_five_dollars(
+def test_the_cost_bound_is_strictly_under(
     estimated_cost_usd: str,
     expected: ApprovalClass,
 ) -> None:
-    """Five dollars exactly goes to a lead.
+    """Five hundred dollars exactly goes to a lead.
 
-    Mutation: change ``<`` to ``<=`` in the automatic branch of ``classify_request``. The
-    middle row flips to automatic. That is the strict-versus-non-strict comparison nobody
-    wrote down, and the direction matters: too wide silently enlarges the set of runs no
-    person ever sees, where too narrow costs a lead one click.
+    Mutation: change ``<`` to ``<=`` in ``classify_request``. The middle row flips to
+    automatic and the first and third rows do not move, so a test asserting only the first
+    row would pass against the wrong comparison. The direction matters asymmetrically: too
+    wide silently enlarges the set of runs no person ever sees, too narrow costs a lead one
+    click.
     """
-    assert classify_request(
-        automatic_facts(estimated_cost_usd=estimated_cost_usd),
-        thresholds(),
-        hourly_rate_usd=ROUTINE_RATE,
-    ) is expected
+    assert classify_request(facts(estimated_cost_usd=estimated_cost_usd), thresholds()) is expected
 
 
-@pytest.mark.parametrize(
-    ("maximum_runtime_hours", "expected"),
-    [
-        ("0.99", ApprovalClass.AUTOMATIC),
-        ("1", ApprovalClass.ROUTINE),
-        ("1.01", ApprovalClass.ROUTINE),
-    ],
-)
-def test_the_runtime_bound_is_strictly_under_one_hour(
-    maximum_runtime_hours: str,
-    expected: ApprovalClass,
-) -> None:
-    """One hour exactly goes to a lead, for the reason the cost bound does.
+def test_the_bound_is_read_from_the_thresholds_and_not_written_into_the_function() -> None:
+    """A request that is automatic at one bound is routine at a lower one.
 
-    Mutation: change ``<`` to ``<=``. The middle row flips to automatic, and a run declaring
-    exactly the bound is the commonest way to declare one.
+    Mutation: replace ``thresholds.automatic_below_cost_usd`` with a literal in
+    ``classify_request``. The second assertion fails, and the failure it catches is a
+    deployed validator that goes on classifying against a figure the reviewed file no longer
+    carries.
     """
-    assert classify_request(
-        automatic_facts(maximum_runtime_hours=maximum_runtime_hours),
-        thresholds(),
-        hourly_rate_usd=ROUTINE_RATE,
-    ) is expected
+    request = facts(estimated_cost_usd="100")
+
+    assert classify_request(request, thresholds()) is ApprovalClass.AUTOMATIC
+    assert (
+        classify_request(request, PolicyThresholds(automatic_below_cost_usd=Decimal(50)))
+        is ApprovalClass.ROUTINE
+    )
 
 
-@pytest.mark.parametrize(
-    ("hourly_rate_usd", "expected"),
-    [
-        (Decimal("19.99"), ApprovalClass.AUTOMATIC),
-        (EXCEPTION_RATE_CEILING_USD_PER_HOUR, ApprovalClass.AUTOMATIC),
-        (Decimal("20.01"), ApprovalClass.EXCEPTION),
-    ],
-)
-def test_the_rate_ceiling_is_inclusive_and_outranks_the_automatic_bounds(
-    hourly_rate_usd: Decimal,
-    expected: ApprovalClass,
-) -> None:
-    """The third limit, pinned both ways, and pinned against the cheap short case.
+# --------------------------------------------------------------------------------------
+# The three things that hold a cheap single cell back
+# --------------------------------------------------------------------------------------
 
-    Inclusive where the two automatic bounds are exclusive: exactly twenty dollars an hour
-    is not an admin's problem, which is how the ceiling has always read and how the four
-    routine bounds beside it read. The interesting row is the last one. These facts are
-    cheap and short and would auto-approve on their own, so the ceiling has to be evaluated
-    before the automatic branch or a request on the largest instance in the account is
-    released by nobody at all.
 
-    Mutation: move the rate comparison below the automatic branch in ``classify_request``.
-    The last row returns automatic, and a p4d.24xlarge starts with no approver.
+@pytest.mark.parametrize("fanout_size", [2, 5, 64, 1000])
+def test_a_fanout_never_auto_approves_however_cheap_it_is(fanout_size: int) -> None:
+    """Sixty-four cells is sixty-four machines starting at once, which the total does not say.
+
+    Mutation: delete the ``fanout_size`` test from ``classify_request``. Every row here
+    returns automatic, and a thousand-cell sweep starts with nobody having seen it. The cost
+    is a hundredth of the bound in each row, so nothing else in the function objects.
     """
-    assert classify_request(
-        automatic_facts(), thresholds(), hourly_rate_usd=hourly_rate_usd
-    ) is expected
+    request = facts(estimated_cost_usd="5", fanout_size=fanout_size)
+
+    assert request.estimated_cost_usd < thresholds().automatic_below_cost_usd
+    assert classify_request(request, thresholds()) is ApprovalClass.ROUTINE
 
 
-@pytest.mark.parametrize(
-    ("overrides", "reason"),
-    [
-        ({"maximum_runtime_hours": "4"}, "cheap because it is short, but asks for four hours"),
-        ({"estimated_cost_usd": "8"}, "one hour, and eight dollars"),
-    ],
-)
-def test_both_halves_of_the_automatic_condition_must_hold(
-    overrides: dict[str, object],
-    reason: str,
-) -> None:
-    """Neither bound carries the decision on its own.
+def test_one_cell_is_the_only_size_that_can_be_automatic() -> None:
+    """The boundary of the fan-out test, pinned on the side a mutation would move it to.
 
-    Mutation: replace the ``and`` between the two comparisons with ``or``. Both rows flip to
-    automatic, and a four-hour run auto-approves because it happens to be cheap.
+    Mutation: change ``facts.fanout_size > 1`` to ``> 2``. The second assertion fails. A
+    two-cell sweep is the smallest thing a wrong comparison here lets through and the
+    likeliest one to be written by somebody trying a fan-out for the first time.
     """
-    assert classify_request(
-        automatic_facts(**overrides), thresholds(), hourly_rate_usd=ROUTINE_RATE
-    ) is ApprovalClass.ROUTINE, reason
+    assert classify_request(facts(estimated_cost_usd="1"), thresholds()) is ApprovalClass.AUTOMATIC
+    assert (
+        classify_request(facts(estimated_cost_usd="1", fanout_size=2), thresholds())
+        is ApprovalClass.ROUTINE
+    )
 
 
-def test_a_fanout_never_auto_approves_however_cheap_and_short_it_is() -> None:
-    """The exclusion that no threshold expresses, asserted where the thresholds are.
+def test_an_unreviewed_image_scan_reaches_a_lead_and_never_reaches_nobody() -> None:
+    """What v5 keeps from the gate it softened, which is the reader rather than the refusal.
 
-    tests/test_fanout.py holds the shipped sixty-four cell case against the real catalog.
-    This is the same property stated against the bounds directly: both are satisfied, the
-    only difference from the automatic baseline is that there is more than one cell, and a
-    person still sees it. Sixty-four cells is sixty-four machines starting at once, which is
-    the fact the total does not carry.
+    Mutation: delete the ``image_scan_reviewed`` test from ``classify_request``. This
+    returns automatic, the run starts with no approver, and the findings
+    ``render_approver_context`` prints are printed to nobody. That turns the softening into
+    a removal, which is the one thing the v5 ruling said it was not.
     """
-    facts = automatic_facts(fanout_size=2, fanout_parallelism=2)
+    request = facts(estimated_cost_usd="0.50", image_scan_reviewed=False)
 
-    assert facts.estimated_cost_usd < thresholds().automatic_below_cost_usd
-    assert facts.maximum_runtime_hours < thresholds().automatic_below_runtime_hours
-    assert classify_request(
-        facts, thresholds(), hourly_rate_usd=ROUTINE_RATE
-    ) is ApprovalClass.ROUTINE
+    assert request.estimated_cost_usd < thresholds().automatic_below_cost_usd
+    assert classify_request(request, thresholds()) is ApprovalClass.ROUTINE
 
 
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("repository_registered", False),
-        ("dataset_registered", False),
-        ("image_scan_reviewed", False),
-        ("maximum_attempts", 3),
-    ],
-)
-def test_a_cheap_short_run_that_trips_any_other_bound_is_still_an_exception(
-    field: str,
-    value: object,
-) -> None:
-    """Automatic is carved out of routine, never out of exception.
+def test_a_reviewed_scan_is_what_makes_the_same_request_automatic() -> None:
+    """The other side of the scan test, so the pair says which way the comparison runs.
 
-    Mutation: evaluate the automatic branch before the exception test in
-    ``classify_request``. Every row here classifies as automatic, and an unregistered
-    repository or an unreviewed image scan reaches AWS with no person having seen it. The
-    ordering is the safety property, which is why it is asserted rather than read.
+    Mutation: invert the condition to ``if facts.image_scan_reviewed``. This fails while the
+    test above still passes, because a single assertion about an unreviewed digest cannot
+    tell a gate that reads the flag from one that ignores it.
     """
-    assert classify_request(
-        automatic_facts(**{field: value}), thresholds(), hourly_rate_usd=ROUTINE_RATE
-    ) is ApprovalClass.EXCEPTION
+    assert (
+        classify_request(facts(estimated_cost_usd="0.50", image_scan_reviewed=True), thresholds())
+        is ApprovalClass.AUTOMATIC
+    )
 
 
-def test_request_facts_describe_a_single_cell_when_no_fanout_is_declared() -> None:
-    facts = routine_facts()
-    assert facts.fanout_size == 1
-    assert facts.fanout_parallelism == 1
-    assert numeric_bound_violations(facts, thresholds()) == frozenset()
+@pytest.mark.parametrize("fact_name", INPUTS_THAT_MUST_RESOLVE)
+def test_an_input_that_does_not_resolve_is_never_automatic(fact_name: str) -> None:
+    """Belt and braces over a refusal that has already happened by the time this is read.
+
+    Every one of these is also a ``denied_outright`` condition, so the submission never
+    reaches a gate. What this pins is the class on the decision record such a refusal
+    writes, and "released by nobody" is the wrong words for a request nobody may release.
+
+    Mutation: delete the ``INPUTS_THAT_MUST_RESOLVE`` test. Every row returns automatic and
+    every refused record starts claiming a class that says no person was needed.
+    """
+    request = facts(estimated_cost_usd="1", **{fact_name: False})
+
+    assert classify_request(request, thresholds()) is ApprovalClass.ROUTINE
+
+
+def test_every_input_that_must_resolve_is_a_fact_the_request_carries() -> None:
+    """A typo in the tuple would silently stop testing one of the five.
+
+    Mutation: misspell any entry of ``INPUTS_THAT_MUST_RESOLVE``. ``getattr`` inside
+    ``classify_request`` would raise on every call, so this is really a guard on the tuple
+    being edited without the model, and it fails here rather than at admission.
+    """
+    assert set(INPUTS_THAT_MUST_RESOLVE) <= set(RequestFacts.model_fields)
+
+
+# --------------------------------------------------------------------------------------
+# No run reaches an admin any more
+# --------------------------------------------------------------------------------------
+
+
+def test_no_combination_of_facts_classifies_as_an_exception() -> None:
+    """The v5 ruling, asserted rather than read off the function.
+
+    Mutation: return ``ApprovalClass.EXCEPTION`` from any branch of ``classify_request``.
+    This fails on the row that reaches it. The grid is every switch this function reads,
+    which is what makes the claim "no run tier routes to an admin" a measurement rather than
+    a reading of the source.
+    """
+    seen = set()
+    for cost in ("0", "499.99", "500", "1000000"):
+        for cells in (1, 2, 64):
+            for reviewed in (True, False):
+                for resolves in (True, False):
+                    overrides: dict[str, object] = {
+                        fact: resolves for fact in INPUTS_THAT_MUST_RESOLVE
+                    }
+                    seen.add(
+                        classify_request(
+                            facts(
+                                estimated_cost_usd=cost,
+                                fanout_size=cells,
+                                image_scan_reviewed=reviewed,
+                                **overrides,
+                            ),
+                            thresholds(),
+                        )
+                    )
+    assert seen == {ApprovalClass.AUTOMATIC, ApprovalClass.ROUTINE}
+
+
+# --------------------------------------------------------------------------------------
+# The two catalog figures the rate ceiling was removed over
+# --------------------------------------------------------------------------------------
+
+
+def test_the_two_shapes_the_rate_ceiling_ranked_backwards_now_rank_by_what_they_commit() -> None:
+    """Why rate went, priced against the shipped catalog rather than quoted from a document.
+
+    A full day of eight A10G is $390.91 and a single hour of eight A100 is $21.96, and the
+    rate ceiling sent the second to an admin and the first to a lead. Under v5 both are
+    under the one bound and neither needs a person, which is the ranking a total gives and
+    the rate could not.
+
+    Mutation: put the rate comparison back into ``classify_request``. The A100 row becomes
+    an exception while the A10G row stays automatic, and the assertion that they classify
+    the same way fails. Both figures are recomputed from ``config/workload-catalog.yaml``,
+    so a repricing that invalidates the reasoning fails here rather than in a comment.
+    """
+    a_full_day_of_eight_a10g = compute_maximum_compute_cost_usd(
+        rate_of("gpu-8xa10g"), 1, Decimal(24), 1
+    )
+    one_hour_of_eight_a100 = compute_maximum_compute_cost_usd(
+        rate_of("gpu-8xa100"), 1, Decimal(1), 1
+    )
+
+    assert a_full_day_of_eight_a10g == Decimal("390.91")
+    assert one_hour_of_eight_a100 == Decimal("21.96")
+    assert a_full_day_of_eight_a10g > one_hour_of_eight_a100 * 17
+
+    limits = thresholds()
+    assert (
+        classify_request(facts(estimated_cost_usd=a_full_day_of_eight_a10g), limits)
+        is ApprovalClass.AUTOMATIC
+    )
+    assert (
+        classify_request(facts(estimated_cost_usd=one_hour_of_eight_a100), limits)
+        is ApprovalClass.AUTOMATIC
+    )
+
+
+def test_two_full_days_of_eight_a10g_is_the_shape_a_lead_still_sees() -> None:
+    """The boundary the representative manifests do not reach, priced off the catalog.
+
+    Twenty-four hours at two attempts on ``gpu-8xa10g`` is $781.82, which is over the bound
+    and is therefore a team lead's to release. It is here rather than in a fixture because a
+    fixture would have to be repriced by hand every time that rate moved.
+
+    Mutation: change ``<`` to ``>`` in the cost test. This row stays routine, so it is
+    asserted beside the automatic row above it: the pair is what pins the direction.
+    """
+    two_days = compute_maximum_compute_cost_usd(rate_of("gpu-8xa10g"), 1, Decimal(24), 2)
+
+    assert two_days == Decimal("781.82")
+    assert classify_request(facts(estimated_cost_usd=two_days), thresholds()) is (
+        ApprovalClass.ROUTINE
+    )
+
+
+def test_the_largest_instance_in_the_account_for_one_hour_is_released_by_nobody() -> None:
+    """What removing the rate ceiling actually admits, stated as a test rather than accepted.
+
+    ``p5.48xlarge`` is the dearest shape ``config/workload-catalog.yaml`` prices, and one
+    hour of it at one attempt is $55.04. Under v4 the rate ceiling made that an admin's
+    call. Under v5 it is under the bound and nobody releases it, and the owner accepted that
+    when the ceiling was removed.
+
+    Mutation: reintroduce any per-hour rule. This fails, which is the point of writing the
+    accepted consequence down as an assertion: the next person to find it alarming has to
+    change the policy rather than quietly reinstate a bound.
+    """
+    dearest = max(profile.hourly_rate_usd for profile in load_workload_catalog().compute_profiles)
+    one_hour = compute_maximum_compute_cost_usd(dearest, 1, Decimal(1), 1)
+
+    assert one_hour == Decimal("55.04")
+    assert classify_request(facts(estimated_cost_usd=one_hour), thresholds()) is (
+        ApprovalClass.AUTOMATIC
+    )
+
+
+# --------------------------------------------------------------------------------------
+# The shipped policy file
+# --------------------------------------------------------------------------------------
 
 
 def test_policy_yaml_validates_against_contract() -> None:
     project_root = Path(__file__).resolve().parents[1]
     config_path = project_root / "config" / "policy.yaml"
     policy = load_yaml(config_path, ApprovalPolicy)
-    # v4 since the image-scan gate moved out of denied_outright and into the exception
-    # class. Pinned rather than merely pattern-checked so that a policy change without a
-    # version bump fails here, which is the whole reason a decision record carries the
-    # version.
-    assert policy.policy_version == "v4"
-    assert policy.thresholds.routine_maximum_cost_usd == Decimal(500)
-    # Twenty-four since the runtime ceiling was measured against real work rather than
-    # picked. Twelve made an exception of every sweep between sixteen and twenty hours, so
-    # the exception path was carrying ordinary runs. The cost ceiling did not move with it
-    # and is what still bounds the expensive shapes.
-    assert policy.thresholds.routine_maximum_runtime_hours == Decimal(24)
-    assert policy.thresholds.routine_maximum_attempts == 2
-    assert policy.thresholds.routine_maximum_fanout_size == 64
-    assert policy.thresholds.routine_maximum_parallelism == 8
-    assert policy.thresholds.automatic_below_cost_usd == Decimal(5)
-    assert policy.thresholds.automatic_below_runtime_hours == Decimal(1)
+    # v5 since the exception class stopped carrying runs. Pinned rather than merely
+    # pattern-checked so that a policy change without a version bump fails here, which is
+    # the whole reason a decision record carries the version.
+    assert policy.policy_version == "v5"
+    assert policy.thresholds.automatic_below_cost_usd == Decimal(500)
     assert policy.routine_approver_role == "team_lead"
     assert policy.exception_approver_roles == ("platform_admin",)
     assert policy.image_scan.blocking_severities == (ImageScanSeverity.CRITICAL,)
     # image_scan_findings_unreviewed came off this list in v4 and is deliberately absent
     # rather than reordered. It is still a legal value of the field and still derived as a
-    # fact; what changed is that classify_request routes it to the admin gate instead of
-    # policy refusing it outright, so an admin who reads the findings can release the run.
+    # fact; what changed in v5 is that a team lead releases it rather than an admin.
     assert policy.denied_outright == (
         "unregistered_repository",
         "unregistered_dataset",
@@ -530,6 +413,33 @@ def test_policy_yaml_validates_against_contract() -> None:
         "dataset_is_not_a_corpus",
     )
     assert "image_scan_findings_unreviewed" not in policy.denied_outright
+
+
+@pytest.mark.parametrize(
+    "retired",
+    [
+        "routine_maximum_cost_usd",
+        "routine_maximum_runtime_hours",
+        "routine_maximum_attempts",
+        "routine_maximum_fanout_size",
+        "routine_maximum_parallelism",
+        "automatic_below_runtime_hours",
+    ],
+)
+def test_a_threshold_v5_retired_cannot_be_put_back_by_editing_the_file(retired: str) -> None:
+    """A half-applied revert is refused rather than half-obeyed.
+
+    ``ContractModel`` sets ``extra="forbid"``, so a ``policy.yaml`` that still names one of
+    the six retired bounds fails to load rather than loading with a field nothing reads.
+    That is the failure mode this pins: a bound written back into the file by somebody
+    expecting it to gate something would otherwise sit there gating nothing, which is the
+    exact defect ``routine_maximum_parallelism`` was for two months.
+
+    Mutation: give ``PolicyThresholds`` ``extra="allow"``, or add any of these back as a
+    field. The row for it stops raising.
+    """
+    with pytest.raises(ValidationError):
+        PolicyThresholds.model_validate({**thresholds_payload(), retired: "1"})
 
 
 def test_approval_policy_requires_the_version_that_produced_a_decision() -> None:
@@ -585,7 +495,7 @@ def test_approval_policy_rejects_unknown_denied_outright_condition() -> None:
 
 def test_policy_thresholds_reject_non_decimal_cost() -> None:
     with pytest.raises(ValidationError) as exc_info:
-        PolicyThresholds.model_validate({**thresholds_payload(), "routine_maximum_cost_usd": 500})
+        PolicyThresholds.model_validate({"automatic_below_cost_usd": 500})
     assert_validation_error(
         exc_info.value,
         error_type="value_error",
@@ -593,23 +503,21 @@ def test_policy_thresholds_reject_non_decimal_cost() -> None:
     )
 
 
+def test_policy_thresholds_reject_a_bound_of_zero() -> None:
+    """Zero would make the automatic class empty rather than turn it off.
+
+    Mutation: change ``gt=0`` to ``ge=0``. A policy declaring zero would load, every run
+    would go to a lead, and nothing would say the class had been switched off by a value
+    rather than by a decision.
+    """
+    with pytest.raises(ValidationError) as exc_info:
+        PolicyThresholds.model_validate({"automatic_below_cost_usd": "0"})
+    assert_validation_error(exc_info.value, error_type="greater_than")
+
+
 def test_request_facts_reject_non_decimal_runtime() -> None:
     with pytest.raises(ValidationError) as exc_info:
-        RequestFacts.model_validate(
-            {
-                "claimed_team": "memory-split",
-                "repository_registered": True,
-                "dataset_registered": True,
-                "dataset_is_a_corpus": True,
-                "compute_profile_registered": True,
-                "immutable_revision": True,
-                "immutable_image": True,
-                "image_scan_reviewed": True,
-                "estimated_cost_usd": "1",
-                "maximum_runtime_hours": 24,
-                "maximum_attempts": 1,
-            }
-        )
+        RequestFacts.model_validate(request_facts_payload(maximum_runtime_hours=24))
     assert_validation_error(
         exc_info.value,
         error_type="value_error",
@@ -635,36 +543,6 @@ def test_request_facts_reject_a_claimed_team_that_is_not_a_team_identifier(
     with pytest.raises(ValidationError) as exc_info:
         RequestFacts.model_validate(request_facts_payload(claimed_team=claimed_team))
     assert exc_info.value.errors()[0]["loc"] == ("claimed_team",)
-
-
-@pytest.mark.parametrize(
-    ("payload_override", "field", "error_type"),
-    [
-        ({"routine_maximum_cost_usd": Decimal(-1)}, "routine_maximum_cost_usd", "greater_than_equal"),
-        ({"routine_maximum_runtime_hours": Decimal(0)}, "routine_maximum_runtime_hours", "greater_than"),
-        ({"routine_maximum_attempts": 0}, "routine_maximum_attempts", "greater_than_equal"),
-        (
-            {"routine_maximum_fanout_size": 0},
-            "routine_maximum_fanout_size",
-            "greater_than_equal",
-        ),
-        (
-            {"routine_maximum_parallelism": 0},
-            "routine_maximum_parallelism",
-            "greater_than_equal",
-        ),
-    ],
-)
-def test_policy_thresholds_reject_out_of_range_values(
-    payload_override: dict[str, object],
-    field: str,
-    error_type: str,
-) -> None:
-    payload = {**thresholds_payload(), **payload_override}
-    with pytest.raises(ValidationError) as exc_info:
-        PolicyThresholds.model_validate(payload)
-    assert_validation_error(exc_info.value, error_type=error_type)
-    assert exc_info.value.errors()[0]["loc"] == (field,)
 
 
 @pytest.mark.parametrize(
@@ -731,7 +609,7 @@ def test_representative_manifest_classifies_as_expected(filename: str) -> None:
     catalog = load_workload_catalog()
     policy = load_approval_policy()
     cost = compute_manifest_cost_inputs(manifest, catalog)
-    facts = request_facts_from_manifest(
+    request = request_facts_from_manifest(
         manifest,
         repositories=load_repository_registry(),
         catalog=catalog,
@@ -739,77 +617,69 @@ def test_representative_manifest_classifies_as_expected(filename: str) -> None:
         estimated_cost_usd=cost.maximum_compute_cost_usd,
     )
     expected = expected_classification(filename)
-    # The fixture's own profile rate rather than a constant, because that is what admission
-    # passes and the fixtures are the shapes a real submission takes.
-    assert (
-        classify_request(facts, policy.thresholds, hourly_rate_usd=cost.hourly_rate_usd)
-        == expected
-    ), f"{filename} classification mismatch for {facts=}"
+    assert classify_request(request, policy.thresholds) == expected, (
+        f"{filename} classification mismatch for {request=}"
+    )
 
 
-def test_gpu_exception_has_full_registration_and_only_runtime_violation() -> None:
-    filename = "gpu-exception.yaml"
-    manifest = load_representative_manifest(filename)
+def test_the_only_representative_manifest_a_person_releases_is_the_fanout() -> None:
+    """What v5 did to the reviewed fixtures, said once rather than inferred from six rows.
+
+    Mutation: delete the fan-out test from ``classify_request``. Every representative
+    manifest becomes automatic, this assertion finds an empty set, and the fixture suite
+    stops covering the routine path at all.
+    """
+    routine = {
+        filename
+        for filename in REPRESENTATIVE_MANIFEST_FILENAMES
+        if expected_classification(filename) is ApprovalClass.ROUTINE
+    }
+
+    assert routine == {"multiseed-routine.yaml"}
+    assert load_representative_manifest("multiseed-routine.yaml").fanout is not None
+
+
+def test_gpu_exception_is_registered_throughout_and_is_now_released_by_nobody() -> None:
+    """The fixture whose name is a class that no longer exists, and what it proves instead.
+
+    Twenty-five hours on ``gpu-4xa10g`` was an exception on runtime alone under v4, which is
+    what the file was built for and where its name came from. There is no runtime ceiling
+    now, it is $141.80 in one cell, and it is released by nobody. It keeps the name in this
+    change because sixty-eight references across twenty files is a rename of its own.
+
+    Mutation: put a runtime ceiling back into ``classify_request``. The last assertion fails.
+    """
+    manifest = load_representative_manifest("gpu-exception.yaml")
     catalog = load_workload_catalog()
     policy = load_approval_policy()
-    estimated_cost_usd = compute_manifest_maximum_cost(manifest, catalog)
-    facts = request_facts_from_manifest(
+    request = request_facts_from_manifest(
         manifest,
         repositories=load_repository_registry(),
         catalog=catalog,
         dataset_registry=load_dataset_registry(),
-        estimated_cost_usd=estimated_cost_usd,
+        estimated_cost_usd=compute_manifest_maximum_cost(manifest, catalog),
     )
 
-    assert facts.repository_registered is True
-    assert facts.dataset_registered is True
-    assert facts.compute_profile_registered is True
+    assert request.repository_registered is True
+    assert request.dataset_registered is True
+    assert request.compute_profile_registered is True
     assert is_workload_profile_registered(manifest, catalog)
-    assert facts.immutable_revision is True
-    assert facts.immutable_image is True
-    assert numeric_bound_violations(facts, policy.thresholds) == frozenset({"runtime"})
-
-
-@pytest.mark.parametrize(
-    "filename",
-    [name for name in REPRESENTATIVE_MANIFEST_FILENAMES if name.endswith("-routine.yaml")],
-)
-def test_routine_manifest_has_full_registration_and_no_bound_violations(
-    filename: str,
-) -> None:
-    manifest = load_representative_manifest(filename)
-    catalog = load_workload_catalog()
-    policy = load_approval_policy()
-    estimated_cost_usd = compute_manifest_maximum_cost(manifest, catalog)
-    facts = request_facts_from_manifest(
-        manifest,
-        repositories=load_repository_registry(),
-        catalog=catalog,
-        dataset_registry=load_dataset_registry(),
-        estimated_cost_usd=estimated_cost_usd,
-    )
-
-    assert facts.repository_registered is True
-    assert facts.dataset_registered is True
-    assert facts.compute_profile_registered is True
-    assert is_workload_profile_registered(manifest, catalog)
-    assert facts.immutable_revision is True
-    assert facts.immutable_image is True
-    assert numeric_bound_violations(facts, policy.thresholds) == frozenset()
+    assert request.immutable_revision is True
+    assert request.immutable_image is True
+    assert manifest.maximum_runtime_hours == Decimal(25)
+    assert classify_request(request, policy.thresholds) is ApprovalClass.AUTOMATIC
 
 
 def test_request_facts_from_manifest_rejects_unregistered_repository() -> None:
     manifest = load_representative_manifest("cpu-routine.yaml")
     catalog = load_workload_catalog()
     broken_manifest = manifest.model_copy(update={"repository": "not-a-registered-repository"})
-    facts = request_facts_from_manifest(
+    request = request_facts_from_manifest(
         broken_manifest,
         repositories=load_repository_registry(),
         catalog=catalog,
         dataset_registry=load_dataset_registry(),
         estimated_cost_usd=Decimal(1),
     )
-    assert facts.repository_registered is False
-    assert classify_request(facts, thresholds(), hourly_rate_usd=ROUTINE_RATE) is (
-        ApprovalClass.EXCEPTION
-    )
+    assert request.repository_registered is False
+    assert classify_request(request, thresholds()) is ApprovalClass.ROUTINE

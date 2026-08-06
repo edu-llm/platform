@@ -38,15 +38,7 @@ def project_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-POLICY_THRESHOLDS_PAYLOAD: dict[str, object] = {
-    "routine_maximum_cost_usd": "500",
-    "routine_maximum_runtime_hours": "24",
-    "routine_maximum_attempts": 2,
-    "routine_maximum_fanout_size": 64,
-    "routine_maximum_parallelism": 8,
-    "automatic_below_cost_usd": "5",
-    "automatic_below_runtime_hours": "1",
-}
+POLICY_THRESHOLDS_PAYLOAD: dict[str, object] = {"automatic_below_cost_usd": "500"}
 
 COMPUTE_PROFILE_PAYLOAD: dict[str, object] = {
     "name": "cpu-test",
@@ -98,12 +90,16 @@ REGISTERED_REPOSITORY_PAYLOAD: dict[str, object] = {
     "build_context": ".",
 }
 
+# POLICY CONTRIBUTES ONE ROW WHERE IT CONTRIBUTED TWO. ``routine_maximum_cost_usd`` was the
+# non-negative one and ``routine_maximum_runtime_hours`` the positive one, and v5 retired
+# both along with the other four ceilings. What is left is the single automatic bound, which
+# is positive. The non-negative alias is still exercised by ``RequestFacts`` and by the
+# manifest, so no probe loses its subject.
 EXPORTED_DECIMAL_FIELDS: tuple[tuple[str, type[BaseModel], str, bool, dict[str, object]], ...] = (
-    ("policy-cost", PolicyThresholds, "routine_maximum_cost_usd", False, POLICY_THRESHOLDS_PAYLOAD),
     (
-        "policy-runtime",
+        "policy-automatic-bound",
         PolicyThresholds,
-        "routine_maximum_runtime_hours",
+        "automatic_below_cost_usd",
         True,
         POLICY_THRESHOLDS_PAYLOAD,
     ),
@@ -385,17 +381,27 @@ def test_exported_decimal_schemas_use_distinct_non_negative_and_positive_pattern
     manifest_schema = json.loads(
         (project_root() / "schemas" / "run-manifest.schema.json").read_text(encoding="utf-8")
     )
+    decision_schema = json.loads(
+        (project_root() / "schemas" / "decision-record.schema.json").read_text(encoding="utf-8")
+    )
     non_negative_pattern = "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
     positive_pattern = "^(?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)$"
 
-    cost_schema = policy_schema["$defs"]["PolicyThresholds"]["properties"]["routine_maximum_cost_usd"]
-    runtime_schema = policy_schema["$defs"]["PolicyThresholds"]["properties"][
-        "routine_maximum_runtime_hours"
+    # POLICY PUBLISHES ONE DECIMAL NOW AND IT IS THE POSITIVE ONE. It published two, and the
+    # non-negative one was ``routine_maximum_cost_usd``, which v5 retired. The two patterns
+    # are still asserted against each other here, one schema apart: a cost of zero is a real
+    # answer for a run that never started, and a bound of zero is not a bound.
+    bound_schema = policy_schema["$defs"]["PolicyThresholds"]["properties"][
+        "automatic_below_cost_usd"
     ]
-    assert cost_schema["type"] == "string"
-    assert cost_schema["pattern"] == non_negative_pattern
-    assert runtime_schema["type"] == "string"
-    assert runtime_schema["pattern"] == positive_pattern
+    recorded_runtime_schema = decision_schema["$defs"]["CostInputs"]["properties"][
+        "maximum_runtime_hours"
+    ]
+    assert bound_schema["type"] == "string"
+    assert bound_schema["pattern"] == positive_pattern
+    assert recorded_runtime_schema["type"] == "string"
+    assert recorded_runtime_schema["pattern"] == non_negative_pattern
+    assert non_negative_pattern != positive_pattern
 
     rate_schema = catalog_schema["$defs"]["ComputeProfile"]["properties"]["hourly_rate_usd"]
     workload_runtime_schema = catalog_schema["$defs"]["WorkloadProfile"]["properties"][

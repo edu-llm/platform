@@ -224,12 +224,43 @@ def load_inventory_inputs(repo_root: Path) -> InventoryInputs:
     )
 
 
+#: What each representative manifest is expected to classify as, declared rather than read
+#: off the end of its filename.
+#:
+#: IT WAS THE FILENAME AND POLICY v5 MADE THAT A LIE. The rule was that a file ending
+#: ``-routine.yaml`` classified as routine and one ending ``-exception.yaml`` as an
+#: exception, which held while the class was a function of five ceilings the fixtures were
+#: written against. v5 leaves one bound at five hundred dollars, so four of these fixtures
+#: are released by nobody and none of them is an exception, and the suffix on the file no
+#: longer says which.
+#:
+#: The files keep their names in this change and the names now describe the shape rather
+#: than the class: which machine, whether it fans out, which repository it came from.
+#: Renaming sixty-eight references across twenty files is a separate change and would land
+#: as one conflict per agent merging beside it.
+#:
+#: ``multiseed-routine.yaml`` is the only one still routine and the reason is worth reading
+#: off this table: it is five cells, and a fan-out is never released automatically whatever
+#: it costs. Nothing here is routine on cost, because no representative manifest reaches
+#: five hundred dollars; that boundary is exercised in tests/test_policy.py against the real
+#: catalog, where a fixture would have had to be repriced every time a rate moved.
+REPRESENTATIVE_MANIFEST_CLASSES: Final[dict[str, ApprovalClass]] = {
+    "cpu-routine.yaml": ApprovalClass.AUTOMATIC,
+    "gpu-exception.yaml": ApprovalClass.AUTOMATIC,
+    "gpu-routine.yaml": ApprovalClass.AUTOMATIC,
+    "multiseed-routine.yaml": ApprovalClass.ROUTINE,
+    "olmo-branch-routine.yaml": ApprovalClass.AUTOMATIC,
+    "sagemaker-routine.yaml": ApprovalClass.AUTOMATIC,
+}
+
+
 def expected_manifest_classification(filename: str) -> ApprovalClass:
-    if filename.endswith("-exception.yaml"):
-        return ApprovalClass.EXCEPTION
-    if filename.endswith("-routine.yaml"):
-        return ApprovalClass.ROUTINE
-    raise ValueError(f"unexpected representative manifest filename: {filename}")
+    try:
+        return REPRESENTATIVE_MANIFEST_CLASSES[filename]
+    except KeyError:
+        raise ValueError(
+            f"unexpected representative manifest filename: {filename}"
+        ) from None
 
 
 def request_facts_from_manifest(
@@ -565,7 +596,7 @@ def check_representative_manifests(
             estimated_cost_usd=cost.maximum_compute_cost_usd,
         )
         expected = expected_manifest_classification(filename)
-        actual = classify_request(facts, policy.thresholds, hourly_rate_usd=cost.hourly_rate_usd)
+        actual = classify_request(facts, policy.thresholds)
         if actual != expected:
             return fail_check(
                 "inventory_representative_manifests",

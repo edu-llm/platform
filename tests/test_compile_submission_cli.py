@@ -456,10 +456,10 @@ def test_a_clean_scan_compiles_where_an_absent_one_was_refused(tmp_path: Path) -
     exit_code, compiled = compile_form(tmp_path)
 
     assert exit_code == EXIT_OK
-    assert compiled["approval_class"] == "routine"
+    assert compiled["approval_class"] == "automatic"
 
 
-def test_an_image_carrying_a_blocking_finding_goes_to_the_admin_with_the_findings_named(
+def test_an_image_carrying_a_blocking_finding_goes_to_a_lead_with_the_findings_named(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -489,8 +489,8 @@ def test_an_image_carrying_a_blocking_finding_goes_to_the_admin_with_the_finding
     )
 
     assert exit_code == EXIT_OK
-    assert compiled["approval_class"] == "exception"
-    assert compiled["approving_environment"] == "run-approval-admin"
+    assert compiled["approval_class"] == "routine"
+    assert compiled["approving_environment"] == "run-approval-lead"
 
     summary = approver_context(tmp_path)
     assert "## Unreviewed image scan findings" in summary
@@ -504,7 +504,7 @@ def test_an_image_carrying_a_blocking_finding_goes_to_the_admin_with_the_finding
     assert "carry no recorded review" in capsys.readouterr().err
 
 
-def test_a_count_with_no_findings_behind_it_does_not_ask_the_admin_to_review_them(
+def test_a_count_with_no_findings_behind_it_does_not_ask_a_lead_to_review_them(
     tmp_path: Path,
 ) -> None:
     """The verdict the fixture above used to produce by accident, kept on purpose.
@@ -520,7 +520,7 @@ def test_a_count_with_no_findings_behind_it_does_not_ask_the_admin_to_review_the
     )
 
     assert exit_code == EXIT_OK
-    assert compiled["approving_environment"] == "run-approval-admin"
+    assert compiled["approving_environment"] == "run-approval-lead"
 
     summary = approver_context(tmp_path)
     assert "did not read them all" in summary
@@ -545,7 +545,7 @@ def test_a_scan_that_had_not_finished_when_it_was_read_says_so_rather_than_namin
     )
 
     assert exit_code == EXIT_OK
-    assert compiled["approving_environment"] == "run-approval-admin"
+    assert compiled["approving_environment"] == "run-approval-lead"
 
     summary = approver_context(tmp_path)
     assert "scan as IN_PROGRESS rather than COMPLETE" in summary

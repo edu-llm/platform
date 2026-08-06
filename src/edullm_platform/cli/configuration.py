@@ -44,6 +44,7 @@ from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.run_history import RunHistory, RunHistoryFormatError, load_run_history
 
 __all__ = [
     "CONFIG_DIRECTORY_VARIABLE",
@@ -90,6 +91,12 @@ class ReviewedConfiguration:
     datasets: DatasetRegistry
     inventory: OrganizationInventory
     image_scan_exceptions: ImageScanExceptionRegistry
+    #: What runs of each shape have actually taken, and ``None`` where this install carries
+    #: no reading. The seventh file, and the only optional one, because it is the only one
+    #: that is a measurement rather than a rule. A missing rule is a broken installation and
+    #: a missing measurement is a thing to say out loud, which
+    #: :data:`~edullm_platform.run_history.NO_HISTORY_PACKAGED` is.
+    run_history: RunHistory | None = None
 
 
 def find_config_directory(
@@ -122,7 +129,15 @@ def find_config_directory(
 
 
 def load_reviewed_configuration(directory: Path) -> ReviewedConfiguration:
-    """Read the six files, or say which one could not be read."""
+    """Read the six rules and the one reading, or say which of them could not be read.
+
+    The reading is optional and the six are not. A directory holding four of the six is a
+    broken installation, and one holding no ``run-history.json`` is an ordinary install from
+    before the first reading was committed, an editable checkout, or a directory a test
+    built. What is not tolerated is a reading that will not parse, which
+    :func:`~edullm_platform.run_history.load_run_history` raises on: a measurement this tree
+    cannot read is a broken install rather than an absent measurement.
+    """
     try:
         return ReviewedConfiguration(
             directory=directory,
@@ -134,8 +149,9 @@ def load_reviewed_configuration(directory: Path) -> ReviewedConfiguration:
             image_scan_exceptions=load_yaml(
                 directory / "image-exceptions.yaml", ImageScanExceptionRegistry
             ),
+            run_history=load_run_history(directory),
         )
-    except (OSError, ValidationError, TypeError) as exc:
+    except (OSError, ValidationError, TypeError, RunHistoryFormatError) as exc:
         raise ConfigurationUnreadableError(
             f"the reviewed configuration in {directory} could not be read: {exc}"
         ) from exc
