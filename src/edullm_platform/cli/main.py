@@ -100,11 +100,31 @@ from edullm_platform.cli.actions import (
     report_ceiling_seconds,
     submit_ceiling_seconds,
 )
+from edullm_platform.cli.browser import (
+    no_browser_here,
+    open_a_browser,
+    sweep_stale_handoffs,
+    write_handoff,
+)
 from edullm_platform.cli.configuration import (
     ConfigurationUnreadableError,
     ReviewedConfiguration,
     find_config_directory,
     load_reviewed_configuration,
+)
+from edullm_platform.cli.console import (
+    CONSOLE_PLACES,
+    SIGNIN_TOKEN_MINUTES,
+    console_destination,
+    could_not_reach_the_sign_in_endpoint,
+    could_not_read_a_credential,
+    export_credentials_argv,
+    login_url,
+    opened_said,
+    session_string,
+    signin_token,
+    signin_token_url,
+    where_said,
 )
 from edullm_platform.cli.intake import (
     ADD_KINDS,
@@ -224,6 +244,7 @@ from edullm_platform.cli.spec import (
     load_spec,
 )
 from edullm_platform.cli.studio import (
+    PRESIGNED_URL_SECONDS,
     STUDIO_CONFIG_FILE,
     OwnedSpace,
     RunningApp,
@@ -260,6 +281,7 @@ from edullm_platform.cli.studio import (
     space_name_for,
     space_named,
     spaces_said,
+    starting_said,
     studio_document,
     studio_name_for,
     studio_refusals,
@@ -401,6 +423,7 @@ BUILT_TODAY: Final = {
     "shell": "a terminal on a machine of your own, or a notebook on it",
     "stop": "end the machine those two started, and say what it cost",
     "studio": "open your SageMaker Studio space, or --stop it",
+    "console": "open the AWS console in your browser, signed in as you",
 }
 
 #: What each built verb does, in the sentence its own ``--help`` opens with.
@@ -469,11 +492,16 @@ WHAT_A_VERB_DOES: Final = {
         "else's machine is reachable from here."
     ),
     "studio": (
-        "Opens the SageMaker Studio space for one project and prints a sign-in URL, after "
-        "saying what an hour of it costs. The project names the space: the same one brings "
-        "back the same disk, a new one makes a new space. With no --project it lists the "
-        "spaces you have. --stop ends the compute and keeps the disk. Nothing here is "
-        "checked, priced against a policy or recorded as a run you can cite."
+        "Opens the SageMaker Studio space for one project in your browser, after saying what "
+        "an hour of it costs. The project names the space: the same one brings back the same "
+        "disk, a new one makes a new space. With no --project it lists the spaces you have. "
+        "--stop ends the compute and keeps the disk. Nothing here is checked, priced against "
+        "a policy or recorded as a run you can cite."
+    ),
+    "console": (
+        "Opens the AWS console in your browser, signed in as you, with exactly the "
+        "permissions your own commands have. Nobody here has a console password, so this is "
+        "the only way in. Name a place to land somewhere other than the front door."
     ),
 }
 
@@ -815,7 +843,25 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
             "on its own eventually, and this is what stops paying for it now"
         ),
     )
+    _add_print_url(studio)
     _add_json(studio)
+
+    console = verb_parser("console", WHAT_A_VERB_DOES["console"])
+    # A POSITIONAL AND NOT A FLAG, BECAUSE THE WORD IS THE WHOLE COMMAND. `edullm console logs`
+    # is the sentence somebody says out loud, and `--at logs` is the same sentence with an
+    # apology in front of it. `choices` rather than a free string: argparse answers an unknown
+    # one with the list, which is the discovery this verb would otherwise need a --list for.
+    console.add_argument(
+        "where",
+        nargs="?",
+        default="home",
+        choices=CONSOLE_PLACES,
+        help=(
+            "the page to land on. Every one of these is reachable by navigating from any "
+            "other, so this is a shortcut rather than a limit on what you may look at"
+        ),
+    )
+    _add_print_url(console)
 
     built: dict[str, argparse.ArgumentParser] = {
         "check": check,
@@ -830,6 +876,7 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         "shell": shell,
         "stop": stop,
         "studio": studio,
+        "console": console,
     }
     for verb, plan in NOT_BUILT_YET.items():
         # THE SENTENCE IS THE PLAN'S, READ RATHER THAN REWRITTEN. An unbuilt verb's help
@@ -879,6 +926,30 @@ def _add_json(parser: argparse.ArgumentParser) -> None:
         help=(
             "print one JSON document on stdout instead of the paragraphs, whatever the "
             "outcome. The exit code is unchanged."
+        ),
+    )
+
+
+def _add_print_url(parser: argparse.ArgumentParser) -> None:
+    """The escape hatch for the two verbs that would otherwise open a browser.
+
+    **IT EXISTS FOR THE MACHINE THAT HAS NO BROWSER, AND THE DEFAULT IS STILL TO OPEN ONE.**
+    Printing a four-thousand-character credential for a person to carry is the failure
+    ``cli/browser.py`` documents at length; it is also the only thing that works on a headless
+    box, in a script, or where somebody wants to paste the URL into a browser on a different
+    machine entirely. So it stays reachable and stops being the default.
+
+    It is not needed for the ordinary remote case. :func:`~edullm_platform.cli.browser.
+    no_browser_here` already detects an SSH session and a display-less Linux box and prints
+    without being asked; this flag is for saying so when the detection cannot know -- a
+    container with a display it cannot use, a person driving the tool from an editor.
+    """
+    parser.add_argument(
+        "--print-url",
+        action="store_true",
+        help=(
+            "print the sign-in URL instead of opening a browser. For a machine with no "
+            "browser on it, or a script. This happens on its own over SSH"
         ),
     )
 
@@ -1310,6 +1381,8 @@ def main(
             return _stop(arguments, runner=command_runner, out=stdout, err=stderr)
         if verb == "studio":
             return _studio(arguments, runner=command_runner, out=stdout, err=stderr)
+        if verb == "console":
+            return _console(arguments, runner=command_runner, out=stdout, err=stderr)
     except KeyboardInterrupt:
         # CAUGHT BECAUSE IT IS NOT AN ``Exception`` AND SO SLIPPED PAST EVERYTHING BELOW.
         # The handler two blocks down exists so that a researcher never meets a traceback,
@@ -2584,6 +2657,7 @@ def _studio(
         out=out,
         err=err,
         as_document=bool(arguments.json),
+        print_url=bool(arguments.print_url),
     )
 
 
@@ -2759,6 +2833,7 @@ def _open_the_studio_space(
     out: TextIO,
     err: TextIO,
     as_document: bool,
+    print_url: bool,
 ) -> int:
     """Open this project's space, making it where there is none. Price first, always.
 
@@ -2856,7 +2931,15 @@ def _open_the_studio_space(
             print(_could_not_start_the_studio_app(request, started.stderr), end="", file=err)
             return EXIT_UNREACHABLE
 
-    signed = runner(presigned_url_argv(settings=settings, request=request), env=environment)
+    # **MINTED LAST, AND AIMED AT WHERE THE SPACE ACTUALLY IS.** The five minutes on this
+    # credential is a ceiling the API enforces, so the only way to spend it well is to cut it
+    # immediately before it is redeemed and to point it somewhere that exists now.
+    # ``presigned_url_argv`` carries the measurement behind both halves of that.
+    running_now = app is not None and app.is_billing
+    signed = runner(
+        presigned_url_argv(settings=settings, request=request, app_is_running=running_now),
+        env=environment,
+    )
     if not signed.ok:
         print(_could_not_sign_in_to_studio(request, signed.stderr), end="", file=err)
         return EXIT_UNREACHABLE
@@ -2883,10 +2966,173 @@ def _open_the_studio_space(
             out=out,
         )
         return EXIT_OK
-    if app is not None and app.is_billing:
-        print(already_running_said(app, request, url=signed.text), file=out)
-    else:
-        print(signed.text, file=out)
+    told = (
+        already_running_said(app, request)
+        if app is not None and app.is_billing
+        else starting_said(request)
+    )
+    print("\n".join(_wrapped(told, indent="")), file=err)
+    print(file=err)
+    _hand_over_a_url(
+        signed.text,
+        print_only=print_url,
+        good_for=f"{PRESIGNED_URL_SECONDS // 60} minutes",
+        out=out,
+        err=err,
+    )
+    return EXIT_OK
+
+
+def _hand_over_a_url(
+    url: str,
+    *,
+    print_only: bool,
+    good_for: str,
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Get one sign-in URL in front of a person, by the best route this machine has.
+
+    **THE URL GOES TO STDOUT AND EVERY EXPLANATION GOES TO STDERR, WHENEVER IT GOES ANYWHERE.**
+    That is what makes ``edullm studio --project x --print-url | pbcopy`` a thing that works
+    rather than a thing that copies three paragraphs and a URL. It is the split the rest of this
+    file already keeps -- the price, the idle warning and the accumulation count are all on
+    stderr -- and it matters more here, because the one line on stdout is a credential a script
+    is about to use.
+
+    **AND IT IS PRINTED ONLY WHEN NO BROWSER TOOK IT.** Printing it as well as opening it would
+    put a live bearer credential into the scrollback of every person who never needed to see it,
+    which is most of them, and would leave the four-thousand-character paste sitting there
+    looking like the thing they were supposed to do.
+    """
+    if print_only:
+        print(_url_was_printed(good_for, because=None), end="", file=err)
+        print(url, file=out)
+        return
+    elsewhere = no_browser_here(os.environ)
+    if elsewhere is not None:
+        print(_url_was_printed(good_for, because=elsewhere), end="", file=err)
+        print(url, file=out)
+        return
+    # SWEPT HERE RATHER THAN ON A TIMER OR AT EXIT, BECAUSE THIS IS THE ONE MOMENT THE PROCESS
+    # IS CERTAINLY ABOUT TO WRITE ANOTHER ONE. A sweep that ran anywhere else would be a
+    # background job this binary does not have.
+    sweep_stale_handoffs(older_than_seconds=PRESIGNED_URL_SECONDS)
+    page = write_handoff(url)
+    if not open_a_browser(page):
+        print(
+            _url_was_printed(good_for, because="no browser on this machine would take it"),
+            end="",
+            file=err,
+        )
+        print(url, file=out)
+        return
+    print(
+        "\n".join(
+            _wrapped(
+                f"Opened it in your browser. The link is good for {good_for}, and it was "
+                "handed straight to the browser rather than printed, because it is a "
+                "credential and it is far too long to copy by hand. Pass --print-url if you "
+                "need the URL itself.",
+                indent="",
+            )
+        ),
+        file=err,
+    )
+
+
+def _url_was_printed(good_for: str, *, because: str | None) -> str:
+    """Why there is a URL on stdout, said above it rather than after it.
+
+    Above, because a person whose terminal has just been handed four thousand characters has
+    scrolled past anything printed underneath by the time they look.
+    """
+    opening = (
+        "Here is the sign-in URL."
+        if because is None
+        else f"No browser was opened here, because {because}. Here is the sign-in URL."
+    )
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                f"{opening} It is good for {good_for} and it signs in as you, so treat it as a "
+                "password: anybody who has it inside that window is you. It is one line, "
+                "however many your terminal wraps it into.",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+def _console(
+    arguments: argparse.Namespace,
+    *,
+    runner: CommandRunner,
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """Sign the caller in to the AWS console, which nobody here can otherwise do.
+
+    **IT ASSUMES NO ROLE, WHICH EVERY OTHER AWS-TOUCHING VERB DOES.** ``cli/console.py`` argues
+    it at length: this verb grants nothing and spends nothing, so a console showing a different
+    principal than the person's own commands see would be a worse answer than no console. It is
+    also why there is no ``--project`` -- there is nothing here to attribute.
+
+    **AND IT MAKES NO AWS API CALL AT ALL.** One ``aws configure export-credentials`` to read the
+    credential the person already has, and one HTTPS GET to AWS's sign-in endpoint. That is the
+    whole of it, which is why it needs nobody to be granted anything and works on the day
+    somebody's IAM permissions are the narrowest they will ever be.
+    """
+    exported = runner(export_credentials_argv())
+    if not exported.ok:
+        refusals: tuple[Refusal, ...] = (could_not_read_a_credential(exported.stderr),)
+        print(render_refusals(refusals), end="", file=err)
+        return EXIT_UNREACHABLE
+    try:
+        credentials = json.loads(exported.stdout)
+    except ValueError:
+        credentials = {}
+    session = session_string(credentials if isinstance(credentials, Mapping) else {})
+    if not session:
+        unreadable: tuple[Refusal, ...] = (could_not_read_a_credential(exported.stdout),)
+        print(render_refusals(unreadable), end="", file=err)
+        return EXIT_UNREACHABLE
+
+    identity = runner(("aws", "sts", "get-caller-identity", "--output", "json"))
+    if not identity.ok:
+        print(_no_aws_session(identity.stderr, opens_a_session=False), end="", file=err)
+        return EXIT_UNREACHABLE
+    person = person_from_caller_arn(str(json.loads(identity.stdout)["Arn"])) or "yourself"
+
+    settings = load_studio_settings(_configuration(arguments).directory)
+    print("\n".join(_wrapped(where_said(arguments.where, person=person), indent="")), file=err)
+    print(file=err)
+
+    token = signin_token(signin_token_url(session))
+    if not token:
+        unreachable: tuple[Refusal, ...] = (could_not_reach_the_sign_in_endpoint(),)
+        print(render_refusals(unreachable), end="", file=err)
+        return EXIT_UNREACHABLE
+
+    print("\n".join(_wrapped(opened_said(), indent="")), file=err)
+    print(file=err)
+    _hand_over_a_url(
+        login_url(
+            token=token,
+            destination=console_destination(
+                arguments.where,
+                region=settings.region,
+                person=person,
+                domain_id=settings.domain_id,
+            ),
+        ),
+        print_only=bool(arguments.print_url),
+        good_for=f"{SIGNIN_TOKEN_MINUTES} minutes",
+        out=out,
+        err=err,
+    )
     return EXIT_OK
 
 

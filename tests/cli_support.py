@@ -33,12 +33,14 @@ from __future__ import annotations
 import io
 import json
 import os
+import tempfile
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+import edullm_platform.cli.main as main_module
 from edullm_platform.cli.lane import AWS_BROKER, SESSION_PLUGIN
 from edullm_platform.cli.main import main
 from edullm_platform.cli.preferences import DEFAULT_TEAM_FILE, PREFERENCES_DIRECTORY
@@ -502,6 +504,41 @@ STUDIO_PERSON = "caiiris"
 STUDIO_PROJECT = "mixlaw"
 STUDIO_SPACE = f"{STUDIO_PERSON}-{STUDIO_PROJECT}"
 
+#: The sign-in token :func:`invoke` hands ``edullm console`` instead of asking AWS for one.
+#:
+#: **THE ONE HTTPS REQUEST IN THIS BINARY IS STUBBED HERE FOR THE REASON EVERY SUBPROCESS IS.**
+#: ``_console`` exchanges the caller's credentials at ``signin.aws.amazon.com``, and a suite that
+#: made that call would reach a network, would need a real credential to get anything but a 400,
+#: and would fail on a laptop with no route out. :func:`~edullm_platform.cli.console.signin_token`
+#: is unit-tested directly against a fake opener, which is where the parsing belongs; what the
+#: cases through ``invoke`` are about is what the verb does with a token once it has one.
+CONSOLE_SIGNIN_TOKEN = "not-a-signin-token"
+
+#: What ``aws configure export-credentials`` answers, in the shape the real CLI prints.
+#:
+#: Deliberately not a plausible-looking key. ``tests/test_evidence.py`` reads the tracked tree for
+#: things that look like credentials, and a fixture that imitated one well enough to be useful
+#: would be a fixture that trips it -- correctly.
+CONSOLE_CREDENTIALS = json.dumps(
+    {
+        "Version": 1,
+        "AccessKeyId": "not-an-access-key",
+        "SecretAccessKey": "not-a-secret",
+        "SessionToken": "not-a-session-token",
+    }
+)
+
+
+def console_answers() -> dict[tuple[str, ...], CommandResult]:
+    """The one command ``edullm console`` runs that no other verb does.
+
+    Its own function rather than a line in :func:`lane_answers`, because the verb deliberately
+    does not enter the lane -- ``cli/console.py`` argues why -- so a fixture that folded it in
+    would describe a verb assuming a role this one never assumes.
+    """
+    return {("aws", "configure", "export-credentials"): ok(CONSOLE_CREDENTIALS)}
+
+
 #: What every space in the live domain is sized at, which is not what the verb creates one at.
 #: A fixture that used the configured size would never catch the verb quoting the configured
 #: size for a space that has its own.
@@ -742,6 +779,36 @@ def write_default_team(cwd: Path, contents: str) -> Path:
     return path
 
 
+#: Every hand-off page a verb asked a browser to show during the last :func:`invoke`.
+#:
+#: **A LIST RATHER THAN A RETURN VALUE, BECAUSE ALMOST NO CASE CARES AND EVERY CASE IS AT RISK.**
+#: ``edullm studio`` and ``edullm console`` end by opening a browser, so without a seam here the
+#: suite would launch one per case on the maintainer's laptop -- and, worse, would pass while
+#: doing it. Recording rather than merely suppressing is what lets the two cases that *are* about
+#: the browser assert that it was reached, and with what.
+#:
+#: Cleared by :func:`invoke` rather than by a fixture, so a case that calls the CLI twice sees
+#: only the second call's pages unless it looks in between. Under ``-n`` each worker is its own
+#: process, so there is no sharing to get wrong.
+OPENED_PAGES: list[Path] = []
+
+
+def pages_opened() -> tuple[Path, ...]:
+    """What the last :func:`invoke` handed a browser, in the order it handed them over."""
+    return tuple(OPENED_PAGES)
+
+
+def _record_a_page(page: Path) -> bool:
+    """Stand in for :func:`~edullm_platform.cli.browser.open_a_browser` and answer success.
+
+    ``True`` because the interesting failure is the other one: a case where the browser could
+    not be opened is written by patching this to return ``False``, and a default of ``False``
+    would silently send every other case down the fallback path and assert nothing.
+    """
+    OPENED_PAGES.append(page)
+    return True
+
+
 def invoke(
     argv: list[str],
     *,
@@ -754,6 +821,7 @@ def invoke(
     broker: bool = True,
     aws_config: str | None = ONE_BROKER_PROFILE,
     aws_profile: str | None = None,
+    ssh: bool = False,
 ) -> tuple[int, str, str]:
     """Run the CLI as a person would, with both streams captured and no ambient identity.
 
@@ -801,6 +869,12 @@ def invoke(
     set rather than to whatever the maintainer running the suite has. Exporting it is what
     reaching the lane took before the resolution existed, so a maintainer who still has it in
     their shell would otherwise send every lane case down the branch that resolves nothing.
+
+    ``ssh`` is the fourth of those and it is opt-in for the same reason the others are opt-out:
+    the two browser verbs refuse to open a window over SSH, so whether they open one would
+    otherwise depend on how the maintainer happened to be logged in when they ran the suite. The
+    variables are cleared on every path and set only here, which makes "this person is remote" a
+    condition a case asks for rather than one it inherits.
     """
     # THE PROCESS GOES WHERE THE CALLER SAYS THE PERSON IS STANDING. The header says what one
     # line of this bought and what its absence cost. It is deliberately not conditional: a
@@ -843,6 +917,27 @@ def invoke(
         monkeypatch.delenv("EDULLM_GITHUB_LOGIN", raising=False)
     else:
         monkeypatch.setenv("EDULLM_GITHUB_LOGIN", login)
+    # NO BROWSER IS EVER OPENED BY THIS SUITE, AND NO HAND-OFF FILE IS EVER WRITTEN OUTSIDE THE
+    # CASE'S OWN DIRECTORY. Both are the ``PATH`` measure above applied to a third thing that
+    # reads the developer's machine. ``open_a_browser`` is replaced by a recorder rather than by
+    # a no-op so the two cases that are about the browser have something to assert against, and
+    # ``tempfile.tempdir`` is redirected rather than the writer being stubbed, so the real
+    # ``write_handoff`` and the real sweep are what run -- a stub there would test nothing and
+    # would leave the one file in this design that carries a credential unexercised.
+    #
+    # THE SSH VARIABLES ARE CLEARED FOR THE REASON ``AWS_PROFILE`` IS. ``no_browser_here`` reads
+    # them, so a maintainer running the suite inside an SSH session would take every one of these
+    # cases down the printing branch and would see two failures nobody else can reproduce.
+    for named in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"):
+        monkeypatch.delenv(named, raising=False)
+    if ssh:
+        monkeypatch.setenv("SSH_CONNECTION", "10.0.0.1 52814 10.0.0.2 22")
+    handoffs = cwd / "_handoffs"
+    handoffs.mkdir(exist_ok=True)
+    monkeypatch.setattr(tempfile, "tempdir", str(handoffs))
+    OPENED_PAGES.clear()
+    monkeypatch.setattr(main_module, "open_a_browser", _record_a_page)
+    monkeypatch.setattr(main_module, "signin_token", lambda url: CONSOLE_SIGNIN_TOKEN)
     out, err = io.StringIO(), io.StringIO()
     verb, *rest = argv
     code = main(

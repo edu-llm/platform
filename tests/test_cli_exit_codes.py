@@ -46,6 +46,7 @@ from edullm_platform.cli.main import (
 )
 from tests.cli_support import (
     FakeRunner,
+    console_answers,
     failed,
     git_answers,
     invoke,
@@ -270,6 +271,11 @@ def a_platform(
     # a widened ``lane_answers``: the two are different surfaces, and a lane test carrying a
     # Studio domain it never reaches would be a fixture describing something untrue.
     answers.update(studio_answers())
+    # ``console`` drives neither EC2 nor SageMaker: one ``export-credentials`` and one HTTPS
+    # request that ``invoke`` stubs. The one command still belongs here, for the reason the two
+    # above do -- a verb in this population whose calls the fixture does not answer reports a
+    # fixture gap as a defect in the binary.
+    answers.update(console_answers())
     return FakeRunner(answers)
 
 
