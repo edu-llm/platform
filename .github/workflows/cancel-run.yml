@@ -487,7 +487,16 @@ jobs:
           print(f"| Stopped | {when('stoppedAt')} |")
           print(f"| Attempts | {len(attempts)} of {job.get('retryStrategy', {}).get('attempts', 1)} |")
           print(f"| Exit code | {container.get('exitCode', 'none yet')} |")
-          print(f"| Container said | {container.get('reason') or 'nothing'} |")
+          # NOT "Container said", WHICH IS WHAT THIS ROW CLAIMED AND IS NOT WHAT THE FIELD IS.
+          # `container.reason` is Batch's own short note about why a container is in the state
+          # it is in -- OutOfMemoryError, CannotPullContainerError, "Essential container in
+          # task exited" -- and it is not one byte of what the program printed. A job that ran
+          # to SUCCEEDED normally carries none, so the row read `| Container said | nothing |`
+          # about runs with nine lines waiting in CloudWatch. Two were read that way on
+          # 2026-08-06, and "my job produced no output" is the wrong conclusion about a job
+          # that worked. `nothing reported` rather than `nothing` for the same reason, and it
+          # is the wording the `Why` row above already uses for the same absence.
+          print(f"| Why the container stopped | {container.get('reason') or 'nothing reported'} |")
           print(f"| Image | `{container.get('image', 'unknown')}` |")
           print(f"| Queue | `{queue or 'unknown'}` |")
           print(f"| Log group | `{log_group or 'not named by config/execution-targets.yaml'}` |")
@@ -501,6 +510,16 @@ jobs:
               "The exit code above is whatever the container returned, and it is not a stage "
               "of this platform. Researchers have used codes in the same range for their own "
               "meanings, so read it against the program that ran."
+          )
+          print()
+          # WHERE THE OUTPUT IS, SAID HERE BECAUSE THIS IS THE WHOLE OF WHAT `edullm status`
+          # PRINTS. Nothing in the table above is the program's own output, and the row that
+          # claimed to be was the reason two people concluded a working run had printed
+          # nothing. On this page the tail is the section below; through the CLI it is a
+          # different verb, and the reader has no way to know that from a table.
+          print(
+              f"Nothing above is the program's own output. `edullm logs "
+              f"{os.environ['RUN_ID']}` prints the last lines it printed."
           )
           with open(os.environ["GITHUB_OUTPUT"], "a") as handle:
               handle.write(f"log_group={log_group or ''}\n")
