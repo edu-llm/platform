@@ -441,7 +441,7 @@ def test_the_count_rule_can_see_a_count_that_has_moved() -> None:
     claims = count_claims(
         [
             (1, "The five verbs that work, and the line each shows in --help."),
-            (2, "Twelve verbs, all built."),
+            (2, "Thirteen verbs, all built."),
             (3, "system-overview.md names eight configuration files as the control plane"),
             (4, "release-tag.yml names six files under config/ and no directory"),
             (5, "It is one check deferred and not more."),
@@ -451,8 +451,9 @@ def test_the_count_rule_can_see_a_count_that_has_moved() -> None:
     said = {line: text for line, text, _ in claims}
     assert 1 in said, "the rule cannot see the count it was written for"
     # THE CONTROL, AND IT HAS TO BE MOVED EVERY TIME A VERB LANDS. It said nine until
-    # ``edullm stop`` made it ten, ``edullm studio`` made it eleven and ``edullm data`` made it
-    # twelve, and being made to edit it is the point rather than the friction: a control
+    # ``edullm stop`` made it ten, ``edullm studio`` made it eleven, ``edullm data`` made it
+    # twelve and ``edullm console`` made it thirteen, and being made to edit it is the point
+    # rather than the friction: a control
     # sentence that stayed correct through a change of the count would be asserting that the
     # rule ignores this phrase, which is the
     # failure it exists to rule out.

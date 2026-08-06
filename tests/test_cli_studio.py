@@ -40,9 +40,9 @@ from edullm_platform.cli.studio import (
     idle_shutdown,
     image_account_argv,
     image_arn_for,
-    landing_uri,
     load_studio_settings,
     owned_spaces,
+    portal_uri,
     presigned_url_argv,
     price_said,
     project_of_space,
@@ -70,6 +70,7 @@ from tests.cli_support import (
     invoke,
     lane_answers,
     ok,
+    pages_opened,
     studio_answers,
 )
 
@@ -193,7 +194,7 @@ def test_an_app_already_running_is_answered_with_its_link_and_never_a_second_app
     """
     runner = a_studio(tmp_path, app_status="InService")
 
-    code, out, _ = invoke(
+    code, out, err = invoke(
         ["studio", "--project", THE_PROJECT], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch
     )
 
@@ -201,8 +202,11 @@ def test_an_app_already_running_is_answered_with_its_link_and_never_a_second_app
     assert not runner.ran("aws", "sagemaker", "create-app"), (
         "a second app was started beside one already running"
     )
-    assert "already running" in out
-    assert STUDIO_URL in out
+    assert "already running" in err
+    # NOT IN THE OUTPUT, WHICH IS THE REVERSAL. The link went to the browser rather than to the
+    # scrollback, and a URL on stdout here would mean the hand-off had silently stopped happening.
+    assert STUDIO_URL not in out
+    assert pages_opened()
 
 
 def test_a_pending_app_counts_as_running_because_the_instance_is_already_allocated(
@@ -571,8 +575,8 @@ def test_the_rate_is_printed_before_the_app_is_created(
     """Mutation: price it afterwards, or not at all.
 
     ``check`` prices a submission before it is dispatched and this is the same promise on the
-    exploration surface. Printed to stderr, so a caller reading the URL off stdout gets the
-    URL and nothing else.
+    exploration surface. Printed to stderr, which is where every explanation this verb makes
+    goes, so that the one thing ``--print-url`` puts on stdout is the URL and nothing else.
     """
     runner = a_studio(tmp_path)
 
@@ -582,7 +586,109 @@ def test_the_rate_is_printed_before_the_app_is_created(
 
     assert code == EXIT_OK
     assert "an hour at list price" in err
+    assert out == ""
+
+
+def test_the_url_is_handed_to_a_browser_and_never_to_the_scrollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE FAILURE THIS CHANGE IS FOR. Mutation: print it, which is what shipped.
+
+    The URL is 4,251 characters and lives 300 seconds, and 300 is a ceiling the API enforces
+    rather than a setting. Selecting four thousand characters out of a terminal, without the
+    breaks the terminal drew into them, and getting them into a browser before they expire is
+    not a thing that works -- and when it does not, AWS sends the person to a console sign-in
+    page asking for a password this organisation issues nobody. What the browser was handed is
+    a short ``file://`` address, so the credential is on no command line.
+    """
+    runner = a_studio(tmp_path, app_status="InService")
+
+    code, out, err = invoke(
+        ["studio", "--project", THE_PROJECT], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch
+    )
+
+    opened = pages_opened()
+
+    assert code == EXIT_OK
+    assert len(opened) == 1
+    assert STUDIO_URL in opened[0].read_text(encoding="utf-8")
+    assert STUDIO_URL not in out
+    assert STUDIO_URL not in err
+    assert out == ""
+
+
+def test_print_url_prints_the_url_alone_and_opens_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: open a browser as well, or print the explanation beside it.
+
+    The flag is for a machine with no browser and for scripts, and both want one line. It has
+    to open nothing: a headless box that launched a browser anyway would consume the single-use
+    sign-in and hand the caller a dead URL.
+    """
+    runner = a_studio(tmp_path, app_status="InService")
+
+    code, out, err = invoke(
+        ["studio", "--project", THE_PROJECT, "--print-url"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK
+    assert not pages_opened()
     assert out.strip() == STUDIO_URL
+    assert out.count("\n") == 1
+    assert "treat it as a password" in err
+
+
+def test_an_ssh_session_prints_rather_than_opening_a_browser_nobody_can_see(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: open one anyway and report success.
+
+    On a remote host this can succeed and still fail the person: the window opens where nobody
+    is sitting, the single-use sign-in is spent, and the terminal says it worked. Detected
+    rather than left to ``--print-url``, because somebody who has to know about the flag to
+    avoid the trap will find the trap first.
+    """
+    runner = a_studio(tmp_path, app_status="InService")
+
+    code, out, err = invoke(
+        ["studio", "--project", THE_PROJECT],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+        ssh=True,
+    )
+
+    assert code == EXIT_OK
+    assert not pages_opened()
+    assert out.strip() == STUDIO_URL
+    assert "SSH session" in err
+
+
+def test_a_space_that_had_no_app_says_the_page_is_not_the_notebook(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: say "opened your notebook" whatever was actually opened.
+
+    A browser that came up looks like success. When the app was not running the page is the
+    space in Studio rather than JupyterLab, because ``--space-name`` against a space with no app
+    serves a blank 404 -- so the sentence has to say what the person is looking at and what to
+    do on it, or they conclude the tool is broken.
+    """
+    runner = a_studio(tmp_path)
+
+    code, _, err = invoke(
+        ["studio", "--project", THE_PROJECT], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch
+    )
+    said = " ".join(err.split())
+
+    assert code == EXIT_OK
+    assert pages_opened()
+    assert "an app is starting now" in said
+    assert "Open JupyterLab from there" in said
 
 
 def test_the_disk_quoted_is_the_space_s_own_and_not_the_configured_one(
@@ -976,21 +1082,69 @@ def test_the_space_is_private_and_owned_by_the_person() -> None:
     assert STUDIO_SPACE in argv
 
 
-def test_the_deep_link_names_the_space_and_the_sign_in_names_the_person() -> None:
-    """Mutation: use ``app:JupyterLab:<space>``, which the documentation's own list suggests.
+def test_the_portal_path_is_relative_because_a_leading_slash_leaves_the_domain() -> None:
+    """Mutation: put the slash back, which is what shipped and what broke every person.
 
-    The API refuses that -- ``Provided app type JupyterLab is invalid for provided url type app
-    for personal apps`` -- and accepts the ``studio::`` form, whose issued token comes back
-    carrying ``landingUriDeepLink: /jupyterlab/<space>``. Both were measured against the live
-    service on 2026-08-06. The profile and the space are different arguments because one is the
-    person and the other is which of their spaces this invocation was about.
+    ``studio::/jupyterlab/<space>`` is accepted by the API and mints a token carrying
+    ``landingUriDeepLink: /jupyterlab/<space>``, so it looks understood. Redeemed, Studio answers
+    ``Location: //jupyterlab/<space>`` -- protocol-relative, so a browser reads ``jupyterlab`` as
+    the host, resolves nothing, and shows its own error page. Measured against ``d-bxqz8jfqjjnu``
+    in Chrome on 2026-08-06, and measured **with an app running**, which is what rules out the
+    deep link merely pointing at something not started yet.
+
+    AWS documents the form as ``studio::relative/path``. This asserts the absence of the one
+    character, from both ends, because a value that merely *contains* the right path is exactly
+    what the broken one did.
     """
     request = a_request()
-    argv = presigned_url_argv(settings=settings(), request=request)
 
-    assert landing_uri(request) == f"studio::/jupyterlab/{STUDIO_SPACE}"
-    assert "--landing-uri" in argv
+    assert portal_uri(request) == f"studio::jupyterlab/{STUDIO_SPACE}"
+    assert not portal_uri(request).startswith("studio::/")
+    assert "//" not in portal_uri(request)
+
+
+def test_a_running_app_is_reached_by_space_name_rather_than_by_a_landing_uri() -> None:
+    """Mutation: keep using a landing URI once the app is up.
+
+    ``--space-name`` is the only recipe AWS's *Launch spaces* page gives for an IAM domain, and
+    measured it is the only one that reaches the space's own host: it lands on
+    ``/jupyterlab/default/lab`` with the person's notebook open. A landing URI cannot, because a
+    landing URI is resolved against the portal and never against a space.
+    """
+    request = a_request()
+    argv = presigned_url_argv(settings=settings(), request=request, app_is_running=True)
+
+    assert "--space-name" in argv
+    assert STUDIO_SPACE in argv
+    assert "--landing-uri" not in argv
     assert THE_PERSON in argv
+
+
+def test_a_space_with_no_app_is_sent_to_the_portal_because_the_notebook_would_404() -> None:
+    """Mutation: use ``--space-name`` whatever the app is doing.
+
+    Measured: ``--space-name`` against a space with no running app authenticates and then serves
+    a bare 404 at ``/jupyterlab/default``, because nothing is listening there yet. The portal page
+    for the space answers 200 and shows the app's status, which is the only honest destination
+    while one is starting.
+    """
+    request = a_request()
+    argv = presigned_url_argv(settings=settings(), request=request, app_is_running=False)
+
+    assert "--space-name" not in argv
+    assert argv[argv.index("--landing-uri") + 1] == portal_uri(request)
+
+
+def test_the_url_is_asked_for_at_the_ceiling_the_service_enforces() -> None:
+    """Mutation: ask for an hour, which is what everybody wants and what nobody may have.
+
+    ``ExpiresInSeconds`` is documented "Maximum value of 300" and the live API refuses 301 with a
+    ``ValidationException``. So the number is not a policy this repository sets and raising it is
+    not a fix available to anybody; ``cli/browser.py`` carries what was done instead.
+    """
+    argv = presigned_url_argv(settings=settings(), request=a_request(), app_is_running=True)
+
+    assert argv[argv.index("--expires-in-seconds") + 1] == "300"
 
 
 def test_the_app_is_created_with_an_image_because_the_service_demands_one() -> None:

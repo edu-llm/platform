@@ -54,12 +54,13 @@ far behind the install is. Re-install with `--force`, which is the upgrade for b
 | `edullm run` | Ships this working tree to a machine of your own and streams the output of the command after a bare `--` back. Ungated, and no run anybody can cite. |
 | `edullm shell` | A terminal on that same machine, or a notebook on it with `--notebook`. |
 | `edullm stop` | Ends the machine those two started, and says what it ran up and where your files are. |
-| `edullm studio` | Opens the Studio space for one `--project` and prints a sign-in URL. Bare, it lists the spaces you have; `--stop` ends compute and keeps the disk. |
+| `edullm studio` | Opens the Studio space for one `--project` in your browser. Bare, it lists the spaces you have; `--stop` ends compute and keeps the disk. |
+| `edullm console` | Opens the AWS console in your browser, signed in as you. Name a place -- `studio`, `work`, `outputs`, `logs`, `batch` -- to land somewhere other than the front door. |
 
 Every verb in `BUILT_TODAY` is here and all of them are built. A bare `edullm` prints the list,
 and `edullm <verb> --help` prints what that verb takes.
 
-The last four are the exploration route and they are not the submission path. Nothing they do
+The last five are the exploration route and they are not the submission path. Nothing they do
 is checked against the registry, priced, approved or written to a lineage record, so what
 comes off them is a thing you saw rather than a result anybody can cite. Reach for `check` and
 `submit` for anything that is meant to count.
@@ -76,6 +77,21 @@ and `edullm shell` onto the exact shape you are about to submit to.
 The same project resumes the same disk with the files as they were left; a new one makes a new
 space. `edullm studio` with no project lists what you have, because the project name is the only
 way back to a disk and forgetting it would otherwise be permanent. Nothing deletes a space.
+
+**Both browser verbs open the browser themselves, and neither prints a URL unless you ask.**
+`edullm studio` used to print a sign-in URL of several thousand characters and ask somebody to
+carry it into a browser before it expired. That is not a thing that works, and the expiry is a
+ceiling AWS enforces rather than a setting anybody here can raise, so the fix was to make the
+process that mints the credential the process that spends it. Pass `--print-url` for the URL
+instead, which is what a script or a machine with no browser wants; over SSH it happens without
+being asked.
+
+**`edullm console` is the only way into the AWS console, because nobody here has a password.**
+The broker issues CLI credentials and nothing else, so federation is the only route that exists.
+It signs in as the caller with exactly their own permissions, grants nobody anything, and its
+session outlives a Studio URL by a wide margin. Use it for looking at a bucket, a log group or a
+bill. It does not replace `edullm studio`: a presigned URL lands inside JupyterLab with the
+person's files open, and the console lands on a page about spaces.
 
 **The domain stops an idle app on its own, and `edullm studio --stop` is what stops paying for
 it now.** The idle timeout is a domain setting somebody can change, so the verb reads it and

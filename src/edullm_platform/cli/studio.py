@@ -124,7 +124,6 @@ __all__ = [
     "idle_shutdown",
     "image_account_argv",
     "image_arn_for",
-    "landing_uri",
     "list_apps_argv",
     "list_spaces_argv",
     "load_studio_settings",
@@ -132,6 +131,7 @@ __all__ = [
     "no_spaces_said",
     "nothing_to_stop",
     "owned_spaces",
+    "portal_uri",
     "presigned_url_argv",
     "price_said",
     "project_collides_with_a_profile",
@@ -142,6 +142,7 @@ __all__ = [
     "space_name_for",
     "space_named",
     "spaces_said",
+    "starting_said",
     "studio_document",
     "studio_name_for",
     "studio_refusals",
@@ -213,10 +214,19 @@ _EDGE_DASHES: Final = re.compile(r"^-+|-+$")
 #: changed. ``cli/lane.py``'s ``GPU_AMI_PARAMETER`` is the same arrangement for the same reasons.
 IMAGE_ACCOUNT_PARAMETER: Final = "/aws/service/sagemaker-distribution/ecr-account-id"
 
-#: How long a presigned URL is good for. Sixty seconds is the default and this asks for more,
-#: because the URL is printed into a terminal for somebody to click and the gap between printing
-#: it and reading it is a person's attention rather than a machine's. Five minutes is the API's
-#: own default and there is no reason to be stricter than the service.
+#: How long a presigned URL is good for, and **it is the service's ceiling rather than a choice**.
+#:
+#: ``ExpiresInSeconds`` is documented as "Minimum value of 5. Maximum value of 300", and the live
+#: API agrees to the second: 300 is issued and 301 is a ``ValidationException``. So there is no
+#: number to raise this to, and the failure that made everybody want to -- "you are directed to
+#: the Amazon Web Services console sign-in page", which is what AWS says an expired URL does and
+#: exactly what people reported -- cannot be fixed by asking for longer.
+#:
+#: **IT IS FIXED BY SPENDING THE FIVE MINUTES ON A BROWSER RATHER THAN ON A PERSON.**
+#: ``cli/browser.py`` opens the URL where it was minted, so the elapsed time between cutting a
+#: credential and redeeming it is a process start rather than somebody noticing their terminal,
+#: reading four thousand characters out of it and getting them into a browser intact. The five
+#: minutes was never generous for the second thing and is enormous for the first.
 PRESIGNED_URL_SECONDS: Final = 300
 
 
@@ -805,30 +815,61 @@ def delete_app_argv(*, settings: StudioSettings, space: str) -> tuple[str, ...]:
     )
 
 
-def landing_uri(request: StudioRequest) -> str:
-    """The deep link that puts somebody in their own space rather than on Studio's home page.
+def portal_uri(request: StudioRequest) -> str:
+    """The Studio portal page for one space, which is where somebody goes when it is not up.
 
-    **MEASURED AGAINST THE SERVICE AND NOT READ OFF A GUESS.** ``app:JupyterLab:<space>`` is
-    the form the documentation's own list suggests and the API refuses it -- ``Provided app
-    type JupyterLab is invalid for provided url type app for personal apps``. The
-    ``studio::`` form is accepted and the issued token carries ``landingUriScheme: studio``
-    with ``landingUriDeepLink: /jupyterlab/<space>``, which is how it was confirmed to have
-    been understood rather than merely tolerated.
+    **THE PATH IS RELATIVE AND THE LEADING SLASH THIS USED TO CARRY WAS THE THIRD FAILURE.**
+    ``CreatePresignedDomainUrl`` documents ``studio::relative/path``, and this passed
+    ``studio::/jupyterlab/<space>``. The service accepted it, minted a token carrying
+    ``landingUriDeepLink: /jupyterlab/<space>``, and then redeemed it into
+    ``Location: //jupyterlab/<space>`` -- a protocol-relative URL, which every browser reads as
+    the host ``jupyterlab``. Chrome resolves nothing, shows its own error page and titles it
+    ``jupyterlab``. It was measured against ``d-bxqz8jfqjjnu`` on 2026-08-06 in a real browser,
+    and it failed **identically on a space whose app was running**, which is what rules out the
+    obvious hypothesis that the deep link was merely pointing at an app that did not exist yet.
+    One character. Dropping it turns the same redirect into ``/jupyterlab/<space>`` and answers
+    200 on the portal.
+
+    The portal page is not the notebook: it is the page for that space, carrying its status, its
+    shape, its disk and an **Open JupyterLab** button. That makes it the right destination for a
+    space whose app is starting or absent, and the wrong one for a space that is up --
+    :func:`presigned_url_argv` chooses between them.
     """
-    return f"studio::/jupyterlab/{request.space}"
+    return f"studio::jupyterlab/{request.space}"
 
 
-def presigned_url_argv(*, settings: StudioSettings, request: StudioRequest) -> tuple[str, ...]:
-    """The URL somebody clicks, which signs them in with no console navigation at all.
+def presigned_url_argv(
+    *, settings: StudioSettings, request: StudioRequest, app_is_running: bool
+) -> tuple[str, ...]:
+    """The URL somebody is taken to, aimed at a destination that is valid at the moment it is cut.
 
     ``CreatePresignedDomainUrl`` works only where the domain's ``AuthMode`` is ``IAM``, which
-    this one's is. **THE PROFILE IS THE PERSON AND THE SPACE IS THE DESTINATION**, which is why
-    both appear: one presigned URL per person, deep-linked to whichever of their spaces this
-    invocation was about. The permissions the session lands with are the caller's, and the
-    domain's ``ExecutionRoleSessionNameMode`` of ``USER_IDENTITY`` is what puts the person's
-    own session name on what the notebook then does -- so a Studio action is attributable to a
-    person in CloudTrail the same way a lane action is.
+    this one's is. The permissions the session lands with are the caller's, and the domain's
+    ``ExecutionRoleSessionNameMode`` of ``USER_IDENTITY`` is what puts the person's own session
+    name on what the notebook then does -- so a Studio action is attributable to a person in
+    CloudTrail the same way a lane action is.
+
+    **``--space-name`` IS AWS'S OWN ANSWER TO "REACH A SPACE" AND THIS VERB WAS NOT USING IT.**
+    The *Launch spaces* page gives exactly one CLI recipe for an IAM domain and it is
+    ``create-presigned-domain-url --domain-id ... --user-profile-name ... --space-name ...``.
+    Measured, it redirects to the space's own host and lands inside JupyterLab at
+    ``/jupyterlab/default/lab`` with the person's files already open. No landing URI reaches
+    that host, because no landing URI is resolved against a space.
+
+    **AND IT 404s WHERE NO APP IS RUNNING, WHICH IS WHY THIS TAKES A BOOLEAN.** A space with no
+    app has nothing serving ``/jupyterlab/default``, so the same URL that is perfect one minute
+    after a start is a blank 404 one minute before it. The alternative was to start the app and
+    wait for ``InService`` before minting -- and that cannot be made safe, because
+    :data:`PRESIGNED_URL_SECONDS` is a **hard** ceiling of 300 that the API refuses 301 against,
+    and a JupyterLab app does not reliably come up inside five minutes. Choosing the destination
+    instead means the URL is only ever cut for somewhere that exists right now, and the five
+    minutes has to cover opening a browser rather than starting a machine.
     """
+    destination = (
+        ("--space-name", request.space)
+        if app_is_running
+        else ("--landing-uri", portal_uri(request))
+    )
     return (
         "aws",
         "sagemaker",
@@ -837,8 +878,7 @@ def presigned_url_argv(*, settings: StudioSettings, request: StudioRequest) -> t
         settings.domain_id,
         "--user-profile-name",
         request.studio_name,
-        "--landing-uri",
-        landing_uri(request),
+        *destination,
         "--expires-in-seconds",
         str(PRESIGNED_URL_SECONDS),
         "--query",
@@ -1166,16 +1206,38 @@ def idle_said(idle: IdleShutdown, shape: StudioShape) -> str:
     )
 
 
-def already_running_said(app: RunningApp, request: StudioRequest, *, url: str) -> str:
-    """A second invocation, answered with the link rather than with a second app.
+def already_running_said(app: RunningApp, request: StudioRequest) -> str:
+    """A second invocation, answered with the running app rather than with a second one.
 
     Starting another would be the expensive reading of "start or resume": Studio permits more
     than one app per space, so the mistake is available and it is silent.
+
+    **IT NO LONGER CARRIES THE URL AND THAT IS THE POINT OF THE CHANGE AROUND IT.** This used to
+    end with four thousand characters for somebody to select out of their scrollback. The URL now
+    goes to a browser this process opens, so what is left to say is the thing the browser cannot:
+    that nothing new was started and nothing new is billing.
     """
     shape = app.instance_type or "a shape it did not report"
     return (
         f"{request.space} is already running on {shape}, so this started nothing and "
-        f"nothing new is billing.\n\n{url}"
+        "nothing new is billing."
+    )
+
+
+def starting_said(request: StudioRequest) -> str:
+    """What somebody is told when the app was not up and has just been asked to come up.
+
+    **THEY ARE NOT LANDED IN A NOTEBOOK AND THE SENTENCE HAS TO SAY SO**, because the browser
+    that just opened looks like a success and is showing a page about a space rather than the
+    space. :func:`presigned_url_argv` records why the destination differs: a URL aimed at
+    ``/jupyterlab/default`` on a space with no app is a blank 404, so the honest destination
+    while an app starts is the page that shows it starting.
+    """
+    return (
+        f"{request.space} had nothing running, so an app is starting now. The page that just "
+        "opened is that space in Studio, and it shows the app coming up -- a few minutes, "
+        "usually. Open JupyterLab from there when the status says Running. Running this verb "
+        "again once it is up takes you straight into the notebook instead."
     )
 
 
