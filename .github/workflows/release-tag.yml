@@ -197,7 +197,26 @@ jobs:
           # through .git/config.
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          version="$(python3 tools/next_version.py)"
+          # THE LAST PLACE A VERSION ABOVE THE CEILING CAN BE STOPPED, and the only one that
+          # is downstream of the merge. The tool refuses to report a declared version above
+          # MAJOR_CEILING, so a hand-edited 5.0.0 that got past `Checks (CI)` -- merged by an
+          # administrator, or on a run where that check did not execute -- dies here, one
+          # step before `git tag`. A tag is the one thing in this file that cannot be undone.
+          # mktemp rather than RUNNER_TEMP, which tests/test_release_tag_workflow.py does not
+          # set: that module runs this step's script under a real shell, which is the only
+          # reason any of it is tested at all.
+          ceiling_said="$(mktemp)"
+          if ! version="$(python3 tools/next_version.py 2>"${ceiling_said}")"; then
+            echo "::error::pyproject.toml declares a version this repository will not tag. Nothing was tagged."
+            {
+              echo '## A version above the ceiling'
+              echo
+              echo '```'
+              cat "${ceiling_said}"
+              echo '```'
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 1
+          fi
           if git rev-parse --verify --quiet "refs/tags/v${version}" >/dev/null; then
             # Said twice on purpose: ::error:: puts it at the top of the run, and the step
             # summary is what somebody sees without opening a log.
@@ -220,8 +239,29 @@ jobs:
           \`\`\`bash
           uv run python tools/next_version.py --bump patch
           uv run python tools/next_version.py --bump minor --why "<what a researcher can now do>"
+          SUMMARY
+            # WHAT THIS PAGE SAYS ABOUT THE MAJOR, ASKED RATHER THAN ASSERTED. The tool
+            # refuses to produce a version above MAJOR_CEILING, so asking it whether a major
+            # of this version exists is the same question a reader is about to ask by running
+            # the command. Written as two blocks rather than one with a variable in it,
+            # because the strings below are commands to a reader and must stay heredoc data:
+            # test_nothing_here_commits_anything_or_pushes_a_branch reads every line this
+            # workflow *runs*, and a bump command in a shell assignment reads as one.
+            if python3 tools/next_version.py --next major --of "${version}" >/dev/null 2>&1; then
+              cat >> "${GITHUB_STEP_SUMMARY}" <<'SUMMARY'
           uv run python tools/next_version.py --bump major --why "<what stopped working>"
-          \`\`\`
+          ```
+          SUMMARY
+            else
+              cat >> "${GITHUB_STEP_SUMMARY}" <<'SUMMARY'
+          ```
+
+          There is no major to take. This repository is held to the major it is on, and
+          `MAJOR_CEILING` in `tools/next_version.py` is the one line that lifts it. Until it
+          is lifted a break is released as a minor, carrying the sentence in its `--why`.
+          SUMMARY
+            fi
+            cat >> "${GITHUB_STEP_SUMMARY}" <<SUMMARY
 
           Each moves \`pyproject.toml\`, \`uv.lock\` and the pinned install line together.
           Merging it cuts the release.
@@ -262,17 +302,21 @@ jobs:
             released="${previous#v}"
             next_patch="$(python3 tools/next_version.py --next patch --of "${released}")"
             next_minor="$(python3 tools/next_version.py --next minor --of "${released}")"
-            next_major="$(python3 tools/next_version.py --next major --of "${released}")"
+            # Empty while MAJOR_CEILING holds, because the tool refuses to produce a version
+            # above it. Tolerated rather than deleted so that lifting the ceiling needs no
+            # edit here: this classifies a major again the moment the tool will compute one.
+            # The two above are not tolerated, for the reason ci.yml gives at the same lines.
+            next_major="$(python3 tools/next_version.py --next major --of "${released}" 2>/dev/null || true)"
             if [ "${version}" = "${next_patch}" ]; then
               size="patch"
             elif [ "${version}" = "${next_minor}" ]; then
               size="minor"
-            elif [ "${version}" = "${next_major}" ]; then
+            elif [ -n "${next_major}" ] && [ "${version}" = "${next_major}" ]; then
               size="major"
             fi
           fi
           if [ "${EVENT}" = "push" ] && [ -n "${previous}" ] && [ -z "${size}" ]; then
-            echo "::error::v${version} is not a patch, minor or major above the latest release ${previous}, so this merge would publish a tag nobody chose. Nothing is tagged. Declare the next version in a pull request; the step summary names the three commands and what each of them would produce."
+            echo "::error::v${version} is not the next version above the latest release ${previous}, so this merge would publish a tag nobody chose. Nothing is tagged. Declare the next version in a pull request; the step summary names the commands and what each of them would produce."
             cat >> "${GITHUB_STEP_SUMMARY}" <<SUMMARY
           ## A version that is not the next one
 
@@ -303,15 +347,39 @@ jobs:
           \`\`\`
 
           A minor is a new command, a new flag, a new optional spec field, or a new refusal
-          that can stop a submission which used to go through. A major is a flag or field
-          removed or given a new meaning, or a changed exit code, which breaks somebody who
-          already has this installed. Both have to say why, and the sentence is published in
-          the release note.
+          that can stop a submission which used to go through. It has to say why, and the
+          sentence is published in the release note.
 
           \`\`\`bash
           uv run python tools/next_version.py --bump minor --why "<what a researcher can now do>"   # ${next_minor}
+          \`\`\`
+
+          A major is a flag or field removed or given a new meaning, or a changed exit code,
+          which breaks somebody who already has this installed.
+          SUMMARY
+            # DECIDED BY WHETHER THERE IS A MAJOR, NOT BY WHAT IS TRUE TODAY. An empty
+            # next_major is MAJOR_CEILING refusing to compute one; a value means the ceiling
+            # has been lifted past this release. Prose that assumed either would be wrong on
+            # the day the other happened, which is exactly the day somebody reads this page.
+            # Two heredocs rather than one with a variable in it, for the reason the summary
+            # above gives: a bump command in a shell assignment reads to
+            # test_nothing_here_commits_anything_or_pushes_a_branch as a bump this workflow runs.
+            if [ -n "${next_major}" ]; then
+              cat >> "${GITHUB_STEP_SUMMARY}" <<SUMMARY
+          It has to say why too, and the sentence is published in the release note.
+
+          \`\`\`bash
           uv run python tools/next_version.py --bump major --why "<what stopped working>"   # ${next_major}
           \`\`\`
+          SUMMARY
+            else
+              cat >> "${GITHUB_STEP_SUMMARY}" <<'SUMMARY'
+          There is none to take: this repository is held to the major it is on, and
+          `MAJOR_CEILING` in `tools/next_version.py` is the one line that lifts it. Until it
+          is lifted a break is released as a minor, carrying the sentence in its `--why`.
+          SUMMARY
+            fi
+            cat >> "${GITHUB_STEP_SUMMARY}" <<SUMMARY
 
           Each moves \`pyproject.toml\`, \`uv.lock\` and the pinned install line together.
           Merging it cuts the release.

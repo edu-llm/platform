@@ -180,8 +180,15 @@ jobs:
             echo
             echo "A major is a flag or spec field removed or given a new meaning, or a"
             echo "changed exit code. It breaks somebody who already has this installed."
-            echo
-            echo "  uv run python tools/next_version.py --bump major --why \"<what stopped working>\"   # ${3}"
+            if [ -n "${3}" ]; then
+              echo
+              echo "  uv run python tools/next_version.py --bump major --why \"<what stopped working>\"   # ${3}"
+            else
+              echo "It is refused: this repository is held to the major it is on, and"
+              echo "MAJOR_CEILING in tools/next_version.py is the one line that lifts it."
+              echo "Until it is lifted a break is released as a minor, with the sentence"
+              echo "you would have written for the major in its --why."
+            fi
           }
           base="HEAD^1"
           if ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
@@ -249,7 +256,24 @@ jobs:
             echo "about, so it needs no version of its own."
             exit 0
           fi
-          declared="$(uv run --frozen python tools/next_version.py)"
+          # THE VERSION THE FILE DECLARES, AND THE ONE REASON READING IT CAN FAIL. The tool
+          # refuses to report a declared version above MAJOR_CEILING, which is what a hand
+          # edit past the calculator looks like from here: three integers in a text file that
+          # nothing made anybody use the tool to move. Caught rather than left to `set -e`,
+          # because the refusal says where the ceiling is and a bare "exited 2" does not.
+          #
+          # mktemp rather than RUNNER_TEMP, which tests/test_release_tag_workflow.py does not
+          # set: that module runs this step's script under a real shell against a real git
+          # repository, which is the only reason any of it is tested at all.
+          ceiling_said="$(mktemp)"
+          if ! declared="$(uv run --frozen python tools/next_version.py 2>"${ceiling_said}")"; then
+            {
+              echo "::error::pyproject.toml declares a version this repository will not release. Nothing after the merge can fix it, because release-tag.yml asks the same question before it tags."
+              echo
+              cat "${ceiling_said}"
+            } >&2
+            exit 1
+          fi
           latest="$(gh release view --json tagName --jq .tagName 2>/dev/null || true)"
           if [ -z "${latest}" ]; then
             echo "No release exists yet, so ${declared} is the first one and there is nothing"
@@ -259,13 +283,23 @@ jobs:
           released="${latest#v}"
           next_patch="$(uv run --frozen python tools/next_version.py --next patch --of "${released}")"
           next_minor="$(uv run --frozen python tools/next_version.py --next minor --of "${released}")"
-          next_major="$(uv run --frozen python tools/next_version.py --next major --of "${released}")"
+          # THE ONE OF THE THREE THAT IS ALLOWED TO HAVE NO ANSWER, and the empty string is
+          # how it says so. `tools/next_version.py` refuses to produce a version above
+          # MAJOR_CEILING, so while that ceiling holds this asks for a major and is told no.
+          # Written as a tolerated failure rather than deleted, so that lifting the ceiling
+          # is the one-line change it is advertised as: this classifies majors again the
+          # moment the tool will compute one, with nothing here to edit.
+          #
+          # The two above are not tolerated and must not be. They step from a released tag,
+          # so the only way either of them fails is a tag this tool cannot parse, and
+          # shrugging at that is how a version nobody chose gets classified as a patch.
+          next_major="$(uv run --frozen python tools/next_version.py --next major --of "${released}" 2>/dev/null || true)"
           step=""
           if [ "${declared}" = "${next_patch}" ]; then
             step="patch"
           elif [ "${declared}" = "${next_minor}" ]; then
             step="minor"
-          elif [ "${declared}" = "${next_major}" ]; then
+          elif [ -n "${next_major}" ] && [ "${declared}" = "${next_major}" ]; then
             step="major"
           fi
           if [ -z "${step}" ]; then

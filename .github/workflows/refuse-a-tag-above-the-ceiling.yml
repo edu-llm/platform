@@ -1,0 +1,101 @@
+name: Refuse a tag above the major ceiling
+
+# THE ONE WAY PAST THE CEILING THAT NEITHER CI NOR THE CALCULATOR CAN SEE.
+#
+# `tools/next_version.py` refuses to produce or report a version above MAJOR_CEILING, and
+# `ci.yml` asks it on every pull request, so a version 5 cannot be computed and cannot be
+# merged. Neither of those is in the way of `git tag v5.0.0 && git push origin v5.0.0`.
+# There are no rulesets on this repository and no tag protection -- checked, both answer
+# empty -- so anybody who can push can put that tag on any commit, and `release-tag.yml`
+# already says in as many words that neither the tag nor the release is protected.
+#
+# WHAT THIS CAN AND CANNOT DO. It cannot stop the push; nothing running after a push can.
+# What it can do is make the tag arrive with a red run against it and a step summary naming
+# the ceiling, instead of arriving silently and being discovered by whoever runs
+# `git describe` next week. That is the difference between a convention and a control: the
+# rule is no longer only in a file somebody has to have read.
+#
+# It does not delete the tag either, deliberately. A workflow that deletes refs on a
+# repository three agents have already destroyed uncommitted work on is a worse failure mode
+# than the thing it cleans up, and the person who pushed a v5 tag on purpose is exactly the
+# person who should be the one to remove it.
+#
+# EVERY RELEASE TAG RUNS THIS, WHICH IS THE POINT RATHER THAN THE COST. It is a checkout, a
+# python call and a comparison. Running only on tags that look suspicious would mean deciding
+# here what suspicious is, which is a second copy of the ceiling.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Nothing is written. This reads a tag name and a constant and decides whether to go red.
+permissions:
+  contents: read
+
+jobs:
+  ceiling:
+    name: the tag is on or below the ceiling
+    runs-on: ubuntu-latest
+    steps:
+      # Shallow on purpose and not fetch-depth: 0. The question is about the tag's *name*,
+      # which github.ref_name already carries, plus a constant in one file. No history is
+      # read, so bringing forty-seven tags and every commit would be paid on every release.
+      - uses: actions/checkout@v5
+
+      - name: Compare the tag against MAJOR_CEILING
+        env:
+          # The tag as pushed, with its leading v. Read from the ref rather than from
+          # pyproject.toml, because the whole point of this job is the tag that does not
+          # agree with the file.
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # ASKED OF THE TOOL RATHER THAN WRITTEN HERE. A workflow cannot import anything, and
+          # a number restated in YAML is the copy that goes stale the day the ceiling is
+          # lifted -- which is the one day this job must not go red.
+          ceiling="$(python3 tools/next_version.py --ceiling)"
+          version="${TAG#v}"
+          major="${version%%.*}"
+          # A tag whose name is not v<integer>.something is not what this is about and is not
+          # this job's business to have an opinion on. release-tag.yml is the only thing that
+          # cuts release tags and it cuts exactly v<major>.<minor>.<patch>.
+          case "${major}" in
+            ''|*[!0-9]*)
+              echo "${TAG} is not a v<major>.<minor>.<patch> tag, so there is no major in it to compare."
+              exit 0
+              ;;
+          esac
+          if [ "${major}" -le "${ceiling}" ]; then
+            echo "${TAG} is major ${major}, on or below the ceiling of ${ceiling}."
+            exit 0
+          fi
+          echo "::error::${TAG} is major ${major} and this repository is held to major ${ceiling}. Nothing here pushed this tag."
+          cat >> "${GITHUB_STEP_SUMMARY}" <<SUMMARY
+          ## A tag above the major ceiling
+
+          **${TAG}** is major **${major}**. This repository is held to major **${ceiling}**,
+          and nothing on the ordinary path can produce a version above it:
+          \`tools/next_version.py\` refuses to compute one and refuses to report one it finds
+          declared, and \`Checks (CI)\` asks it that on every pull request.
+
+          So this tag was pushed by hand, past all of that. There is no tag protection on this
+          repository, so the push succeeded and nothing here can undo it.
+
+          **If it was a mistake**, delete it. A tag with no release attached is not yet
+          anything an installed \`edullm\` can see, because its staleness probe reads
+          \`releases/latest\`.
+
+          \`\`\`bash
+          git push --delete origin ${TAG}
+          git tag --delete ${TAG}
+          \`\`\`
+
+          **If major ${major} is genuinely the answer**, lift the ceiling first, in a pull
+          request somebody reviews, and let the ordinary path cut the tag.
+
+          \`\`\`
+          MAJOR_CEILING in tools/next_version.py   (currently ${ceiling})
+          \`\`\`
+          SUMMARY
+          exit 1
