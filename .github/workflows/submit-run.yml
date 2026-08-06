@@ -219,6 +219,7 @@ on:
           - fineweb2-phase0-equal-superbpe-2b-v1
           - fineweb2-unimax-bpe-20b-v1
           - fineweb2-unimax-superbpe-20b-v1
+          - reservoir-dolma2-v1
       # A DROPDOWN BECAUSE THE COST OF A TYPO WAS PAID SOMEWHERE THE TYPIST NEVER LOOKS.
       # This was free text and nothing refused an unrecognised value, so `pre-traning`
       # compiled, classified, was approved, ran, wrote its outputs under

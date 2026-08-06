@@ -402,6 +402,44 @@ published:
   # Registered because both fineweb-edu-1b entries pin this digest in their `depends_on`, and
   # unreachable as a corpus by family. Its dataset.json names HuggingFaceTB/SmolLM2-135M as its
   # source, which is the fact OLMo-core needs to build it.
+  # THE FIRST CORPUS THE DATASET PIPELINE PRODUCED END TO END, which matters here only because
+  # it is why every value below was read out of the bucket rather than reported. Built on Batch
+  # from a pinned source registry, receipt-verified with a real payload re-hash (all 10,049
+  # shards re-read and re-digested, `verify --deep` RC=0), then promoted by the validator role.
+  #
+  # 251,218,001,920 tokens over 10,049 shards: 250,242,924,544 train + 975,077,376 val, uint32
+  # `.u32le.bin` at 25,001,984 tokens per shard. 14 sources under one `tokens` group, labelled
+  # by `source`, so `build_mixture` can draw a weighted subset without re-reading the corpus.
+  #
+  # A READER MUST TREAT THIS AS A RESERVOIR AND NOT A 252B TRAINING SET. It exists so a run can
+  # draw its own ~20B mixture from 8 categories; naming it whole trains on a mix nobody chose.
+  # Two facts a consumer cannot recompute from the shards, both in the corpus's own
+  # `limitations[]` and its generated README:
+  #   * 59.6B tokens (23.82% of train, the four FinePhrase configs) are effectively
+  #     UNDECONTAMINATED -- they are rephrased FineWeb-Edu, and rephrasing is what defeats the
+  #     13-gram matcher that is the only decontamination applied.
+  #   * `ubuntu-irc` has no val split at all: one val shard needs 5,000,396,800 source tokens at
+  #     val_fraction 0.005 and the source holds 1.87B.
+  # Licensing is MIXED and includes share-alike: 17,845,944,320 tokens (7.13% of train,
+  # stackexchange + finewiki) are CC-BY-SA-4.0, finewiki additionally GFDL. There is no single
+  # dataset-level licence id, which is why this file's four facts are the pin and not the terms.
+  #
+  # `manifest_sha256` is the `tokens` group's, per this class's docstring, NOT the seal's
+  # `dataset_sha256` (`c3e9b678...`) -- recomputed from the bytes of
+  # `pretrain/reservoir-dolma2/v1/tokens/manifest.json` on 2026-08-05 and equal to what both
+  # `dataset.json` and `_VALIDATED.json` publish. Registrable at all because the dataset
+  # declares `mutability: frozen`.
+  #
+  # Offered on the form immediately, unlike the gigatoken pair: `tokenizer/dolma2-bpe` is
+  # already registered above, already in tools' TOKENIZERS map, and OLMo-core already carries
+  # `TokenizerConfig.dolma2()`, so the ordering hazard that comment describes -- a corpus every
+  # image refuses at the tokenizer lookup -- does not apply.
+  - reference_id: reservoir-dolma2-v1
+    uri: "s3://edullm-data/pretrain/reservoir-dolma2/v1/"
+    dataset_id: pretrain/reservoir-dolma2
+    version: v1
+    manifest_sha256: "aba31c73d40e4473867bb8e76e6d42c5949ab67657512b6ebc7ceec79a8db388"
+    tokenizer: tokenizer/dolma2-bpe
   - reference_id: smollm2-bpe-v1
     uri: "s3://edullm-data/tokenizer/smollm2-bpe/v1/"
     dataset_id: tokenizer/smollm2-bpe
