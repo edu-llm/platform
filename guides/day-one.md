@@ -59,7 +59,16 @@ Clone it in full. `git clone --depth 1` fetches only `main` and then the checkou
 edullm submit --team scratch --experiment day-one --dataset none
 ```
 
-The run id is minted a couple of minutes later by the compile job, and `submit` is meant to wait for it. On four real submissions on 2026-08-06 it returned in under nine seconds instead, the last of them in 7.7, with a workflow link and a line saying the id is still compiling. Either way `edullm status` carries the id once that job has finished.
+**This one blocks, and that is the point of it.** It says so first, then dispatches, then waits for the compile job to mint your run id, printing a line a minute while it does and giving up after five. Measured on a real submission at 04:57 on 2026-08-06: **49 seconds**, ending with the id and the approval line.
+
+```
+run_019fd676-62f0-70bb-ae06-c35fcb715af7
+released automatically. Nothing is waiting on a person.
+```
+
+Those two lines are the whole reason to wait. The id is how you ask about the run at all, and the second line is whether anybody has to release your work before it starts. Both used to be lost: `submit` returned in about eight seconds, before the compile job had finished, so every real submission left the submitter knowing neither. `--no-wait` skips the wait and prints the workflow link on its own, which is what you want in a script and not what you want the first time.
+
+`submit` also reaches the network once to ask whether your install is the current release, and says so if it is not, with the exact line to run. It cannot stop a submission and a network failure skips it, so it is a courtesy rather than the version check at the top of this page.
 
 ## Reading it back
 
@@ -69,9 +78,9 @@ edullm status run_019fd5d7-915f     # one run, in full
 edullm logs run_019fd5d7-915f       # the last lines it printed
 ```
 
-`status` with no argument answers from GitHub in ten to twenty seconds. `status` on one run and `logs` reach AWS, which they do by dispatching a workflow and waiting for a runner, so give them one to three minutes. A job sitting at `RUNNABLE` is waiting for a machine and is billing nothing. Do not cancel and resubmit it, because that puts it at the back of the queue.
+`status` with no argument answers from GitHub in ten to twenty seconds. `status` on one run and `logs` reach AWS, which they do by dispatching a workflow and waiting for a runner. Both say so before they start waiting and both give up after eleven minutes; measured on 2026-08-06 they took 45 seconds and 58 seconds. A job sitting at `RUNNABLE` is waiting for a machine and is billing nothing. Do not cancel and resubmit it, because that puts it at the back of the queue.
 
-Both of those print a stretch of the workflow's own job log under the report, runner cleanup lines and all, and one of them prints the workflow's shell source. Read down to the table and stop.
+Read `status` for what the job is doing and `logs` for what it printed. They answer different questions off the same run, and the report from `status` says at the bottom which verb holds your output.
 
 This is what came back on 2026-08-06. Two minutes from `submit` to admitted, five waiting for a card, six seconds running.
 
@@ -86,7 +95,7 @@ median of     20 timed iterations after 3 warm-up
   4096       20.074        69.255     89.329     366,824
 ```
 
-**Your milliseconds will not be these**, and nothing is wrong when they are not. It is a real measurement on a card somebody else was using an hour ago. Two runs of it hours apart on 2026-08-06 differed by two to five percent on every figure. What tells you it worked is the card, the shape, and four rows arriving.
+**Your milliseconds will not be these**, and nothing is wrong when they are not. It is a real measurement of a card somebody else was using an hour ago. Three runs of it across 2026-08-06 spread about six percent at the longest sequence, in both directions. What tells you it worked is the card, the shape, and four rows arriving.
 
 ## The notification, and how to find out without one
 
@@ -106,6 +115,7 @@ Aryan Verma · plan-b-phase0-100m-superbpe-eval · $0.70 spent, nothing produced
 Your commit has to have been built into an image before a run can name it, and a push to a branch under `edullm/` is what builds one. So the loop on a repository that has never been submitted from is five steps rather than two.
 
 1. `edullm check`. On a registered repository with no spec it writes a first `.edullm/run.yaml` and tells you to commit it on a branch. It does not hold the file it just wrote against you. It used to, which was a loop with no way out, and that is fixed.
+   Where it could not work out a value it writes something the next `check` refuses by name rather than something that looks right. In a clone with no `.edullm/` entry point to read, the command it writes earns `checkpoint_path_not_in_command`, and that refusal is a paragraph telling you what to pass and how to waive it. **That is the tool declining to guess, not a wall.** A guessed checkpoint path would cost a queue wait, somebody's approval and a run that exits zero having saved nothing.
 2. Commit that file on a branch. `check` refuses with `commit_not_pushed` now, because no remote-tracking branch in your clone contains the commit, so nothing has built an image from it.
 3. Push the branch under `edullm/`. The image build takes three to eight minutes.
 4. `edullm check` again. It should print no refusals.
@@ -121,8 +131,6 @@ Two checks are deferred to submit time and `check` names both, because they need
 | --- | --- |
 | No Windows machine has ever finished this. The install used to fail with `Filename too long` for any username over eight characters, and [#291](https://github.com/edu-llm/platform/pull/291) fixed that on 2026-08-06 along with the `gh` lookup, the spec's line endings and redirected output. All of it is untested on real Windows | Follow it anyway and say where it stopped. If the install still fails on a path, point `UV_CACHE_DIR` at something short such as `C:\uv` and try again |
 | `edullm status` with no argument reads `SUBMITTED` for every run, whatever the job did. The state it shows is your submission workflow's rather than your job's, and it never moves again | Watch `#edullm-runs`, or name the run. `edullm status <run-id>` asks AWS and takes one to three minutes |
-| `edullm status <run-id>` prints `Container said` `nothing` for a run that printed plenty. Measured on the run above, which had nine lines waiting | `edullm logs <run-id>` reads the same stream and does show them. Believe that one |
-| `edullm submit` returns before the run id exists, though `--help` says it waits for one and `--no-wait` is the flag that turns that off | Run `edullm status` a couple of minutes later. The id is there |
 | The eval image carries no torch and no vLLM, so only the `mock` provider runs | Nothing yet. GPU evaluation through the platform is not available. eval-inference owns the choice |
 | `gh` in a clone that has an `upstream` remote answers about the wrong repository, with no warning. In OLMo-core it reported no image build for a branch whose build had succeeded | Use `edullm`, which reads `origin`. Where you must use `gh`, pass `--repo edu-llm/<name>` |
 | Roughly half of all runs fail, and about half of those failures print no cause | Nothing yet. Your first failure is probably not your fault. Bring the run id to an issue |

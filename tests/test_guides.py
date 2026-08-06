@@ -49,6 +49,7 @@ GPU_ROLES_PATH = PROJECT_ROOT / "infra" / "iam" / "batch-gpu-roles.yaml"
 POLICY_PATH = PROJECT_ROOT / "config" / "policy.yaml"
 CAPACITY_PATH = PROJECT_ROOT / "config" / "capacity.yaml"
 CATALOGUE_PATH = PROJECT_ROOT / "config" / "workload-catalog.yaml"
+ACCELERATORS_PATH = PROJECT_ROOT / "config" / "accelerators.yaml"
 INFRA_README_PATH = PROJECT_ROOT / "infra" / "README.md"
 PYPROJECT_PATH = PROJECT_ROOT / "pyproject.toml"
 
@@ -879,14 +880,20 @@ def test_the_hourly_range_the_guides_quote_is_the_range_that_can_be_booked() -> 
     being bookable. The floor was right and the ceiling was a shape admission refuses, so
     every reader who sized a budget against it sized it against a machine nobody can have.
 
-    Both ends are read out of the catalogue's provisioned profiles. Every range a guide
-    writes has to be that range, in either of the two shapes the guides write it in.
+    **A range may quote either top, and the priced one costs a sentence.** $30.13 is what
+    can be started; $55.04 is what the dropdown offers. A page that gives the priced top
+    without saying that the shape cannot be started is the original defect, and a page that
+    gives only the placeable top hides a shape somebody will pick anyway -- so the priced
+    top is allowed exactly where the page also names the refusal it earns.
+
+    Both ends are read out of the catalogue. Promoting the L40S node or withdrawing the H100
+    one moves a number here rather than leaving four pages quoting history.
     """
-    rates = sorted(
-        profile.hourly_rate_usd for profile in catalogue().compute_profiles if profile.provisioned
-    )
-    assert rates, "no profile is provisioned, so this test asserts nothing"
-    floor, ceiling = to_cents(rates[0]), to_cents(rates[-1])
+    profiles = catalogue().compute_profiles
+    startable = sorted(p.hourly_rate_usd for p in profiles if p.provisioned)
+    assert startable, "no profile is provisioned, so this test asserts nothing"
+    floor, ceiling = to_cents(startable[0]), to_cents(startable[-1])
+    priced = to_cents(max(p.hourly_rate_usd for p in profiles))
 
     patterns = (
         r"\$(\d+\.\d\d) an hour to \$(\d+\.\d\d)",
@@ -897,10 +904,21 @@ def test_the_hourly_range_the_guides_quote_is_the_range_that_can_be_booked() -> 
         for pattern in patterns:
             for low, high in re.findall(pattern, page):
                 found += 1
-                assert (low, high) == (floor, ceiling), (
+                assert low == floor, (
+                    f"{name} starts a range at ${low} an hour, and the cheapest shape in "
+                    f"config/workload-catalog.yaml is ${floor}"
+                )
+                if high == priced and priced != ceiling:
+                    assert "unprovisioned_compute_profile" in page, (
+                        f"{name} tops a range at ${high} an hour, which is a shape that "
+                        "cannot be started, and the page never names the refusal that "
+                        f"answers it. Say so, or quote ${ceiling}"
+                    )
+                    continue
+                assert high == ceiling, (
                     f"{name} quotes a range of ${low} to ${high} an hour. What can "
-                    f"actually be booked today is ${floor} to ${ceiling}, read off the "
-                    "provisioned profiles in config/workload-catalog.yaml"
+                    f"actually be started today is ${floor} to ${ceiling}, and what is "
+                    f"priced runs to ${priced}. Neither is ${high}"
                 )
 
     assert found, (
@@ -968,6 +986,131 @@ def test_the_placement_column_says_what_the_measurements_say() -> None:
         f"the table only exercises {sorted(seen)}, so this test could pass with the "
         "interesting answers missing from the guide entirely"
     )
+
+
+def profile_row(name: str) -> str:
+    """One profile as the training guide's tables write it, composed from the three files.
+
+    The guide used to type these. Every figure in them lived somewhere a program could read
+    -- the rate in the catalogue, the placement in ``config/capacity.yaml``, and since
+    ``config/accelerators.yaml`` landed the card and its memory too -- so a typed row was a
+    fourth copy that nothing compared against the other three. This is the row those files
+    say, and :func:`test_the_profile_tables_are_the_three_config_files_rendered` holds the
+    page to it.
+    """
+    from edullm_platform.accelerators import read_accelerators, record_for
+    from edullm_platform.placement import read_capacity
+
+    profile = next(p for p in catalogue().compute_profiles if p.name == name)
+    card = record_for(name, accelerators=read_accelerators(ACCELERATORS_PATH))
+    assert card is not None, f"config/accelerators.yaml has no entry for {name}"
+    places = {record.profile: record.places for record in read_capacity(CAPACITY_PATH)}
+    said = {"reliably": "reliably", "unreliably": "unreliably", "after_a_wait": "after a wait"}
+    placing = "**refused**" if not profile.provisioned else said[places[name]]
+    return (
+        f"| `{name}` | {card.devices} x {card.device} | {card.memory_mib_total:,} MiB "
+        f"| ${profile.hourly_rate_usd.normalize():f}/hr | {placing} |"
+    )
+
+
+def test_the_profile_tables_are_the_three_config_files_rendered() -> None:
+    """Mutation: change any cell of any row, or any figure in any of the three files.
+
+    Held cell by cell rather than column by column, because the columns went wrong
+    separately and for different reasons. The memory column said "24 GB" for a card that
+    reports 22,888 MiB, which is the same quantity and the wrong number to size a batch
+    against. The rate column was rounded to the cent, so ``gpu-8xl4`` read $13.35 for
+    $13.3504 and the four-figure rates all looked like round numbers somebody chose. The
+    device count and the card were prose nothing could check at all until
+    ``config/accelerators.yaml`` existed.
+
+    ``normalize()`` on the rate is what the catalogue's own renderer does, so $0.526 stays
+    three places and $55.04 stays two rather than every rate being padded to four.
+    """
+    guide = OLMO_CORE_GUIDE_PATH.read_text(encoding="utf-8")
+    # Every compute profile is named `<device>-<shape>`, so the prefix is what separates a
+    # profile row from the workload and flag tables that also lead with a backticked cell.
+    tabulated = re.findall(r"^\| `((?:gpu|cpu)-[a-z0-9-]+)` \|.*\|$", guide, re.MULTILINE)
+    priced = {profile.name for profile in catalogue().compute_profiles}
+
+    assert len(tabulated) >= 16, (
+        f"the training guide tabulates {len(tabulated)} profiles, and the catalogue prices "
+        "seventeen with one of them a CPU shape. Either a table was cut or this stopped "
+        "matching the rows"
+    )
+    for name in tabulated:
+        assert name in priced, (
+            f"the training guide tabulates {name!r}, which the catalogue does not price. A "
+            "submission naming it is refused as unregistered, which is what a typo earns"
+        )
+        expected = profile_row(name)
+        assert expected in guide, (
+            f"the row for {name} disagrees with configuration. It should read:\n\n"
+            f"{expected}\n\nRun `uv run python tools/render_profile_table.py` and take the "
+            "figures from it rather than editing this row by hand"
+        )
+
+
+def test_the_training_guide_names_every_profile_the_catalogue_prices() -> None:
+    """Mutation: register an eighteenth profile and leave the guide at seventeen.
+
+    A shape nobody documents is a shape somebody meets in the dropdown with nothing to read
+    about it, and a profile added to the catalogue is exactly the change that never reaches
+    prose. The tool this calls is the one the repository already ships for the purpose, so
+    the check here and the check a person runs by hand cannot answer differently.
+    """
+    import sys
+
+    sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+    try:
+        from render_profile_table import profiles_missing_from
+    finally:
+        sys.path.pop(0)
+
+    missing = profiles_missing_from(
+        OLMO_CORE_GUIDE_PATH.read_text(encoding="utf-8"), catalogue().compute_profiles
+    )
+    assert missing == (), (
+        f"guides/olmo-core.md never names {sorted(missing)}. Every priced profile is in the "
+        "dropdown, so every priced profile needs a row or a sentence"
+    )
+
+
+def test_the_platform_guide_quotes_the_priced_range_and_the_placeable_one() -> None:
+    """Mutation: quote one range and drop the other, whichever one.
+
+    Four pages quoted "$0.53 to $55.04" for months after the top of that range stopped
+    being purchasable, which sent people planning eight-H100 runs. Quoting only the
+    placeable top is the opposite error and just as wrong: $30.13 as the whole range hides
+    that the dropdown offers a $55.04 shape, so the first person to pick it reads the
+    refusal as a bug rather than as the thing this page told them about.
+
+    Both numbers are computed here. The catalogue moves and a rate change should fail this
+    rather than silently make the page a historical document.
+    """
+    profiles = catalogue().compute_profiles
+    priced = max(profile.hourly_rate_usd for profile in profiles)
+    placeable = max(profile.hourly_rate_usd for profile in profiles if profile.provisioned)
+    cheapest = min(profile.hourly_rate_usd for profile in profiles)
+    assert priced != placeable, (
+        "every priced profile can now be started, so there is one range rather than two "
+        "and this test is asserting a distinction that no longer exists. Rewrite the page "
+        "and then rewrite this"
+    )
+
+    section = PLATFORM_GUIDE_PATH.read_text(encoding="utf-8").split("## Choosing a machine", 1)
+    assert len(section) == 2, "the platform guide has no 'Choosing a machine' section"
+    body = section[1].split("\n## ", 1)[0]
+
+    for figure, what in (
+        (to_cents(cheapest), "the cheapest shape"),
+        (to_cents(priced), "the top of the priced range"),
+        (to_cents(placeable), "the top of the range that can be started"),
+    ):
+        assert f"${figure}" in body, (
+            f"'Choosing a machine' does not quote ${figure}, which is {what}. A reader "
+            "given one of these ranges and not the other plans against the wrong one"
+        )
 
 
 def test_the_guides_name_the_approval_classes_a_submission_can_actually_reach() -> None:

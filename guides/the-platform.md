@@ -50,9 +50,13 @@ Ask for all three through the [ask](https://github.com/edu-llm/platform/issues/n
 
 ## Choosing a machine
 
-`compute_profile` is a closed dropdown of every shape with a queue behind it, and it is the most expensive field on the form by a factor of fifty-seven. The range runs from $0.53 an hour to $30.13. Nothing infers it from what you are running, and nothing refuses a small job on a large machine.
+`compute_profile` is a closed dropdown, and it is the most expensive field on the form by a wide margin. **Two ranges, and reading the wrong one is how people plan a run they cannot have.** Seventeen shapes are priced, from $0.53 an hour to $55.04. Fourteen of them can be started, and that range stops at $30.13. Nothing infers the field from what you are running, and nothing refuses a small job on a large machine.
 
-**Three shapes are priced in the catalogue and cannot be started.** `gpu-8xh100` and `gpu-1xh100` are the two that catch people, because eight H100s at $55.04 an hour is the number everybody remembers. EC2 has never once sold this account a p5 of either size, so both read `provisioned: false` and naming one is refused as `unprovisioned_compute_profile` before anything is dispatched. `gpu-1xa10g-sagemaker` is the third and nothing was ever built for it. The full list with the column that says so is in [training a model](olmo-core.md#multi-gpu-jobs).
+**The three that are priced and cannot be started.** `gpu-8xh100` and `gpu-1xh100` catch people, because eight H100s at $55.04 an hour is the number everybody remembers and 640 GB has no peer in the catalogue. EC2 has never sold this account a p5 of either size: `config/capacity.yaml` records 7,654 refusals for the eight-card shape and 4,060 for the single-card one, both over a day, and not one instance from either. So both read `provisioned: false` and naming one is refused with `unprovisioned_compute_profile`, before anything is dispatched and before anybody is asked to release it. `gpu-1xa10g-sagemaker` is the third and nothing was ever built for it. Both profile tables carry a column that says which is which, in [training a model](olmo-core.md#one-big-card).
+
+**They are priced on purpose rather than by neglect, and the refusal is the reason.** Withdrawing them from the catalogue would look tidier and would make the answer worse: the refusal becomes `unregistered_compute_profile`, whose whole detail is the name you typed, which is what a misspelling gets. `unprovisioned_compute_profile` says something different and more useful, that the shape is real, is priced, and has no compute environment behind it, and it lists what is provisioned instead. One sends you to buy differently. The other sends you hunting for the correct spelling of a thing that is spelled correctly.
+
+If you need 640 GB, the route is a Capacity Block rather than a profile: prove the work on a smaller node, buy a dated window, size the run to about 70% of it. Checked on 2026-08-04 and open, at about a fortnight of lead time. `edullm ask` is where that starts.
 
 | You are | Pick |
 | --- | --- |
