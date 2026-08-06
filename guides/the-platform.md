@@ -76,7 +76,9 @@ There are two answers, and `edullm check` prints which one you got before you su
 
 **One cell, under $500 worst case, and nobody releases it.** No lead, no wait. It is still recorded and still attributed to you, and you still have to be on the roster and running registered code. What you skip is the queue, not the checks.
 
-**There is no hour bound.** Forty-eight hours on one A10G is $48.29 and starts on its own. The rule reads the worst-case total, which already multiplies the rate by the hours by the attempts by the cells, so a long run is an expensive one and expensive is what the bound catches. The figure lives at `automatic_below_cost_usd` in `config/policy.yaml`, and it is strictly under. $499.70 starts on its own and $500.23 waits.
+**No hour bound decides this.** `olmo-core-train` at its full twenty-four hours and two attempts on one A10G is $48.29 and starts on its own. The rule reads the worst-case total, which already multiplies the rate by the hours by the attempts by the cells, so a long run is an expensive one and expensive is what the bound catches. The figure lives at `automatic_below_cost_usd` in `config/policy.yaml`, and it is strictly under. $499.70 starts on its own and $500.23 waits.
+
+**What does bound your hours is the workload profile.** `--hours` above what the profile declares is refused with `runtime_above_the_workload_bound`, which names the profile and its figure. That refusal arrived on 2026-08-06. Until it did, `--hours 10000` against a one-hour profile was accepted, priced at $5,260 and routed to a lead who had no way to see that the profile said one.
 
 **A fan-out never starts on its own, whatever it costs.** Four cells of a twenty-step check is $2.10 and still goes to a lead, because four cells is four machines starting at once and the total does not carry that. So does an image whose registry scan findings nobody has read yet.
 
