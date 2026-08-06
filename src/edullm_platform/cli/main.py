@@ -384,7 +384,20 @@ NOT_BUILT_YET: Final[dict[str, str]] = {}
 #: therefore the ones :func:`_split_at_the_dashes` runs on. Named rather than inferred, because
 #: splitting a verb's arguments away from it is a thing to do deliberately: on any other verb it
 #: would silently discard everything after a ``--`` argparse would have handled itself.
+#:
+#: Read a second time by :func:`_no_such_verb`, which keeps both out of the spellings it
+#: offers for a word it does not know. They are the two that spend money ungated.
 LANE_VERBS: Final = ("run", "shell")
+
+#: Words that are a request for the help rather than a guess at a verb. ``help`` is a verb in
+#: git, cargo, docker and npm, so somebody typing it here has not misspelled anything and
+#: should not be answered as though they had -- the answer they got was ``Did you mean
+#: shell?``. Both are answered with what a bare ``edullm`` prints, which is the thing being
+#: asked for.
+#:
+#: Not an alias and not a verb: nothing is added to :data:`BUILT_TODAY`, ``edullm help
+#: check`` is not a thing, and the tenth name this design would have to carry is not created.
+ASKING_FOR_THE_HELP: Final = frozenset({"help", "usage"})
 
 
 def _split_at_the_dashes(tokens: Sequence[str]) -> tuple[list[str], tuple[str, ...]]:
@@ -697,7 +710,14 @@ def _no_such_verb(word: str) -> str:
             lines += ["", f"  edullm {replacement}"]
         return "\n".join([*lines, ""])
 
-    known = sorted({*BUILT_TODAY, *NOT_BUILT_YET, *RETIRED})
+    # THE LANE VERBS ARE LISTED AND NEVER SUGGESTED, AND THE ASYMMETRY IS THE POINT. A
+    # suggestion is read as an instruction, and `run` and `shell` are the two verbs that
+    # start an instance without a price, an approval or a lineage record -- so offering one
+    # to somebody who has just demonstrated they do not know the verbs puts the most
+    # expensive thing in the tool one keystroke from the cheapest mistake in it. `edullm
+    # help` was answered with "Did you mean shell?". They stay in the list below, where
+    # choosing one is a choice rather than a prompt.
+    known = sorted({*BUILT_TODAY, *NOT_BUILT_YET, *RETIRED} - set(LANE_VERBS))
     near = get_close_matches(word, known, n=1, cutoff=0.6)
     lines += [f"{word} is not a verb."]
     if near:
@@ -732,6 +752,7 @@ def _orientation() -> str:
         ),
         "",
         "  edullm check --help    the flags one submission takes",
+        "  edullm --help          this list, and the flags every verb takes",
         "",
     ]
     return "\n".join(lines)
@@ -963,7 +984,7 @@ def main(
     # researcher who types `dry-run` because a guide said so needs to be told the verb was
     # renamed and what it is now, not handed a menu to search.
     word = tokens[0] if tokens and not tokens[0].startswith("-") else None
-    if not tokens:
+    if not tokens or word in ASKING_FOR_THE_HELP:
         print(_orientation(), end="", file=stderr)
         return EXIT_UNUSABLE
     if word is not None and word not in BUILT_TODAY and word not in NOT_BUILT_YET:
