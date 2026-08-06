@@ -49,6 +49,11 @@ from pathlib import Path
 import pytest
 import yaml
 
+from edullm_platform.approval_gate import (
+    DECLARED_ENVIRONMENT_NAMES,
+    PREVIEW_GATE,
+    declared_gate,
+)
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.authorization import holds_routine_approver_role
 from edullm_platform.contracts.inventory import OrganizationInventory, normalize_github_login
@@ -114,28 +119,66 @@ def routine_approvers() -> frozenset[str]:
     )
 
 
-def test_all_three_approval_environments_exist_and_no_fourth_one_does(
+def test_every_captured_environment_is_one_this_repository_declares(
     environments: EnvironmentInventory,
 ) -> None:
-    # All of them, not only the three expected. An environment is auto-created with no
-    # protection rules at all by anyone who names one in a workflow file, and everyone who
-    # can submit holds the write access that allows it. The trust policy enumerates three
-    # subjects and would refuse a fourth, so such an environment could not reach AWS -- but
-    # a capture that only looked for the expected names could not tell anybody it existed.
-    assert set(environments.names) == set(APPROVAL_ENVIRONMENT_NAMES)
+    """All of them, against the list of all of them, which is not the list it used to read.
+
+    An environment is auto-created with no protection rules at all by anybody who names one
+    in a workflow file, and everybody who can submit holds the write access that allows it.
+    So the capture records every environment rather than the expected ones, and something
+    has to hold the whole set to a declaration or the extra one is merely written down.
+
+    **This compared against ``APPROVAL_ENVIRONMENT_NAMES`` until 2026-08-06 and that was the
+    wrong set, which is why it was a landmine rather than a check.** That constant is the
+    three subjects ``infra/iam/admission-role.yaml`` enumerates in its trust policy, and
+    ``tests/test_run_preview_role.py`` requires by name that the preview environment stay
+    out of it. ``run-approval-preview`` was created on 2026-08-04 and merged in #197 as the
+    gate a branch dispatch demotes to, so from that day the two sets differed and this
+    assertion was arithmetic waiting for a re-capture: correct in what it complained about,
+    wrong about what to do, and reachable only by whoever happened to refresh the evidence.
+    The repair it argued for was deleting the fourth environment or widening the trust
+    policy to accept it, and both are worse than what is actually true.
+
+    ``DECLARED_GATES`` is the set that means "every environment on this repository", and it
+    already named four. Mutation: drop the ``run-approval-preview`` entry from it. Applied,
+    and this goes red naming the environment.
+    """
+    assert set(environments.names) == set(DECLARED_ENVIRONMENT_NAMES)
+
+    # And the admission subjects are a subset of it rather than equal to it, asserted
+    # separately because the two facts fail for different reasons. A name here that no
+    # environment carries is a trust policy pinned to a gate that does not exist, so every
+    # submission routed to it dies at AssumeRole.
+    assert set(APPROVAL_ENVIRONMENT_NAMES) <= set(environments.names)
 
 
-def test_every_environment_restricts_deployments_to_main_by_name(
+def test_every_environment_admits_only_the_branches_declared_for_it(
     environments: EnvironmentInventory,
 ) -> None:
-    # The custom form specifically, and this is the assertion the criterion exists for.
-    # protected_branches follows whatever branch protection happens to cover, so it widens
-    # silently the moment a second branch is protected -- a change nobody would connect to
-    # this control. custom_branch_policies matches names that were written down.
+    """The custom form on all four, and the patterns read per gate rather than asserted once.
+
+    ``protected_branches`` follows whatever branch protection happens to cover, so it widens
+    silently the moment a second branch is protected -- a change nobody would connect to this
+    control. ``custom_branch_policies`` matches names that were written down. That half is
+    the same for every environment and is asserted for every environment.
+
+    **The patterns are not the same and asserting ``("main",)`` across all four was the
+    second half of the landmine.** The preview gate is ``*`` because every role trusted to
+    ``submit-run.yml`` pins its subject to ``refs/heads/main``, so a branch dispatch had
+    nowhere to go until it existed. A blanket assertion has no way to say that, so the only
+    edit that clears it on the next re-capture is one that stops checking the other three --
+    which is exactly the shape of red this repository refuses to let arrive on a stranger.
+
+    Mutation: change the preview gate's declared patterns to ``("main",)``. Applied, and
+    this goes red.
+    """
     for environment in environments.environments:
+        declared = declared_gate(environment.name)
+        assert declared is not None, environment.name
         assert environment.custom_branch_policies is True, environment.name
         assert environment.protected_branches is False, environment.name
-        assert environment.branch_policy_names == ("main",), environment.name
+        assert environment.branch_policy_names == declared.branch_policy_names, environment.name
 
 
 def test_no_environment_lets_an_admin_release_without_a_reviewer(
@@ -158,10 +201,12 @@ def test_self_review_is_deliberately_permitted_on_the_two_reviewed_gates(
     # cannot approve their own submission -- is enforced by members not being reviewers,
     # and independently by evaluate_authorization.
     #
-    # False on run-approval-automatic for an unrelated reason, and the name says two gates
-    # because that environment is not one of them. GitHub answers 422 to setting this flag
-    # on an environment with no reviewers, so the capture derives false from the absent
-    # required_reviewers rule. Same value, different fact: there is nobody to prevent.
+    # False on run-approval-automatic and run-approval-preview for an unrelated reason, and
+    # the name says two gates because neither of those is one of them. GitHub answers 422 to
+    # setting this flag on an environment with no reviewers, so the capture derives false
+    # from the absent required_reviewers rule. Same value, different fact: there is nobody
+    # to prevent. DeclaredGate.prevent_self_review carries None for both rather than False,
+    # which is that distinction written down where the live check can act on it.
     for environment in environments.environments:
         assert environment.prevent_self_review is False, environment.name
 
@@ -190,6 +235,38 @@ def test_the_automatic_gate_carries_every_protection_the_other_two_do_except_a_r
     assert automatic.branch_policy_names == ("main",)
     assert automatic.can_admins_bypass is False
     assert automatic.wait_timer_minutes == 0
+
+
+def test_the_preview_gate_is_open_on_the_branch_and_closed_on_everything_else(
+    environments: EnvironmentInventory,
+) -> None:
+    """The fourth environment, stated as what it is rather than left as an exception.
+
+    ``run-approval-preview`` reviews nobody and admits every branch, which read on its own is
+    the open door this module exists to find. It is not one, and the reason is that neither
+    of those two settings is what bounds it: ``infra/iam/run-preview-role.yaml`` grants
+    ``batch:SubmitJob`` on the single cheapest CPU queue and two ECR describes, and nothing
+    else. So a branch may burn CPU minutes, may not reach a GPU, may not reach the state
+    machine, and leaves no lineage record — which is what keeps a preview result uncitable.
+
+    Everything the other three carry, it carries: the named branch-policy form, no admin
+    bypass, no wait timer. What it drops is the reviewer and the ``main`` pin, and the two
+    assertions below say so in place rather than letting a sibling test quietly widen to
+    accommodate them.
+
+    Mutation: give this environment a required reviewer, or narrow it to ``main``. The first
+    makes the preview path wait for a person who has no basis to judge it; the second stops
+    a branch dispatch reaching anything at all, which is the failure that produced this
+    environment. Both applied, and this goes red on each.
+    """
+    preview = next(e for e in environments.environments if e.name == PREVIEW_GATE)
+
+    assert preview.reviewers == ()
+    assert preview.branch_policy_names == ("*",)
+    assert preview.custom_branch_policies is True
+    assert preview.protected_branches is False
+    assert preview.can_admins_bypass is False
+    assert preview.wait_timer_minutes == 0
 
 
 def test_the_lead_gate_is_reviewed_by_the_leads_team_rather_than_by_named_people(
@@ -348,8 +425,14 @@ def test_phase_two_introduced_no_credential_at_all(secrets: SecretInventory) -> 
     # fallback if the approvals endpoint had needed a fine-grained token was to store one
     # as an environment secret; the endpoint answered a GITHUB_TOKEN holding actions read,
     # so nothing was stored. This check starts satisfied and exists to keep it that way.
+    #
+    # The second assertion is what makes the first mean anything, and it is the third place
+    # the wrong set was read: the capture walks every environment GitHub lists, so an
+    # environment missing from these keys is one the capture never asked about rather than
+    # one holding no secret. Held to DECLARED_GATES for the reason
+    # test_every_captured_environment_is_one_this_repository_declares gives at length.
     assert all(names == () for names in secrets.environment_secret_names.values())
-    assert set(secrets.environment_secret_names) == set(APPROVAL_ENVIRONMENT_NAMES)
+    assert set(secrets.environment_secret_names) == set(DECLARED_ENVIRONMENT_NAMES)
 
 
 def test_the_only_repository_variables_are_role_arns_and_the_region(
@@ -367,16 +450,28 @@ def test_the_only_repository_variables_are_role_arns_and_the_region(
     # gate, and the test is renamed off the count it used to carry, because a count is the
     # part of an assertion like this that ages.
     #
-    # AWS_NIGHTLY_READER_ROLE_ARN IS SPELLED HERE UNDER ITS OLD NAME ON PURPOSE. The
-    # variable was renamed to AWS_AUDIT_READER_ROLE_ARN on 2026-08-05 with the workflow and
-    # the role, and this list is not the live settings. It is what the capture beside it saw
-    # at 2026-08-02T14:30:06Z, so editing it would make the record claim it observed a name
-    # that did not exist yet. The next re-capture moves both together.
+    # THAT RE-CAPTURE HAPPENED ON 2026-08-06 AND MOVED BOTH, WHICH IS WHAT THE PREVIOUS
+    # PARAGRAPH SAID IT WOULD. AWS_NIGHTLY_READER_ROLE_ARN was spelled here under its old
+    # name because the capture beside it observed that name at 2026-08-02T14:30:06Z; the
+    # rename to AWS_AUDIT_READER_ROLE_ARN landed on 2026-08-05 and is in the record now.
+    # AWS_RUN_PREVIEW_ROLE_ARN arrived on 2026-08-04T23:11:10Z, three minutes after #197
+    # merged, and is the seventh.
+    #
+    # SEVEN IS NOT A LIST ANYTHING COMPARES LIVE, AND THAT IS WORTH SAYING WHERE THE LIST IS.
+    # A repository variable can be added in a browser in ten seconds and this is a
+    # thirty-day photograph of them, the same shape of cover the approval environments had
+    # until edullm_platform.approval_gate. The reason it is not the same fix is that the
+    # endpoint is not the same: GET /repos/{owner}/{repo}/actions/variables answers 401 to an
+    # anonymous request, verified against this public repository on 2026-08-06, where every
+    # environment endpoint answers 200. So the daily job that reads the gate with no
+    # credential at all cannot read this, and a credential that could is a stored token the
+    # test above forbids by name.
     assert secrets.repository_variable_names == (
         "AWS_ADMISSION_ROLE_ARN",
+        "AWS_AUDIT_READER_ROLE_ARN",
         "AWS_IMAGE_RESOLVER_ROLE_ARN",
         "AWS_INFRA_DEPLOYER_ROLE_ARN",
-        "AWS_NIGHTLY_READER_ROLE_ARN",
         "AWS_REGION",
         "AWS_RUN_CANCELLER_ROLE_ARN",
+        "AWS_RUN_PREVIEW_ROLE_ARN",
     )
