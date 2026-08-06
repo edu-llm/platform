@@ -867,6 +867,30 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # each of the last twenty commits of main showed the janitor moving to 10f94f8a7082
     # exactly at #301's commit and not moving again until #318's, which settles both halves
     # at once and needs nobody's memory.
+    #
+    # A FOURTEENTH, AND IT IS THE JANITOR AGAIN THROUGH THE SAME MODULE, WHICH IS WORTH
+    # NOTICING RATHER THAN JUST RECORDING. Adding a reviewed configuration file means adding
+    # a ConfigFile member, because tests/test_config_resolution.py holds the vocabulary and
+    # the contents of config/ level in both directions. researcher_lane.py imports that enum
+    # and the janitor's zip carries researcher_lane.py for two tag keys and a role name, so
+    # a new line in a StrEnum moves a Lambda digest. That is the second time this register
+    # has opened for that exact path in a day, and the coupling is the finding: the file the
+    # header of reviewed_configuration.py went out of its way to keep the vocabulary *out
+    # of* is config.py, and it reached three zips through a different module anyway.
+        PendingRelease(
+            function="janitor",
+            reason=(
+                "One member added to ConfigFile for config/accelerators.yaml, reached "
+                "through researcher_lane.py, which the janitor's zip carries for two tag "
+                "keys and a role name. janitor_handler.py builds its settings in "
+                "_settings_from_environment and never calls load_lane_settings, and nothing "
+                "it does reads the vocabulary, so this is bytes and no behaviour."
+            ),
+            cleared_by="uv run python tools/release_lambda.py --function janitor",
+            builds_to="e07efe963ec9cadb79f7345a14d9074c125e359a588e0661f99db687a757e96a",
+            released="50922d41d3750af154e3b2342cfe634c4105b398ed2895a2de585b48579b98d9",
+            recorded_on=date(2026, 8, 6),
+        ),
     )
     return one_record_per_function(releases)
 

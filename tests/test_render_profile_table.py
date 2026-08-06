@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from edullm_platform.accelerators import read_accelerators
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.workload import ComputeProfile, WorkloadCatalog
 
@@ -97,8 +98,14 @@ def test_an_unprovisioned_profile_says_so_twice() -> None:
         [a_profile("gpu-1xreal"), a_profile("gpu-1xghost", provisioned=False)]
     )
 
-    assert "| `gpu-1xghost` | `g5.xlarge` | 1 | $1.006/hr | no |" in table
-    assert "| `gpu-1xreal` | `g5.xlarge` | 1 | $1.006/hr | yes |" in table
+    assert (
+        "| `gpu-1xghost` | `g5.xlarge` | not recorded | not recorded | 1 | $1.006/hr | no |"
+        in table
+    )
+    assert (
+        "| `gpu-1xreal` | `g5.xlarge` | not recorded | not recorded | 1 | $1.006/hr | yes |"
+        in table
+    )
     assert "`gpu-1xghost` are in the catalogue and cannot be started today" in table
     assert "gpu-1xreal` are in the catalogue and cannot" not in table
 
@@ -175,5 +182,60 @@ def test_rendering_the_real_catalogue_costs_no_argument_and_exits_zero(
 
     assert module.main([]) == 0
     printed = capsys.readouterr().out
-    assert "| Compute profile | Instance type | Nodes | Rate | Provisioned |" in printed
+    assert (
+        "| Compute profile | Instance type | Device | Memory | Nodes | Rate | Provisioned |"
+        in printed
+    )
     assert "`gpu-8xh100`" in printed
+
+
+def test_the_two_new_columns_carry_the_measurement_rather_than_a_dash() -> None:
+    """Mutation: render the accelerator columns from the profile name instead of the file.
+
+    ``gpu-8xl40s`` spells eight L40S and a renderer could parse that out of the slug without
+    reading anything, which is exactly the inference ``config/accelerators.yaml`` exists to
+    replace. The name cannot say 45,776, so the memory figure is the assertion that separates
+    a table generated from a measurement from one generated from a string.
+
+    Stated over the real catalogue and the real file, because a fixture would let both sides
+    be wrong together.
+    """
+    module = render_profile_table()
+    accelerators = read_accelerators(PROJECT_ROOT / "config" / "accelerators.yaml")
+    table = module.render_table(the_catalogue().compute_profiles, accelerators)
+
+    assert "| `gpu-8xl40s` | `g6e.48xlarge` | 8 x L40S | 366,208 MiB |" in table
+    assert "| `gpu-8xa100` | `p4d.24xlarge` | 8 x A100 | 327,680 MiB |" in table
+    assert "not recorded" not in table
+
+
+def test_the_shape_with_no_accelerator_says_so_in_both_columns() -> None:
+    """Mutation: leave the cells empty for a CPU profile, or print ``0 MiB``.
+
+    An empty cell in a generated table reads as a figure the tool could not find. This one is
+    a measurement -- ``c7i.8xlarge`` returns no ``GpuInfo`` at all -- and a reader deciding
+    where to put a training command should be able to tell the two apart.
+    """
+    module = render_profile_table()
+    accelerators = read_accelerators(PROJECT_ROOT / "config" / "accelerators.yaml")
+    table = module.render_table(the_catalogue().compute_profiles, accelerators)
+
+    assert "| `cpu-32vcpu` | `c7i.8xlarge` | none | none | 1 |" in table
+
+
+def test_the_memory_note_appears_only_where_a_memory_figure_did() -> None:
+    """Mutation: print the note unconditionally, under a table with no memory column filled in.
+
+    The note explains a unit. Printing it over a table whose memory column reads ``not
+    recorded`` in every row explains a unit nothing used, which is how a reader learns that
+    the prose under a generated table is boilerplate to skip.
+    """
+    module = render_profile_table()
+    unmeasured = module.render_table([a_profile("gpu-1xreal")])
+    measured = module.render_table(
+        the_catalogue().compute_profiles,
+        read_accelerators(PROJECT_ROOT / "config" / "accelerators.yaml"),
+    )
+
+    assert "22,888 MiB" not in unmeasured
+    assert "a 24 GB A10G is 22,888 MiB" in measured

@@ -123,6 +123,7 @@ class ConfigFile(StrEnum):
     IMAGE_EXCEPTIONS = "image-exceptions.yaml"
     EXECUTION_TARGETS = "execution-targets.yaml"
     CAPACITY = "capacity.yaml"
+    ACCELERATORS = "accelerators.yaml"
     RUN_HISTORY = "run-history.json"
     ASKS = "reports/asks.yaml"
     CHECKPOINT_ACKNOWLEDGEMENTS = "reports/checkpoint-acknowledgements.yaml"
