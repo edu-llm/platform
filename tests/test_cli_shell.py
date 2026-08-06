@@ -9,6 +9,7 @@ That difference is why neither verb takes ``--json``, and the case at the bottom
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,14 @@ from edullm_platform.cli.main import (
     EXIT_UNUSABLE,
     build_parser_and_verbs,
 )
-from tests.cli_support import FakeRunner, git_answers, invoke, lane_answers
+from tests.cli_support import (
+    LANE_EXISTING_EXPIRY,
+    LANE_INSTANCE,
+    FakeRunner,
+    git_answers,
+    invoke,
+    lane_answers,
+)
 
 
 def a_laptop(tmp_path: Path, **overrides: object) -> FakeRunner:
@@ -163,6 +171,28 @@ def test_a_shell_reuses_the_machine_run_started(
 
     assert runner.ran("aws", "ec2", "run-instances") == []
     assert "i-0000000000000aaaa" in " ".join(runner.ran("aws", "ssm", "start-session")[0])
+
+
+def test_a_shell_on_a_reused_machine_quotes_the_tag_and_not_a_fresh_afternoon(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: compute the expiry from this invocation's clock, which is what shipped.
+
+    The companion to the same check on run, and the verb where the stale number cost most: a
+    shell is where somebody settles in for an afternoon on the strength of the expiry this line
+    gave them. Both verbs print through one object precisely so that fixing one cannot leave the
+    other saying something else.
+    """
+    runner = a_laptop(tmp_path, existing=LANE_INSTANCE)
+
+    _, out, _ = invoke(
+        ["shell", "--project", "mixlaw", "--compute", "gpu-1xt4"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert set(re.findall(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", out)) == {LANE_EXISTING_EXPIRY}, out
 
 
 def test_a_shell_takes_no_command_and_says_so_rather_than_ignoring_one(

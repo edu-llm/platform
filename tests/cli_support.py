@@ -42,6 +42,7 @@ from edullm_platform.cli.lane import SESSION_PLUGIN
 from edullm_platform.cli.main import main
 from edullm_platform.cli.preferences import DEFAULT_TEAM_FILE, PREFERENCES_DIRECTORY
 from edullm_platform.cli.workspace import CommandResult
+from edullm_platform.researcher_lane import EXPIRES_AT_TAG_KEY
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = PROJECT_ROOT / "config"
@@ -150,10 +151,16 @@ FAKE_ACCOUNT = "123456789012"
 
 LANE_INSTANCE = "i-0000000000000aaaa"
 
+#: The expiry a reused fixture machine carries on its tag. Deliberately a round instant that no
+#: arithmetic against the test clock produces, so a verb that computed one instead of reading
+#: this cannot match it by coincidence.
+LANE_EXISTING_EXPIRY = "2026-08-06T09:00:00Z"
+
 
 def lane_answers(
     *,
     existing: str | None = None,
+    existing_expiry: str | None = LANE_EXISTING_EXPIRY,
     remote_exit: int | None = 0,
     agent: str = "Online",
 ) -> dict[tuple[str, ...], CommandResult]:
@@ -161,6 +168,13 @@ def lane_answers(
 
     ``remote_exit`` of ``None`` is a session that dropped: the stream carries output and no
     sentinel, which is what a Spot interruption in the middle of a command looks like.
+
+    ``describe-instances`` answers the shape :func:`~edullm_platform.cli.lane.find_machine_argv`
+    asks for, an instance id beside its tag list, rather than the bare id it asked for until
+    2026-08-06. That is the whole seam the stale-expiry defect lived in: the fixture and the
+    account have to agree about the answer's shape or a test proves nothing about a laptop.
+    ``existing_expiry`` of ``None`` is a machine carrying no such tag, which is a machine
+    launched before the tag existed or one somebody stripped.
 
     Which repository the caller is standing in is :func:`git_answers`' business and not this
     one's. It changes no AWS answer, and the case the whole slice turns on -- a directory nothing
@@ -194,7 +208,23 @@ def lane_answers(
         ("aws", "ssm", "get-parameter"): ok("ami-000000000000000aa\n"),
         ("aws", "ec2", "describe-subnets"): ok(json.dumps(["subnet-000000000000000bb"])),
         ("aws", "ec2", "describe-security-groups"): ok(json.dumps(["sg-000000000000000cc"])),
-        ("aws", "ec2", "describe-instances"): ok(json.dumps([existing] if existing else [])),
+        ("aws", "ec2", "describe-instances"): ok(
+            json.dumps(
+                [
+                    {
+                        "machine": existing,
+                        "tags": [{"Key": "Project", "Value": "mixlaw"}]
+                        + (
+                            [{"Key": EXPIRES_AT_TAG_KEY, "Value": existing_expiry}]
+                            if existing_expiry
+                            else []
+                        ),
+                    }
+                ]
+                if existing
+                else []
+            )
+        ),
         ("aws", "ec2", "run-instances"): ok(f"{LANE_INSTANCE}\n"),
         ("aws", "ssm", "describe-instance-information"): ok(f"{agent}\n"),
         ("aws", "s3", "sync"): ok(""),

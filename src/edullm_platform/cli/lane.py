@@ -716,6 +716,10 @@ def find_machine_argv(*, project: str, person: str) -> tuple[str, ...]:
     person's would put one researcher's session on another's instance. ``pending`` is included
     with ``running`` so a second invocation thirty seconds after the first waits for the machine
     that is coming rather than starting a second one.
+    **THE TAGS COME BACK WITH THE ID AND THAT IS WHAT REPAIRED THE EXPIRY.** This asked for
+    ``InstanceId`` alone, so the one fact a reused machine carries that the verb needed --
+    when the janitor may stop it -- was not in the answer, and the verb printed a fresh
+    computation in its place. :func:`machine_already_running` reads it out of what comes back.
     """
     return (
         "aws",
@@ -726,7 +730,7 @@ def find_machine_argv(*, project: str, person: str) -> tuple[str, ...]:
         f"Name=tag:{LANE_TAG_KEY},Values={person}",
         "Name=instance-state-name,Values=pending,running",
         "--query",
-        "Reservations[].Instances[].InstanceId",
+        "Reservations[].Instances[].{machine:InstanceId,tags:Tags}",
         "--output",
         "json",
     )

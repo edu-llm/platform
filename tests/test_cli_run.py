@@ -8,12 +8,20 @@ run_preflight, and a second verb calling run_preflight would pick it up for free
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 
 from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED, EXIT_UNREACHABLE, EXIT_UNUSABLE
-from tests.cli_support import FakeRunner, git_answers, invoke, lane_answers
+from tests.cli_support import (
+    LANE_EXISTING_EXPIRY,
+    LANE_INSTANCE,
+    FakeRunner,
+    git_answers,
+    invoke,
+    lane_answers,
+)
 
 
 def a_laptop(tmp_path: Path, **overrides: object) -> FakeRunner:
@@ -140,6 +148,36 @@ def test_an_existing_machine_for_this_project_is_reused_rather_than_doubled(
 
     assert code == EXIT_OK, out + err
     assert runner.ran("aws", "ec2", "run-instances") == []
+
+
+def test_a_reused_machine_is_told_the_expiry_its_tag_carries_and_not_a_fresh_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE STALE-EXPIRY DEFECT, AT THE VERB RATHER THAN AT THE FUNCTION.
+    Mutation: compute the expiry from this invocation's clock, which is what shipped.
+
+    The janitor stops the machine seconds after the instant on its ``ExpiresAt`` tag, and that
+    tag keeps the value launch wrote because the researcher role is denied ``ec2:CreateTags`` on
+    it after ``RunInstances``. A verb that printed a fresh eight hours told somebody they had
+    until this evening when the sweep was coming for them within the hour.
+
+    Asserted as the tag's value appearing and every other instant being absent, rather than as a
+    substring of one sentence, because the sentence is prose and will be reworded. The fixture's
+    tag is a round instant no arithmetic against the test clock reaches, so this cannot pass by
+    coincidence.
+    """
+    runner = a_laptop(tmp_path, existing=LANE_INSTANCE)
+
+    code, out, err = invoke(
+        ["run", "--project", "mixlaw", "--compute", "gpu-1xt4", "--", "python", "-V"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    printed = set(re.findall(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", out))
+    assert printed == {LANE_EXISTING_EXPIRY}, out
 
 
 def test_a_remote_command_that_failed_is_reported_as_refused_with_its_status(

@@ -115,17 +115,20 @@ from edullm_platform.cli.lane import (
     AWS_LOGIN_COMMAND,
     GPU_AMI_PARAMETER,
     SESSION_PLUGIN,
+    LaneExpiry,
     LaneRequest,
     WorkingTierSettings,
     agent_online_argv,
     assume_lane_argv,
     command_line,
     credentials_environment,
-    expires_at,
+    default_compute_profile,
+    expiry_for_a_new_machine,
     find_machine_argv,
     instance_type_for,
     lane_refusals,
     load_working_tier_settings,
+    machine_already_running,
     missing_plugin_refusal,
     notebook_forward_argv,
     person_from_caller_arn,
@@ -899,6 +902,15 @@ def _add_lane_arguments(parser: argparse.ArgumentParser) -> None:
     experiment, a workload profile and a W&B project because a record names them; a lane ask
     names a machine and a place to put files. Sharing the flag set would be sharing the meaning.
 
+    **``--project`` IS REQUIRED AND ``--compute`` STOPPED BEING SO ON 2026-08-06, AND THE
+    DIFFERENCE IS NOT INCONSISTENCY.** A project is a name only the person has: it tags the
+    instance and the volume, it is the last segment of the working prefix, and two unrelated
+    pieces of work under one name is two unrelated pieces of work on one bill that nothing
+    afterwards can separate. A machine is a price, it is declared in reviewed configuration,
+    and :func:`~edullm_platform.cli.lane.default_compute_profile` picks the cheapest shape whose
+    card can run what a trainer defaults to -- the argument ``cli/scaffold.py`` already makes,
+    over the same catalog. It is announced with its rate before anything starts.
+
     **NO ``--team``, WHICH THIS CARRIED UNTIL 2026-08-05.** It set the first segment of the
     working prefix and nothing else, and the prefix is ``<person>/<project>/`` now. A flag that
     stayed on for compatibility would be one a researcher could type, watch be accepted, and
@@ -913,7 +925,7 @@ def _add_lane_arguments(parser: argparse.ArgumentParser) -> None:
     than having none. ``tests/test_cli_shell.py`` holds this.
     """
     parser.add_argument("--project", required=True, help="what this machine is for")
-    parser.add_argument("--compute", required=True, help="the machine, from the catalog")
+    parser.add_argument("--compute", help="the machine, from the catalog; one is picked if absent")
     parser.add_argument(
         "--hours",
         type=_whole_hours,
@@ -1271,7 +1283,11 @@ class _LaneSession:
 
     request: LaneRequest
     machine: str
-    expires_at: str
+    #: When the janitor may stop this machine, and the line that says so, as one value. It was
+    #: a bare string computed against this invocation's clock, which is true of a machine being
+    #: started and false of one being found: a reused machine kept the tag its launch wrote and
+    #: was described with a later instant it would not be honoured to.
+    expiry: LaneExpiry
     environment: dict[str, str]
     #: The working tier's four numbers, read once for the whole session. ``edullm shell``
     #: read them a second time for the notebook port, out of a second resolution of a
@@ -1315,10 +1331,17 @@ def _lane_session(
         return EXIT_UNREACHABLE
     facts = json.loads(identity.stdout)
     person = person_from_caller_arn(str(facts["Arn"])) or ""
+    # ANNOUNCED BEFORE ANYTHING IS BOUGHT, WHICH IS WHAT MAKES THE DEFAULT DEFENSIBLE RATHER
+    # THAN A SURPRISE. The objection to answering this flag is that it spends money nobody
+    # asked for; the verb spends money on every reading and the question was only which shape,
+    # so what the researcher is owed is the name and the rate, before the machine exists.
+    defaulted = None if arguments.compute else default_compute_profile(configuration)
+    if defaulted is not None:
+        print("\n".join(_wrapped(defaulted.said, indent="")), file=err)
     request = LaneRequest(
         project=arguments.project or "",
         person=person,
-        compute_profile=arguments.compute or "",
+        compute_profile=arguments.compute or (defaulted.profile if defaulted else ""),
     )
     # NO ``resolve_team`` CALL, AND ITS REMOVAL ON 2026-08-05 IS THE POINT RATHER THAN A
     # SIMPLIFICATION. The working tier is laid out ``<person>/<project>/`` now, so there is no
@@ -1351,33 +1374,37 @@ def _lane_session(
     found = runner(
         find_machine_argv(project=request.project, person=request.person), env=environment
     )
-    existing = [one for one in json.loads(found.stdout or "[]") if one]
-    expiry = expires_at(datetime.now(tz=UTC), hours)
-    if existing:
+    # THE EXPIRY OF A MACHINE THAT ALREADY EXISTS IS READ OFF IT AND NOT COMPUTED HERE. It was
+    # computed, once, above this branch and for both of them, so a second invocation printed an
+    # instant the ExpiresAt tag did not carry and the janitor was never going to honour.
+    reused = machine_already_running(found.stdout)
+    if reused is not None:
+        machine, carried = reused
         return _LaneSession(
             request=request,
-            machine=existing[0],
-            expires_at=expiry,
+            machine=machine,
+            expiry=carried,
             environment=environment,
             settings=settings,
         )
 
-    machine = _start_a_machine(
+    expiry = expiry_for_a_new_machine(datetime.now(tz=UTC), hours)
+    started = _start_a_machine(
         request,
         configuration=configuration,
         settings=settings,
-        expiry=expiry,
+        expiry=expiry.value,
         spot=bool(arguments.spot),
         runner=runner,
         environment=environment,
         err=err,
     )
-    if isinstance(machine, int):
-        return machine
+    if isinstance(started, int):
+        return started
     return _LaneSession(
         request=request,
-        machine=machine,
-        expires_at=expiry,
+        machine=started,
+        expiry=expiry,
         environment=environment,
         settings=settings,
     )
@@ -1600,7 +1627,7 @@ def _run(
         return session
 
     uri = working_uri(person=session.request.person, project=session.request.project)
-    print(f"{session.machine} expires {session.expires_at}", file=out)
+    print("\n".join(_wrapped(session.expiry.said(session.machine), indent="")), file=out)
     print(
         "\n".join(
             _wrapped(
@@ -1726,7 +1753,7 @@ def _shell(
 
     settings = session.settings
     uri = working_uri(person=session.request.person, project=session.request.project)
-    print(f"{session.machine} expires {session.expires_at}", file=out)
+    print("\n".join(_wrapped(session.expiry.said(session.machine), indent="")), file=out)
     print(
         "\n".join(
             _wrapped(
