@@ -382,6 +382,68 @@ jobs:
             --s3-prefix cloudformation-templates/checksummed \
             --no-fail-on-empty-changeset
 
+      # RECOVER A CREATE THAT FAILED AND ROLLED BACK, BECAUSE THE STEP BELOW CANNOT.
+      #
+      # A stack whose first create failed sits in ROLLBACK_COMPLETE holding none of its
+      # resources, and CloudFormation refuses to update it. The step below computes an update
+      # change set, is told the stack cannot be updated, and exits non-zero. So one failed
+      # create breaks every later dispatch of this workflow -- including dispatches with
+      # nothing to do with notifications -- and the three steps below it never run.
+      #
+      # THAT HAPPENED ON 2026-08-05. The step below created the stack at 23:42 UTC,
+      # CreateFunction was refused for want of iam:PassRole on
+      # sbsandbox-intern-edullm-notifier-lambda, and the stack rolled back six seconds later
+      # holding nothing. Recovering it took a person with a laptop credential deleting the
+      # stack by hand. Deleting it here removes the class rather than that one instance, and
+      # the permission fix it was waiting on is a separate change to the deployer role.
+      #
+      # NO NEW GRANT WAS NEEDED FOR THIS. The deployer role already answers allowed for
+      # cloudformation:DeleteStack on the ARN of this stack, measured on 2026-08-05.
+      #
+      # ONE STATUS AND NOTHING ELSE, WHICH IS THE WHOLE OF THE BLAST RADIUS ARGUMENT. A guard
+      # that quietly deletes a healthy stack is far worse than the problem it solves. So this
+      # deletes only from ROLLBACK_COMPLETE, the one status a stack can hold while provably
+      # containing nothing: it is reachable only from a first create that failed, and that
+      # create rolled back every resource it had begun. Every other status is left alone and
+      # said out loud, and that deliberately includes UPDATE_ROLLBACK_COMPLETE, which is also
+      # a rollback and also not healthy. It is not deleted, because that stack is live and
+      # holds the resources of the template it carried before the update that failed.
+      #
+      # THE STATUS IS NOT TRUSTED ON ITS OWN EITHER. Every resource is listed and every one
+      # must read DELETE_COMPLETE before anything is deleted. That costs one call and it is
+      # what stands between a wrong belief about this status and a stack full of queues.
+      #
+      # It refuses rather than skipping when that check fails. A skip would leave the deploy
+      # below to fail on the stack state, which is the failure this step exists to prevent
+      # and which reads as a broken template.
+      - name: Delete the notifier stack if a failed create left it unupdatable
+        if: inputs.describe_run == ''
+        run: |
+          set -euo pipefail
+          stack=sbsandbox-intern-edullm-notifications
+          status_file="${RUNNER_TEMP}/notifications-status.txt"
+          held_file="${RUNNER_TEMP}/notifications-held-resources.txt"
+          aws cloudformation describe-stacks --stack-name "${stack}" --query 'Stacks[0].StackStatus' --output text > "${status_file}" 2>/dev/null || echo ABSENT > "${status_file}"
+          read -r status < "${status_file}"
+          if [[ "${status}" == "ABSENT" ]]; then
+            echo "::notice::No stack called ${stack}, so the step below creates it."
+            exit 0
+          fi
+          if [[ "${status}" != "ROLLBACK_COMPLETE" ]]; then
+            echo "::notice::${stack} is in ${status}. This guard deletes only from ROLLBACK_COMPLETE, so it is left exactly as it is."
+            exit 0
+          fi
+          aws cloudformation list-stack-resources --stack-name "${stack}" --query 'StackResourceSummaries[?ResourceStatus!=`DELETE_COMPLETE`].LogicalResourceId' --output text > "${held_file}"
+          if [[ -s "${held_file}" ]]; then
+            echo "::error::${stack} is in ROLLBACK_COMPLETE and still holds resources that do not read DELETE_COMPLETE, so it is not the empty failed create this guard deletes. Nothing has been deleted. The resources it still holds are listed below and somebody has to look at this by hand."
+            cat "${held_file}"
+            exit 1
+          fi
+          echo "::warning::Deleting ${stack} and then creating it again. It is in ROLLBACK_COMPLETE, which means its first create failed and rolled every resource back out, so it holds nothing and CloudFormation will not accept an update to it. Without this, the step below would fail on the state of the stack rather than on anything wrong with the template. Why that create failed is in the stack events and is worth reading, because this deletion does not fix it."
+          aws cloudformation delete-stack --stack-name "${stack}"
+          aws cloudformation wait stack-delete-complete --stack-name "${stack}"
+          echo "::notice::Deleted ${stack}, which held no resources. The step below now creates it from scratch."
+
       # BEFORE THE EVENTS STACK, BECAUSE THE RULE'S SECOND TARGET NAMES A QUEUE THIS CREATES.
       # EventBridge does not check that an SQS target exists at PutTargets time, so the wrong
       # order deploys perfectly and drops every notification until somebody notices a channel
