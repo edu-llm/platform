@@ -42,6 +42,7 @@ import pytest
 from edullm_platform.cli.lane import SESSION_PLUGIN
 from edullm_platform.cli.main import main
 from edullm_platform.cli.preferences import DEFAULT_TEAM_FILE, PREFERENCES_DIRECTORY
+from edullm_platform.cli.studio import IMAGE_ACCOUNT_PARAMETER
 from edullm_platform.cli.workspace import CommandResult
 from edullm_platform.researcher_lane import EXPIRES_AT_TAG_KEY, PROJECT_TAG_KEY
 
@@ -63,7 +64,7 @@ COMMIT = "8076c077533eb79742f4ed22aade439df123a593"
 #: A command that satisfies both command guards on a one-device profile: it names a program,
 #: it keeps its quoting through a shell wrapper, and the checkpoint directory expands.
 TRAINING_COMMAND = (
-    "bash -lc 'python .edullm/train_on_corpus.py \"$EDULLM_RUN_ID\" "
+    'bash -lc \'python .edullm/train_on_corpus.py "$EDULLM_RUN_ID" '
     '--save-folder "$EDULLM_CHECKPOINT_DIR"\''
 )
 
@@ -81,7 +82,12 @@ class FakeRunner:
     differently from ``git rev-parse --show-toplevel``.
     """
 
-    def __init__(self, answers: Mapping[tuple[str, ...], CommandResult | Callable[[tuple[str, ...]], CommandResult]]) -> None:
+    def __init__(
+        self,
+        answers: Mapping[
+            tuple[str, ...], CommandResult | Callable[[tuple[str, ...]], CommandResult]
+        ],
+    ) -> None:
         self._answers = dict(answers)
         self.calls: list[tuple[str, ...]] = []
         #: Beside ``calls`` rather than zipped into it, because a case about the lane wants the
@@ -162,12 +168,8 @@ def git_answers(
         ("git", "rev-parse", "--show-toplevel"): ok(f"{root}\n"),
         ("git", "rev-parse", "HEAD"): ok(f"{commit}\n"),
         ("git", "rev-parse", "--abbrev-ref", "HEAD"): ok("edullm/an-arm\n"),
-        ("git", "remote", "get-url", "origin"): ok(
-            f"git@github.com:edu-llm/{repository}.git\n"
-        ),
-        ("git", "status", "--porcelain"): ok(
-            "".join(f" M {path}\n" for path in dirty)
-        ),
+        ("git", "remote", "get-url", "origin"): ok(f"git@github.com:edu-llm/{repository}.git\n"),
+        ("git", "status", "--porcelain"): ok("".join(f" M {path}\n" for path in dirty)),
         ("git", "branch", "--remotes", "--contains"): ok(
             "  origin/edullm/an-arm\n" if pushed else ""
         ),
@@ -204,9 +206,7 @@ LANE_ZONES_OFFERING = tuple(zone for zone in LANE_ZONES if zone != LANE_ZONE_FOR
 
 #: A fake subnet id per zone, shaped like a real one and distinct per zone so a test can read
 #: which zone a launch was aimed at out of the argv.
-LANE_SUBNETS = {
-    zone: f"subnet-0000000000000{index:02d}b" for index, zone in enumerate(LANE_ZONES)
-}
+LANE_SUBNETS = {zone: f"subnet-0000000000000{index:02d}b" for index, zone in enumerate(LANE_ZONES)}
 
 #: What EC2 says when a zone has none of a shape to sell, in the words it actually uses. Copied
 #: from a ``p5.4xlarge`` refused in ``us-east-1a`` on 2026-08-06, including the trailing list of
@@ -419,9 +419,7 @@ def lane_answers(
         ),
         ("aws", "ssm", "get-parameter"): ok("ami-000000000000000aa\n"),
         ("aws", "ec2", "describe-subnets"): ok(
-            json.dumps(
-                [{"subnet": LANE_SUBNETS[zone], "zone": zone} for zone in LANE_ZONES]
-            )
+            json.dumps([{"subnet": LANE_SUBNETS[zone], "zone": zone} for zone in LANE_ZONES])
         ),
         ("aws", "ec2", "describe-instance-type-offerings"): ok(
             json.dumps(list(LANE_ZONES_OFFERING if offerings is None else offerings))
@@ -437,6 +435,88 @@ def lane_answers(
         ("aws", "ssm", "describe-instance-information"): ok(f"{agent}\n"),
         ("aws", "s3", "sync"): ok(""),
         ("aws", "ssm", "start-session"): ok(f"hello from the machine{sentinel}"),
+    }
+
+
+#: What ``create-presigned-domain-url`` hands back, minus the token, which is what makes it a
+#: URL somebody could paste into a browser and not a credential sitting in a fixture.
+STUDIO_URL = "https://studio-d-example.studio.us-east-1.sagemaker.aws/auth?token=not-a-token"
+
+#: What the public SSM parameter answers with, standing in for Amazon's image account.
+#:
+#: NOT THE REAL TWELVE DIGITS, AND NOT BECAUSE THEY ARE SECRET. ``tests/test_evidence.py``
+#: refuses every 12-digit run in the tracked tree and does not judge whose account an id is,
+#: which is why the verb reads this from SSM rather than carrying it. A fixture holding the
+#: real value would put back the literal the design exists to avoid.
+STUDIO_IMAGE_ACCOUNT = "00image00acct"
+
+
+def studio_answers(
+    *,
+    app_status: str | None = None,
+    space_exists: bool = True,
+    profile_exists: bool = True,
+    instance_type: str = "ml.t3.medium",
+    image_account: str | None = STUDIO_IMAGE_ACCOUNT,
+) -> dict[tuple[str, ...], CommandResult | Callable[[tuple[str, ...]], CommandResult]]:
+    """Every SageMaker call ``edullm studio`` makes, answered as a laptop holding a session.
+
+    Separate from :func:`lane_answers` even though the verb enters the lane, because the two
+    describe different surfaces and merging them would make every lane test carry a Studio
+    domain it never reaches. ``a_platform`` merges both, which is the arrangement that keeps
+    each one about the thing it is about.
+
+    ``app_status`` of ``None`` is the ordinary state: a space with no app on it, so
+    ``describe-app`` fails the way it does for a space that has never been started. The
+    defaults are a person who has been here before -- profile and space already made -- because
+    that is every invocation after the first, and the first is expressed by passing ``False``.
+
+    ``image_account`` of ``None`` is the public SSM parameter refusing, which is the one
+    failure that stops a start before anything is created.
+
+    **THE SSM ANSWER SHARES A PREFIX WITH ``lane_answers``' AMI LOOKUP AND MUST WIN.**
+    ``FakeRunner`` matches on the longest declared prefix, and both are
+    ``("aws", "ssm", "get-parameter")``, so this entry is keyed on the parameter name as well.
+    Merged after the lane's, which is why ``a_platform`` updates in that order.
+    """
+    described = (
+        failed("An error occurred (ResourceNotFound) when calling the DescribeApp operation")
+        if app_status is None
+        else ok(
+            json.dumps(
+                {
+                    "AppName": "default",
+                    "Status": app_status,
+                    "ResourceSpec": {"InstanceType": instance_type},
+                }
+            )
+        )
+    )
+    return {
+        # Longer than ``lane_answers``' bare ``get-parameter`` on purpose: ``FakeRunner`` takes
+        # the longest matching prefix, so naming the parameter is what keeps the AMI lookup and
+        # this one from answering each other.
+        ("aws", "ssm", "get-parameter", "--name", IMAGE_ACCOUNT_PARAMETER): (
+            failed("An error occurred (ParameterNotFound)")
+            if image_account is None
+            else ok(f"{image_account}\n")
+        ),
+        ("aws", "sagemaker", "describe-app"): described,
+        ("aws", "sagemaker", "describe-user-profile"): (
+            ok(json.dumps({"UserProfileName": "caiiris"}))
+            if profile_exists
+            else failed("An error occurred (ResourceNotFound)")
+        ),
+        ("aws", "sagemaker", "create-user-profile"): ok(json.dumps({"UserProfileArn": "arn:x"})),
+        ("aws", "sagemaker", "describe-space"): (
+            ok(json.dumps({"SpaceName": "caiiris"}))
+            if space_exists
+            else failed("An error occurred (ResourceNotFound)")
+        ),
+        ("aws", "sagemaker", "create-space"): ok(json.dumps({"SpaceArn": "arn:x"})),
+        ("aws", "sagemaker", "create-app"): ok(json.dumps({"AppArn": "arn:x"})),
+        ("aws", "sagemaker", "delete-app"): ok(""),
+        ("aws", "sagemaker", "create-presigned-domain-url"): ok(f"{STUDIO_URL}\n"),
     }
 
 

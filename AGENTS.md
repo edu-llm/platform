@@ -53,14 +53,29 @@ far behind the install is. Re-install with `--force`, which is the upgrade for b
 | `edullm run` | Ships this working tree to a machine of your own and streams the output of the command after a bare `--` back. Ungated, and no run anybody can cite. |
 | `edullm shell` | A terminal on that same machine, or a notebook on it with `--notebook`. |
 | `edullm stop` | Ends the machine those two started, and says what it ran up and where your files are. |
+| `edullm studio` | Opens your own SageMaker Studio space and prints a sign-in URL, or `--stop` ends its compute and keeps the disk. |
 
 Every verb in `BUILT_TODAY` is here and all of them are built. A bare `edullm` prints the list,
 and `edullm <verb> --help` prints what that verb takes.
 
-The last three are the exploration route and they are not the submission path. Nothing they do
+The last four are the exploration route and they are not the submission path. Nothing they do
 is checked against the registry, priced, approved or written to a lineage record, so what
 comes off them is a thing you saw rather than a result anybody can cite. Reach for `check` and
 `submit` for anything that is meant to count.
+
+**Studio is where exploration goes, and `edullm run` is what the lane still wins.** The two
+overlapped and Studio won most of the argument: it uses the same instance types, it clones a
+repository, its disk survives, it needs no Session Manager plugin and a notebook on it reads as
+a document. Reproducibility never argued for the lane here, because nobody re-runs a prototype
+and the run somebody cites goes through `submit`. What has no Studio equivalent is `edullm
+run` -- ship a working tree to a GPU, run one command, stream it back, discard the machine --
+and `edullm shell` onto the exact shape you are about to submit to.
+
+**Nothing stops a Studio app except `edullm studio --stop`.** The domain carries no
+idle-shutdown setting, so an app left running overnight bills every hour of it, and this has
+already happened here across three nights on a GPU shape. The verb prints its rate and says
+this before it starts anything; do not quote a Studio rate from memory or from a document,
+because `edullm studio` reads it from reviewed configuration and the numbers move.
 
 **`edullm stop` terminates rather than stopping, and that is worth knowing before you type it.**
 The machine's own disk goes with it. The scratch prefix survives, `edullm run` syncs that prefix

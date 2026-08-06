@@ -23,6 +23,20 @@
     },
     {
       "base": false,
+      "module": "edullm_platform.cli.studio",
+      "name": "StudioSettings",
+      "schema_version": "1",
+      "structural_digest": "sha256:16a7062c489d387207a1c26b50448dcb55ae1149ff9ff2f0e8a28942a966eff7"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.cli.studio",
+      "name": "StudioShape",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:96b50697b9207b20ad662d4264640ae55b3b8442ae634ded8aa43b95b05c91b4"
+    },
+    {
+      "base": false,
       "module": "edullm_platform.contracts.admission",
       "name": "DecisionRecord",
       "schema_version": "1",
