@@ -60,7 +60,8 @@ name: The audit (what the platform recorded, against what is actually there)
 #     into the account and a write into this repository. That split is the whole reason it
 #     is a second job rather than three more steps on the eighth. The branch is orphaned and
 #     appended to, never force-pushed, because with a perishable source the history is the
-#     product; the single writer is this file's own `concurrency: group: audit`.
+#     product; the single writer is that job's own `concurrency: group:`, on the job rather
+#     than on this file, for the reason the block below the trigger gives at length.
 #
 #   activity-history — the tenth, and the second that writes rather than judges. It takes the
 #     same artifact substrate-capture published, turns it into the day's page and commits it
@@ -263,9 +264,38 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: audit
-  cancel-in-progress: false
+# THE GROUP IS ON THE TWO JOBS THAT WRITE AND NOT ON THIS FILE, AND MOVING IT IS THE WHOLE
+# REASON ANYBODY CAN DISPATCH THIS AGAIN.
+#
+# It was `concurrency: group: audit` here, and what it was bought for is stated three times
+# further down: `machine/substrate` and `machine/activity` are orphan branches appended to
+# and never force-pushed, so two runs pushing at once lose one reading each and nobody
+# notices until somebody goes looking for that morning. That property is worth having and
+# nothing below weakens it. What a group at this level also does is charge it to the other
+# eleven jobs, none of which write anything anywhere, and on 2026-08-06 that bill came due.
+# checkpoint-reconciliation had been taking about forty minutes a run for at least eleven
+# hours -- 38, 43, 45, 44, 39 across five consecutive runs, growing with the intent tree it
+# reads -- and it held this group for every one of those minutes. Two people dispatched the
+# audit at 07:32 and 07:35 to check something before a deploy, and both dispatches were
+# discarded without ever starting a job.
+#
+# `cancel-in-progress: false` is not what saved them and would not have. IT QUEUES ONE RUN,
+# NOT A QUEUE OF THEM: a second arrival waits and a third cancels the one waiting, so under
+# contention a dispatch is silently discarded whichever way this is set. The choice the flag
+# offers is only which run to throw away, the new one or the one already waiting, and
+# neither answer is right for a workflow somebody dispatches to find out a specific thing.
+# The answer is to stop the eleven read-only jobs from being in a group at all. They compute
+# verdicts; two runs computing the same verdict concurrently is not a race, it is a duplicate
+# answer, and it costs a runner minute.
+#
+# So each writer takes its own group, keyed on the branch it pushes rather than shared, since
+# they push different branches and are `needs: substrate-capture` siblings that should still
+# run beside each other within a run. `cancel-in-progress: false` on both, and there it is
+# the right answer for the reason it was never the right answer here: a discarded reading is
+# a day of a source that forgets, where a discarded verdict is one somebody can recompute.
+#
+# tests/test_audit_workflow.py holds both halves -- the writers each declare a group, and
+# nothing else in the file does.
 
 jobs:
   the-gate-still-exists:
@@ -340,6 +370,19 @@ jobs:
   checkpoint-reconciliation:
     name: runs that promised a checkpoint have one
     runs-on: ubuntu-latest
+    # THE SLOWEST JOB IN THIS FILE BY TWO ORDERS OF MAGNITUDE, AND THIS BOUND SAYS WHICH KIND
+    # OF SLOW IS ACCEPTABLE. It reads a prefix per contracted run and the intent tree it reads
+    # grows with every submission, so its runtime is a function of how long the platform has
+    # been used: 38, 43, 45, 44 and 39 minutes across five consecutive runs on 2026-08-06,
+    # against under four minutes for every other job here. The per-object reads that cost that
+    # are gone -- tools/find_runs_that_saved_nothing.py explains what it was paying for -- and
+    # the bound is set above the old figure rather than at the new one on purpose. A slow read
+    # of a growing bucket is not a defect and should not go red for being one. What this stops
+    # is the other thing, which nothing else here can see: a call that never returns used to
+    # sit for GitHub's six-hour default, and for four of those hours nobody could tell it from
+    # a job doing arithmetic. The tool now names each run before it reads it, so the log
+    # distinguishes them, and this bounds how long a wedged one can go unnoticed.
+    timeout-minutes: 45
     permissions:
       contents: read
       # Only these two jobs mint a token, so the three gates above keep the read-only
@@ -1006,6 +1049,16 @@ jobs:
     # to commit and this exits without one.
     if: always()
     runs-on: ubuntu-latest
+    # THE SINGLE WRITER OF machine/substrate, AND THE REASON THE GROUP IS HERE RATHER THAN ON
+    # THE FILE. The branch is orphaned and appended to, so two runs pushing at once lose a
+    # reading and a perishable source means the loss is permanent. Keyed on this branch and
+    # not shared with activity-history, which pushes a different one and is a sibling that
+    # should still run beside this within a run. Never cancelling, because a cancelled writer
+    # is the same lost morning arriving differently. The block under the trigger says why the
+    # eleven jobs that only compute verdicts are no longer in a group at all.
+    concurrency:
+      group: audit-substrate-history
+      cancel-in-progress: false
     # THE ONLY WRITE IN THIS FILE, AND IT IS DELIBERATELY IN A JOB THAT CANNOT REACH AWS. No
     # job here holds both a credential into the account and a write into this repository; a
     # reader that could commit could publish a reading it made up, which is the same argument
@@ -1031,8 +1084,8 @@ jobs:
       # forget, so last week is the only copy of last week -- which is the opposite of the
       # run index, where a snapshot refreshed on state change is overwritten in place and its
       # history is noise. Both need excluding from protection rules; only the other one needs
-      # a force push. The single writer for this branch is the concurrency group at the top
-      # of this file.
+      # a force push. The single writer for this branch is this job's own concurrency group,
+      # declared above it.
       - name: Keep the reading on the machine/substrate branch
         run: |
           set -euo pipefail
@@ -1058,6 +1111,14 @@ jobs:
     # is no reading, and it exits without writing anything.
     if: always()
     runs-on: ubuntu-latest
+    # THE SINGLE WRITER OF machine/activity, for the reason substrate-history is the single
+    # writer of its own branch: the page is appended to and never force-pushed, because a
+    # source having been refused for a week is a diff rather than a value. Its own group
+    # rather than substrate-history's, since the branches are different and the two are
+    # siblings that should not serialise against each other inside one run.
+    concurrency:
+      group: audit-activity-history
+      cancel-in-progress: false
     # NO id-token, SO THIS JOB CANNOT REACH THE ACCOUNT HOWEVER ITS STEPS ARE WRITTEN. Same
     # separation substrate-history is built on, and tests/test_ci_workflow.py holds the two
     # sets disjoint. It costs the budget section, which needs Cost Explorer; the page prints
@@ -1124,8 +1185,8 @@ jobs:
 
       # APPENDED TO, NEVER FORCE-PUSHED, for the reason the readings are: the history is the
       # product. A page is how somebody sees that a source has been refused for a week, and
-      # that is a diff rather than a value. The single writer is this file's own concurrency
-      # group, which is what makes an append safe.
+      # that is a diff rather than a value. The single writer is this job's own concurrency
+      # group, declared above it, which is what makes an append safe.
       - name: Keep the page on the machine/activity branch
         run: |
           set -euo pipefail

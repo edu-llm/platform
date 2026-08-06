@@ -1295,16 +1295,89 @@ def test_the_history_job_keeps_the_reading_where_it_can_be_diffed(
     assert "git switch --orphan" in body, "the readings carry none of the tree they came from"
 
 
-def test_the_history_job_is_the_single_writer_of_its_branch(workflow: dict[str, Any]) -> None:
-    """Mutation: drop the concurrency group, or give this job one of its own.
+def test_each_writing_job_is_the_single_writer_of_its_own_branch(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: drop a group, share one between them, or cancel in progress.
 
-    Two runs of this workflow appending to one branch race, and the loser is a reading nobody
-    notices is missing until somebody goes looking for that day. The audit already declares a
-    single-writer group for the whole file, which is what makes this safe -- so the property
-    is asserted here rather than left as a fact about a line somebody could move.
+    Two runs appending to one branch race, and the loser is a reading nobody notices is
+    missing until somebody goes looking for that day. Cancelling is the same loss arriving
+    differently, which is why the flag is asserted as well as the group.
+
+    Sharing one group between them is the third mutation and the least obvious. They push
+    different branches and are `needs: substrate-capture` siblings, so a shared group would
+    serialise them inside a single run for a race that does not exist between them, and the
+    page would be written a runner-minute after the reading it describes for no reason.
     """
-    assert workflow["concurrency"]["group"] == "audit"
-    assert workflow["concurrency"]["cancel-in-progress"] is False
+    for job, group in ((HISTORY_JOB, HISTORY_BRANCH), (ACTIVITY_JOB, ACTIVITY_BRANCH)):
+        concurrency = workflow["jobs"][job]["concurrency"]
+
+        assert concurrency["cancel-in-progress"] is False, job
+        assert group.removeprefix("machine/") in concurrency["group"], (
+            f"{job} must key its group on the branch it is the single writer of"
+        )
+
+    assert (
+        workflow["jobs"][HISTORY_JOB]["concurrency"]["group"]
+        != workflow["jobs"][ACTIVITY_JOB]["concurrency"]["group"]
+    )
+
+
+def test_no_job_that_only_computes_a_verdict_takes_a_concurrency_group() -> None:
+    """THE ONE THAT MATTERS. Mutation: put `concurrency: group: audit` back on the file.
+
+    That is where it was, and it made this workflow undispatchable. checkpoint-reconciliation
+    had been taking about forty minutes a run for at least eleven hours on 2026-08-06 while
+    every other job finished inside four, and it held the group for all of them. Two people
+    dispatched the audit at 07:32 and 07:35 to check something before a deploy; a scheduled
+    run arriving at 07:44 discarded the second and the second had already discarded the first.
+    Neither ever started a job.
+
+    `cancel-in-progress: false` does not prevent that and cannot. The group holds one pending
+    run, so a third arrival cancels the one waiting -- the flag chooses which dispatch is
+    thrown away, not whether one is. The only fix is for the jobs that compute verdicts to be
+    in no group at all: two runs computing the same verdict concurrently is a duplicate
+    answer, not a race, and it costs a runner minute.
+
+    Asserted on the file rather than on a job list, because the failure it guards is somebody
+    adding a group back at the top, which no per-job assertion would see.
+    """
+    workflow = load_workflow(WORKFLOW_PATH)
+
+    assert "concurrency" not in workflow, (
+        "a group here is charged to every job in the file, including the one that takes "
+        "forty minutes, and a dispatch is what pays it"
+    )
+
+    grouped = {name for name, job in workflow["jobs"].items() if "concurrency" in job}
+
+    assert grouped == {HISTORY_JOB, ACTIVITY_JOB}, (
+        "only the two jobs that push a branch have anything to serialise"
+    )
+
+
+def test_the_slowest_job_is_bounded_well_above_how_long_it_takes() -> None:
+    """Mutation: drop the bound, or set it at what the job currently takes.
+
+    Both directions are wrong and for opposite reasons. With no bound a call that never
+    returns sits for GitHub's six-hour default, which is how long nobody could tell a wedged
+    job from one reading a bucket. Set at the current runtime, an ordinary slow morning goes
+    red for being slow, and this job's runtime is a function of how many runs the platform has
+    ever accepted -- 38, 43, 45, 44 and 39 minutes across five consecutive runs while the
+    intent tree grew under it. A read of a growing bucket is not a defect.
+
+    So the bound is above the worst figure measured rather than near the expected one, and
+    what makes that safe is that the tool now names each run before reading it: slow is
+    visible in the log, and this only has to catch wedged.
+    """
+    #: The longest this job has been measured taking, on 2026-08-06.
+    slowest_observed = 45
+    #: What GitHub allows a job with no bound, which is what the old state was.
+    github_default = 6 * 60
+    bound = load_workflow(WORKFLOW_PATH)["jobs"][RECONCILE_JOB]["timeout-minutes"]
+
+    assert bound >= slowest_observed, "an ordinary slow morning must not go red for being slow"
+    assert bound < github_default, "a wedged call must not be allowed to sit for the default"
 
 
 def test_the_history_job_commits_nothing_when_no_reading_was_published(
