@@ -157,6 +157,23 @@ class SubprocessRunner:
                 list(argv),
                 capture_output=True,
                 text=True,
+                # THE ENCODING IS NAMED BECAUSE `text=True` ALONE MEANS FOUR DIFFERENT
+                # CODECS. With no encoding it is the locale's, which is UTF-8 on macOS and
+                # Linux and the ANSI code page on Windows -- usually cp1252, against a `gh`
+                # that emits UTF-8. Most of what `gh` prints is ASCII and survives; a log
+                # line, a branch name or a pull request title with an accented character
+                # does not, and cp1252 has undefined bytes, so a UTF-8 sequence can raise
+                # UnicodeDecodeError out of this call rather than merely mangle -- which
+                # takes `edullm logs` down entirely. It changes again under Python 3.15,
+                # where PEP 686 turns UTF-8 mode on by default, so an unpinned
+                # `uv tool install` would have two researchers on one install line decoding
+                # `gh` differently from each other.
+                #
+                # `replace` rather than strict, for the same reason: a mangled character in
+                # a log line is a worse-looking log line, and a raised exception is a dead
+                # verb.
+                encoding="utf-8",
+                errors="replace",
                 cwd=None if cwd is None else str(cwd),
                 check=False,
                 timeout=timeout,

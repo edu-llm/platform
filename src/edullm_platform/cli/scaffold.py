@@ -91,7 +91,20 @@ def scaffold_spec(
     )
     path = root / SPEC_PATH if destination is None else destination
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_spec(spec, notes=_notes(configuration, repository)), encoding="utf-8")
+    # NEWLINE IS NAMED, AND WITHOUT IT THIS FILE IS A DIFFERENT FILE ON WINDOWS. Text mode
+    # translates every "\n" to os.linesep, so the same scaffold writes LF here and CRLF
+    # there. What gets written is committed into a research repository, and a repository
+    # without a .gitattributes -- which a research repository is not guaranteed to have --
+    # carries the difference into the diff: this repository's own .gitattributes records the
+    # incident it was written for, a 32-line change that arrived as 1,795 lines. Nothing
+    # breaks, which is the problem: `check` reads with newline=None and folds CRLF back, so
+    # a Windows researcher produces a file that differs from everybody else's before they
+    # have typed anything and nothing tells them.
+    path.write_text(
+        render_spec(spec, notes=_notes(configuration, repository)),
+        encoding="utf-8",
+        newline="\n",
+    )
     return path
 
 

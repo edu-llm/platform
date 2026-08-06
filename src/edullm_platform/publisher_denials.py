@@ -694,6 +694,11 @@ def run_aws(
             check=False,
             capture_output=True,
             text=True,
+            # Named for the reason `cli.workspace.SubprocessRunner` writes out beside its
+            # own, and for the reason `capture_tooling.aws` repeats: this output is parsed,
+            # and a denial that failed to decode reads the same as a denial nobody proved.
+            encoding="utf-8",
+            errors="replace",
             timeout=AWS_CALL_TIMEOUT_SECONDS,
             shell=False,
         )

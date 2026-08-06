@@ -57,6 +57,7 @@ are decided here.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final
@@ -106,6 +107,7 @@ from edullm_platform.submission import (
 
 __all__ = [
     "DEFERRED_TO_SUBMIT",
+    "SUBMITTER_UNKNOWN",
     "UNRESOLVED_IMAGE_DIGEST",
     "Preflight",
     "Refusal",
@@ -113,6 +115,7 @@ __all__ = [
     "first_validation_message",
     "resolve_team",
     "run_preflight",
+    "said_once",
     "validation_messages",
     "working_tree_refusals",
 ]
@@ -170,6 +173,54 @@ class Refusal:
 
     code: str
     detail: str
+
+
+#: What every check that needs the submitter says when there is no submitter to have.
+#:
+#: **A CHECK THAT CANNOT MAKE ITS CHECK MUST NOT ANSWER AS THOUGH IT MADE IT.** Three things
+#: here consult the login -- whether the roster names you, which group the roster puts you in,
+#: and whether the group you claimed is one of them -- and two of them used to return an empty
+#: answer when there was nobody to ask about. An empty answer from a check is indistinguishable
+#: from a pass, so a broken ``gh`` login made ``check`` quieter and more permissive than a
+#: working one: measured on 2026-08-05, one refusal against two, and the arm that says
+#: ``gh auth login`` was never reached at all because an unresolved team stops ``_preflight``
+#: before ``run_preflight`` runs.
+#:
+#: Held as one value rather than written at each site, so that a fourth reader of the submitter
+#: has something to return and no reason to invent a second wording. Said once to the reader
+#: even where several sites want it, which :func:`said_once` is for.
+SUBMITTER_UNKNOWN: Final = Refusal(
+    code="submitter_unknown",
+    detail=(
+        "gh has not recorded who you are, so this cannot say whether the roster names you, "
+        "which group your runs are charged to, or whether a group you name is one of yours. "
+        "Run gh auth login. edullm holds no credential of its own -- the submission workflow "
+        "holds the AWS one -- so gh is the whole of what it needs from you."
+    ),
+)
+
+
+def said_once(refusals: Iterable[Refusal]) -> tuple[Refusal, ...]:
+    """The refusals in the order they were reached, with a repeated code kept only once.
+
+    One problem reported twice under one code sends a reader looking for a second problem,
+    which is the argument :func:`run_preflight` already makes where it drops a denied-outright
+    condition it has already stated in words. It matters here because
+    :data:`SUBMITTER_UNKNOWN` is deliberately produced by every site that wanted the submitter
+    -- that is what makes a silent site impossible -- and a reader needs the one command it
+    names once rather than three times.
+
+    The first occurrence is kept rather than the last, so a refusal stays where the ordering
+    in :func:`run_preflight` put it, which is the order the compile job makes them in.
+    """
+    seen: set[str] = set()
+    kept: list[Refusal] = []
+    for refusal in refusals:
+        if refusal.code in seen:
+            continue
+        seen.add(refusal.code)
+        kept.append(refusal)
+    return tuple(kept)
 
 
 @dataclass(frozen=True)
@@ -258,7 +309,7 @@ def run_preflight(
     if workload is None or compute is None:
         return Preflight(
             request=request,
-            refusals=tuple(refusals),
+            refusals=said_once(refusals),
             team_source=team_source,
             workload=workload,
             compute=compute,
@@ -270,7 +321,7 @@ def run_preflight(
     if manifest is None:
         return Preflight(
             request=request,
-            refusals=tuple(refusals),
+            refusals=said_once(refusals),
             team_source=team_source,
             workload=workload,
             compute=compute,
@@ -283,7 +334,7 @@ def run_preflight(
     if isinstance(priced, Refusal):
         return Preflight(
             request=request,
-            refusals=(*refusals, priced),
+            refusals=said_once((*refusals, priced)),
             team_source=team_source,
             workload=workload,
             compute=compute,
@@ -311,7 +362,7 @@ def run_preflight(
     approval_class = classify_request(facts, configuration.policy.thresholds)
     return Preflight(
         request=request,
-        refusals=tuple(refusals),
+        refusals=said_once(refusals),
         team_source=team_source,
         workload=workload,
         compute=compute,
@@ -490,7 +541,13 @@ def resolve_team(
     if default is not None and default.team:
         return default.team, f"your default, in {default.path}", None
     if submitter is None:
-        return None, "", None
+        # NOT AN ABSENCE, AND ANSWERING IT AS ONE IS WHAT MADE A BROKEN LOGIN QUIET. The
+        # caller stops on a team it could not resolve, so a team resolved to nothing with no
+        # refusal beside it ends the whole check and reports nothing -- including the refusal
+        # that would have named `gh auth login`. The roster cannot name a group for somebody
+        # it cannot name, and that is a thing to say rather than a question that did not
+        # arise.
+        return None, "", SUBMITTER_UNKNOWN
     declared = tuple(
         team.team_id
         for team in configuration.inventory.teams_for_member(submitter)
@@ -537,17 +594,7 @@ def _check_identity(
     submitter: str | None, configuration: ReviewedConfiguration
 ) -> list[Refusal]:
     if submitter is None:
-        return [
-            Refusal(
-                code="submitter_unknown",
-                detail=(
-                    "gh has not recorded who you are, so this cannot say whether the roster "
-                    "names you. Run gh auth login. edullm holds no credential of its own -- "
-                    "the submission workflow holds the AWS one -- so gh is the whole of what "
-                    "it needs from you."
-                ),
-            )
-        ]
+        return [SUBMITTER_UNKNOWN]
     try:
         require_submitter_on_the_roster(submitter, inventory=configuration.inventory)
     except SubmissionRefusedError as exc:
@@ -728,7 +775,10 @@ def _check_team(
             )
         ]
     if submitter is None:
-        return []
+        # The claim goes unexamined and that is a thing the output has to carry. Returning
+        # nothing here reads as "the claim was examined and held", which is the fail-open
+        # direction on the one field that decides which lead is asked and whose budget pays.
+        return [SUBMITTER_UNKNOWN]
     # THE ONLY PLACE THIS IS STILL ASKED OF A PERSON, WHICH IS WHY IT READS THE SHARED
     # HELPER RATHER THAN COMPARING TWO LISTS HERE. ``evaluate_authorization`` used to ask it
     # again inside AWS and refuse there; it does not, because that refusal landed past the

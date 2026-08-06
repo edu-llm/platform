@@ -147,6 +147,7 @@ from edullm_platform.cli.preflight import (
     first_validation_message,
     resolve_team,
     run_preflight,
+    said_once,
     working_tree_refusals,
 )
 from edullm_platform.cli.presentation import (
@@ -2768,7 +2769,7 @@ def _preflight(
     if spec is None or team is None or missing or facts.commit_sha is None:
         return Preflight(
             request=_partial_request(arguments, spec, facts, team),
-            refusals=tuple(refusals),
+            refusals=said_once(refusals),
             team_source=team_source,
         )
 
@@ -2803,7 +2804,7 @@ def _preflight(
     )
     return Preflight(
         request=preflight.request,
-        refusals=(*refusals, *preflight.refusals),
+        refusals=said_once((*refusals, *preflight.refusals)),
         team_source=preflight.team_source,
         workload=preflight.workload,
         compute=preflight.compute,
