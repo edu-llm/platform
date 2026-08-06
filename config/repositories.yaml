@@ -72,3 +72,20 @@ repositories:
     base_image_digest: sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
     dockerfile_path: .edullm/Dockerfile
     build_context: .
+  # edullm-p1: MixLaw data-mixing-law validation at 370M, whose image differs in kind
+  # from every registered one rather than in degree: it is the only registration that
+  # needs a prebuilt flash-attn wheel, and .edullm/verify_image.py asserts
+  # torch.version.cuda == 12.8, loads libcudart.so.12 and pins six distributions to
+  # exact versions, so it builds from the CUDA base olmo-eval-full registered rather
+  # than the python base the three training images share. It also carries its own
+  # dependency lock, .edullm/requirements-linux-cu128.lock, which no other registration
+  # does, and its entrypoint is a seven-arm Batch array over
+  # experiments/skill-dag/mixlaw rather than a program taking a run id.
+  - repository: edullm-p1
+    github_repository_id: 1314176548
+    default_branch: main
+    ecr_repository: sbsandbox-intern-edullm-p1
+    base_image_repository: docker.io/nvidia/cuda
+    base_image_digest: sha256:ebef3c171eeef0298e4eb2e4be843105edf3b8b0ac45e0b43acee358e8046867
+    dockerfile_path: .edullm/Dockerfile
+    build_context: .

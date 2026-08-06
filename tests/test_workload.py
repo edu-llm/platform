@@ -302,8 +302,9 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     # gpu-8xl40s filling the eight-device row, then gpu-1xh100. Same tripwire role as the
     # workload count below: a profile arriving without a deliberate edit.
     assert len(catalog.compute_profiles) == 17
-    # Nine: seven, plus open-instruct-scored-rewards-check and
-    # open-instruct-scored-rewards-train. The seven were five since the presets collapsed
+    # Eleven: nine, plus olmo-eval-sweep and edullm-p1-check. Nine was seven plus
+    # open-instruct-scored-rewards-check and open-instruct-scored-rewards-train. The seven
+    # were five since the presets collapsed
     # plus edullm-alt-cl-check and edullm-alt-cl-train. It was seven before the collapse
     # too, and the two pairs that merged -- olmo-core-check-cpu with olmo-core-check-gpu,
     # and olmo-core-train-1gpu with olmo-core-train-4gpu -- differed only in a compute
@@ -318,7 +319,16 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     # pair. olmo-eval-full was already registered and already had olmo-eval-check, so the
     # thing edullm-alt-cl was missing -- somewhere to run the work the repository exists for
     # -- is what this adds, on the two-hour GPU shape a real benchmark split needs.
-    assert len(catalog.workloads) == 10
+    #
+    # ELEVEN SINCE edullm-p1-check, WHICH IS THE SECOND ENTRY ADDED SINGLY AND FOR THE OTHER
+    # REASON. olmo-eval-sweep is single because the pair was already complete; this one is
+    # single because the pair cannot be written yet. edullm-p1's workload is a seven-arm
+    # Batch array over experiments/skill-dag/mixlaw, so a -train entry would have to name a
+    # runtime, an attempt count and a checkpoint contract nobody has measured, and the
+    # argument above is precisely that a bound written without a measurement is a ceiling
+    # pretending to be an estimate. The pre-training team owns those three numbers; the
+    # check exists so the path can be proved while they pick.
+    assert len(catalog.workloads) == 11
     # The check Phase 3 runs. It names OLMo-core, which was the only registered repository
     # with a published image when this was written; dolma-tokenize is the same shape against
     # a repository that still has neither.

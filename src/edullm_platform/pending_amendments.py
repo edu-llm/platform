@@ -212,6 +212,147 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
     # never exists. Applying the deployer stack once clears all of it.
     amendments: tuple[PendingAmendment, ...] = (
         PendingAmendment(
+            role_name="sbsandbox-intern-edullm-ecr-publisher",
+            reason=(
+                "Registering edullm-p1 widens this role in the three places a registration "
+                "always widens it: the repository_id the trust policy accepts, the OIDC "
+                "subject it matches, and the ECR repository ARN the inline policy may push "
+                "to. All three are template edits, and this is an IAM stack, so the account "
+                "catches up from a laptop rather than from CI. Until it does, a build in "
+                "edullm-p1 presents a repository id the trust policy does not list and dies "
+                "at AssumeRole with a message that reads like a broken role ARN. Nothing "
+                "else is waiting on it: the ECR repository itself is a CloudFormation "
+                "resource that deploy-phase1-ecr.yml creates when this merges."
+            ),
+            cleared_by=(
+                "aws cloudformation deploy --stack-name "
+                "sbsandbox-intern-edullm-ecr-publisher-iam --template-file "
+                "infra/iam/ecr-publisher-role.yaml --capabilities CAPABILITY_NAMED_IAM "
+                "--no-fail-on-empty-changeset --profile sbsandbox --region us-east-1, then "
+                "tools/capture_phase1_evidence.py --target roles, then delete this record"
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="trust policy statement 1 conditions",
+                    detail=(
+                        "StringEquals token.actions.githubusercontent.com:repository_id "
+                        "does not accept values the template does: 1314176548"
+                    ),
+                ),
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="trust policy statement 1 conditions",
+                    detail=(
+                        "StringLike token.actions.githubusercontent.com:sub does not "
+                        "accept values the template does: "
+                        "repo:edu-llm@306859726/edullm-p1@1314176548:ref:refs/heads/*"
+                    ),
+                ),
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'publish-research-images' statement 2 resources",
+                    detail=(
+                        "the template declares resources the deployed role does not: "
+                        "arn:<partition>:ecr:<region>:<account>:repository/"
+                        "sbsandbox-intern-edullm-p1"
+                    ),
+                ),
+            ),
+        ),
+        PendingAmendment(
+            role_name="sbsandbox-intern-edullm-batch-execution",
+            reason=(
+                "The ecr:BatchGetImage grant that lets the container start. Same "
+                "registration and same omission as the admission states record below: "
+                "tools/register_repository.py writes infra/ecr-repositories.yaml and "
+                "infra/iam/ecr-publisher-role.yaml and leaves every other file that "
+                "enumerates one ARN per submittable repository alone. Until the stack is "
+                "applied a job naming edullm-p1 is placed, gets its node, and then cannot "
+                "pull the image, which Batch reports as a CannotPullContainerError naming "
+                "the image rather than the grant."
+            ),
+            cleared_by=(
+                "The deploy-phase3-batch.yml run that fires on merge to main, then "
+                "tools/capture_phase3_evidence.py, then delete this record. CI applies the "
+                "Phase 3 stacks, so this needs a workflow run rather than a person."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element=(
+                        "inline policy 'pull-the-image-and-open-the-log-stream' "
+                        "statement 2 resources"
+                    ),
+                    detail=(
+                        "the template declares resources the deployed role does not: "
+                        "arn:<partition>:ecr:<region>:<account>:repository/"
+                        "sbsandbox-intern-edullm-p1"
+                    ),
+                ),
+            ),
+        ),
+        PendingAmendment(
+            role_name="sbsandbox-intern-edullm-batch-instance",
+            reason=(
+                "The instance-side half of the same pull. The execution role authorises the "
+                "pull and this role is what the ECS agent on the node presents, so both have "
+                "to name the repository or the image does not arrive. One registration, one "
+                "deploy, two records, because the findings are compared per role."
+            ),
+            cleared_by=(
+                "The deploy-phase3-batch.yml run that fires on merge to main, then "
+                "tools/capture_phase3_evidence.py, then delete this record."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element=(
+                        "inline policy 'join-the-batch-managed-ecs-cluster' "
+                        "statement 3 resources"
+                    ),
+                    detail=(
+                        "the template declares resources the deployed role does not: "
+                        "arn:<partition>:ecr:<region>:<account>:repository/"
+                        "sbsandbox-intern-edullm-p1"
+                    ),
+                ),
+            ),
+        ),
+        PendingAmendment(
+            role_name="sbsandbox-intern-edullm-admission-states",
+            reason=(
+                "The other half of registering edullm-p1, and the half tools/"
+                "register_repository.py does not write. That tool amends "
+                "infra/ecr-repositories.yaml and infra/iam/ecr-publisher-role.yaml and "
+                "nothing else, so the five places that enumerate one ARN per submittable "
+                "repository were left behind: this role's ecr:DescribeImageScanFindings, "
+                "and the four ecr:BatchGetImage grants in infra/iam/batch-roles.yaml and "
+                "infra/iam/batch-gpu-roles.yaml. All five are amended here. Only this one "
+                "reports drift, because it is the only one of the five whose role has a "
+                "committed capture. Until the stack is applied, a submission naming "
+                "edullm-p1 is refused at the scan-findings read with a message about the "
+                "image rather than about the grant."
+            ),
+            cleared_by=(
+                "The deploy-phase2-admission.yml run that fires on merge to main, then "
+                "tools/capture_phase2_evidence.py, then delete this record. Unlike the "
+                "publisher role above this needs no laptop: the Phase 2 stacks are applied "
+                "by CI, so the window is one workflow run rather than one person."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'run-admission-workflow' statement 7 resources",
+                    detail=(
+                        "the template declares resources the deployed role does not: "
+                        "arn:<partition>:ecr:<region>:<account>:repository/"
+                        "sbsandbox-intern-edullm-p1"
+                    ),
+                ),
+            ),
+        ),
+        PendingAmendment(
             role_name=DEPLOYER_ROLE_NAME,
             reason=(
                 "Two stacks deployed by deploy-phase3-batch.yml need grants this role does "
@@ -697,9 +838,21 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "every manifest_sha256 in the store is over a run manifest, which is the one "
                 "this change deliberately did not touch. The validator does not construct a "
                 "ResultManifest at all; the recorder does."
+                "\n\n"
+                "A SEVENTH EDIT MOVED IT AGAIN AND THIS ONE DOES CARRY A BEHAVIOUR, unlike the "
+                "sixth above it. "
+                "Registering edullm-p1 writes config/repositories.yaml and "
+                "config/workload-catalog.yaml, and the validator packages both. Until the "
+                "release is cut the deployed validator has never heard of the repository or "
+                "of edullm-p1-check, so a submission naming either is refused by a principal "
+                "reading the previous catalog while the form offers both. That is the same "
+                "shape as the Phase 4 refusal this record's own file describes: correct for "
+                "the bytes that produced it, wrong about the account, and naming the workload "
+                "rather than the release. It is one record rather than two because a zip "
+                "carries whatever the tree holds when it is built."
             ),
             cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="49df73e7e2062fe17e65c6b2a519298f8847ec2bbd471ea08b449a283a8124ae",
+            builds_to="a2f7c751245b8d25b691bb56b280e50c19c569e4f1063e5152f420faf7546ab5",
             released="d2c42173589e7c91ff20faeaa7b5b9f705f02e28214ad15fcf782964bf7bf3af",
             recorded_on=date(2026, 8, 5),
         ),

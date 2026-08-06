@@ -786,17 +786,29 @@ def test_an_undeployed_amendment_is_the_only_thing_the_skip_stands_down_for(
         ),
         findings=edited.report.findings,
     )
+    # Falling through to the real register for every other role rather than returning None,
+    # which is what this read when the register was empty. Returning None once it is not
+    # suppresses a recorded amendment, so the guard reports that role as unexplained and this
+    # case fails for a reason it is not about.
+    recorded = phase1_capture.pending_for
     monkeypatch.setattr(
-        phase1_capture, "pending_for", lambda name: amendment if name == AMENDED_ROLE else None
+        phase1_capture,
+        "pending_for",
+        lambda name: amendment if name == AMENDED_ROLE else recorded(name),
     )
 
     explained = _captures_with_one_role_rewritten(tmp_path, AMENDED_ROLE, _drop_an_inline_policy)
     waiting = only_a_pending_deploy_stands_in_the_way(explained)
 
-    assert [capture.role_name for capture in waiting] == [AMENDED_ROLE]
-    assert [capture.verdict for capture in waiting] == [CaptureVerdict.PENDING_DEPLOY]
+    already = {name for name, _template in PHASE3_ROLE_TEMPLATES if recorded(name) is not None}
+    assert {capture.role_name for capture in waiting} == already | {AMENDED_ROLE}
+    assert {capture.verdict for capture in waiting} == {CaptureVerdict.PENDING_DEPLOY}
     # The skip has to hand a reader the deploy, or it is worse than the failure it replaced.
-    message = _what_the_deploy_would_clear(waiting[0])
+    # By role rather than by position, because `waiting` now carries the register's own
+    # entries beside this case's and their order is the capture order.
+    message = _what_the_deploy_would_clear(
+        next(capture for capture in waiting if capture.role_name == AMENDED_ROLE)
+    )
     assert amendment.reason in message
     assert amendment.cleared_by in message
 
@@ -824,6 +836,9 @@ def test_a_second_problem_beside_a_recorded_amendment_still_fails_loudly(
     captures = _captures_with_one_role_rewritten(tmp_path, AMENDED_ROLE, spoil_two)
     edited = next(capture for capture in captures if capture.role_name == AMENDED_ROLE)
     assert edited.report is not None
+    # Falls through to the real register for the other roles, for the reason given in the
+    # case above: a recorded amendment answered with None reads as unexplained drift.
+    recorded = phase1_capture.pending_for
     monkeypatch.setattr(
         phase1_capture,
         "pending_for",
@@ -835,7 +850,7 @@ def test_a_second_problem_beside_a_recorded_amendment_still_fails_loudly(
                 findings=edited.report.findings if edited.report else (),
             )
             if name == AMENDED_ROLE
-            else None
+            else recorded(name)
         ),
     )
 

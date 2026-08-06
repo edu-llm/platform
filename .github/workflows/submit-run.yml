@@ -49,6 +49,7 @@ on:
           # this reads as a list rather than as the order the registrations happened in.
           - edullm-alt-cl
           - edullm-data
+          - edullm-p1
           - OLMo-core
           - olmo-eval-full
           - open-instruct-scored-rewards

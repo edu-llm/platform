@@ -402,7 +402,18 @@ def test_a_capture_that_no_longer_matches_its_template_does_not_hold(tmp_path: P
     assert capture.verdict is CaptureVerdict.DRIFTED
     assert not capture.holds
     assert capture.report is not None
-    assert [finding.direction.value for finding in capture.report.findings] == ["wider"]
+    # Exactly one widening, and everything else exactly what the open pending amendment on
+    # this role already accounts for. Asserting the whole list is `["wider"]` was right only
+    # while nothing was pending here, and it would have read as this case breaking on the
+    # day somebody amended the template -- which is the ordinary state this role spends time
+    # in, since every registration widens it and the stack is applied from a laptop.
+    findings = capture.report.findings
+    assert [one.direction.value for one in findings if one.direction is DriftDirection.WIDER] == [
+        "wider"
+    ]
+    assert tuple(
+        one for one in findings if one.direction is not DriftDirection.WIDER
+    ) == expected_findings(PUBLISHER_ROLE)
     assert "ecr:DeleteRepository" in capture.detail
 
 

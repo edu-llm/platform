@@ -35,6 +35,20 @@ the comment it leaves above them. One hour, one attempt and no checkpoint contra
 shape every repository's first workload has; anything that trains needs a person to pick
 real numbers, which is the last of the follow-ups below.
 
+**THE SIXTH, SEVENTH AND EIGHTH FILES ARE PULL GRANTS, AND WITHOUT THEM A REGISTRATION
+PUBLISHES AND CANNOT RUN.** This wrote one IAM template until 2026-08-05, the publisher
+role, which is what a build assumes to *push*. Fetching the image back is a different grant
+held by four other identities: `…-batch-execution` is ECS's while it starts the task and
+`…-batch-instance` is the agent's on the host, both spelled twice because there is one
+compute stack for CPU and another for GPU, and `…-admission-states` reads the ECR scan the
+admission decision is made from. So a registration made the obvious way produced a
+repository whose first job scaled an instance, joined the cluster and died at
+`CannotPullContainerError`, naming a registry path rather than a policy -- and if only
+`infra/iam/batch-roles.yaml` had been widened, every CPU submission would have worked while
+every GPU one failed that way. The five entries are written here now, off what each
+`Resource` list already holds rather than off a list of roles this tool would have to keep
+in step with the templates.
+
 **IT CREATES NO ECR REPOSITORY, AND THAT IS THE WHOLE DESIGN RATHER THAN A LIMITATION.**
 Every ECR repository in this account is a CloudFormation resource in
 ``sbsandbox-intern-edullm-phase1-ecr``, applied by ``.github/workflows/deploy-phase1-ecr.yml``
@@ -98,6 +112,60 @@ WORKLOAD_CATALOG_PATH = Path("config/workload-catalog.yaml")
 SUBMISSION_FORM_PATH = Path(".github/workflows/submit-run.yml")
 ECR_TEMPLATE_PATH = Path("infra/ecr-repositories.yaml")
 PUBLISHER_TEMPLATE_PATH = Path("infra/iam/ecr-publisher-role.yaml")
+
+#: THE THREE FILES A REGISTRATION USED TO OMIT, AND WHAT EACH OMISSION COSTS.
+#:
+#: Pushing an image and pulling one are different grants held by different identities, and
+#: until 2026-08-05 this tool wrote only the first. The publisher role above is what a build
+#: assumes to push, so a registration made with this tool produced a repository that could
+#: publish and then could not run: `sbsandbox-intern-edullm-batch-execution` is ECS's
+#: identity while it starts the task, `…-batch-instance` is the agent's on the host, and both
+#: are spelled twice, once per compute stack, so a CPU-only widening leaves every GPU
+#: submission unable to start. `…-admission-states` reads the ECR scan findings the
+#: admission decision is made from, so without it a submission is refused before it is a job.
+#:
+#: The failure mode is the reason these are written here rather than left to a follow-up.
+#: Everything upstream succeeds first -- the scan is read, the decision recorded, the job
+#: definition registered, the job submitted, the queue finds capacity and an instance scales
+#: up and joins the cluster -- and what arrives is `CannotPullContainerError` inside a job
+#: that has already cost money, naming a registry path rather than a policy. It reads as a
+#: broken image rather than as a repository nothing in the account may fetch from.
+#:
+#: `test_every_role_that_pulls_an_image_may_pull_from_every_submittable_repository` and
+#: `test_the_states_role_may_read_a_scan_for_every_submittable_repository` hold these lists
+#: equal to the submittable set, so a registration that omitted them was a red pull request
+#: rather than a silent hazard -- which is why no already-registered repository is missing
+#: them. What it was instead was five hand-patches per registration, discovered as five test
+#: failures, and hand-patching is how a sixth gets missed on the day somebody is in a hurry.
+BATCH_ROLES_TEMPLATE_PATH = Path("infra/iam/batch-roles.yaml")
+GPU_BATCH_ROLES_TEMPLATE_PATH = Path("infra/iam/batch-gpu-roles.yaml")
+ADMISSION_SERVICE_ROLES_TEMPLATE_PATH = Path("infra/iam/admission-service-roles.yaml")
+
+#: Widened together, because the tests that hold them read all three in one pass.
+PER_REPOSITORY_GRANT_PATHS = (
+    BATCH_ROLES_TEMPLATE_PATH,
+    GPU_BATCH_ROLES_TEMPLATE_PATH,
+    ADMISSION_SERVICE_ROLES_TEMPLATE_PATH,
+)
+
+#: The roles each of those files scopes per repository, named so the verification pass can
+#: say which one a widening missed rather than reporting a count.
+PULL_ROLE_NAMES: dict[Path, tuple[str, ...]] = {
+    BATCH_ROLES_TEMPLATE_PATH: (
+        "sbsandbox-intern-edullm-batch-execution",
+        "sbsandbox-intern-edullm-batch-instance",
+    ),
+    GPU_BATCH_ROLES_TEMPLATE_PATH: (
+        "sbsandbox-intern-edullm-batch-gpu-execution",
+        "sbsandbox-intern-edullm-batch-gpu-instance",
+    ),
+    ADMISSION_SERVICE_ROLES_TEMPLATE_PATH: ("sbsandbox-intern-edullm-admission-states",),
+}
+
+#: The ARN a grant entry is written as, matching the five hundred already in these files.
+ECR_REPOSITORY_ARN = (
+    "arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/"
+)
 
 #: The deployer's ECR grant is scoped to `repository/sbsandbox-intern-edullm-*`, narrower
 #: than the contract's own pattern, which accepts any `sbsandbox-intern-` name. A
@@ -164,6 +232,29 @@ class FollowUp:
 # a test module this tool has no business editing.
 FOLLOW_UPS: tuple[FollowUp, ...] = (
     FollowUp(
+        summary="Deploy the three IAM stacks that hold the pull grants, from a laptop",
+        detail=(
+            "`aws cloudformation deploy --capabilities CAPABILITY_NAMED_IAM "
+            "--no-fail-on-empty-changeset --profile sbsandbox --region us-east-1` once per "
+            "stack: `sbsandbox-intern-edullm-phase3-batch-iam` from "
+            "`infra/iam/batch-roles.yaml`, `sbsandbox-intern-edullm-phase4-gpu-iam` from "
+            "`infra/iam/batch-gpu-roles.yaml`, and "
+            "`sbsandbox-intern-edullm-phase2-admission-service-roles` from "
+            "`infra/iam/admission-service-roles.yaml`. These five grants are written by this "
+            "tool and were not until 2026-08-05, which is the whole reason this step is "
+            "first: pushing an image and pulling one are different grants held by different "
+            "identities, and a registration carrying only the publisher widening produces a "
+            "repository that publishes and then cannot run. Skip the GPU stack and every CPU "
+            "submission works while every GPU one dies at CannotPullContainerError after the "
+            "instance has scaled up."
+        ),
+        paths=(
+            "infra/iam/batch-roles.yaml",
+            "infra/iam/batch-gpu-roles.yaml",
+            "infra/iam/admission-service-roles.yaml",
+        ),
+    ),
+    FollowUp(
         summary="Deploy the publisher role from a laptop",
         detail=(
             "`aws cloudformation deploy --stack-name "
@@ -179,15 +270,19 @@ FOLLOW_UPS: tuple[FollowUp, ...] = (
         paths=("infra/iam/ecr-publisher-role.yaml", "infra/README.md"),
     ),
     FollowUp(
-        summary="Re-capture the publisher role, or record the gap while it is open",
+        summary="Re-capture the amended roles, or record the gap while it is open",
         detail=(
-            "The committed capture is compared against the template that declares it, so "
-            "amending the template makes it report three narrower findings. "
-            "`tools/capture_phase1_evidence.py --target roles` refreshes it once the "
-            "deploy above has run. To land before that deploy instead, add a "
-            "`PendingAmendment` to `src/edullm_platform/pending_amendments.py`, which is "
-            "where a template committed ahead of the account is declared, and delete it "
-            "when the capture is refreshed."
+            "Every committed capture is compared against the template that declares it, so "
+            "amending a template makes it report a narrower finding. Four roles are "
+            "captured and all four move on a registration: the publisher, "
+            "`…-admission-states`, `…-batch-execution` and `…-batch-instance`. "
+            "`tools/capture_phase1_evidence.py --target roles` refreshes them once the "
+            "deploys above have run. To land before those deploys instead, add a "
+            "`PendingAmendment` per role to `src/edullm_platform/pending_amendments.py`, "
+            "which is where a template committed ahead of the account is declared, and "
+            "delete each when its capture is refreshed. The three GPU roles have no capture "
+            "at all, so nothing reports on whether their deploy happened -- which is the "
+            "argument for doing it first rather than for skipping this step."
         ),
         paths=(
             "tools/capture_phase1_evidence.py",
@@ -196,10 +291,10 @@ FOLLOW_UPS: tuple[FollowUp, ...] = (
         ),
     ),
     FollowUp(
-        summary="Re-record the publisher role golden digest",
+        summary="Re-record the IAM role golden digests",
         detail=(
             "`uv run python tools/record_goldens.py --force`. The golden is a canonical "
-            "serialization of the template, so it moves whenever the template does. "
+            "serialization of the templates, so it moves whenever any of the four does. "
             "Offline and needs no credential, and the re-recording is deliberately behind "
             "a flag so a change to what a role may do cannot be absorbed by re-running the "
             "tool."
@@ -604,6 +699,83 @@ def insert_after_last_list_item(text: str, key: str, item: str) -> str:
     return "".join(lines)
 
 
+def widen_resource_lists(text: str, known: Sequence[str], ecr_repository: str) -> tuple[str, int]:
+    """Add one ECR ARN to every ``Resource`` list that is already scoped per repository.
+
+    ANCHORED ON WHAT THE LIST ALREADY HOLDS RATHER THAN ON A ROLE NAME OR AN ACTION, and
+    that is the part worth arguing about. Naming the statements would mean teaching this
+    tool which actions constitute a pull, which is a fact ``tests/test_phase3_infrastructure
+    .py`` already holds and would then hold in two places -- and the two would disagree the
+    first time a fifth action was added. A list that names the ECR repository of an existing
+    registration is, definitionally, a grant somebody widens per registration, so widening
+    exactly those lists reaches every one of them and nothing else. Lists scoped by wildcard
+    over the project prefix are untouched, correctly: they already cover the new repository.
+
+    Returns the count as well as the text so the caller can refuse a file it changed
+    nothing in. A template that stopped spelling its grants this way must not be edited to
+    look right and left not working, which is the failure this whole function exists about.
+    """
+    suffixes = tuple(f"repository/{name}" for name in known)
+    lines = text.splitlines(keepends=True)
+    insertions: list[tuple[int, str]] = []
+
+    for start, line in enumerate(lines):
+        if line.strip() != "Resource:":
+            continue
+        key_indent = indent_of(line)
+        items: list[int] = []
+        holds_a_registered_repository = False
+        for index in range(start + 1, len(lines)):
+            stripped = lines[index].strip()
+            if not stripped or indent_of(lines[index]) <= key_indent:
+                break
+            if stripped.startswith("- "):
+                items.append(index)
+                if stripped.endswith(suffixes):
+                    holds_a_registered_repository = True
+            elif not stripped.startswith("#"):
+                # A continuation line inside an item, which these lists do not have and
+                # which this cannot append after correctly. Left alone; the verification
+                # pass below is what turns the omission into a refusal.
+                break
+        if holds_a_registered_repository and items:
+            margin = " " * indent_of(lines[items[-1]])
+            insertions.append(
+                (items[-1] + 1, f"{margin}- Fn::Sub: {ECR_REPOSITORY_ARN}{ecr_repository}\n")
+            )
+
+    for at, item in reversed(insertions):
+        lines.insert(at, item)
+    return "".join(lines), len(insertions)
+
+
+def role_named(template: dict[str, Any], role_name: str) -> dict[str, Any]:
+    for resource in template.get("Resources", {}).values():
+        if not isinstance(resource, dict) or resource.get("Type") != "AWS::IAM::Role":
+            continue
+        if resource.get("Properties", {}).get("RoleName") == role_name:
+            return dict(resource["Properties"])
+    raise SourceUnusable(f"no_role_named:{role_name}")
+
+
+def ecr_repositories_reachable_by(template: dict[str, Any], role_name: str) -> set[str]:
+    """Every ECR repository name one role's policies grant it something against.
+
+    Read back off the parsed document rather than off the text this tool wrote, because the
+    point of the verification pass is to catch an insertion that landed somewhere
+    syntactically fine and semantically wrong.
+    """
+    reachable: set[str] = set()
+    for policy in role_named(template, role_name).get("Policies", []):
+        for statement in policy["PolicyDocument"]["Statement"]:
+            resource = statement.get("Resource")
+            for arn in resource if isinstance(resource, list) else [resource]:
+                rendered = arn.get("Fn::Sub", "") if isinstance(arn, dict) else str(arn)
+                if ":repository/" in rendered:
+                    reachable.add(rendered.rsplit(":repository/", 1)[1])
+    return reachable
+
+
 def owner_id_of(publisher: dict[str, Any]) -> str:
     """The organisation id the publisher role already trusts, read rather than hardcoded.
 
@@ -826,13 +998,33 @@ def plan(
         f":repository/{entry.ecr_repository}",
     )
 
+    # THE THREE THAT MAKE THE REGISTRATION RUNNABLE RATHER THAN MERELY PUBLISHABLE. Widened
+    # off what each list already holds, so a file that stopped scoping its grants per
+    # repository refuses here instead of being edited into looking correct.
+    known = [item.ecr_repository for item in registry_of(registry_after).repositories]
+    grant_edits: list[Edit] = []
+    for path in PER_REPOSITORY_GRANT_PATHS:
+        before = read(root / path)
+        after, widened = widen_resource_lists(before, known, entry.ecr_repository)
+        if widened == 0:
+            raise SourceUnusable(f"no_per_repository_grant_to_widen:{path.as_posix()}")
+        grant_edits.append(Edit(path, before, after))
+
     return [
         Edit(REGISTRY_PATH, registry_before, registry_after),
         Edit(WORKLOAD_CATALOG_PATH, catalog_before, catalog_after),
         Edit(SUBMISSION_FORM_PATH, form_before, form_after),
         Edit(ECR_TEMPLATE_PATH, ecr_before, ecr_after),
         Edit(PUBLISHER_TEMPLATE_PATH, publisher_before, publisher_after),
+        *grant_edits,
     ]
+
+
+def registry_of(text: str) -> RepositoryRegistry:
+    try:
+        return RepositoryRegistry.model_validate(yaml.safe_load(text))
+    except (ValidationError, yaml.YAMLError) as error:
+        raise SourceUnusable(f"registry_would_not_validate:{error}") from error
 
 
 def form_inputs_of(text: str) -> dict[str, Any]:
@@ -869,12 +1061,7 @@ def verify(
     """
     by_path = {edit.path: edit.after for edit in edits}
 
-    try:
-        registry = RepositoryRegistry.model_validate(
-            yaml.safe_load(by_path[REGISTRY_PATH])
-        )
-    except (ValidationError, yaml.YAMLError) as error:
-        raise SourceUnusable(f"registry_would_not_validate:{error}") from error
+    registry = registry_of(by_path[REGISTRY_PATH])
     if registry.repositories[-1] != entry:
         raise SourceUnusable("registry_entry_is_not_the_one_that_was_asked_for")
 
@@ -958,6 +1145,24 @@ def verify(
     }
     if granted != {item.ecr_repository for item in registry.repositories}:
         raise SourceUnusable("publisher_push_scope_and_registry_disagree")
+
+    # Checked against the registry rather than against the entry, which is what makes this
+    # catch the case the insertion is most likely to get wrong: widening four of the five
+    # lists. Comparing only "is the new one there" would pass on a file where the insertion
+    # landed in one statement and not its twin.
+    destinations = {item.ecr_repository for item in registry.repositories}
+    for path in PER_REPOSITORY_GRANT_PATHS:
+        try:
+            template = yaml.safe_load(by_path[path])
+        except yaml.YAMLError as error:
+            raise SourceUnusable(f"would_not_parse:{path.as_posix()}:{error}") from error
+        for role_name in PULL_ROLE_NAMES[path]:
+            reachable = ecr_repositories_reachable_by(template, role_name)
+            if not destinations <= reachable:
+                raise SourceUnusable(
+                    f"role_cannot_reach_every_registered_repository:{role_name}:"
+                    + ",".join(sorted(destinations - reachable))
+                )
 
 
 def commit_message(entry: RegisteredRepository, reason: str) -> str:
