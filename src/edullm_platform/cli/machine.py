@@ -89,8 +89,25 @@ def emit(document: dict[str, Any], *, out: TextIO) -> None:
     ``tools/compile_submission.py``'s own write rather than chosen again, so a caller holding
     both files is reading one formatting. Sorted keys also make the output byte-stable across
     a Python whose dict ordering changed, which is what lets a test compare two runs.
+
+    **``ensure_ascii`` IS WRITTEN OUT BECAUSE THE DEFAULT IS LOAD-BEARING HERE AND READS
+    LIKE NOISE.** It escapes every character above ASCII to ``\\uXXXX``, so a document
+    naming a checkpoint with an accent in it, or carrying an arrow in a refusal detail, is
+    pure ASCII by the time it reaches :func:`print`. That is what kept ``--json`` out of the
+    crash that
+    ``cli.__init__`` fixes for the prose: an ASCII document encodes under cp1252, cp932 and
+    every other code page, so the machine-readable half never depended on the stream being
+    UTF-8 and still does not. Somebody tidying this line would find ``ensure_ascii=False``
+    reads better and produces smaller output, and would be putting the worse half of the bug
+    back -- a script parsing this gets a truncated document and an exit code that says
+    nothing, where a person at least gets a traceback to read.
+
+    It is worth keeping now that the stream is UTF-8, because the document does not stop
+    being handled when this process writes it. Whatever captures a redirect may re-encode it
+    on the way to a file, and an ASCII document is the same bytes under every encoding that
+    contains ASCII. ``json.loads`` restores the characters, so no caller loses anything.
     """
-    print(json.dumps(document, indent=2, sort_keys=True), file=out)
+    print(json.dumps(document, indent=2, sort_keys=True, ensure_ascii=True), file=out)
 
 
 def refusal_document(verb: str, refusals: Sequence[Refusal]) -> dict[str, Any]:

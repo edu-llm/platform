@@ -62,6 +62,7 @@ from edullm_platform.phase3_evidence import (
 __all__ = [
     "COMPUTE_ENVIRONMENT_RECORD",
     "PHASE3_CAPTURE_DIR",
+    "RECORDS_SUBDIR",
     "REFUSAL_RECORD",
     "REFUSED_RUN_RECORDS",
     "RUNS_SUBDIR",
@@ -71,6 +72,7 @@ __all__ = [
     "CommittedPhase3Evidence",
     "CommittedPhase3Run",
     "Phase3EvidenceProblem",
+    "committed_body_path",
     "problems_across",
     "read_committed_phase3_evidence",
     "reasons",
@@ -124,6 +126,32 @@ TRACEABLE_ARTIFACTS: Final = (
     "batch_job",
     "log_stream",
 )
+
+
+def committed_body_path(records_dir: Path, key: str) -> Path:
+    """Where one lineage object's body is committed, from the S3 key it was read at.
+
+    **THE RUN ID IS TAKEN OUT OF THE KEY, AND THE REASON IS THE 260-CHARACTER LIMIT ON
+    WINDOWS.** ``attempt/`` and ``events/`` are written one directory per run in S3, so
+    mirroring the key under a directory that is already ``runs/<run id>/`` spelled the run id
+    twice and produced tracked paths of 174 characters. ``uv tool install`` checks this
+    repository out under a cache prefix that is 77 characters plus the researcher's Windows
+    username, and Git for Windows refuses a path past 260, so those fifteen paths put the
+    install out of reach of anybody whose username ran past eight characters -- and the error
+    they get names a file in a cache directory rather than anything here.
+    ``tests/test_tracked_path_length.py`` holds the tree under a bound with the arithmetic
+    beside it.
+
+    Nothing is lost by dropping it. The directory this resolves against belongs to one run,
+    every reader takes the record kind from the first path component, and an object name is
+    unique within its run. One function rather than the expression written at the writer and
+    again at each reader, because two spellings of a layout is how a capture comes to write
+    where nothing looks.
+    """
+    kind = key.split("/", 1)[0]
+    name = key.rsplit("/", 1)[-1]
+    return records_dir / kind / name
+
 
 RUN_RECAPTURE_GUIDANCE: Final = (
     "Re-run tools/capture_phase3_evidence.py against the sandbox with --target run and "

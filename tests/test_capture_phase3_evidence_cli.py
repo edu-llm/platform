@@ -28,6 +28,7 @@ import pytest
 from workflow_support import write_stub
 
 from edullm_platform.evidence import AWS_ACCOUNT_ID_PLACEHOLDER, scan_for_secrets
+from edullm_platform.phase3_capture import RECORDS_SUBDIR, committed_body_path
 from tools.capture_phase3_evidence import (
     ALLOWED_OUTPUT_SUFFIX,
     COMPUTE_ENVIRONMENT_NAME,
@@ -65,6 +66,21 @@ OBSERVED_AT_FIELD = re.compile(r'"observed_at": "[^"]*"')
 
 def committed(relative: str) -> Any:
     return json.loads((COMMITTED / relative).read_text(encoding="utf-8"))
+
+
+def body_path(run_id: str, key: str) -> Path:
+    """Where one run's lineage body is committed, asked of the module that decides it.
+
+    Asked rather than spelled, because the layout is the thing under test on both sides: the
+    tool writes here and ``phase3_capture`` reads here, and a copy of the rule in this file
+    would let the two drift while this file went on agreeing with whichever it had copied.
+    """
+    return committed_body_path(COMMITTED / "runs" / run_id / RECORDS_SUBDIR, key)
+
+
+def written_name(run_id: str, key: str) -> str:
+    """The same path as the capture reports it, repository-relative and posix-spelled."""
+    return body_path(run_id, key).relative_to(COMMITTED).as_posix()
 
 
 def epoch_millis(instant: str) -> int:
@@ -111,11 +127,11 @@ def stored_bodies(run_id: str) -> dict[str, str]:
     """
     attestation = committed(f"runs/{run_id}/lineage-attestation.sanitized.json")
     return {
-        str(entry["key"]): (COMMITTED / "runs" / run_id / "records" / str(entry["key"]))
+        str(entry["key"]): body_path(run_id, str(entry["key"]))
         .read_text(encoding="utf-8")
         .replace(AWS_ACCOUNT_ID_PLACEHOLDER, ACCOUNT_ID)
         for entry in attestation["objects"]
-        if (COMMITTED / "runs" / run_id / "records" / str(entry["key"])).exists()
+        if body_path(run_id, str(entry["key"])).exists()
     }
 
 
@@ -402,7 +418,7 @@ def test_capturing_a_run_writes_its_five_records_and_the_nine_objects_it_wrote(
         f"runs/{RAN}/log-stream.sanitized.json",
         f"runs/{RAN}/oidc-session.sanitized.json",
         *(
-            f"runs/{RAN}/records/{entry['key']}"
+            written_name(RAN, str(entry["key"]))
             for entry in committed(f"runs/{RAN}/lineage-attestation.sanitized.json")["objects"]
         ),
         "compute-environment.sanitized.json",
@@ -482,7 +498,7 @@ def test_an_object_that_does_not_load_is_recorded_and_its_body_is_not_committed(
     assert summary["bodies_withheld_because_they_do_not_load"] == 1
     assert captured.err.splitlines() == [f"object_does_not_load_as_its_contract:{key}"]
     files = written(tmp_path)
-    assert f"runs/{RAN}/records/{key}" not in files
+    assert written_name(RAN, key) not in files
     attestation = json.loads(files[f"runs/{RAN}/lineage-attestation.sanitized.json"])
     withheld = next(entry for entry in attestation["objects"] if entry["key"] == key)
     assert withheld["loads_as_contract"] is False

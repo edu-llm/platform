@@ -81,7 +81,12 @@ from edullm_platform.phase2_evidence import PHASE2_ROLE_TEMPLATES, AdmissionExec
 #: places and the reader looked for it through a constant -- three spellings of one
 #: filename, agreeing today. A capture written under a name the reader does not look for is
 #: an absent record, and an absent record reads as a run that never happened.
-from edullm_platform.phase3_capture import COMPUTE_ENVIRONMENT_RECORD
+from edullm_platform.phase3_capture import (
+    COMPUTE_ENVIRONMENT_RECORD,
+    RECORDS_SUBDIR,
+    RUNS_SUBDIR,
+    committed_body_path,
+)
 from edullm_platform.phase3_evidence import (
     EVERY_BATCH_JOB_STATUS,
     BatchJobEvidence,
@@ -1648,9 +1653,10 @@ def capture_run_target(arguments: argparse.Namespace) -> int:
             # that it does not load are all in the record beside this.
             if key in refused:
                 continue
-            path = arguments.output_dir / "runs" / run_id / "records" / key
+            records_dir = arguments.output_dir / RUNS_SUBDIR / run_id / RECORDS_SUBDIR
+            path = committed_body_path(records_dir, key)
             write_sanitized_text(path, body.decode("utf-8"))
-            written.append(f"runs/{run_id}/records/{key}")
+            written.append(path.relative_to(arguments.output_dir).as_posix())
 
     environment = capture_compute_environment(
         profile=arguments.aws_profile,

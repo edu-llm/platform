@@ -159,6 +159,13 @@ def aws(
             check=False,
             capture_output=True,
             text=True,
+            # Named for the reason `cli.workspace.SubprocessRunner` writes out beside its
+            # own. The AWS CLI writes UTF-8 and this output is parsed as JSON, so a decode
+            # under the wrong codec is not a cosmetic problem here: it is a capture that
+            # fails to parse, or worse, one that parses with a character substituted inside
+            # a value somebody later reads as evidence.
+            encoding="utf-8",
+            errors="replace",
             timeout=AWS_CALL_TIMEOUT_SECONDS,
             shell=False,
         )
