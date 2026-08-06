@@ -502,14 +502,14 @@ def test_the_built_column_rests_on_the_working_tree_and_on_no_lookup_that_can_fa
     """Mutation: give a `built` row a rule that needs a network, or a fallback to fall to.
 
     `Built` is the column with the fewest excuses for being wrong, and the claim made for it
-    is that every cell is derived. Verified here rather than trusted: sixty-four of the
-    ninety-six read the tree, thirty-two are somebody's answer that a thing does not exist
+    is that every cell is derived. Verified here rather than trusted: sixty-three of the
+    ninety-six read the tree, thirty-three are somebody's answer that a thing does not exist
     or does not apply, and none of them reaches a network or declares an `or:`. That last part
     is what matters, because the silent downgrade to opinion that made `deployed` untrustworthy
     can only happen to a cell whose lookup can fail. None of these can.
 
-    What this does not claim is that `Built` is all measurement. Thirty-two of the cells are
-    a person's answer, and eighteen of those are a hand-written `no` sitting in the
+    What this does not claim is that `Built` is all measurement. Thirty-three of the cells are
+    a person's answer, and nineteen of those are a hand-written `no` sitting in the
     denominator that nobody re-reads. They cannot move without somebody editing the manifest,
     which is a different failure from the one this test holds and is not a quiet one.
 
@@ -534,6 +534,16 @@ def test_the_built_column_rests_on_the_working_tree_and_on_no_lookup_that_can_fa
     reported as built and proven. A person's `no` is the honest cell there, because
     `test_every_path_the_manifest_names_is_a_path_that_exists` will not let the manifest name
     the two files that are owed until somebody writes them.
+
+    IT ROSE BY ONE LATER THE SAME DAY AND THAT IS THE COUNT MOVING IN THE RIGHT DIRECTION.
+    `test_no_cell_may_be_implied_by_another_rows_cell_unless_the_manifest_says_why` was written
+    to catch what `morning-message` had been doing, and the first thing it caught was
+    `verb-reconciliation`, whose `built` was `exists: cli/main.py` -- character for character
+    `cli-binary`'s cell -- one line below a `planned` reading `settled and not built`. Nothing in
+    the tree reconciles a verb list. Its `built` is a person's `no` now, for the same reason the
+    morning message's is: the manifest may not name the file that would prove it, because that
+    file has not been written. A number rising because a lookup stopped answering for a surface
+    it was never about is a better board than one where it stayed put.
     """
     manifest = read_manifest(SURFACES)
     surfaces = [surface for group in manifest["slices"] for surface in group["surfaces"]]
@@ -560,7 +570,7 @@ def test_the_built_column_rests_on_the_working_tree_and_on_no_lookup_that_can_fa
         for surface in surfaces
         if next(key for key in surface["built"] if key != "or") == "reached"
     ], "no built cell may be a person's yes, which is the claim the `*` on the column makes"
-    assert len(spoken) == 32, "the count of hand-written built cells moved; re-read them"
+    assert len(spoken) == 33, "the count of hand-written built cells moved; re-read them"
 
 
 def test_the_detail_view_is_behind_a_flag_and_the_summary_is_the_default() -> None:

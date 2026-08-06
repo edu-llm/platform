@@ -13,6 +13,7 @@ The last of those is the one that earns its keep daily. A row whose `stack:` is 
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -398,6 +399,190 @@ def test_every_path_the_manifest_names_is_a_path_that_exists(
         if "tests" in spec:
             for path in spec["tests"]:
                 assert (PROJECT_ROOT / path).is_file(), f"{surface_id} {stage} names {path}"
+
+
+#: The stages where a false `yes` misleads about the system rather than about a document or a
+#: plan. `designed` is a person's answer in every row by construction, and `planned` is a claim
+#: about a plan, where two surfaces built by one task is the ordinary case rather than a defect.
+MEASURED_STAGES = ("built", "deployed", "proven")
+
+#: What a cell guarantees, so that one cell can be compared with another. The first element is
+#: the kind of claim -- two cells are only comparable when they make the same kind -- the second
+#: is everything that has to be present for the cell to be green, and the third is the extra
+#: condition beyond presence, which is a pattern for `grep` and `absent` and nothing otherwise.
+#: `release: true` gets no entry on purpose: it names nothing, is one global fact about the
+#: repository, and is shared by six rows because CLI features go live by being released.
+_CLAIM_KINDS = {
+    "exists": "in the tree",
+    "evidence": "in the tree",
+    "grep": "in the tree",
+    "on_main": "on the default branch",
+    "tests": "collected by pytest",
+    "stack": "a stack",
+    "bucket": "a bucket",
+    "environment": "an environment",
+    "absent": "an absence",
+}
+
+
+def _claim(spec: Mapping[str, Any]) -> tuple[str, frozenset[str], str | None] | None:
+    """What this cell guarantees, or `None` for a cell that is a person speaking."""
+    for rule, kind in _CLAIM_KINDS.items():
+        if rule not in spec:
+            continue
+        value = spec[rule]
+        if rule in ("grep", "absent"):
+            return (kind, frozenset([str(value[0])]), str(value[1]))
+        named = [value] if isinstance(value, str) else list(value)
+        return (kind, frozenset(str(item) for item in named), None)
+    return None
+
+
+def _guarantees(
+    stronger: tuple[str, frozenset[str], str | None],
+    weaker: tuple[str, frozenset[str], str | None],
+) -> bool:
+    """True when `stronger` being green forces `weaker` green, so `weaker` measures nothing new.
+
+    Three ways one cell can imply another, and all three occur in this manifest. A superset of
+    names implies any subset of them, which is how a roll-up implies each of its parts. A `grep`
+    implies a bare `exists` on the same file, because a pattern cannot be found in a file that is
+    not there -- that is the half `morning-message` hid behind. And a pattern is only implied by
+    the identical pattern, which is what lets two rows grep one file for different things.
+    """
+    kind, names, condition = weaker
+    if stronger[0] != kind or not names <= stronger[1]:
+        return False
+    return True if condition is None else stronger[2] == condition
+
+
+def _implications(manifest: Any) -> set[tuple[str, str, str]]:
+    """Every `(stage, row whose cell is implied, row implying it)` the manifest currently holds."""
+    cells = [
+        (surface["id"], stage, claim)
+        for group in manifest["slices"]
+        for surface in group["surfaces"]
+        for stage in MEASURED_STAGES
+        if (claim := _claim(surface[stage])) is not None
+    ]
+    return {
+        (stage, weak_id, strong_id)
+        for weak_id, stage, weak in cells
+        for strong_id, other_stage, strong in cells
+        if weak_id != strong_id and stage == other_stage and _guarantees(strong, weak)
+    }
+
+
+def _declarations(manifest: Any) -> list[tuple[str, frozenset[str], str]]:
+    """The `shared_readings:` block as `(stage, the rows it covers, the reason given)`."""
+    return [
+        (str(entry["stage"]), frozenset(entry["rows"]), str(entry.get("why", "")))
+        for entry in manifest.get("shared_readings", ())
+    ]
+
+
+def test_no_cell_may_be_implied_by_another_rows_cell_unless_the_manifest_says_why(
+    manifest: Any,
+) -> None:
+    """Mutation: point one row's `built` and `proven` at another row's module and test file.
+
+    Not a hypothetical. `morning-message` did exactly that and read `yes` on both, for a surface
+    nobody has ever written, because `notifications/messages.py` and
+    `test_notification_messages.py` belong to the run-ended feed post -- a different surface with
+    its own row. One built thing was counted twice and an unbuilt one was reported as built and
+    proven. `test_every_path_the_manifest_names_is_a_path_that_exists`, directly above, cannot
+    catch it: every path named was real. It was the wrong row's paths, and nothing looked at that
+    until a person read the file.
+
+    THE FIRST VERSION OF THIS TEST ASKED FOR EQUAL READINGS AND THE MUTATION WALKED STRAIGHT
+    THROUGH IT. Restoring `morning-message` left it green, because neither cell was identical to
+    the run-ended post's -- `exists: messages.py` is weaker than that row's `grep` over the same
+    file by a pattern, and `tests: [test_notification_messages.py]` is weaker than its test set by
+    a file. Implication is the relation that matters and equality is only its special case. Worth
+    knowing before somebody simplifies this back into the version that passes.
+
+    WHY IMPLICATION IS NOT ITSELF A DEFECT, WHICH IS WHY THE ANSWER IS A DECLARATION. Nineteen
+    paths here are named by more than one row and almost all of it is honest. `capacity-yaml`
+    asserting that `capacity.yaml` exists is implied by `control-plane` asserting that all eight
+    config files do, and that is fine, because `capacity-yaml` checks its own file and earns its
+    green whether or not the roll-up passes. The test cannot tell that apart from
+    `morning-message` by looking at the manifest, and it does not try. It forces somebody to say
+    which kind it is. Every declaration is a case where the answer is "the same fact, honestly,
+    and here is why"; `morning-message` was the case where the answer would have had to be
+    "because I pointed at another surface's files", which nobody writes down.
+
+    WHY THIS TEST IS WORTH ITS WEIGHT -- THE PART THAT GETS RE-DERIVED IN A MONTH OTHERWISE. On
+    2026-08-06, fourteen cells on this board were corrected. Twelve were false negatives, rows
+    calling built and tested things absent: `collector` said `nothing collects` about nine hundred
+    lines with a test file that an audit job had been running on a schedule for days. Two were
+    false positives, both on `morning-message`. That ratio reads as reassuring and is the
+    opposite. A false negative is self-correcting -- it understates, somebody trips over the work
+    existing, and the cost is duplicated effort that gets noticed and complained about. A false
+    positive is absorbing: the board says a thing is built, everybody downstream plans on it, and
+    nothing ever contradicts it, because the thing that would have contradicted it is the row
+    that is lying. Twelve cheap errors and one expensive one is not a good ratio. It is a board
+    whose `no` is worth more than its `yes`, which is backwards for an instrument, because the
+    green readings are the ones people act on. Every other guard in this file protects the `no`
+    side. This is the only one on the `yes` side.
+
+    IT FOUND A SECOND FALSE POSITIVE ON THE FIRST RUN. `verb-reconciliation` had
+    `built: {exists: cli/main.py}`, character for character `cli-binary`'s cell, one line under a
+    `planned` that said `settled and not built`; and a `proven` implied by two other rows' test
+    sets. Nothing in the tree reconciles a verb list. It had read `yes` since #274 wrote this file.
+    """
+    implications = _implications(manifest)
+    declarations = _declarations(manifest)
+
+    undeclared = sorted(
+        (stage, weak, strong)
+        for stage, weak, strong in implications
+        if not any(
+            stage == at and {weak, strong} <= rows for at, rows, _ in declarations
+        )
+    )
+    assert not undeclared, (
+        "each of these cells is green whenever the other row's is, so it is resting on that "
+        "row's artifact rather than measuring its own surface. Either give it a reading of its "
+        "own, or add both rows to an entry in `shared_readings:` and say why the two are "
+        f"honestly one fact. (stage, implied row, row implying it): {undeclared}"
+    )
+
+
+def test_a_shared_reading_declaration_that_stopped_being_true_is_deleted(manifest: Any) -> None:
+    """Mutation: fix an implication and leave its entry in `shared_readings:` behind.
+
+    The block is only worth anything if it is exactly the set of places this board cannot tell
+    two rows apart. An entry that outlives what it described is an exemption sitting open over a
+    reading nobody makes, and the next row that happens to make it inherits a permission with
+    somebody else's reasoning attached -- which is how a guard stops guarding without anybody
+    deciding to weaken it. So the block ratchets both ways: the test above refuses an undeclared
+    implication, and this one refuses a declaration that has stopped earning its place.
+
+    Every row an entry lists has to be in at least one implication it covers, so widening an
+    entry to make a failure go away is itself a failure. The `why` is measured rather than merely
+    required, because `why: shared` satisfies a presence check and is what gets written at four
+    in the morning. Somebody who has to produce a sentence has to have a reason.
+    """
+    implications = _implications(manifest)
+
+    for stage, rows, why in _declarations(manifest):
+        covered = {
+            (weak, strong)
+            for at, weak, strong in implications
+            if at == stage and {weak, strong} <= rows
+        }
+        assert covered, (
+            f"no cell among {sorted(rows)} implies another at `{stage}` any more, so delete this "
+            "entry rather than leaving an exemption open for whoever makes that reading next."
+        )
+        idle = sorted(rows - {row for pair in covered for row in pair})
+        assert not idle, (
+            f"{idle} are listed in the `{stage}` entry for {sorted(rows)} but take part in no "
+            "implication, so the entry is wider than the thing it excuses."
+        )
+        assert len(why.split()) >= 12, (
+            f"the `{stage}` entry for {sorted(rows)} needs a reason somebody can argue with."
+        )
 
 
 def test_every_stack_the_manifest_names_is_a_stack_this_repository_deploys(
