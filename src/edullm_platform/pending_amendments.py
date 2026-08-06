@@ -629,7 +629,52 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     #
     # All three are released now, so this deletion is bookkeeping rather than a decision. The
     # notifier's missing tripwire is not, and it outlives these entries.
-    releases: tuple[PendingRelease, ...] = ()
+    #
+    # AN EIGHTH, AND IT IS THE FIRST ONE HERE THAT CARRIES NO CODE AT ALL. Every entry above
+    # moved a digest by changing a module; this one moves it by editing
+    # config/organization.yaml, which `ADMISSION_CONFIG` in tools/build_admission_lambda.py
+    # packages into the zip. That makes a roster change -- the most ordinary edit anybody
+    # makes to this repository, and the one most likely to be made by somebody who has never
+    # read this file -- a change that drifts the deployed validator.
+    #
+    # Worth writing down as a shape rather than only as this instance. Seven of the eight
+    # entries in this register have been code, so the reading a person carries away from it is
+    # that releases follow code, and the entry that will be missed is the one where somebody
+    # adds a line to a YAML file and merges it. The tripwire catches it, which is the whole
+    # argument for the tripwire; nothing warns them in advance.
+    releases: tuple[PendingRelease, ...] = (
+        PendingRelease(
+            function="validator",
+            reason=(
+                "A ROSTER CHANGE, WHICH IS CONFIGURATION THIS ZIP CARRIES RATHER THAN CODE. "
+                "config/organization.yaml is one of the seven files ADMISSION_CONFIG packages "
+                "into the validator, so the packaged bytes move whenever the roster does. The "
+                "edit is binding Intern-langming.xing-sbsandbox to meric233 and excluding the "
+                "two Intern-p3math-* task roles."
+                "\n\n"
+                "NOTHING IN IT CHANGES WHO MAY SUBMIT A RUN, and that is a fact about this "
+                "edit rather than a claim about roster edits in general. meric233 was already "
+                "on the roster and already admitted, so binding a second AWS role to that "
+                "login adds no authorization; an excluded role is one whose trust policy "
+                "names a service rather than the credential broker, so nobody can assume it "
+                "to submit anything. A roster edit that added a member would be a different "
+                "entry with a different sentence here."
+                "\n\n"
+                "The window is real and runs the safe way round. Until this zip is released, "
+                "admission inside AWS decides on the roster as it was, so a launch under the "
+                "newly-bound role goes on being attributed to nobody by whatever reads the "
+                "deployed copy -- a reporting gap that already exists and is not widened. "
+                "`edullm check` on a laptop reads the tree and is correct immediately, which "
+                "is the half that decides whether somebody is refused, and it is the half "
+                "that the note above about the ninety-second window argues should be the one "
+                "that leads."
+            ),
+            cleared_by="uv run python tools/release_lambda.py --function validator",
+            builds_to="da7313e1055d1abdafb79d7a83c344bdbde32cc7a6739b36df99291c0643f2e9",
+            released="e4a45e5666ccd3648b29687c77e513460d91ef14af1c353325c921b0f25ed804",
+            recorded_on=date(2026, 8, 6),
+        ),
+    )
     return one_record_per_function(releases)
 
 
