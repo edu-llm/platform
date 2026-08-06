@@ -197,6 +197,17 @@ Resources:
               # The ceiling everything below narrows. The boundary is what caps this in
               # absolute terms; this statement exists so that the role is usable for ordinary
               # research work and the interesting content of the policy is the denies.
+              #
+              # AND EVERY DENY BELOW NAMES ec2:RunInstances, ec2:CreateTags OR A BUCKET, SO
+              # THIS ROLE MAY TERMINATE ANY INSTANCE IN THE ACCOUNT. Nothing here scopes
+              # ec2:TerminateInstances. What stops `edullm stop` ending somebody else's
+              # machine is the CLI: lane.py's find_lane_machines_argv filters on
+              # tag:edullm:lane read off the caller's own ARN, the verb ends only what that
+              # describe returned, and it takes no --instance flag. That is a convention and
+              # not a permission -- a lane credential in a shell reaches everything. See
+              # infra/README.md, "What stops `edullm stop` ending somebody else's machine is
+              # the CLI, not this policy", before assuming this statement is narrower than it
+              # reads.
               - Sid: AllowResearchWorkingSet
                 Effect: Allow
                 Action: "*"
