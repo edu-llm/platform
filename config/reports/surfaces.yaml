@@ -109,7 +109,7 @@ checked: "2026-08-05"
 #
 # WHY IMPLICATION AND NOT SHARING. Nineteen paths in this file are named by more than one row and
 # almost all of that is honest, so the line cannot be at the path. `capacity-yaml` asserting that
-# `capacity.yaml` exists is implied by `control-plane` asserting that all eight config files do,
+# `capacity.yaml` exists is implied by `control-plane` asserting that all nine config files do,
 # and that is fine: `capacity-yaml` is checking its own file and earns its green whether or not
 # the roll-up above it passes. Nothing is wrong with being implied; what the test does is force
 # somebody to say which kind of implication this is. Every entry below is a case where the answer
@@ -142,7 +142,7 @@ shared_readings:
       - priced-profiles
       - repository-pipeline
     why: >
-      `control-plane` is a roll-up: its `built` is the conjunction of the eight configuration
+      `control-plane` is a roll-up: its `built` is the conjunction of the nine configuration
       files, seven of which have a row of their own. Each of those seven checks its own file and
       is red the moment that file goes, so none of them is resting on the roll-up. What is true is
       the reverse -- the roll-up can never be green while any of them is red -- and that is the
@@ -369,12 +369,19 @@ slices:
         deployed: {stack: sbsandbox-intern-edullm-phase3-events, or: {reached: the recorder is live}}
         under_test: {tests: [tests/test_deployed_lambdas.py]}
 
+      # IT READ `eight` AND CHECKED EIGHT UNTIL 2026-08-06, WHICH IS THE ROLL-UP QUIETLY
+      # COVERING LESS THAN ITS NAME. `config/accelerators.yaml` landed in #351, the overview
+      # names nine control-plane files now, and this row went on asserting the other eight --
+      # so the one file a reader would most expect a new roll-up to catch was the one outside
+      # it. The count in the name is the count in the list, and both move together or this is
+      # a row that says nine and checks eight.
       - id: control-plane
-        name: The eight configuration files as the control plane
+        name: The nine configuration files as the control plane
         designed: {reached: overview draws it}
         planned: {not_applicable: predates the plans}
         built:
           exists:
+            - config/accelerators.yaml
             - config/capacity.yaml
             - config/datasets.yaml
             - config/execution-targets.yaml

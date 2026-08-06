@@ -1,17 +1,44 @@
 # The two clocks the expiry janitor runs on, and the lifetime the lane helper defaults to.
 #
 # UNDER config/reports/ RATHER THAN IN config/, and the placement is an argument rather than
-# tidiness. docs-frank/reference/system-overview.md names eight configuration files as the
-# control plane; a ninth in config/ would contradict a document this plan is required to cite
-# rather than edit. config/reports/ is where operational limits that are not the control plane
-# already live -- config/reports/checkpoint-acknowledgements.yaml is here, and
+# tidiness. docs-frank/reference/system-overview.md names the configuration files that are the
+# control plane -- nine of them since config/accelerators.yaml landed in #351 -- and a further
+# one in config/ would contradict a document this plan is required to cite rather than edit.
+# config/reports/ is where operational limits that are not the control plane already live --
+# config/reports/checkpoint-acknowledgements.yaml is here, and
 # docs-frank/reference/decisions.md, under "The budget is a number and a line in the morning
 # message", records that tools/spend-limits.yaml belongs at config/reports/spend.yaml for the
 # same reason.
 #
-# IT IS ALSO NOT A RELEASE PATH, WHICH IS THE SECOND HALF OF THE PLACEMENT ARGUMENT.
-# .github/workflows/release-tag.yml names six files under config/ and no directory, so a number
-# here moves no installed CLI's answer and earns no version. The same edit in config/ would.
+# IT IS NOT A RELEASE PATH, WHICH IS THE SECOND HALF OF THE PLACEMENT ARGUMENT.
+# .github/workflows/release-tag.yml names seven files under config/ and no directory, so a
+# number here earns no version. The same edit in config/ would.
+#
+# SIX AND SEVEN ARE BOTH RIGHT ABOUT THAT TRIGGER AND THEY COUNT DIFFERENT THINGS, which is
+# written out here because two counts disagreeing in silence is what sent somebody looking.
+# Seven paths under config/ are on it. Six of those are control-plane files, and the seventh is
+# config/run-history.json, a measurement rather than a rule. Three control-plane files --
+# capacity.yaml, execution-targets.yaml and accelerators.yaml -- are not on it at all. Read the
+# list from tools/release_paths.py rather than from a number in a comment; it parses the trigger.
+#
+# IT DOES NOT FOLLOW THAT A NUMBER HERE MOVES NO INSTALLED CLI'S ANSWER, AND THIS HEADER SAID IT
+# DID UNTIL 2026-08-06. pyproject.toml force-includes the whole of config/ into the wheel at
+# edullm_platform/_config, and since #318 load_lane_settings resolves this file out of whatever
+# find_config_directory answers with, which for an installed edullm is that packaged copy. So
+# `edullm run` and `edullm shell` default --hours to the number below as it stood at the release
+# somebody installed. Earning no version is what makes that worse rather than better: an install
+# reads a different lifetime from main's and `edullm submit`'s staleness check has nothing to
+# report, `releases/latest` not having moved.
+#
+# WHICH IS THE ARROW system-overview.md DRAWS AS SILENT, and it is worth knowing which seams are
+# covered before assuming this one is. These three numbers reach the deployed function as
+# environment variables on infra/expiry-janitor.yaml;
+# tests/test_janitor_infrastructure.py holds that template equal to this file, and
+# tools/verify_deployed_stacks.py holds the deployed stack equal to that template. Both compare
+# main against something. Neither can read a wheel somebody installed six weeks ago, so a stale
+# install asks for a lifetime the sweep will not honour and tells the researcher a time the
+# janitor ignores. Nothing in this repository can close that, because the stale copy is on a
+# laptop; naming this file on the release trigger would, at the cost of a release per edit.
 #
 # NOT PACKAGED INTO ANY LAMBDA ZIP. tools/build_janitor_lambda.py declares no configuration at
 # all, the way tools/build_lifecycle_lambda.py does. These two numbers reach the deployed
