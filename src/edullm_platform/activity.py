@@ -39,7 +39,7 @@ exist.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from edullm_platform.substrate import (
@@ -56,6 +56,7 @@ __all__ = [
     "RunRow",
     "day_activity",
     "render_launch_feed_unread",
+    "render_launch_window",
     "render_section",
 ]
 
@@ -109,6 +110,11 @@ class DayActivity:
     """One day of runs, and what each source behind them did."""
 
     day: date
+    #: When the reading behind this was taken. Carried for one reason and it is the launch
+    #: feed's: CloudTrail can only answer for the part of a day that has happened, so a
+    #: denominator counted at breakfast covers the hours before breakfast and no reader can
+    #: work that out from the count.
+    read_at: datetime
     rows: tuple[RunRow, ...]
     #: False exactly when the experiment tag read was refused, and False exactly when the
     #: attempt prefix was not read. Both are carried rather than inferred from every row
@@ -175,6 +181,7 @@ def day_activity(*, day: date, substrate: Substrate) -> DayActivity:
     """One day of the substrate, in the order the runs entered the record."""
     return DayActivity(
         day=day,
+        read_at=substrate.collected_at,
         rows=tuple(RunRow.of(facts) for facts in substrate.ran_on(day)),
         experiments_read=substrate.experiments_read,
         attempts_read=substrate.attempts_read,
@@ -190,6 +197,37 @@ def _money(value: Decimal | None) -> str:
 def _duration(seconds: Decimal) -> str:
     whole = int(seconds)
     return f"{whole // 3600}h {(whole % 3600) // 60:02d}m"
+
+
+def render_launch_window(activity: DayActivity) -> str | None:
+    """The hours the launch denominator was counted over, or ``None`` where there is none.
+
+    **A COUNT OF LAUNCHES WITH NO WINDOW UNDER IT IS READ AS THE WHOLE DAY, AND ON THIS
+    ACCOUNT IT NEVER IS.** The collector asks CloudTrail for one day and the account can only
+    answer for the part of that day which has already happened, so a reading taken by the
+    audit at five in the morning carries five hours of launches under a heading naming a
+    date. Six thousand events is a large enough number that a reader assumes it is everything,
+    which is the same failure as a mismatch count printed with no denominator at all -- one
+    level further down, and harder to see, because the figure that is wrong looks thorough.
+
+    The whole-day case is real too and is not the audit's: somebody reporting a past day by
+    hand gets a feed that covers all of it, and saying so is what keeps the sentence worth
+    reading rather than a caveat that is always there.
+    """
+    if activity.launch_outcome == SOURCE_NOT_READ:
+        return None
+    if activity.read_at.date() != activity.day:
+        return (
+            f"Those launches are the whole of what CloudTrail reports for "
+            f"{activity.day:%-d %B}, because the reading was taken on "
+            f"{activity.read_at:%-d %B}, after the day had ended."
+        )
+    return (
+        f"Those launches are the ones CloudTrail had reported by {activity.read_at:%H:%M} UTC, "
+        "when the reading was taken. The window opens at midnight, so this denominator covers "
+        f"the hours of {activity.day:%-d %B} before that time and not the day. Anything "
+        "launched after it is counted on the next reading and not on this page."
+    )
 
 
 def render_launch_feed_unread(activity: DayActivity) -> str | None:

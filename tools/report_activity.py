@@ -187,7 +187,11 @@ def render_document(
     if unread is not None:
         parts.append(unread)
     elif report is not None:
-        parts.append(mismatch_module.render_section(report))
+        parts.append(
+            mismatch_module.render_section(
+                report, window=activity_module.render_launch_window(today)
+            )
+        )
 
     parts += [spend_markdown, _not_read_section(substrate)]
     return "\n".join(part for part in parts if part)

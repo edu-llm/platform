@@ -236,6 +236,23 @@ def test_a_feed_that_was_read_produces_the_list_and_its_denominator(
     assert "Not computed, and that is not the same as none found." not in page
 
 
+def test_the_denominator_on_the_page_names_the_hours_it_covers(
+    inventory: OrganizationInventory,
+) -> None:
+    """Mutation: render the mismatch section without passing the window.
+
+    The window is optional on `mismatch.render_section` because that module cannot derive it,
+    and an optional argument nobody passes is a feature that exists in one file. Every page
+    the audit writes is counted over a part-day, so this is the caller that has to pass it.
+    """
+    substrate = _substrate(_facts(RUN_A, "alsy7009", "12.00"), launches=(_launch(1), _launch(2)))
+    page = render_document(day=DAY, substrate=substrate, inventory=inventory, spend_markdown="")
+
+    assert "2 launch events examined" in page
+    assert "05:00" in page
+    assert "not the day" in page
+
+
 def test_a_launch_by_an_unbound_role_is_counted_rather_than_dropped(
     inventory: OrganizationInventory,
 ) -> None:

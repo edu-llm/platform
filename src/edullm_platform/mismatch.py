@@ -234,9 +234,19 @@ def render_line(report: MismatchReport) -> str:
     return "; ".join(parts) + "."
 
 
-def render_section(report: MismatchReport) -> str:
-    """The mismatch section of the activity document, as markdown."""
+def render_section(report: MismatchReport, *, window: str | None = None) -> str:
+    """The mismatch section of the activity document, as markdown.
+
+    ``window`` is the hours the denominator was counted over, and it goes directly under the
+    line rather than in a footnote for the same reason the denominator goes on the line: a
+    reader who stops after the first figure has to have met it. This module cannot derive it
+    -- it is handed a list of events and nothing about the call that produced them -- so it
+    is a caller's sentence, and ``edullm_platform.activity.render_launch_window`` is the one
+    that writes it.
+    """
     lines = ["## Mismatches", "", render_line(report), ""]
+    if window is not None:
+        lines += [window, ""]
 
     if report.mismatches:
         lines += ["| When | Who | Role | Event |", "| --- | --- | --- | --- |"]
