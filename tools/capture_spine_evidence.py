@@ -128,11 +128,17 @@ DOES_NOT_ESTABLISH: Final = (
         "defect. This platform has never claimed a workload is bit-reproducible."
     ),
     (
-        "Nothing about the platform comparing checkpoint payloads, because it cannot. "
-        "result.checkpoints[].checksum is a SHA-256 over the names and sizes a listing "
-        "returned rather than a digest of the bytes, so both runs record one value in it "
-        "and no checksum row appears in the comparison. That silence is not agreement. "
-        "Closing it needs a read grant the lifecycle recorder deliberately does not hold."
+        "Nothing about the platform comparing these two checkpoint payloads, because "
+        "neither of these records carries a payload reading. Both were written before "
+        "CheckpointManifest.payload existed, and nothing rewrites a record already "
+        "written. What they carry is result.checkpoints[].checksum, a SHA-256 over the "
+        "names and sizes a listing returned rather than a digest of the bytes, so both "
+        "record one identical value in it and no checksum row appears in the comparison. "
+        "That silence is not agreement. It is closed for runs recorded from 2026-08-05 "
+        "onward rather than for these two: the recorder now derives a digest per object "
+        "from the entity tag its listing already returns, or from S3's attested CRC32C "
+        "once the pending s3:GetObjectAttributes amendment is applied. A difference in "
+        "that digest is named as a cause and moves no exit code."
     ),
     (
         "Nothing about a multi-hour run. Each of these took about seven seconds of compute "

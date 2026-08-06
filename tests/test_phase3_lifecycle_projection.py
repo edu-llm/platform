@@ -19,6 +19,7 @@ spelled exactly this way, and what happens to a delivery that will not go.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import UTC, datetime
@@ -40,7 +41,12 @@ from edullm_platform.contracts.lifecycle import (
     new_event_id,
 )
 from edullm_platform.contracts.manifest import RunManifest
-from edullm_platform.contracts.results import CheckpointListingOutcome, ResultManifest
+from edullm_platform.contracts.results import (
+    PAYLOAD_OBJECT_CEILING,
+    CheckpointListingOutcome,
+    PayloadDigestOutcome,
+    ResultManifest,
+)
 from edullm_platform.contracts.vocabulary import RetentionClass
 from edullm_platform.execution import WANDB_ENTITY, batch_submit_request
 from edullm_platform.lifecycle_handler import (
@@ -67,6 +73,7 @@ from edullm_platform.lifecycle_projection import (
     WANDB_PROJECT_VARIABLE,
     UnmappedBatchStatusError,
     UnreadableBatchEventError,
+    checkpoints_under,
     derived_event_id,
     described_listing_checksum,
     project_batch_event,
@@ -1020,9 +1027,24 @@ class FakeLister:
     file thinks about them and the absolute form is noise.
     """
 
-    def __init__(self, members: dict[str, int], *, pages: int = 1) -> None:
+    def __init__(
+        self,
+        members: dict[str, int],
+        *,
+        pages: int = 1,
+        tags: dict[str, str] | None = None,
+    ) -> None:
         self.members = members
         self.pages = pages
+        #: ``ETag`` per member, quoted the way S3 returns it. Defaulted to a digest of the
+        #: name so that every existing caller exercises the same path the deployed recorder
+        #: takes -- a real listing ALWAYS carries an entity tag, and a fake that omitted one
+        #: would have quietly tested only the case where the payload cannot be read.
+        self.tags = (
+            tags
+            if tags is not None
+            else {name: hashlib.md5(name.encode()).hexdigest() for name in members}
+        )
         self.calls: list[dict[str, Any]] = []
 
     def list_objects_v2(self, **arguments: Any) -> Any:
@@ -1032,7 +1054,12 @@ class FakeLister:
         key = str(arguments["Prefix"])
         return {
             "Contents": [
-                {"Key": key + name, "Size": size, "LastModified": WRITTEN_AT}
+                {
+                    "Key": key + name,
+                    "Size": size,
+                    "LastModified": WRITTEN_AT,
+                    **({"ETag": f'"{self.tags[name]}"'} if name in self.tags else {}),
+                }
                 for name, size in self.members.items()
             ],
             "IsTruncated": False,
@@ -1513,3 +1540,206 @@ def test_the_two_copies_of_the_checkpoint_vocabulary_agree() -> None:
         protocol.OLMO_CORE_STEP_DIRECTORY.pattern,
         protocol.HUGGINGFACE_CHECKPOINT_DIRECTORY.pattern,
     ], "the order decides which layout wins a prefix holding both, and it is OLMo-core first"
+
+
+# The payload reading: a digest of what a checkpoint holds, rather than of what it is called
+
+
+class FakeAttributes:
+    """``GetObjectAttributes`` as S3 answers it, or refuses it.
+
+    ``refuse_after`` is what makes the undeployed case testable: a role without
+    ``s3:GetObjectAttributes`` refuses the first call, and the projection must not then pay
+    for one refusal per object.
+    """
+
+    def __init__(self, crc: dict[str, str] | None = None, *, refuse_after: int | None = None):
+        self.crc = crc or {}
+        self.refuse_after = refuse_after
+        self.calls: list[str] = []
+
+    def get_object_attributes(self, **arguments: Any) -> Any:
+        key = str(arguments["Key"])
+        self.calls.append(key)
+        if self.refuse_after is not None and len(self.calls) > self.refuse_after:
+            raise RuntimeError("An error occurred (AccessDenied) when calling GetObjectAttributes")
+        name = key.rsplit("/", 1)[-1]
+        if name not in self.crc:
+            return {}
+        return {"Checksum": {"ChecksumCRC32C": self.crc[name]}}
+
+
+def step(members: dict[str, Any]) -> dict[str, Any]:
+    """The same members inside the one step directory the matcher reads."""
+    return {f"step20/{name}": value for name, value in members.items()}
+
+
+def read_payload(lister: Any, attributes: Any = None) -> Any:
+    manifests, _survey = checkpoints_under(lister, prefix=CHECKPOINT_PREFIX, attributes=attributes)
+    return manifests[0].payload
+
+
+def test_a_listing_alone_puts_a_digest_of_the_bytes_in_the_record() -> None:
+    """Mutation: leave the payload reading out until s3:GetObjectAttributes is deployed.
+
+    THE ENTITY TAG IS IN THE LISTING THE RECORDER ALREADY MAKES, which is the finding that
+    let this ship without an IAM change. A real ``ListObjectsV2`` answer carries ``ETag``
+    per object; it says ``ChecksumAlgorithm: ["CRC32C"]`` too and does NOT carry the value,
+    which is the grant that is still missing. Waiting for it would have left the record
+    unable to see differing bytes for as long as the deploy took, and the settled principle
+    is that jobs running comes first and the record follows.
+    """
+    lister = FakeLister(step({MARKER_OBJECT: 227, "model.pt": 762_258_865}))
+
+    payload = read_payload(lister)
+
+    assert payload.outcome is PayloadDigestOutcome.LISTING_ETAG
+    assert payload.digests == {
+        name: f"etag:{lister.tags[f'step20/{name}']}" for name in (MARKER_OBJECT, "model.pt")
+    }
+    # The name the record carries is relative to the checkpoint directory and not the key,
+    # because the key holds the run id and would differ between any two runs of anything.
+    assert [one.name for one in payload.objects] == [MARKER_OBJECT, "model.pt"]
+
+
+def test_the_attested_checksum_wins_when_the_grant_is_there() -> None:
+    """Mutation: keep the entity tags once GetObjectAttributes answers.
+
+    An entity tag is a function of how an object was uploaded as well as of its bytes, so
+    two byte-identical payloads written with different part sizes carry different tags. The
+    CRC32C has no such property. When both are available the record must carry the stronger
+    one and must say which, because the two are not comparable with each other.
+    """
+    attributes = FakeAttributes({MARKER_OBJECT: "kAom4g==", "model.pt": "UmCGRQ=="})
+
+    payload = read_payload(
+        FakeLister(step({MARKER_OBJECT: 227, "model.pt": 762_258_865})), attributes
+    )
+
+    assert payload.outcome is PayloadDigestOutcome.OBJECT_ATTRIBUTES
+    assert payload.digests == {MARKER_OBJECT: "crc32c:kAom4g==", "model.pt": "crc32c:UmCGRQ=="}
+
+
+def test_a_refused_attributes_call_falls_back_to_the_tags_and_stops_asking() -> None:
+    """Mutation: continue the loop past a refusal instead of breaking out of it.
+
+    The grant is held or it is not, per bucket, so a role without it would otherwise pay one
+    AccessDenied per object on every Batch state change -- up to PAYLOAD_OBJECT_CEILING of
+    them inside a Lambda, for a checkpoint it was never going to read. That is the live
+    configuration today, so the wasted case is the ordinary one and not the edge.
+
+    The fallback matters as much as the count: a refusal must not empty the record. The
+    entity tags were already in hand and they still answer the question this field exists
+    for, so the reading degrades rather than disappearing.
+    """
+    attributes = FakeAttributes(refuse_after=0)
+
+    payload = read_payload(
+        FakeLister(step({MARKER_OBJECT: 227, "model.pt": 762_258_865, "extra.bin": 5})), attributes
+    )
+
+    assert payload.outcome is PayloadDigestOutcome.LISTING_ETAG
+    assert len(payload.digests) == 3
+    assert len(attributes.calls) == 1
+
+
+def test_an_object_the_store_attests_nothing_for_carries_no_digest_rather_than_a_guess() -> None:
+    """Mutation: fill a missing checksum with the entity tag beside it.
+
+    Mixing two functions of the bytes inside one reading would make ``outcome`` a lie about
+    half its own objects, and the comparison reads the outcome to decide whether two
+    digests are comparable at all. An object S3 attests nothing for says nothing.
+    """
+    attributes = FakeAttributes({"model.pt": "UmCGRQ=="})
+
+    payload = read_payload(
+        FakeLister(step({MARKER_OBJECT: 227, "model.pt": 762_258_865})), attributes
+    )
+
+    assert payload.outcome is PayloadDigestOutcome.OBJECT_ATTRIBUTES
+    assert payload.digests == {"model.pt": "crc32c:UmCGRQ=="}
+    assert [one.name for one in payload.objects] == [MARKER_OBJECT, "model.pt"]
+    assert payload.objects[0].digest is None
+
+
+def test_a_listing_that_carries_no_tag_says_it_read_nothing_rather_than_recording_nothing() -> None:
+    """Mutation: return an empty objects list under a source name instead of NOT_ATTEMPTED.
+
+    A payload block naming a source and holding no digest reads, at a glance, like a
+    checkpoint of no objects. The contract refuses to construct one, and this is the
+    projection's half: with nothing to record it names the absence.
+    """
+    payload = read_payload(FakeLister(step({MARKER_OBJECT: 227, "model.pt": 1}), tags={}))
+
+    assert payload.outcome is PayloadDigestOutcome.NOT_ATTEMPTED
+    assert payload.objects == ()
+
+
+def test_a_checkpoint_wider_than_the_ceiling_records_no_object_at_all() -> None:
+    """Mutation: truncate to the ceiling and record the first sixty-four.
+
+    A lineage record must not grow with the width of the parallelism that wrote it, and a
+    sharded checkpoint has hundreds of objects. Truncating would be worse than refusing:
+    the record would hold a digest per object for an arbitrary subset, and two runs sharded
+    differently would compare the first sixty-four names of one against the first
+    sixty-four of the other and call the mismatch a finding.
+    """
+    wide = step({f"shard-{index:04d}.pt": 4096 for index in range(PAYLOAD_OBJECT_CEILING + 1)})
+
+    payload = read_payload(FakeLister(wide))
+
+    assert payload.outcome is PayloadDigestOutcome.TOO_MANY_OBJECTS
+    assert payload.objects == ()
+
+
+def test_a_store_answering_with_something_other_than_an_entity_tag_records_no_digest() -> None:
+    """Mutation: trust whatever string the listing put under ETag.
+
+    A CLI-backed store or a stub can answer with anything. An arbitrary string recorded
+    under a name that reads as a digest of the payload is exactly the defect this whole
+    field exists to remove, one layer down.
+    """
+    payload = read_payload(
+        FakeLister(
+            step({MARKER_OBJECT: 227, "model.pt": 1}), tags=step({MARKER_OBJECT: "not-a-digest"})
+        )
+    )
+
+    assert payload.outcome is PayloadDigestOutcome.NOT_ATTEMPTED
+
+
+class ListerThatAlsoAttests(FakeLister):
+    """A store answering both calls, which is what a boto3 S3 client is."""
+
+    def __init__(self, members: dict[str, int], crc: dict[str, str]) -> None:
+        super().__init__(members)
+        self.crc = crc
+
+    def get_object_attributes(self, **arguments: Any) -> Any:
+        name = str(arguments["Key"]).rsplit("/", 1)[-1]
+        return {"Checksum": {"ChecksumCRC32C": self.crc[name]}}
+
+
+def test_the_handler_needs_no_second_client_to_reach_the_attested_checksum() -> None:
+    """Mutation: require the caller to pass the attributes reader explicitly.
+
+    THIS IS THE WIRING CLAIM, AND IT IS THE ONE NOBODY CAN SEE BY READING THE HANDLER.
+    lifecycle_handler passes one boto3 client as the checkpoint lister and nothing else, so
+    if the projection took the attributes reader as a separate argument the deployed
+    recorder would never make the call at all -- the grant could be applied and the record
+    would go on saying listing_etag forever, with no test failing anywhere.
+
+    So the projection asks whether the lister it was given also answers
+    GetObjectAttributes, which a boto3 client does and a listing-only fake does not. Both
+    halves are asserted, because the branch is only worth having if it goes the other way
+    for a store that cannot answer.
+    """
+    members = {"step20/_SUCCESS": 227, "step20/model.pt": 762_258_865}
+    attesting = ListerThatAlsoAttests(members, {"_SUCCESS": "ENlEhA==", "model.pt": "UmCGRQ=="})
+
+    attested = projected_with(attesting).result.checkpoints[0].payload
+    from_the_listing = projected_with(FakeLister(members)).result.checkpoints[0].payload
+
+    assert attested.outcome is PayloadDigestOutcome.OBJECT_ATTRIBUTES
+    assert attested.digests == {"_SUCCESS": "crc32c:ENlEhA==", "model.pt": "crc32c:UmCGRQ=="}
+    assert from_the_listing.outcome is PayloadDigestOutcome.LISTING_ETAG

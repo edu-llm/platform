@@ -143,7 +143,7 @@
     "right_size_bytes": 762258865
   },
   "comparison": {
-    "compared_at": "2026-08-05T21:00:27Z",
+    "compared_at": "2026-08-06T00:46:17Z",
     "differences": [
       {
         "cause": "the instant a record was written",
@@ -227,12 +227,13 @@
     "left": "run_019fd3a1-d2f8-70e5-b453-2743c4400c35",
     "right": "run_019fd3a2-fa48-706d-9d77-9b2e262f7f63",
     "schema_version": 1,
+    "unattested_payloads": [],
     "unreadable_checkpoints": [],
     "unverified": []
   },
   "does_not_establish": [
     "The two runs are not the same computation, and this establishes only that their records agree. Their checkpoint payloads are the same 762,258,865 bytes long and S3 attests a different CRC32C for each. 716,708,889 of those bytes differ, which is 94 per cent of the file, and the first difference is at offset 30,080, so the two agree across the archive header and then diverge. The losses diverge from the first step. That is ordinary floating-point reduction order on a GPU and not a defect. This platform has never claimed a workload is bit-reproducible.",
-    "Nothing about the platform comparing checkpoint payloads, because it cannot. result.checkpoints[].checksum is a SHA-256 over the names and sizes a listing returned rather than a digest of the bytes, so both runs record one value in it and no checksum row appears in the comparison. That silence is not agreement. Closing it needs a read grant the lifecycle recorder deliberately does not hold.",
+    "Nothing about the platform comparing these two checkpoint payloads, because neither of these records carries a payload reading. Both were written before CheckpointManifest.payload existed, and nothing rewrites a record already written. What they carry is result.checkpoints[].checksum, a SHA-256 over the names and sizes a listing returned rather than a digest of the bytes, so both record one identical value in it and no checksum row appears in the comparison. That silence is not agreement. It is closed for runs recorded from 2026-08-05 onward rather than for these two: the recorder now derives a digest per object from the entity tag its listing already returns, or from S3's attested CRC32C once the pending s3:GetObjectAttributes amendment is applied. A difference in that digest is named as a cause and moves no exit code.",
     "Nothing about a multi-hour run. Each of these took about seven seconds of compute over twenty steps, inside a container alive for about twenty-five seconds.",
     "Nothing about a fan-out. Both runs are one cell on one instance.",
     "Nothing about a resume from a checkpoint. Both runs wrote one and neither read one back to continue from.",
@@ -243,7 +244,7 @@
   "establishes": "Two dispatches of one submission on gpu-1xt4, eighty-four seconds apart from a form that did not change between them, produced two lineage records differing only in fields a named cause explains. Both compiled to one manifest digest, both were classified automatic and released by nobody, and both finished succeeded with exit code 0. Each wrote one checkpoint at step 20 that the recorder could read, so the checkpoint fields are inside the comparison rather than absent from it.",
   "lineage_bucket": "sbsandbox-intern-edullm-lineage",
   "manifest_sha256": "sha256:4bbf6ffb274d98fa0c20a3317c1b2650779adcc35491245b622ccf44cbe7e1b9",
-  "observed_at": "2026-08-05T21:00:27Z",
+  "observed_at": "2026-08-06T00:46:17Z",
   "schema_version": 1,
   "source": "aws"
 }

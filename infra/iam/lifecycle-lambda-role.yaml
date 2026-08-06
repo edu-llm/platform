@@ -104,6 +104,46 @@ Resources:
                 Action: s3:GetObject
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-outputs/teams/*/runs/*/metrics.json
+
+              # s3:GetObjectAttributes, WHICH IS THE READ THAT RETURNS NO BYTES AT ALL.
+              # The grant above reaches one document per run by exact name because its
+              # contents are the only place the answer lives. This one is the opposite
+              # case: the answer is metadata S3 already computed, so no byte is needed and
+              # none is granted, and the resource can therefore be the whole checkpoint
+              # path without widening what the recorder can see.
+              #
+              # THE FIELD THIS IS FOR ALREADY WORKS WITHOUT IT, WHICH IS WHY THIS SITS HERE
+              # UNDEPLOYED RATHER THAN BLOCKING ANYTHING. contracts/results.py::
+              # CheckpointPayload records a digest of a checkpoint's objects, and
+              # lifecycle_projection derives it from the ETag ListObjectsV2 already returns
+              # above -- payload-derived, free, and enough to see that two runs hold
+              # different bytes. An ETag is weaker than a checksum: it is a function of how
+              # the object was uploaded as well as of its contents, so two byte-identical
+              # payloads written with different part sizes carry different tags.
+              #
+              # S3 HOLDS THE BETTER ANSWER AND THE LISTING SAYS SO WITHOUT GIVING IT.
+              # Contents[] comes back with ChecksumAlgorithm ["CRC32C"] and ChecksumType
+              # FULL_OBJECT for these objects and no value, measured against the live
+              # bucket. GetObjectAttributes returns the value.
+              #
+              # WHY THIS AND NOT A SECOND s3:GetObject, which would also work and which
+              # the statement above shows is not forbidden here. GetObjectAttributes
+              # returns the checksum, the size, the ETag and the part layout, and cannot
+              # return a byte of the object. So the recorder gains the ability to say what
+              # a checkpoint hashes to and does not gain the ability to read what any
+              # team's run produced. A GetObject wide enough to cover checkpoints would be
+              # a grant over every weight every team wrote, to compute something S3 has
+              # already computed. The Resource is the run-scoped shape the listing's
+              # condition uses, so it reaches checkpoint objects and nothing else.
+              #
+              # Until this is applied the first call is refused, _attested_digests stops
+              # asking rather than paying one AccessDenied per object, and the record says
+              # listing_etag. Nothing fails and no run is affected; the record simply
+              # carries the weaker of the two true answers.
+              - Effect: Allow
+                Action: s3:GetObjectAttributes
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-outputs/teams/*/runs/*/checkpoints/*
               # The event source mapping polls as this role, so receive, delete and the
               # attribute read are all needed; without DeleteMessage a projected event is
               # redelivered until it reaches the dead-letter queue, which reads as a

@@ -454,6 +454,66 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
                 ),
             ),
         ),
+        # A SECOND RECORD BECAUSE IT IS A SECOND ROLE, WHICH IS THE SPLIT THIS REGISTRY
+        # WANTS. The note above refuses two records for one role, because a capture reports
+        # the sum of the drift on it and two records would each describe an account state
+        # that never exists. That reasoning is about one role. This is a different role and
+        # a different stack, and applying one does nothing for the other.
+        #
+        # IT IS ALSO THE MILDEST RECORD THIS REGISTRY HAS HELD, WHICH IS WORTH SAYING
+        # PLAINLY BECAUSE EVERY OTHER ENTRY HERE DESCRIBES SOMETHING BROKEN UNTIL IT IS
+        # DEPLOYED. Five GPU profiles were unsubmittable for two days behind one of them.
+        # This one blocks nothing at all: the field it would improve is already being
+        # recorded from the entity tag the listing returns.
+        PendingAmendment(
+            role_name="sbsandbox-intern-edullm-lifecycle-lambda",
+            reason=(
+                "infra/iam/lifecycle-lambda-role.yaml adds s3:GetObjectAttributes to the "
+                "record-what-batch-reported inline policy, scoped to "
+                "sbsandbox-intern-edullm-outputs/teams/*/runs/*/checkpoints/*, which is the "
+                "same shape the s3:ListBucket condition beside it uses. It is what lets the "
+                "recorder put S3's own attested CRC32C into CheckpointManifest.payload "
+                "instead of the ETag the listing already returns."
+                "\n\n"
+                "NOTHING IS BROKEN WHILE THIS IS OPEN. lifecycle_projection._attested_digests "
+                "catches the refusal, stops asking after the first one rather than paying an "
+                "AccessDenied per object, and falls back to the entity tags it already had. "
+                "The record then says listing_etag, which is a true statement about a real "
+                "payload-derived digest -- weaker only in that an ETag is a function of how "
+                "an object was uploaded as well as of its bytes. Two runs holding different "
+                "weights are visible either way, which is the whole point of the field. If "
+                "this is never applied the record says listing_etag forever and is not wrong "
+                "about anything."
+                "\n\n"
+                "It is s3:GetObjectAttributes and deliberately not a second s3:GetObject, "
+                "which the metrics.json statement above it shows is not forbidden here. "
+                "GetObjectAttributes returns the checksum, the size and the part layout and "
+                "cannot return a byte of the object, so the recorder gains the ability to "
+                "say what a checkpoint hashes to without gaining the ability to read what "
+                "any team's run produced. A GetObject wide enough to cover checkpoints would "
+                "be a grant over every weight every team wrote, to compute something S3 has "
+                "already computed."
+            ),
+            cleared_by=(
+                "Deploying the sbsandbox-intern-edullm-phase3-lifecycle-iam stack from a "
+                "laptop with an SSO session, per infra/README.md, then re-capturing the "
+                "Phase 3 roles. The re-capture is what ends this record: the findings are "
+                "compared for equality, so it fails the moment the account stops differing "
+                "in exactly this way."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'record-what-batch-reported'",
+                    detail=(
+                        "the template declares a statement the deployed role does not: Allow "
+                        "Action [s3:GetObjectAttributes] Resource "
+                        "[arn:<partition>:s3:::sbsandbox-intern-edullm-outputs/teams/*/runs/"
+                        "*/checkpoints/*]"
+                    ),
+                ),
+            ),
+        ),
     )
     declared = declared_role_templates()
     for amendment in amendments:
@@ -769,6 +829,12 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # noticing is that the last three entries in a row have all been the kind a submitter
     # can meet, where every entry before them was a digest moving with no behaviour behind
     # it. The register is doing the job it was built for rather than absorbing noise.
+    #
+    # A RECORDER ENTRY JOINS IT, WHICH THE REGISTER HAS NOT HELD ALONGSIDE A VALIDATOR
+    # ONE SINCE THE TWO ZIPS WERE SPLIT. They share contracts/results.py, which gained
+    # an optional payload field on CheckpointManifest, and that is a behaviour for the
+    # recorder and an import for the validator. Two records because they are two zips,
+    # cleared by two commands, and the paragraphs below say which is which.
     releases: tuple[PendingRelease, ...] = (
         PendingRelease(
             function="validator",
@@ -797,11 +863,56 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "goes on admitting v2. A submitter therefore gets the superseded corpus "
                 "rather than a refusal, which is worth cutting the release for but is not "
                 "the same urgency as the paragraph above."
+                "\n\n"
+                "One packaged module moved beside all of that and carries nothing this "
+                "function reads. contracts/results.py gained CheckpointPayload, "
+                "PayloadObject and PayloadDigestOutcome, and CheckpointManifest gained an "
+                "optional payload field holding a digest derived from what S3 attests "
+                "about a checkpoint's objects. The validator constructs no "
+                "CheckpointManifest and no ResultManifest -- the recorder does -- so the "
+                "module is in this zip because the import tree reaches it and for no "
+                "other reason. It moves this digest and moves no admission decision."
             ),
             cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="7a149fc4e563aa97a66371a96a36dd0c7e1fad59080949228970deb3a2077b79",
+            builds_to="b8db05da9915bacb12f13d7d6c5945f523e358186dd6afcb0e06d1066c53e7ec",
             released="15c3f1014c6ecfdc107f39d48f740d0905dad43b7e90cfc506ee62702ddd0f54",
             recorded_on=date(2026, 8, 6),
+        ),
+        PendingRelease(
+            function="recorder",
+            reason=(
+                "THIS IS THE HALF THAT CARRIES A BEHAVIOUR. The same contracts/results.py "
+                "addition, plus lifecycle_projection.py deriving the reading -- from the "
+                "ETag ListObjectsV2 already returns, or from the CRC32C GetObjectAttributes "
+                "returns where the grant exists. lifecycle_handler.py is untouched: the "
+                "boto3 client it already passes as the checkpoint lister answers both calls, "
+                "so the projection takes it as the attributes reader too."
+                "\n\n"
+                "It is what puts a digest of the bytes into a lineage record for the first "
+                "time. CheckpointManifest.checksum is a SHA-256 over the listing, so two "
+                "runs holding different weights recorded one identical value in the only "
+                "field named for a digest, and a comparison of them printed no row at all. "
+                "The new field is derived from what S3 attests about the payload, so the "
+                "difference is visible without anything downloading 762 MB."
+                "\n\n"
+                "Additive in every direction, and its ordering against the lifecycle-lambda "
+                "amendment recorded above is a non-problem both ways round. Release this zip "
+                "first and the attributes call is refused, _attested_digests falls back to "
+                "the entity tags, and the record says listing_etag. Amend the role first and "
+                "nothing calls the grant until the zip lands. Records already in the store "
+                "are unaffected either way: the field is optional and defaults to None, "
+                "which tests/test_results.py holds directly."
+                "\n\n"
+                "Until this is released the recorder goes on writing checkpoints with no "
+                "payload reading at all, which is the same silence the change exists to end "
+                "and is not a regression on anything. A stale recorder is the quiet kind of "
+                "stale -- it writes lineage that looks exactly like correct lineage into "
+                "immutable records -- so it is recorded here rather than noticed later."
+            ),
+            cleared_by="uv run python tools/release_lambda.py --function recorder",
+            builds_to="31be04c5a1c8ec0f7472dfc3d1930d9cdcf1b3c4efd8a07a59f8d4fb5ea3a803",
+            released="756bb23ea9e52b9e9624386f7946b66111286813c981c88983658f4d244c496f",
+            recorded_on=date(2026, 8, 5),
         ),
     )
     return one_record_per_function(releases)

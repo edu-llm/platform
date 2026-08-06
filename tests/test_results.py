@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -13,6 +14,7 @@ from edullm_platform.contracts.lifecycle import (
 from edullm_platform.contracts.results import (
     CheckpointManifest,
     CheckpointNotResumableError,
+    CheckpointPayload,
     ResultManifest,
     WandbRunRef,
 )
@@ -30,18 +32,19 @@ CHECKPOINT_DIGEST = "sha256:" + "b" * 64
 LATER_CHECKPOINT_DIGEST = "sha256:" + "c" * 64
 
 CHECKPOINT_MANIFEST_DIGEST = (
-    "sha256:40895c7e549ac5aa0aa0fc524f0310e9ed567484f6f64482997b4829c717e45d"
+    "sha256:743da39492e0ef242fa287cf368c3972288fc9cb318b03b2e55c2fddaa4b7192"
 )
-# Moved when ``checkpoint_survey`` was added, and only this one moved, which is the shape
-# of the change: ``CheckpointManifest`` above is untouched, so a checkpoint recorded before
-# and after this serializes identically and only the record wrapping it grew a field.
+# Both digests moved when ``payload`` was added to ``CheckpointManifest``, and both had to:
+# the field is optional and defaults to None, and a None is written rather than omitted, so
+# a checkpoint recorded before this serializes to different bytes than the same checkpoint
+# recorded after it. That is a re-pin and not a compatibility break -- these digests are
+# computed on read and are pinned nowhere in the store, unlike ``manifest_sha256``, which is
+# over ``RunManifest`` and is untouched here.
 #
-# The field is optional and defaults to None, for the reason ``exit_code`` beside it is, so
-# every result record already in the lineage store still validates. What it does not do is
-# still serialize to the same bytes -- a None is written rather than omitted -- so this
-# digest is a new one rather than a preserved one, exactly as it was when ``exit_code``
-# arrived.
-RESULT_MANIFEST_DIGEST = "sha256:aaeaced43f43facee5650642cec3863a171bcdc3f4359b7bf9f43af5f163637d"
+# What must not move is whether the older bytes still VALIDATE, which is asserted directly
+# in ``test_a_checkpoint_recorded_before_the_payload_field_still_reads`` rather than left to
+# these constants to imply.
+RESULT_MANIFEST_DIGEST = "sha256:73110e6f928561c2b60f2934eec3fc5c2ad93da24f98da93f4e1030f436f90b9"
 
 OUTSIDE_SANDBOX_PREFIXES = (
     "s3://edullm-checkpoints/runs/olmo/",
@@ -551,3 +554,95 @@ def test_result_models_are_frozen() -> None:
     with pytest.raises(ValidationError) as exc_info:
         result.outcome = AttemptTerminalState.FAILED
     assert_validation_error(exc_info.value, error_type="frozen_instance", loc=("outcome",))
+
+
+# The payload reading refuses to be constructed in a shape that would mislead a reader
+
+
+def payload(**overrides: Any) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "outcome": "listing_etag",
+        "objects": [
+            {
+                "schema_version": 1,
+                "name": "model.pt",
+                "size_bytes": 762_258_865,
+                "digest": "etag:40ee0a84119a1c6824f00ca379acdeec",
+            }
+        ],
+    } | overrides
+
+
+def test_a_payload_reading_that_names_a_source_must_have_read_something() -> None:
+    """Mutation: allow `listing_etag` with an empty objects list, or with no digest in it.
+
+    Either shape is a record saying a source answered and holding nothing it answered, and
+    a reader seeing the source name would take the absence of a difference for agreement --
+    which is the exact defect ``checksum`` had and the reason this field exists. The honest
+    form of "a source was asked and produced nothing" is ``refused``.
+    """
+    with pytest.raises(ValidationError, match="must record the objects"):
+        CheckpointPayload.model_validate(payload(objects=[]))
+    with pytest.raises(ValidationError, match="did not read the bytes"):
+        CheckpointPayload.model_validate(
+            payload(
+                objects=[{"schema_version": 1, "name": "model.pt", "size_bytes": 1, "digest": None}]
+            )
+        )
+
+
+def test_a_payload_reading_that_read_nothing_must_not_carry_objects() -> None:
+    """Mutation: let `refused` carry the sizes the listing saw anyway.
+
+    They are available and recording them would be free, and it would put a list of objects
+    under an outcome that says nothing was read. A reader skimming for the object names
+    finds them and stops; the word above them is the only thing saying they carry no digest.
+    """
+    with pytest.raises(ValidationError, match="must record no objects"):
+        CheckpointPayload.model_validate(payload(outcome="refused"))
+
+
+def test_a_payload_reading_is_sorted_and_names_each_object_once() -> None:
+    """Mutation: record the objects in whatever order the listing returned them.
+
+    Two runs' objects line up by list index in the comparison, so an unsorted reading would
+    compare one run's ``model.pt`` against the other's ``_SUCCESS`` and report two
+    differences that are an artifact of the ordering. S3 lists lexically today, which is
+    what makes this the kind of assumption that holds until it does not.
+    """
+    unsorted = [
+        {"schema_version": 1, "name": "model.pt", "size_bytes": 1, "digest": "etag:" + "a" * 32},
+        {"schema_version": 1, "name": "_SUCCESS", "size_bytes": 1, "digest": "etag:" + "b" * 32},
+    ]
+    with pytest.raises(ValidationError, match="sorted by name"):
+        CheckpointPayload.model_validate(payload(objects=unsorted))
+    with pytest.raises(ValidationError, match="each object once"):
+        CheckpointPayload.model_validate(payload(objects=[unsorted[0], unsorted[0]]))
+
+
+def test_a_checkpoint_recorded_before_the_payload_field_still_reads() -> None:
+    """Mutation: make `payload` required.
+
+    THIS IS THE WHOLE BACKWARD-COMPATIBILITY GUARANTEE IN ONE ASSERTION. ``ContractModel``
+    sets ``extra="forbid"`` and every result record in the store was written without this
+    field, so a required ``payload`` -- or a rename of ``checksum`` to what it actually
+    describes -- makes 149 records of runs that happened unreadable by the platform that
+    recorded them. That is the one outcome worth more than any correctness this field buys.
+    """
+    prefix = "s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/run_a/checkpoints/"
+    as_the_store_holds_it = {
+        "schema_version": 1,
+        "uri": f"{prefix}step20/",
+        "step": 20,
+        "epoch": None,
+        "created_at": "2026-08-05T16:42:43.000000Z",
+        "size_bytes": 762_259_092,
+        "checksum": "sha256:" + "c" * 64,
+        "success_marker_uri": f"{prefix}step20/_SUCCESS",
+    }
+
+    manifest = CheckpointManifest.model_validate(as_the_store_holds_it)
+
+    assert manifest.payload is None
+    assert "payload" not in manifest.model_dump(exclude_none=True)
