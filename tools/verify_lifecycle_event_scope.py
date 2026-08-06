@@ -487,7 +487,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(
         f"{RULE_NAME} delivers {len(delivered)} of the {names_considered} distinct job names "
         f"on its {len(queue_arns)} queues, standing for {jobs_listed} jobs Batch still lists, "
-        "and the recorder can read every one of them."
+        "and the recorder can read every one of them.",
+        # UNDER --json THE DOCUMENT IS THE ONLY THING ON STDOUT. Every refusal above already
+        # writes to stderr; this one line did not, so `--json` produced a document with a
+        # sentence after it and `| jq` failed on the successful case only. A flag that works
+        # until the answer is good is worse than no flag.
+        file=sys.stderr if options.json else sys.stdout,
+        flush=True,
     )
     return EXIT_OK
 
