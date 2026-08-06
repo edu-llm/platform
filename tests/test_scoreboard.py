@@ -13,15 +13,18 @@ import argparse
 from datetime import UTC, datetime
 from pathlib import Path
 
+from edullm_platform.stages import STAGES, Cell, Mark, Slice, Surface
 from tools.scoreboard import (
     Row,
     TaskStatus,
     build_parser,
     census_of_plan_tasks,
     count_collected_tests,
+    fraction,
     pull_requests_in_other_repositories,
     read_task_status,
     render,
+    render_slice_rollup,
     status_of_every_task,
 )
 
@@ -208,6 +211,84 @@ def test_every_row_carries_the_command_that_produced_it() -> None:
 
     assert "`pytest --collect-only -q`" in printed
     assert "2026-08-06 01:30 UTC" in printed
+
+
+def _slice(name: str, *cells: Cell) -> Slice:
+    return Slice(
+        name=name,
+        surfaces=[
+            Surface(f"{name}-{index}", f"{name} {index}", dict.fromkeys(STAGES, cell))
+            for index, cell in enumerate(cells)
+        ],
+    )
+
+
+def test_a_slice_fraction_says_when_part_of_its_yes_side_is_somebodys_answer() -> None:
+    """Mutation: roll ninety-six rows up into nine and print bare fractions.
+
+    Collapsing the board is what makes it readable and it is also what hides the one distinction
+    the board exists for. A slice reading `10 of 15` where four of those ten are a person's
+    recollection is not the same claim as one where all ten were looked up, and a reader with
+    only the fraction cannot tell.
+    """
+    read = _slice("Measured", Cell(Mark.REACHED), Cell(Mark.NOT_REACHED))
+    recalled = _slice("Recalled", Cell(Mark.REACHED, derived=False), Cell(Mark.NOT_REACHED))
+
+    assert fraction(read, "built") == "1 of 2"
+    assert fraction(recalled, "built") == "1 of 2*"
+
+
+def test_a_row_nobody_could_read_is_named_rather_than_dropped_out_of_the_denominator() -> None:
+    """Mutation: leave unread rows out silently, which the denominator already does.
+
+    Without a session every `deployed` lookup returns unread, and the fraction would shrink to
+    the handful of rows that need no account and read small and confident. Saying how many rows
+    were not asked is what stops a blind run looking like a bad one.
+    """
+    partly = _slice("Blind", Cell(Mark.REACHED), Cell(Mark.NOT_READ), Cell(Mark.NOT_READ))
+
+    assert fraction(partly, "deployed") == "1 of 1 (2 unread)"
+
+
+def test_a_stage_that_applies_to_nothing_in_a_slice_reads_as_not_applying() -> None:
+    """Mutation: print `0 of 0` for a slice with nothing to deploy.
+
+    The probe deploys nothing, because it is a dispatch and a verdict. `0 of 0` reads as failure
+    at a glance and would have the owner asking about work that does not exist.
+    """
+    nothing = _slice("Probe", Cell(Mark.NOT_APPLICABLE), Cell(Mark.NOT_APPLICABLE))
+
+    assert fraction(nothing, "deployed") == "n/a"
+
+
+def test_the_total_keeps_its_qualifier_outside_the_bold() -> None:
+    """Mutation: bold the whole cell.
+
+    `**30 of 55***` is three closing asterisks, and markdown renders it as bold with the mark
+    eaten. The one cell where losing that mark matters most is the total, because it is the
+    figure anybody quotes.
+    """
+    board = [_slice("A", Cell(Mark.REACHED, derived=False)), _slice("B", Cell(Mark.NOT_REACHED))]
+
+    printed = render_slice_rollup(board, checked="2026-08-05", moment=MOMENT)
+
+    assert "| **Total** | **1 of 2**\\* | **1 of 2**\\* | **1 of 2**\\* |" in printed
+    assert "| A | 1 of 1* | 1 of 1* | 1 of 1* |" in printed
+    assert "***" not in printed
+
+
+def test_the_detail_view_is_behind_a_flag_and_the_summary_is_the_default() -> None:
+    """Mutation: print the per-surface table by default.
+
+    Ninety-six rows is a detail view. It answers which surface is undeployed and it cannot
+    answer where the platform is, because nothing on it is a total. The document at the top of
+    this carries the summary and names the flag for the other one.
+    """
+    default = build_parser().parse_args([])
+    detailed = build_parser().parse_args(["--detail"])
+
+    assert default.detail is False
+    assert detailed.detail is True
 
 
 def test_the_plans_directory_has_no_default_because_it_is_outside_this_repository() -> None:

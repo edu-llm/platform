@@ -41,6 +41,7 @@ from typing import Any, Final
 
 from edullm_platform.stages import (
     STAGES,
+    Mark,
     Slice,
     Sources,
     count_reached,
@@ -59,11 +60,13 @@ __all__ = [
     "census_of_plan_tasks",
     "collected_test_files",
     "count_collected_tests",
+    "fraction",
     "gather",
     "healthy_stacks",
     "main",
     "pull_requests_in_other_repositories",
     "read_task_status",
+    "render_slice_rollup",
     "rows",
     "status_of_every_task",
     "tasks_in_plans",
@@ -409,35 +412,79 @@ def _merged_since(repository: str, since: str) -> str | None:
     )
 
 
-def stage_rows(board: Sequence[Slice]) -> list[Row]:
-    """The three stage columns as fractions, which is the aggregate worth watching.
+#: The three stages a slice is rolled up over. `designed` and `planned` are left off the summary
+#: because neither moves when the work moves: `designed` is a judgement about a document and is a
+#: person's answer on every row, and `planned` says whether a task exists rather than whether
+#: anything happened. Both are still in the detail view, which is where a question about them
+#: gets asked.
+ROLLED_UP: Final = ("built", "deployed", "proven")
 
-    These are the only aggregate figures the table above does not already show, and they come
-    free from it. A count of merged pull requests moves every hour and says nothing about
-    whether the platform does more than it did; `deployed 41 of 63` moves rarely and says
-    exactly that.
+
+def fraction(group: Slice, stage: str) -> str:
+    """One slice at one stage, as the fraction and the two things that qualify it.
+
+    THE QUALIFIERS ARE NOT DECORATION. Rolling ninety-six rows into nine loses exactly the
+    information that makes a fraction trustworthy, so both losses are put back on the cell. A
+    `*` means part of the yes side is somebody's recollection rather than a reading, which is
+    what the whole board is built to keep visible. An `unread` count is rows the denominator
+    silently dropped because no lookup could run, and without it a `deployed` column read with
+    no AWS session looks small and confident rather than largely unasked.
     """
-    counted = []
-    for stage in ("built", "deployed", "proven"):
-        reached, applicable = count_reached(board, stage)
-        spoken = sum(
-            1
-            for group in board
-            for surface in group.surfaces
-            if surface.cells[stage].moved and not surface.cells[stage].derived
-        )
-        counted.append(
-            Row(
-                label=f"Surfaces {stage}",
-                value=f"{reached} of {applicable}",
-                command="uv run --frozen python tools/scoreboard.py",
-                note=(
-                    f"Out of the rows the stage applies to and something could answer. {spoken} "
-                    "of the yes side is a person's answer rather than a reading"
-                ),
-            )
-        )
-    return counted
+    reached, applicable = count_reached([group], stage)
+    cells = [surface.cells[stage] for surface in group.surfaces]
+    unread = sum(1 for cell in cells if cell.mark is Mark.NOT_READ)
+    spoken = sum(1 for cell in cells if cell.moved and not cell.derived)
+    if applicable == 0 and unread == 0:
+        return "n/a"
+    text = f"{reached} of {applicable}{'*' if spoken else ''}"
+    return f"{text} ({unread} unread)" if unread else text
+
+
+def _bold(text: str) -> str:
+    """The figure in bold with its qualifiers left outside.
+
+    Mutation this is written against: wrap the whole cell. `**30 of 55***` is three closing
+    asterisks and markdown renders it as bold text followed by nothing, silently eating the one
+    mark that says part of the total is somebody's recollection. The qualifier has to sit
+    outside the emphasis to survive.
+    """
+    figure, opened, tail = text.partition(" (")
+    marked = figure.endswith("*")
+    bolded = f"**{figure.removesuffix('*')}**" + ("\\*" if marked else "")
+    return bolded + (f"{opened}{tail}" if opened else "")
+
+
+def render_slice_rollup(board: Sequence[Slice], *, checked: str, moment: datetime) -> str:
+    """The whole platform on one screen, a row per slice and a fraction per stage.
+
+    WHY THIS IS THE DEFAULT AND THE PER-SURFACE TABLE IS NOT. Ninety-six rows is a detail view.
+    It answers "which thing is undeployed" and it cannot answer "where are we", because nothing
+    on it is a total and a reader has to count ninety-six rows to get one. These nine rows
+    answer the second question and name the command that answers the first.
+    """
+    total = Slice(name="Total", surfaces=[s for group in board for s in group.surfaces])
+    legend = (
+        "A denominator counts the rows the stage applies to. `*` means part of that yes side is "
+        f"a person's answer as of {checked} rather than a reading, and `unread` is rows no "
+        "lookup could answer on this run, which are in neither side of the fraction."
+    )
+    lines = [
+        (
+            f"Read at {moment.strftime('%Y-%m-%d %H:%M')} UTC by `tools/scoreboard.py`. Every "
+            "figure is computed on the run that prints it."
+        ),
+        "",
+        "| Slice | Built | Deployed | Proven |",
+        "| --- | --- | --- | --- |",
+    ]
+    lines.extend(
+        "| {} | {} |".format(group.name, " | ".join(fraction(group, s) for s in ROLLED_UP))
+        for group in board
+    )
+    joined = " | ".join(_bold(fraction(total, stage)) for stage in ROLLED_UP)
+    lines.append(f"| **Total** | {joined} |")
+    lines.extend(["", legend])
+    return "\n".join(lines)
 
 
 def rows(
@@ -635,14 +682,22 @@ def _run_collector() -> str | None:
     return completed.stdout
 
 
-def render(board: Sequence[Row], *, moment: datetime) -> str:
-    """The board as markdown, with the command beside every figure."""
-    lines = [
+def render(board: Sequence[Row], *, moment: datetime, heading: bool = True) -> str:
+    """The board as markdown, with the command beside every figure.
+
+    `heading` is off when the slice rollup printed above this, because that carries the same
+    read-at line, and two identical timestamps fifteen lines apart is the duplication this
+    document is being cured of.
+    """
+    heading_lines = [
         (
             f"Read at {moment.strftime('%Y-%m-%d %H:%M')} UTC by `tools/scoreboard.py`. Every "
             "figure is computed on the run that prints it."
         ),
         "",
+    ]
+    lines = [
+        *(heading_lines if heading else []),
         "| | Now | Re-run it |",
         "| --- | --- | --- |",
     ]
@@ -671,6 +726,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--region", default="us-east-2", help="AWS region the stacks are in")
     parser.add_argument("--surfaces", default=str(SURFACES), help="the surface manifest to resolve")
     parser.add_argument("--stages-only", action="store_true", help="the table and nothing else")
+    parser.add_argument(
+        "--detail",
+        action="store_true",
+        help="a row per surface rather than a row per slice, for asking which one",
+    )
     parser.add_argument("--json", action="store_true", help="one JSON document instead of a table")
     return parser
 
@@ -690,16 +750,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             now=moment,
             collected=None if collector_output is None else count_collected_tests(collector_output),
         )
-        + stage_rows(board)
     )
+    checked = str(manifest["checked"])
 
     if arguments.json:
         print(json.dumps(_document(board, counted, manifest, moment), indent=2))
         return 0
-    print(render_stage_table(board, checked=str(manifest["checked"])))
+    if arguments.detail:
+        print(render_stage_table(board, checked=checked))
+        return 0
+    print(render_slice_rollup(board, checked=checked, moment=moment))
     if counted:
         print()
-        print(render(counted, moment=moment))
+        print(render(counted, moment=moment, heading=False))
     return 0
 
 
