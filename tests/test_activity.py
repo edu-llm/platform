@@ -106,8 +106,8 @@ def _facts(
         fanout_size=None,
         submitted_at=started,
         approving_environment="run-approval-lead",
-        workflow_run_id=30281990942,
-        workflow_run_url="https://github.com/edu-llm/platform/actions/runs/30281990942/attempts/1",
+        workflow_run_id=19407766,
+        workflow_run_url="https://github.com/edu-llm/platform/actions/runs/19407766/attempts/1",
         attempts=attempts,
         state=state,
         state_source=state_source,
@@ -381,7 +381,7 @@ def test_a_feed_that_was_read_leaves_the_list_to_the_mismatch_module() -> None:
     page or replace a real list with a caveat.
     """
     launch = LaunchEvent(
-        event_id="b1e2c3d4-0000-4000-8000-000000000001",
+        event_id="b1e2c3d4-0000-4000-8000-a1b2c3d4e5f6",
         event_name="RunInstances",
         occurred_at=datetime(2026, 8, 4, 9, 30, tzinfo=UTC),
         role_name="Intern-cathy.du-sbsandbox",
