@@ -106,6 +106,9 @@ A waiver lands in the run's manifest and the approving lead is told which check 
 | `olmo-original-30b-v1` | 31.3B | 120 |
 | `olmo-127b-v1` | 126.5B | 474 |
 | `olmo-150b-dolma2-v1` | 157.2B | 6,851 |
+| `reservoir-dolma2-v1` | 250.2B | 10,049 |
+
+`reservoir-dolma2-v1` is the odd one on this list and the difference matters before you pick it. The others are corpora sized to be trained on whole; that one is a **reservoir** you draw a mixture out of. Its 250.2B tokens span 14 sources across 8 categories, labelled so `build_mixture` can take a weighted ~20B subset; naming it whole trains on a mix nobody chose, and on roughly twelve times the tokens a 20B run budgeted for. Two things it discloses that you cannot recompute from the shards: 23.8% of its train split is rephrased FineWeb-Edu and is effectively undecontaminated, because rephrasing is what defeats n-gram matching; and its `ubuntu-irc` source has no validation split at all. Its licensing is mixed and 7.1% of train carries CC-BY-SA-4.0 share-alike terms, so check them before redistributing anything derived from it.
 
 All are frozen and nothing you run can write to them. Most use the dolma2 tokenizer, which the training image has built in. The exceptions are: `fineweb-edu-1b-v6` (SmolLM2 from Hub), `formal-proof-premises-500m-v2` (vendored Qwen2.5 from Hub), and the four `fineweb2-*` Plan B releases (gigatoken BPE / SuperBPE, configured in the image with no Hub fetch). Hub outages refuse only the SmolLM2 and Qwen corpora; Plan B and dolma2 start without it.
 
