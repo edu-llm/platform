@@ -40,14 +40,22 @@ far behind the install is. Re-install with `--force`, which is the upgrade for b
 | `edullm ask` | Files one ask for something you need yourself. Produces an issue somebody answers. |
 | `edullm run` | Ships this working tree to a machine of your own and streams the output of the command after a bare `--` back. Ungated, and no run anybody can cite. |
 | `edullm shell` | A terminal on that same machine, or a notebook on it with `--notebook`. |
+| `edullm stop` | Ends the machine those two started, and says what it ran up and where your files are. |
 
-Nine verbs, all built. A bare `edullm` prints the list, and `edullm <verb> --help` prints what
-that verb takes.
+Every verb in `BUILT_TODAY` is here and all of them are built. A bare `edullm` prints the list,
+and `edullm <verb> --help` prints what that verb takes.
 
-The last two are the exploration route and they are not the submission path. Nothing they do
+The last three are the exploration route and they are not the submission path. Nothing they do
 is checked against the registry, priced, approved or written to a lineage record, so what
 comes off them is a thing you saw rather than a result anybody can cite. Reach for `check` and
 `submit` for anything that is meant to count.
+
+**`edullm stop` terminates rather than stopping, and that is worth knowing before you type it.**
+The machine's own disk goes with it. The scratch prefix survives, `edullm run` syncs that prefix
+down before your command and back up after it, and a new machine for the same project picks up
+where the old one left off. Stopping instead would leave a machine no verb here can find and
+nothing reclaims, billing its volume for ever. It reaches only a machine tagged with your own
+source identity, and there is deliberately no flag that names an instance id.
 
 ## Start with `check`, always
 

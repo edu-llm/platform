@@ -214,7 +214,7 @@ edullm --version
 
 You need [uv](https://docs.astral.sh/uv/) and a `gh` that is logged in with `gh auth login`. That is the whole of it for the five verbs below. `check`, `submit`, `status`, `logs` and `cancel` drive `git` and `gh` rather than holding a credential of their own, so they can do what you can do and nothing more, and there is no AWS account anywhere in this. All five were run on 2026-08-06 with `AWS_PROFILE`, both key variables and both configuration paths pointed at nothing, and all five answered normally.
 
-**Two verbs are not like that and this is the one place that is said.** `edullm run` and `edullm shell` start a machine of your own, which means they need an AWS session on your laptop as well, and the [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html) beside the AWS CLI. The session comes from the broker and from nowhere else.
+**Three verbs are not like that and this is the one place that is said.** `edullm run`, `edullm shell` and `edullm stop` work on a machine of your own, which means they need an AWS session on your laptop as well. The first two also need the [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html) beside the AWS CLI, because both open a session on the machine; `stop` opens nothing and needs only the session, which is deliberate — a laptop whose plugin has broken can still end a machine it can no longer connect to. The session comes from the broker and from nowhere else.
 
 ```
 sb-aws-creds login
@@ -280,7 +280,7 @@ no refusals. edullm submit will dispatch this.
 
 **Read the ceiling and the approval line out of your own run rather than out of the block above.** Both come from reviewed configuration and both have moved this week. `what it has taken` moves faster still, because it is measured over every run the platform has recorded, and it is the only figure here that is an observation rather than a bound.
 
-Nine verbs. `edullm` on its own prints the list and `edullm <verb> --help` prints what one takes.
+These are all of them. `edullm` on its own prints the list and `edullm <verb> --help` prints what one takes.
 
 | Verb | What it does |
 | --- | --- |
@@ -293,6 +293,7 @@ Nine verbs. `edullm` on its own prints the list and `edullm <verb> --help` print
 | `edullm ask` | Files one issue a person answers. It grants nothing itself |
 | `edullm run --project p -- <command>` | A machine of your own, this directory on it, output streamed back. Needs an AWS session. `--compute` is optional |
 | `edullm shell --project p` | A terminal on that same machine, or a notebook with `--notebook`. Needs an AWS session |
+| `edullm stop --project p` | Ends that machine and says what it ran up. Needs an AWS session, and no plugin |
 
 The flags are the fields the form asks for, and `check` and `submit` take the same ones. The command, the workload profile and a suggested machine are properties of the code, so they live in `.edullm/run.yaml` and travel with it in git. What a run costs today is typed on the command line, because one commit run by two people belongs to two teams.
 
@@ -351,7 +352,32 @@ You can configure credentials by running "aws login".
 
 **How the sixteen of us holding no AWS role get that broker is still not settled**, and the reason the rollout note's install line fails is worth knowing rather than retrying. `sb-aws-creds` is a private package published out of another repository, so `npm install -g sb-aws-creds` answers 404 and always will, and no amount of re-running it changes that. On a laptop that already has it, `sb-aws-creds login` is the whole of it. On one that does not, `edullm ask --kind access-request` is the route, and it will be answered with whatever the distribution turns out to be. **Nothing on the submission path waits on this.** You can produce a citable run today with `gh auth login` and nothing else.
 
-`--compute` is optional on both verbs. Left out, the lane starts the cheapest GPU shape whose card has bfloat16 and that has been recorded as placing, and says which one it chose and what it costs an hour before it starts. **A second `run` that finds a machine you already have says nothing about a shape**, deliberately, because the machine it found may not be the one that default would have picked and quoting the default's rate for it would be a wrong number that reads as authoritative. `--project` stays required, because a project name is the one thing only you hold: it tags the instance and names the prefix your output lands in, and a wrong one puts two unrelated pieces of work under one bill with nothing afterwards able to separate them.
+## Ending a machine
+
+`edullm stop --project p` ends the machine you have for that project. Until it existed nothing in this tool did, and `--hours 1` is the smallest lifetime the flag takes, so the floor on starting the wrong shape was about an hour of billing you could watch and could not stop.
+
+It prints three things: that the machine is gone, roughly what it ran up, and where your files are.
+
+```
+i-0abc123def4567890 is terminated, and it was running until this ran. It ran
+2 hours 15 minutes on a g4dn.xlarge, which config/workload-catalog.yaml prices
+as gpu-1xt4 at $0.526/hour, so roughly $1.18. That is the machine and not its
+disk or its traffic.
+
+Your files are at s3://edullm-scratch/you/mixlaw/, which survives the machine
+and holds what is in it for 90 days. The machine's own disk went with the
+machine, which is what it was for: edullm run syncs that prefix down before
+your command and back up after it, so a new machine for this project picks up
+where this one left off.
+```
+
+**Read the rate and the figure out of your own run rather than out of the block above.** The rate is reviewed configuration, it moves, and the cost is the catalog's on-demand price against the wall clock — it excludes the volume and the traffic, and on a machine bought with `--spot` it is a ceiling rather than a reading. The verb says which of those apply.
+
+**It terminates rather than stopping, and the disk goes with it.** The expiry janitor stops; this does not, and the difference is deliberate. The janitor acts on a machine nobody asked it to touch, so it takes the expensive half off the bill and leaves every recovery open. You typing `stop` is you saying you are finished. A stopped machine would be worse for you three ways at once: `edullm run` looks for a running one and would start a second, the janitor leaves anything already stopped alone for ever, and the two hundred gibibytes would go on billing the whole time. So `edullm stop` is also how you clear up a machine the janitor has already stopped, which is the one state no other verb can see.
+
+**It reaches your machine and nobody else's.** The instance it ends is whichever one came back from a search filtered on your own source identity, and there is no flag that names an instance id — not because one would be hard, but because it would be the one way to end a colleague's machine. A `--project` that matches nothing you have is answered with the projects that do, rather than with a bare "nothing found" that reads like reassurance while something bills.
+
+`--compute` is optional on both starting verbs. Left out, the lane starts the cheapest GPU shape whose card has bfloat16 and that has been recorded as placing, and says which one it chose and what it costs an hour before it starts. **A second `run` that finds a machine you already have says nothing about a shape**, deliberately, because the machine it found may not be the one that default would have picked and quoting the default's rate for it would be a wrong number that reads as authoritative. `--project` stays required, because a project name is the one thing only you hold: it tags the instance and names the prefix your output lands in, and a wrong one puts two unrelated pieces of work under one bill with nothing afterwards able to separate them.
 
 ## Keeping edullm current
 

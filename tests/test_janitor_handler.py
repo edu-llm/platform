@@ -388,6 +388,83 @@ def test_a_warning_that_cannot_be_written_costs_neither_the_other_warnings_nor_t
     assert refusal.value.summary["refusals"][0]["code"] == "InvalidInstanceID.NotFound"
 
 
+@pytest.mark.parametrize("code", ["IncorrectInstanceState", "InvalidInstanceID.NotFound"])
+def test_a_machine_somebody_ended_themselves_does_not_fail_the_sweep(code: str) -> None:
+    """**THE RACE ``edullm stop`` INTRODUCES, AND THE WHOLE OF WHAT WAS DONE ABOUT IT.**
+    Mutation: keep counting a stop on a vanished machine as a refusal.
+
+    The sweep runs every five minutes and a researcher ending their own machine lands in the
+    window between this sweep's describe and its stop as often as they do it near an expiry.
+    Left as a refusal, the invocation fails on purpose -- which is right for a machine that is
+    expired, warned and unstoppable, and is exactly wrong for one that is already terminated.
+    Somebody would be paged, the reclaim service would look broken, and what had actually
+    happened is the one thing a researcher is now able to do about their own spending.
+
+    Both codes, because the two spellings are one fact arriving at two moments.
+    ``IncorrectInstanceState`` is a machine mid-termination and ``InvalidInstanceID.NotFound``
+    is one EC2 has finished forgetting, and a sweep cannot choose which it meets.
+    """
+    ended_by_its_owner = "i-0000000000000cafe"
+    client = FakeEc2(
+        [
+            reservation(ended_by_its_owner, EXPIRED_AND_WARNED),
+            reservation(ORDINARY, EXPIRED_AND_WARNED),
+        ],
+        refuses={ended_by_its_owner: code},
+    )
+
+    summary = handler({}, None, client=client)
+
+    assert client.stopped == [ORDINARY]
+    assert summary["refused"] == 0, "a machine that is already off the clock is not a refusal"
+    assert summary["already_gone"] == 1
+    assert summary["stops_completed"] == 1
+
+
+def test_a_stop_that_is_already_gone_is_not_reported_as_one_the_janitor_made() -> None:
+    """Mutation: count it in ``stops_completed`` and be done with it.
+
+    Tolerating the refusal and crediting the sweep with the reclaim are different changes, and
+    only the first is warranted. ``stops_completed`` is what says whether the janitor is doing
+    anything; a night on which every expired machine was ended by the person who started it
+    would read, under the collapsed count, exactly like a night the janitor worked -- so the
+    one number that could reveal a sweep quietly stopping nothing would be the number hiding
+    it.
+    """
+    ended_by_its_owner = "i-0000000000000cafe"
+    client = FakeEc2(
+        [reservation(ended_by_its_owner, EXPIRED_AND_WARNED)],
+        refuses={ended_by_its_owner: "InvalidInstanceID.NotFound"},
+    )
+
+    summary = handler({}, None, client=client)
+    lines = {one["instance_id"]: one for one in summary["decisions"]}  # type: ignore[attr-defined]
+
+    assert summary["stopped"] == 1, "it was still decided, which is what the judgement counts"
+    assert summary["stops_completed"] == 0, "and the sweep did not do it"
+    assert lines[ended_by_its_owner]["action"] == "stop"
+    assert lines[ended_by_its_owner]["outcome"] == "already_gone"
+
+
+def test_a_stop_the_account_genuinely_refuses_still_fails_the_sweep() -> None:
+    """**THE BOUNDARY ON THE TOLERANCE ABOVE, WHICH IS THE HALF WORTH GUARDING.**
+    Mutation: tolerate every error code on a stop rather than the two that mean it is gone.
+
+    ``OperationNotPermitted`` from ``DisableApiStop`` is the 2026-08-06 drill: a machine that
+    is expired, warned, running and costing money, and that this sweep cannot reclaim. That is
+    precisely the case the invocation is meant to fail on, and a tolerance list wide enough to
+    swallow it would put back the silence the whole per-machine repair was written to end.
+    """
+    client = a_sweep_with_a_protected_machine_and_an_ordinary_one()
+
+    with pytest.raises(SweepIncomplete) as refusal:
+        handler({}, None, client=client)
+
+    assert client.stopped == [ORDINARY]
+    assert refusal.value.summary["refusals"][0]["code"] == "OperationNotPermitted"
+    assert refusal.value.summary["already_gone"] == 0
+
+
 def test_a_decision_line_says_what_came_of_it_and_not_only_what_was_decided() -> None:
     """Mutation: report the decision without the outcome beside it.
 

@@ -39,7 +39,7 @@ import json
 import os
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Any, Protocol, cast
+from typing import Any, Final, Protocol, cast
 
 from edullm_platform.expiry_janitor import (
     ExpiryAction,
@@ -50,7 +50,45 @@ from edullm_platform.expiry_janitor import (
 )
 from edullm_platform.researcher_lane import WARNING_TAG_KEY, LaneSettings
 
-__all__ = ["Ec2Client", "SweepIncomplete", "handler"]
+__all__ = ["ALREADY_OFF_THE_CLOCK", "Ec2Client", "SweepIncomplete", "handler"]
+
+#: The EC2 error codes that mean the machine this sweep was about to act on is already off the
+#: clock, rather than that the sweep could not act.
+#:
+#: **THIS EXISTS BECAUSE ``edullm stop`` EXISTS AND THE TWO SHARE A FIVE-MINUTE WINDOW.** A
+#: researcher who ends their own machine between this sweep's describe-instances and its
+#: stop-instances leaves the second call with nothing to stop, and without this list that reads
+#: as a refusal: the invocation fails, which it is meant to do for a machine that is expired,
+#: warned and unstoppable, and somebody is paged about a machine that is already gone. The one
+#: thing a person is now able to do about their own spending would make the reclaim service look
+#: broken every time they did it near an expiry.
+#:
+#: **AND IT IS NARROW FOR THE REASON ``ZONE_SHAPED_REFUSALS`` IS.** Every code here has to mean
+#: the machine is not billing. ``InvalidInstanceID.NotFound`` is an instance EC2 no longer has.
+#: ``IncorrectInstanceState`` reaches a stop only from ``shutting-down`` or ``terminated``,
+#: because this sweep decides STOP only for a machine it has just observed ``running`` and
+#: stopping one that is already ``stopping`` or ``stopped`` succeeds. Anything else -- a stop
+#: refused by ``DisableApiStop``, a throttle, a credential -- is a machine that is still running
+#: and still costing money, and it stays a refusal that fails the invocation.
+#:
+#: **IT IS PASSED TO THE STOP AND NOT TO THE WARNING, WHICH IS THE OTHER HALF OF ITS NARROWNESS.**
+#: A ``create_tags`` that answers ``InvalidInstanceID.NotFound`` is the case
+#: ``test_a_warning_that_cannot_be_written_costs_neither_the_other_warnings_nor_the_stops``
+#: was written for, and this repository already ruled on it: a warning that did not land is a
+#: machine no later sweep can stop, so it is said out loud. That ruling is about a different
+#: call from the one ``edullm stop`` races, and widening this to cover it would be quietly
+#: reversing a decision under cover of a change about something else.
+ALREADY_OFF_THE_CLOCK: Final[frozenset[str]] = frozenset(
+    {"IncorrectInstanceState", "InvalidInstanceID.NotFound"}
+)
+
+#: What one machine's decision came to. Three outcomes rather than a boolean, because "the
+#: sweep stopped it" and "somebody else had already ended it" are different facts about who
+#: reclaimed a machine, and a record that collapsed them could not answer whether the janitor
+#: is doing anything at all.
+_DONE: Final = "done"
+_ALREADY_GONE: Final = "already_gone"
+_REFUSED: Final = "refused"
 
 
 def _settings_from_environment() -> LaneSettings:
@@ -145,8 +183,14 @@ def _act(
     instance_id: str,
     action: str,
     refusals: list[dict[str, str]],
-) -> bool:
+    tolerated: frozenset[str] = frozenset(),
+) -> str:
     """Make one EC2 call for one machine, and record a refusal rather than raising it.
+
+    ``tolerated`` is the codes this particular call may answer without the sweep having
+    failed, and it is empty unless a caller argues for a value. See
+    :data:`ALREADY_OFF_THE_CLOCK`, which is the one caller that passes anything and the one
+    action for which "the machine is not there" and "the goal is met" are the same sentence.
 
     ONE CALL PER MACHINE, AND THE COST IS THE POINT RATHER THAN AN OVERSIGHT. Both mutating
     EC2 verbs here validate every id in a request before acting on any of them, so a batched
@@ -166,16 +210,23 @@ def _act(
     try:
         call(**request)
     except Exception as error:  # noqa: BLE001 -- botocore's type is not importable here
+        code = _error_code(error)
+        # A MACHINE SOMEBODY ELSE ALREADY ENDED IS NOT A MACHINE THIS COULD NOT STOP. See
+        # ``ALREADY_OFF_THE_CLOCK``. Reported as its own outcome rather than as a success,
+        # because the sweep did not do this and a record saying it did would credit the
+        # janitor with reclaims that were somebody typing ``edullm stop``.
+        if code in tolerated:
+            return _ALREADY_GONE
         refusals.append(
             {
                 "instance_id": instance_id,
                 "action": action,
-                "code": _error_code(error),
+                "code": code,
                 "detail": str(error),
             }
         )
-        return False
-    return True
+        return _REFUSED
+    return _DONE
 
 
 def _error_code(error: BaseException) -> str:
@@ -230,7 +281,7 @@ def handler(
     refusals: list[dict[str, str]] = []
     stamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    acted: dict[str, bool] = {}
+    acted: dict[str, str] = {}
     for one in warned:
         acted[one.instance_id] = _act(
             ec2.create_tags,
@@ -249,6 +300,7 @@ def handler(
             one.instance_id,
             ExpiryAction.STOP.value,
             refusals,
+            ALREADY_OFF_THE_CLOCK,
         )
 
     summary: dict[str, object] = {
@@ -263,8 +315,12 @@ def handler(
         # `examined`; these two are outcomes. Collapsing them would make a sweep that stopped
         # nothing because there was nothing to stop read the same as one that stopped nothing
         # because every machine refused.
-        "warnings_written": sum(1 for one in warned if acted[one.instance_id]),
-        "stops_completed": sum(1 for one in stopped if acted[one.instance_id]),
+        "warnings_written": sum(1 for one in warned if acted[one.instance_id] == _DONE),
+        "stops_completed": sum(1 for one in stopped if acted[one.instance_id] == _DONE),
+        # Kept apart from ``stops_completed`` so the two numbers add up against ``stopped``
+        # with ``refused``, and so a night on which every reclaim was somebody ending their
+        # own machine is legible as that rather than as the janitor working.
+        "already_gone": sum(1 for one in acted.values() if one == _ALREADY_GONE),
         "refused": len(refusals),
         "refusals": refusals,
         "decisions": [_as_line(one, acted) for one in decisions],
@@ -275,18 +331,21 @@ def handler(
     return summary
 
 
-def _as_line(decision: ExpiryDecision, acted: Mapping[str, bool]) -> dict[str, str]:
+def _as_line(decision: ExpiryDecision, acted: Mapping[str, str]) -> dict[str, str]:
     """One instance's judgement and what came of it.
 
     ``action`` is what the sweep decided and ``outcome`` is what the account allowed, and they
     are two fields because they disagree exactly when somebody needs to know. A line reading
     ``stop`` with no outcome beside it was read for two sweeps as a machine that had been
     stopped.
+
+    Four outcomes now rather than three. ``already_gone`` is a machine somebody ended between
+    this sweep looking at it and this sweep acting on it, which since ``edullm stop`` shipped
+    is an ordinary thing for a researcher to do and is not the sweep failing.
     """
-    done = acted.get(decision.instance_id)
     return {
         "instance_id": decision.instance_id,
         "action": decision.action.value,
         "reason": decision.reason,
-        "outcome": "nothing_to_do" if done is None else ("done" if done else "refused"),
+        "outcome": acted.get(decision.instance_id, "nothing_to_do"),
     }

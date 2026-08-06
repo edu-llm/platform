@@ -34,6 +34,7 @@ import io
 import json
 import os
 from collections.abc import Callable, Collection, Iterable, Mapping
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -42,7 +43,7 @@ from edullm_platform.cli.lane import SESSION_PLUGIN
 from edullm_platform.cli.main import main
 from edullm_platform.cli.preferences import DEFAULT_TEAM_FILE, PREFERENCES_DIRECTORY
 from edullm_platform.cli.workspace import CommandResult
-from edullm_platform.researcher_lane import EXPIRES_AT_TAG_KEY
+from edullm_platform.researcher_lane import EXPIRES_AT_TAG_KEY, PROJECT_TAG_KEY
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = PROJECT_ROOT / "config"
@@ -230,6 +231,92 @@ def _run_instances(
     return answer
 
 
+#: How long a machine ``edullm stop`` finds has been up, and the shape it is.
+#:
+#: A duration rather than an instant, resolved against the clock when the fixture is built, so
+#: a case can assert on the sentence the verb composes without freezing time. Two hours and a
+#: quarter is 8100 seconds, which divides into hours exactly, so the money is the same figure
+#: whether the verb runs a millisecond or a second after this is computed.
+LANE_MACHINE_UPTIME = timedelta(hours=2, minutes=15)
+
+#: ``gpu-1xt4``'s instance type, which ``config/workload-catalog.yaml`` prices. Named as the
+#: type rather than the profile because the type is what EC2 reports and what the verb has to
+#: look the price up by.
+LANE_MACHINE_TYPE = "g4dn.xlarge"
+
+
+def _describe_instances(
+    *,
+    existing: str | None,
+    existing_expiry: str | None,
+    stoppable: Collection[Mapping[str, object]] | None,
+) -> Callable[[tuple[str, ...]], CommandResult]:
+    """One ``describe-instances`` answering the two different questions the lane asks of it.
+
+    **BRANCHED ON THE ``--query`` RATHER THAN ANSWERED ONCE, BECAUSE THE TWO CALLS ASK FOR
+    DIFFERENT FIELDS AND A FIXTURE THAT CONFLATED THEM WOULD PROVE NOTHING ABOUT EITHER.**
+    ``find_machine_argv`` asks for an id and its tags, which is what reuse needs.
+    ``find_lane_machines_argv`` asks for the state, the type, the launch time and the market
+    as well, because ``edullm stop`` reports what a machine was and what it ran up -- and a
+    fake that returned the reuse shape to it would let a verb that never asked for those
+    fields pass every case about the sentence they compose.
+    """
+
+    def answer(argv: tuple[str, ...]) -> CommandResult:
+        query = argv[argv.index("--query") + 1]
+        if "state:State.Name" in query:
+            return ok(json.dumps(list(stoppable or [])))
+        return ok(
+            json.dumps(
+                [
+                    {
+                        "machine": existing,
+                        "tags": [{"Key": PROJECT_TAG_KEY, "Value": "mixlaw"}]
+                        + (
+                            [{"Key": EXPIRES_AT_TAG_KEY, "Value": existing_expiry}]
+                            if existing_expiry
+                            else []
+                        ),
+                    }
+                ]
+                if existing
+                else []
+            )
+        )
+
+    return answer
+
+
+def a_machine_you_have(
+    *,
+    machine: str = LANE_INSTANCE,
+    project: str = "mixlaw",
+    state: str = "running",
+    instance_type: str = LANE_MACHINE_TYPE,
+    up_for: timedelta | None = LANE_MACHINE_UPTIME,
+    spot: bool = False,
+) -> dict[str, object]:
+    """One entry in what ``find_lane_machines_argv`` gets back, in the account's own shape.
+
+    ``up_for`` of ``None`` is a machine EC2 answered no ``LaunchTime`` for, which is the input
+    that decides whether the verb states a cost or says it cannot. ``lifecycle`` is omitted
+    entirely for an On-Demand machine rather than set to a word, because that is what EC2 does
+    and a fake that spelled it out would let a reader that keyed on the wrong absence pass.
+    """
+    launched = None if up_for is None else datetime.now(tz=UTC) - up_for
+    return {
+        "machine": machine,
+        "state": state,
+        "type": instance_type,
+        "launched": None if launched is None else launched.isoformat(),
+        **({"lifecycle": "spot"} if spot else {}),
+        "tags": [
+            {"Key": PROJECT_TAG_KEY, "Value": project},
+            {"Key": EXPIRES_AT_TAG_KEY, "Value": LANE_EXISTING_EXPIRY},
+        ],
+    }
+
+
 def lane_answers(
     *,
     existing: str | None = None,
@@ -238,6 +325,7 @@ def lane_answers(
     agent: str = "Online",
     capacity_in: Collection[str] | None = None,
     offerings: Collection[str] | None = None,
+    stoppable: Collection[Mapping[str, object]] | None = None,
 ) -> dict[tuple[str, ...], CommandResult | Callable[[tuple[str, ...]], CommandResult]]:
     """Every AWS call a lane verb makes, answered as a laptop already holding a session.
 
@@ -302,23 +390,10 @@ def lane_answers(
             json.dumps(list(LANE_ZONES_OFFERING if offerings is None else offerings))
         ),
         ("aws", "ec2", "describe-security-groups"): ok(json.dumps(["sg-000000000000000cc"])),
-        ("aws", "ec2", "describe-instances"): ok(
-            json.dumps(
-                [
-                    {
-                        "machine": existing,
-                        "tags": [{"Key": "Project", "Value": "mixlaw"}]
-                        + (
-                            [{"Key": EXPIRES_AT_TAG_KEY, "Value": existing_expiry}]
-                            if existing_expiry
-                            else []
-                        ),
-                    }
-                ]
-                if existing
-                else []
-            )
+        ("aws", "ec2", "describe-instances"): _describe_instances(
+            existing=existing, existing_expiry=existing_expiry, stoppable=stoppable
         ),
+        ("aws", "ec2", "terminate-instances"): ok("shutting-down\n"),
         ("aws", "ec2", "run-instances"): _run_instances(
             LANE_ZONES if capacity_in is None else capacity_in
         ),
