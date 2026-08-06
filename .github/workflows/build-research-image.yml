@@ -95,6 +95,7 @@ jobs:
           WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
           EVENT_NAME: ${{ github.event_name }}
           AWS_REGION: ${{ inputs.aws_region }}
+          PUBLISHER_ROLE_ARN: ${{ inputs.publisher_role_arn }}
         run: |
           set -euo pipefail
           missing=""
@@ -129,6 +130,34 @@ jobs:
               exit 1
               ;;
           esac
+          # `required: true` on a workflow_call input requires the key, not a value. An unset
+          # repository variable renders as the empty string, GitHub drops an empty input, and
+          # the credentials action in the two jobs that assume the role then receives no role
+          # to assume at all -- so it falls through to a default credential chain and
+          # prints "Could not load credentials from any providers" twelve times over ninety
+          # seconds. That names the credential chain. It names neither the input, nor the
+          # variable behind it, nor the repository that has to change, and it arrives on a
+          # second runner after the tooling has been installed. edullm-p1 was registered on
+          # 2026-08-04 with a correct caller file, nobody set the variable, and its ECR
+          # repository held zero images until a person read that log on 2026-08-06.
+          #
+          # Checked here too, in the job that holds no identity, because this is the first
+          # job and the check costs nothing.
+          #
+          # Neither message repeats the value. It carries the account id, which
+          # mask-aws-account-id keeps out of every other line in this file.
+          if [[ -z "${PUBLISHER_ROLE_ARN-}" ]]; then
+            echo "publisher_role_arn_is_empty" >&2
+            echo "This workflow was called with no publisher role, which is almost always the AWS_ECR_PUBLISHER_ROLE_ARN repository variable being unset on the calling repository rather than anything in the caller file." >&2
+            echo "Read what a sibling carries and copy it, rather than typing an ARN: gh variable get AWS_ECR_PUBLISHER_ROLE_ARN --repo edu-llm/<a repository that publishes>" >&2
+            echo "Then: gh variable set AWS_ECR_PUBLISHER_ROLE_ARN --repo <this repository> --body <that value>" >&2
+            exit 1
+          fi
+          if [[ ! "${PUBLISHER_ROLE_ARN}" =~ ^arn:aws[a-z-]*:iam::[0-9]{12}:role/.+$ ]]; then
+            echo "publisher_role_arn_malformed" >&2
+            echo "publisher_role_arn is set to something that is not an IAM role ARN, so AssumeRole would refuse it with a message about the ARN rather than about the value somebody typed. Expected arn:aws:iam::<account>:role/<name>." >&2
+            exit 1
+          fi
 
       # fetch-depth 0 is for the caller, not for us: verification needs only git status,
       # git rev-parse HEAD, and git ls-remote, but the caller's own test command runs
@@ -266,6 +295,7 @@ jobs:
           WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
           EVENT_NAME: ${{ github.event_name }}
           AWS_REGION: ${{ inputs.aws_region }}
+          PUBLISHER_ROLE_ARN: ${{ inputs.publisher_role_arn }}
         run: |
           set -euo pipefail
           missing=""
@@ -300,6 +330,34 @@ jobs:
               exit 1
               ;;
           esac
+          # `required: true` on a workflow_call input requires the key, not a value. An unset
+          # repository variable renders as the empty string, GitHub drops an empty input, and
+          # the credentials action in the two jobs that assume the role then receives no role
+          # to assume at all -- so it falls through to a default credential chain and
+          # prints "Could not load credentials from any providers" twelve times over ninety
+          # seconds. That names the credential chain. It names neither the input, nor the
+          # variable behind it, nor the repository that has to change, and it arrives on a
+          # second runner after the tooling has been installed. edullm-p1 was registered on
+          # 2026-08-04 with a correct caller file, nobody set the variable, and its ECR
+          # repository held zero images until a person read that log on 2026-08-06.
+          #
+          # Checked here too, in the job that holds no identity, because this is the first
+          # job and the check costs nothing.
+          #
+          # Neither message repeats the value. It carries the account id, which
+          # mask-aws-account-id keeps out of every other line in this file.
+          if [[ -z "${PUBLISHER_ROLE_ARN-}" ]]; then
+            echo "publisher_role_arn_is_empty" >&2
+            echo "This workflow was called with no publisher role, which is almost always the AWS_ECR_PUBLISHER_ROLE_ARN repository variable being unset on the calling repository rather than anything in the caller file." >&2
+            echo "Read what a sibling carries and copy it, rather than typing an ARN: gh variable get AWS_ECR_PUBLISHER_ROLE_ARN --repo edu-llm/<a repository that publishes>" >&2
+            echo "Then: gh variable set AWS_ECR_PUBLISHER_ROLE_ARN --repo <this repository> --body <that value>" >&2
+            exit 1
+          fi
+          if [[ ! "${PUBLISHER_ROLE_ARN}" =~ ^arn:aws[a-z-]*:iam::[0-9]{12}:role/.+$ ]]; then
+            echo "publisher_role_arn_malformed" >&2
+            echo "publisher_role_arn is set to something that is not an IAM role ARN, so AssumeRole would refuse it with a message about the ARN rather than about the value somebody typed. Expected arn:aws:iam::<account>:role/<name>." >&2
+            exit 1
+          fi
 
       # No checkout of the caller. This job holds a publisher session, and the caller's
       # code has no part in deciding what that session is allowed to do.
@@ -383,6 +441,7 @@ jobs:
           WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
           EVENT_NAME: ${{ github.event_name }}
           AWS_REGION: ${{ inputs.aws_region }}
+          PUBLISHER_ROLE_ARN: ${{ inputs.publisher_role_arn }}
         run: |
           set -euo pipefail
           missing=""
@@ -417,6 +476,34 @@ jobs:
               exit 1
               ;;
           esac
+          # `required: true` on a workflow_call input requires the key, not a value. An unset
+          # repository variable renders as the empty string, GitHub drops an empty input, and
+          # the credentials action in the two jobs that assume the role then receives no role
+          # to assume at all -- so it falls through to a default credential chain and
+          # prints "Could not load credentials from any providers" twelve times over ninety
+          # seconds. That names the credential chain. It names neither the input, nor the
+          # variable behind it, nor the repository that has to change, and it arrives on a
+          # second runner after the tooling has been installed. edullm-p1 was registered on
+          # 2026-08-04 with a correct caller file, nobody set the variable, and its ECR
+          # repository held zero images until a person read that log on 2026-08-06.
+          #
+          # Checked here too, in the job that holds no identity, because this is the first
+          # job and the check costs nothing.
+          #
+          # Neither message repeats the value. It carries the account id, which
+          # mask-aws-account-id keeps out of every other line in this file.
+          if [[ -z "${PUBLISHER_ROLE_ARN-}" ]]; then
+            echo "publisher_role_arn_is_empty" >&2
+            echo "This workflow was called with no publisher role, which is almost always the AWS_ECR_PUBLISHER_ROLE_ARN repository variable being unset on the calling repository rather than anything in the caller file." >&2
+            echo "Read what a sibling carries and copy it, rather than typing an ARN: gh variable get AWS_ECR_PUBLISHER_ROLE_ARN --repo edu-llm/<a repository that publishes>" >&2
+            echo "Then: gh variable set AWS_ECR_PUBLISHER_ROLE_ARN --repo <this repository> --body <that value>" >&2
+            exit 1
+          fi
+          if [[ ! "${PUBLISHER_ROLE_ARN}" =~ ^arn:aws[a-z-]*:iam::[0-9]{12}:role/.+$ ]]; then
+            echo "publisher_role_arn_malformed" >&2
+            echo "publisher_role_arn is set to something that is not an IAM role ARN, so AssumeRole would refuse it with a message about the ARN rather than about the value somebody typed. Expected arn:aws:iam::<account>:role/<name>." >&2
+            exit 1
+          fi
 
       # No fetch-depth here. Nothing in this job reads history, and this checkout is the
       # `docker build` context, where a full .git is weight a layer can copy.

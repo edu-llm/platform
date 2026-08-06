@@ -337,6 +337,51 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: uv run --frozen python tools/verify_registered_dockerfiles.py
 
+  publishable-registrations:
+    name: every registration can actually publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # WHAT THIS CATCHES IS EVERYTHING A REGISTRATION IMPLIES THAT LIVES IN ANOTHER
+      # REPOSITORY. The job above holds a registration against the repository it names; this
+      # one holds it against whether that repository can do the thing the registration
+      # authorised. Four of the six requirements are written by hand in the caller repository
+      # and none of them is written by tools/register_repository.py: the caller workflow, its
+      # id-token grant, the ref its `uses:` names, and the AWS_ECR_PUBLISHER_ROLE_ARN
+      # repository variable.
+      #
+      # edullm-p1 was registered on 2026-08-04 with all of that correct except the variable,
+      # which nobody set. Its ECR repository held zero images for two days and nothing on this
+      # schedule could say so, because the failure is a credentials error inside a workflow in
+      # another repository that only fires when somebody dispatches it.
+      # docs-frank/reference/registering-a-repository.md predicts the failure and a runbook is
+      # read by whoever is registering something rather than by whoever registered something
+      # last week, so it goes here instead.
+      #
+      # The variable itself is deliberately not what this reads, and the tool's docstring
+      # argues that at length: Actions variables need collaborator access, this repository's
+      # GITHUB_TOKEN is a collaborator on nothing else, and two tests in
+      # tests/test_phase2_github_evidence.py assert that this repository holds no credential
+      # at all. So the question asked is the one the variable is a means to -- has a build of
+      # this registration ever succeeded -- which needs only a public read and is answered no
+      # by every one of the six failures rather than by that one.
+      #
+      # No translation of the exit code, for the reason the job above gives.
+      - name: Check every registration can reach the registry it was given
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --frozen python tools/verify_registered_repositories_can_publish.py
+
   checkpoint-reconciliation:
     name: runs that promised a checkpoint have one
     runs-on: ubuntu-latest

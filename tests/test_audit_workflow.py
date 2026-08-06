@@ -87,6 +87,10 @@ ROSTER_JOB = "roster-against-the-account"
 #: Found by the sweep below on the morning a tenth job was added, which is what the sweep is
 #: for. It was the first job in the file until the gate check went in front of it.
 DOCKERFILES_JOB = "registered-dockerfiles"
+#: The other half of the same question. The job above asks whether a registration names a
+#: file that is there; this one asks whether the repository it names can do the thing the
+#: registration authorised, which is the part that lives outside this repository entirely.
+PUBLISHABLE_JOB = "publishable-registrations"
 LEAD_GATE_JOB = "lead-gate"
 #: The one job here whose subject is a GitHub setting rather than a file or the account. Its
 #: neighbour above is the other half of the same question and the two do not overlap:
@@ -121,6 +125,7 @@ ACTIVITY_UPLOAD_STEP = "Publish the page"
 ACTIVITY_HISTORY_STEP = "Keep the page on the machine/activity branch"
 ASKS_STEP = "Count the open asks"
 DOCKERFILES_STEP = "Check every registration against the repository it names"
+PUBLISHABLE_STEP = "Check every registration can reach the registry it was given"
 LEAD_GATE_STEP = "Compare the captured team against the roster, and say how old the capture is"
 GATE_STEP = "Check the approval environments against what this repository declares"
 GUARD_STEP = "Check the audit reader role is deployed"
@@ -1679,6 +1684,7 @@ def test_the_audit_reads_the_approval_gate_out_of_github_every_morning(
         (CAPTURE_JOB, CAPTURE_STEP),
         (ASKS_JOB, ASKS_STEP),
         (DOCKERFILES_JOB, DOCKERFILES_STEP),
+        (PUBLISHABLE_JOB, PUBLISHABLE_STEP),
         (LEAD_GATE_JOB, LEAD_GATE_STEP),
     ],
 )
@@ -1731,6 +1737,7 @@ def test_every_job_in_this_file_is_either_checked_above_or_excused_by_name(
         CAPTURE_JOB,
         ASKS_JOB,
         DOCKERFILES_JOB,
+        PUBLISHABLE_JOB,
         ROSTER_JOB,
         LEAD_GATE_JOB,
         GATE_JOB,

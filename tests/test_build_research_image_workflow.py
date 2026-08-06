@@ -45,6 +45,16 @@ FAILURE_NOTICE_STEP = "Say what failed, where the failure notification lands"
 # Written by whichever of the build step and the resume step ran, read by provenance.
 IMAGE_CREATED_FILE = "image-created.txt"
 JOB_WORKFLOW_REF = f"{PLATFORM_REPOSITORY}/{WORKFLOW_PATH_INPUT}@refs/heads/main"
+# On the documentation account id every other test in this module uses. The name is the
+# real one because the guard matches the shape rather than the name, and a placeholder
+# there would let a guard that pattern-matched the role name pass this file.
+SOME_PUBLISHER_ROLE_ARN = (
+    "arn:aws:iam::123456789012:role/sbsandbox-intern-edullm-ecr-publisher"
+)
+# The repository Actions variable each caller reads the ARN out of. Spelled here because
+# the guard's message names it and that name is the whole value of the message: the failure
+# it replaces named the credential chain instead, in a job three steps further on.
+PUBLISHER_ROLE_VARIABLE = "AWS_ECR_PUBLISHER_ROLE_ARN"
 PUBLISHED_IMAGE_DIGEST = "sha256:" + "b" * 64
 PUBLISHED_CONFIG_DIGEST = "sha256:" + "c" * 64
 PUBLISHED_BASE_REFERENCE = "public.ecr.aws/example/base@sha256:" + "e" * 64
@@ -316,6 +326,10 @@ def test_every_job_checks_the_caller_contract_before_anything_else() -> None:
         assert contract["env"]["WORKFLOW_FILE_PATH"] == "${{ job.workflow_file_path }}"
         assert contract["env"]["EVENT_NAME"] == "${{ github.event_name }}"
         assert contract["env"]["AWS_REGION"] == "${{ inputs.aws_region }}"
+        # Checked in the gate job as well as in the two that assume the role. It costs
+        # nothing there and it is the first job, so the run that has no role says so in
+        # fourteen seconds rather than after a second runner has installed the tooling.
+        assert contract["env"]["PUBLISHER_ROLE_ARN"] == "${{ inputs.publisher_role_arn }}"
         scripts.add(contract["run"])
 
     assert len(scripts) == 1, "every job must enforce the identical caller contract"
@@ -329,6 +343,7 @@ def _contract_environment(**overrides: str) -> dict[str, str]:
         "WORKFLOW_FILE_PATH": WORKFLOW_PATH_INPUT,
         "EVENT_NAME": "push",
         "AWS_REGION": "us-east-1",
+        "PUBLISHER_ROLE_ARN": SOME_PUBLISHER_ROLE_ARN,
     }
     environment.update(overrides)
     return environment
@@ -411,6 +426,99 @@ def test_events_whose_github_ref_is_merely_the_default_branch_are_rejected(
     assert result.returncode == 1
     assert "unsupported_caller_event" in result.stderr
     assert event_name in result.stderr
+
+
+@pytest.mark.slow
+def test_a_caller_that_passed_no_publisher_role_is_told_which_variable_is_unset(
+    tmp_path: Path,
+) -> None:
+    """THE ONE THIS GUARD WAS ADDED FOR, and the reason is the message rather than the exit.
+
+    `required: true` on a workflow_call input requires the key and not a value. An unset
+    repository variable renders as the empty string, GitHub drops the empty input, and
+    aws-actions/configure-aws-credentials receives no role-to-assume at all -- so it falls
+    through to a default credential chain holding nothing and prints "Could not load
+    credentials from any providers" twelve times over ninety seconds. That text names the
+    credential chain. It does not name the input, the variable behind it, or the repository
+    that has to change, and it arrives in the second job after a runner has installed the
+    tooling.
+
+    edullm-p1 was registered on 2026-08-04 with a correct caller file and nobody set the
+    variable. Its ECR repository held zero images until 2026-08-06, and what finally said so
+    was a person reading a log. So the assertion here is that the variable is named.
+    """
+    contract = step(_job("publish"), CONTRACT_STEP)
+
+    result = run_step_script(
+        contract["run"],
+        cwd=tmp_path,
+        env=_contract_environment(PUBLISHER_ROLE_ARN=""),
+    )
+
+    assert result.returncode == 1
+    assert "publisher_role_arn_is_empty" in result.stderr
+    assert PUBLISHER_ROLE_VARIABLE in result.stderr
+    # The repair, not just the diagnosis. Both halves are asserted because a message that
+    # named the variable and left somebody to invent an ARN is how a role name ends up in
+    # it, which is the failure the test below covers.
+    assert "gh variable get" in result.stderr
+    assert "gh variable set" in result.stderr
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "value",
+    [
+        "sbsandbox-intern-edullm-ecr-publisher",
+        "arn:aws:iam::123456789012:role/",
+        "arn:aws:iam::12345:role/sbsandbox-intern-edullm-ecr-publisher",
+        "arn:aws:sts::123456789012:assumed-role/sbsandbox-intern-edullm-ecr-publisher",
+        "${{ vars.AWS_ECR_PUBLISHER_ROLE_ARN }}",
+    ],
+)
+def test_a_publisher_role_that_is_not_an_arn_is_refused_before_assume_role_sees_it(
+    tmp_path: Path,
+    value: str,
+) -> None:
+    """Mutation: check only that the value is non-empty.
+
+    A variable set to the role's *name* is the obvious mistake once somebody is told a
+    variable is missing, and STS answers it with a message about a malformed ARN rather than
+    about the thing that was typed. The last case is the one worth having: a caller that
+    single-quoted the expression passes a literal that is neither empty nor an ARN.
+    """
+    contract = step(_job("publish"), CONTRACT_STEP)
+
+    result = run_step_script(
+        contract["run"],
+        cwd=tmp_path,
+        env=_contract_environment(PUBLISHER_ROLE_ARN=value),
+    )
+
+    assert result.returncode == 1
+    assert "publisher_role_arn_malformed" in result.stderr
+    assert "publisher_role_arn_is_empty" not in result.stderr
+
+
+@pytest.mark.slow
+def test_the_guard_never_repeats_the_publisher_role_it_was_given(tmp_path: Path) -> None:
+    """The ARN carries the account id, which mask-aws-account-id keeps out of every other line.
+
+    A guard that echoed the value it rejected would put an account id in a world-readable
+    log on exactly the runs somebody is most likely to share while asking for help.
+    """
+    contract = step(_job("publish"), CONTRACT_STEP)
+
+    result = run_step_script(
+        contract["run"],
+        cwd=tmp_path,
+        env=_contract_environment(
+            PUBLISHER_ROLE_ARN="arn:aws:iam::123456789012:role/"
+        ),
+    )
+
+    assert result.returncode == 1
+    assert "123456789012" not in result.stderr + result.stdout
 
 
 @pytest.mark.slow
