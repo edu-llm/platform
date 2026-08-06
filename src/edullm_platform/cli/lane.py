@@ -23,10 +23,11 @@ import random
 import re
 import shlex
 from collections.abc import Mapping, Sequence
+from configparser import ConfigParser, Error, MissingSectionHeaderError
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Final, Literal
 
 from pydantic import Field
@@ -56,7 +57,12 @@ from edullm_platform.researcher_lane import (
 from edullm_platform.reviewed_configuration import ConfigFile, load_config_file
 
 __all__ = [
+    "ACCESS_REQUEST_COMMAND",
+    "AWS_BROKER",
     "AWS_LOGIN_COMMAND",
+    "AWS_PROFILE_COMMAND",
+    "AWS_PROFILE_VARIABLE",
+    "CREDENTIAL_PROCESS_KEY",
     "GPU_AMI_PARAMETER",
     "LANE_INSTANCE_PROFILE",
     "LANE_TAG_KEY",
@@ -71,11 +77,16 @@ __all__ = [
     "LaneRequest",
     "LaneSubnet",
     "RanFor",
+    "ResolvedProfile",
     "WorkingTierSettings",
     "ZoneAttempt",
     "agent_online_argv",
+    "ambiguous_profile_refusal",
     "another_zone_may_answer",
     "assume_lane_argv",
+    "aws_config_path",
+    "broker_profiles",
+    "chosen_profile_said",
     "command_line",
     "credentials_environment",
     "default_compute_profile",
@@ -91,7 +102,9 @@ __all__ = [
     "load_working_tier_settings",
     "machine_already_running",
     "machine_for_project",
+    "missing_broker_refusal",
     "missing_plugin_refusal",
+    "no_broker_profile_refusal",
     "no_machine_to_stop",
     "no_zone_had_this_shape",
     "notebook_forward_argv",
@@ -102,9 +115,11 @@ __all__ = [
     "priced_as",
     "ran_for",
     "ran_for_said",
+    "read_aws_config",
     "refusal_code",
     "remote_command_argv",
     "remote_script",
+    "resolve_aws_profile",
     "run_instances_argv",
     "shell_session_argv",
     "ssh_proxy_command",
@@ -1612,6 +1627,13 @@ def run_instances_argv(
 #: install and it is not optional: every session below goes through it.
 SESSION_PLUGIN: Final = "session-manager-plugin"
 
+#: The binary that issues every human AWS credential in this organization.
+#:
+#: Named as a constant of its own rather than spelled into the three commands below, because
+#: it is now also the thing :func:`missing_broker_refusal` looks for on PATH, and a name that
+#: appeared in four string literals would be four places to miss on a rename.
+AWS_BROKER: Final = "sb-aws-creds"
+
 #: How a person in this organization gets an AWS session, spelled out rather than alluded to.
 #:
 #: There is one way and no second one. The sandbox issues no long-lived keys and refuses the
@@ -1622,7 +1644,19 @@ SESSION_PLUGIN: Final = "session-manager-plugin"
 #:
 #: Held to ``guides/the-platform.md`` by ``tests/test_guides.py``, so the guide and the
 #: refusal cannot name two different commands.
-AWS_LOGIN_COMMAND: Final = "sb-aws-creds login"
+AWS_LOGIN_COMMAND: Final = f"{AWS_BROKER} login"
+
+#: What writes the profile the lane then resolves. The second of the broker's two steps.
+AWS_PROFILE_COMMAND: Final = f"{AWS_BROKER} install-profiles"
+
+#: Where somebody who cannot get the broker is sent, spelled the way ``cli/intake.py`` spells
+#: the kind. ``guides/day-one.md`` and ``guides/the-platform.md`` already route here, so this
+#: refusal joins a path that exists rather than inventing one.
+ACCESS_REQUEST_COMMAND: Final = "edullm ask --kind access-request"
+
+#: The environment variable the AWS CLI and every SDK read to pick a profile, and the one
+#: this resolution steps aside for entirely.
+AWS_PROFILE_VARIABLE: Final = "AWS_PROFILE"
 
 
 def shell_session_argv(instance_id: str) -> tuple[str, ...]:
@@ -1813,6 +1847,261 @@ def missing_plugin_refusal() -> Refusal:
             "Nothing was started and nothing is billing."
         ),
     )
+
+
+def missing_broker_refusal() -> Refusal:
+    """What to say when the laptop has no credential broker at all.
+
+    **THIS REFUSAL PRINTS NO INSTALL COMMAND, AND THAT IS THE WHOLE POINT OF IT RATHER THAN AN
+    OMISSION TO TIDY UP LATER.** ``sb-aws-creds`` cannot be installed by the person reading
+    this. It is marked ``"private": true`` in its own ``package.json``, so it has never been
+    publishable to npm and ``npm view sb-aws-creds`` answers 404; it is built out of
+    ``superbuilders/devops-dashboard``, which is a private repository in an organization the
+    eduLLM roster is not a member of, so ``git clone`` answers 404 as well. Every working
+    install in this organization -- roughly twenty of them -- came from a tarball handed over
+    by somebody who already had one. That was traced on this laptop on 2026-08-06 from the
+    symlink ``npm install -g`` left, the Safari quarantine attribute on the tarball, and the
+    absence of any private registry in ``~/.npmrc``.
+
+    So the honest refusal is the one below: it says the thing cannot be self-served and routes
+    to the ask queue, which is where ``guides/day-one.md`` and ``guides/the-platform.md``
+    already send anybody who needs AWS. **An install line here would be worse than no line at
+    all** -- it would send fifteen people to a 404 and cost each of them the afternoon this
+    refusal exists to save, which is exactly the failure being corrected. The README inside the
+    tarball demonstrates the hazard: it names ``pipx install git+...`` for a package that is
+    Node and TypeScript, so even the copy shipped beside the binary is wrong.
+
+    **IT IS THE FIRST WALL BECAUSE IT PRECEDES BOTH OTHERS.** The Session Manager plugin and an
+    AWS session are the other two prerequisites, and neither is reachable without this: the
+    session comes from the broker, and there is nothing else in this account that issues one.
+    Somebody without it who is checked against the plugin first installs the plugin, gets past
+    that wall, and meets a shell "command not found" from ``credential_process`` -- which is
+    not a refusal, names nothing, and is where the fifteen have been landing.
+    """
+    return Refusal(
+        code="aws_broker_missing",
+        detail=(
+            f"{AWS_BROKER} is not on PATH, and it is the first of three things a lane session "
+            "needs. Every AWS credential a person holds in this organization comes from that "
+            "broker -- there are no long-lived keys in this account and creating one is refused "
+            "-- so nothing below this point can work without it. Nothing was started and nothing "
+            "is billing. It cannot be installed from here: the package is private, it is not on "
+            "npm, and it is built out of a repository this roster cannot read, so every working "
+            f"copy was passed on by somebody who had one. Run `{ACCESS_REQUEST_COMMAND}` and say "
+            "you need the AWS credential broker; that is the queue this is answered from, and it "
+            "is the same one the guides send you to."
+        ),
+    )
+
+
+#: The key an ``~/.aws/config`` profile carries when something other than a stored key answers
+#: for it. The broker's managed block writes one per profile and writes no role ARN beside it.
+CREDENTIAL_PROCESS_KEY: Final = "credential_process"
+
+
+def broker_profiles(config: str) -> tuple[str, ...]:
+    """Every profile in an ``~/.aws/config`` whose credentials the broker mints, in file order.
+
+    **THE BROKER'S OWN ``credential_process`` LINE IS THE DISCRIMINATOR, AND THE ROLE ARN IS
+    NOT, BECAUSE THE ROLE ARN IS NOT IN THE FILE.** This is the one place the obvious design
+    and the actual bytes on disk disagree, so it is written down rather than left to be
+    rediscovered. ``sb-aws-creds install-profiles`` prints ``[sbsandbox] ->
+    arn:aws:iam::<account>:role/Intern-<person>-sbsandbox`` to its own stdout and then writes a
+    managed block containing three lines per profile -- the section header, a
+    ``credential_process``, and a region. No ARN and no account reach the file, so a resolver
+    keying on ``role/Intern-*`` would match nothing that the broker has ever written. Read off
+    the installed 0.2.1 build's ``dist/aws_config.js`` and off this laptop's own config.
+
+    **AND THE ACCOUNT COULD NOT BE COMPARED AGAINST EVEN IF IT WERE THERE.** A twelve-digit
+    account ID is a secret by this repository's own reckoning -- it is in
+    ``evidence.SECRET_PATTERNS`` and ``scan_for_secrets`` refuses it -- so there is no literal
+    to test against, and the tests use ``123456789012`` precisely because the real one may not
+    be written down here. The account arrives at runtime from ``sts:GetCallerIdentity``, which
+    is the call this resolution exists to make possible and therefore cannot precede.
+
+    **WHAT IS LOST BY KEYING ON THE BROKER INSTEAD IS NOTHING THE RULES ASKED FOR.** The hazard
+    named is a profile belonging to somebody's other employer, and no such profile invokes this
+    binary: the broker is this organization's and mints for this organization's accounts only.
+    The remaining imprecision is between two profiles the broker itself manages -- ``sbsandbox``
+    and, for engineers who have one, ``sbproduction`` -- and that case is answered by asking
+    rather than by choosing, which is what :func:`resolve_aws_profile` does with anything other
+    than exactly one candidate.
+
+    Parsed rather than pattern-matched over the whole file, so that a ``credential_process``
+    inside one profile cannot be attributed to the section above it. ``strict=False`` because
+    a duplicated section is the AWS CLI's problem to report and not a reason for this to raise,
+    and interpolation is off because ``%`` is an ordinary character in a shell command.
+    """
+    parser = ConfigParser(interpolation=None, strict=False)
+    try:
+        parser.read_string(config)
+    except MissingSectionHeaderError:
+        return ()
+    except Error:
+        return ()
+    found = []
+    for section in parser.sections():
+        process = parser.get(section, CREDENTIAL_PROCESS_KEY, fallback="")
+        if not process.strip():
+            continue
+        # THE PROGRAM AND NOT A SUBSTRING. ``shlex`` so that a quoted path with a space in it
+        # reads as one token, and the basename so that a broker invoked by absolute path -- an
+        # npm global install is a symlink somebody may well have spelled out -- is still the
+        # broker. A bare ``in`` test would also match a wrapper script merely mentioning it.
+        try:
+            program = shlex.split(process)[0]
+        except (ValueError, IndexError):
+            continue
+        if PurePath(program).name.casefold().removesuffix(".exe") != AWS_BROKER:
+            continue
+        # ``[profile x]`` everywhere except ``[default]``, which the AWS CLI spells bare and
+        # which is a profile a person did not pick and this must therefore not pick either.
+        name = section.split(maxsplit=1)
+        if len(name) == 2 and name[0] == "profile":
+            found.append(name[1].strip())
+    return tuple(found)
+
+
+def chosen_profile_said(profile: str, *, path: Path) -> str:
+    """The one line that says which credentials this is about to use, and where it read them.
+
+    **PRINTED ON EVERY RESOLUTION, WHICH IS THE POINT RATHER THAN A COURTESY.** Choosing a
+    credential is not the thing to avoid; choosing one silently is. A person with an AWS
+    profile for other work needs to be able to see, in the line above the machine that starts
+    billing, that this reached for the platform's one and not for theirs.
+
+    A path and no colour, matching ``presentation.config_source_said``, so a piped run and a
+    terminal run stay the same bytes.
+    """
+    return f"using AWS profile {profile}, the one {path} has from {AWS_BROKER}"
+
+
+def no_broker_profile_refusal(*, path: Path) -> Refusal:
+    """What to say when the broker is installed and has written no profile yet.
+
+    The gap between the broker's two steps. ``login`` puts a refresh token in the keychain and
+    writes nothing to ``~/.aws/config``; ``install-profiles`` is what writes the profile, and
+    somebody who ran the first and not the second has a working credential that no AWS client
+    can find.
+
+    **``AWS_PROFILE`` IS NAMED AS THE WAY PAST THIS AND THAT IS DELIBERATE.** Not everybody who
+    reaches an AWS session reaches it through the broker's managed block -- an administrator on
+    Identity Center does not -- and a refusal with no override would be this resolution
+    breaking a setup it does not understand. Setting the variable is honoured ahead of
+    everything here.
+    """
+    return Refusal(
+        code="no_broker_profile",
+        detail=(
+            f"{AWS_PROFILE_VARIABLE} is not set and {path} has no profile from {AWS_BROKER}, so "
+            "there is no credential to reach the lane with. Nothing was started and nothing is "
+            f"billing. There are two steps and this is the second: `{AWS_LOGIN_COMMAND}` puts a "
+            f"token in your keychain and writes no profile, and `{AWS_PROFILE_COMMAND}` is what "
+            f"writes one. Run both, then run this again. If your AWS session comes from "
+            f"somewhere other than {AWS_BROKER}, set {AWS_PROFILE_VARIABLE} to the profile you "
+            "want and this uses it untouched."
+        ),
+    )
+
+
+def ambiguous_profile_refusal(profiles: Sequence[str], *, path: Path) -> Refusal:
+    """What to say when the broker manages more than one profile and none of them is the ask.
+
+    **NAMED AND NOT CHOSEN BETWEEN.** These are all the platform's own credentials, so there is
+    no unsafe answer here, only an expensive one: picking ``sbproduction`` for somebody who
+    meant ``sbsandbox`` starts a machine on the wrong account's bill and reports success. The
+    file does not say which account each label reaches -- see :func:`broker_profiles` for why
+    -- so there is nothing here that could break the tie, and inventing a precedence rule from
+    the label spelling would be a guess that reads like a fact.
+    """
+    named = ", ".join(profiles)
+    return Refusal(
+        code="aws_profile_is_ambiguous",
+        detail=(
+            f"{AWS_PROFILE_VARIABLE} is not set and {path} has {len(profiles)} profiles from "
+            f"{AWS_BROKER}, so which one this should spend is yours to say rather than this "
+            f"binary's to assume: {named}. Nothing was started and nothing is billing. Set "
+            f"{AWS_PROFILE_VARIABLE} to one of them, or pass it for the one command, and run "
+            "this again."
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class ResolvedProfile:
+    """Which AWS profile the lane will use, and what to print about having decided that.
+
+    Three fields rather than a union, because two of the three outcomes carry something to
+    print and the caller's branch is the same shape for all of them: print whatever is here,
+    then stop if there is a refusal.
+
+    ``profile`` is ``None`` both when the person set ``AWS_PROFILE`` themselves -- there is
+    nothing to add to their environment, and nothing to tell them they do not already know --
+    and when this refused. ``said`` and ``refusal`` are never both set.
+    """
+
+    profile: str | None
+    said: str | None
+    refusal: Refusal | None
+
+
+def resolve_aws_profile(config: str, *, declared: str | None, path: Path) -> ResolvedProfile:
+    """Which profile the two lane verbs run under when nobody named one.
+
+    **THE THIRD STEP THAT USED TO BE A PERSON'S AND IS NOW THIS FUNCTION'S.** Reaching the lane
+    took three: ``login``, ``install-profiles``, and then ``AWS_PROFILE=sbsandbox`` in front of
+    every command or ``--profile`` on every command. The refusal named only the first, and the
+    third is per-terminal -- so somebody got through it once, opened a new tab the next
+    morning, and met an identical refusal with no memory of what had answered it.
+
+    **A DECLARED ``AWS_PROFILE`` IS NEVER OVERRIDDEN AND NEVER SECOND-GUESSED.** Not checked
+    against the broker's block, not warned about, not reported. A person who set it has said
+    which credential they want more explicitly than anything this could infer, and the one
+    thing worse than choosing silently is overruling a choice that was made out loud.
+
+    **A BLANK ONE IS NOT A CHOICE.** ``AWS_PROFILE=`` is what an unset variable looks like to
+    the AWS CLI, which falls back to ``default``, so honouring the empty string as a declaration
+    would leave this resolving nothing while the CLI resolved something else.
+    """
+    if declared is not None and declared.strip():
+        return ResolvedProfile(profile=None, said=None, refusal=None)
+    candidates = broker_profiles(config)
+    if not candidates:
+        return ResolvedProfile(
+            profile=None, said=None, refusal=no_broker_profile_refusal(path=path)
+        )
+    if len(candidates) > 1:
+        return ResolvedProfile(
+            profile=None, said=None, refusal=ambiguous_profile_refusal(candidates, path=path)
+        )
+    only = candidates[0]
+    return ResolvedProfile(profile=only, said=chosen_profile_said(only, path=path), refusal=None)
+
+
+def aws_config_path(environ: Mapping[str, str], *, home: Path) -> Path:
+    """Where the AWS CLI reads its config, honouring the one variable that moves it.
+
+    ``AWS_CONFIG_FILE`` rather than the fixed path, because the AWS SDKs honour it, the broker
+    honours it -- ``dist/aws_config.js`` reads the same variable before writing -- and a
+    resolution that read a different file from the one the CLI is about to read would refuse
+    over a profile that is present, or choose one the CLI cannot see.
+    """
+    declared = environ.get("AWS_CONFIG_FILE", "").strip()
+    return Path(declared) if declared else home / ".aws" / "config"
+
+
+def read_aws_config(path: Path) -> str:
+    """The config file's text, or nothing where there is none to read.
+
+    A missing file is the ordinary state of a laptop that has never run the broker's second
+    step, and an unreadable one is answered the same way: as no profiles, which
+    :func:`resolve_aws_profile` turns into the refusal that names the step. Raising here would
+    put a traceback in front of the newcomer this whole path is for.
+    """
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 def remote_script(*, uri: str, project: str, command: str) -> str:

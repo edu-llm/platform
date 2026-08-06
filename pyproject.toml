@@ -35,7 +35,8 @@ name = "edullm"
 #
 # 0.2.0 rather than 0.1.1 because 0.1.0 was never released and nothing was ever installed
 # from a tag; the first tag this repository has should not look like the second.
-version = "4.2.3"
+# WHY THIS IS A MINOR RATHER THAN A PATCH. edullm run and edullm shell pick up the AWS profile the credential broker wrote, so AWS_PROFILE no longer has to be set in every terminal, and a laptop with no broker is refused by name instead of failing with a shell error.
+version = "4.3.0"
 requires-python = ">=3.12"
 dependencies = [
   "pydantic>=2,<3",
@@ -84,7 +85,7 @@ reader = [
 # needs on day one -- `docs-frank/reference/system-overview.md` counts twelve of the
 # fourteen surfaces that reach a researcher as this one command:
 #
-#   uv tool install --force git+https://github.com/edu-llm/platform@v4.2.3
+#   uv tool install --force git+https://github.com/edu-llm/platform@v4.3.0
 #
 # THAT LINE IS TESTED RATHER THAN PROOFREAD, by tests/test_cli_install_command.py, which
 # holds it to the one in `edullm_platform.cli.release`. What used to be written here was

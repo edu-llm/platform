@@ -101,6 +101,11 @@ def answers_from_a_clone(root: Path, *, committed: frozenset[str]) -> Answers:
     not new and git names ``.edullm/run.yaml`` on its own rather than collapsing to the
     directory above it. Anything under the tree that ``committed`` does not name is reported
     untracked, which is what makes the file the scaffold writes visible here.
+
+    The excluded prefixes are ``cli_support.invoke``'s own furniture rather than anything a
+    researcher has: a stub tool directory, two empty configuration homes, and the AWS config
+    the profile resolution is pointed at. A real clone has none of them, and reporting one
+    would refuse ``uncommitted_changes`` over the harness.
     """
     def status(_: tuple[str, ...]) -> CommandResult:
         found = sorted(path for path in root.rglob("*") if path.is_file())
@@ -109,7 +114,7 @@ def answers_from_a_clone(root: Path, *, committed: frozenset[str]) -> Answers:
                 f"?? {relative}\n"
                 for path in found
                 if (relative := path.relative_to(root).as_posix()) not in committed
-                and not relative.startswith(("_tools/", "_no-"))
+                and not relative.startswith(("_tools/", "_no-", "_aws-config"))
             )
         )
 
