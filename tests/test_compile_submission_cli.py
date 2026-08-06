@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
+import sys
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -1264,6 +1266,55 @@ def test_nothing_is_refused_on_the_version_it_says_it_came_from(
 
     assert exit_code == EXIT_OK
     assert compiled["run_id"] == RUN_ID
+
+
+def test_the_install_is_named_above_the_refusal_and_not_below_it(tmp_path: Path) -> None:
+    """Mutation: drop the flush. It is invisible in-process and wrong on every runner.
+
+    stdout is block-buffered when it is not a terminal and stderr is not, so the line
+    introducing a submission was held until the process exited and arrived underneath the
+    refusal it was meant to introduce. Measured on run 31094757003 before the flush and
+    fixed after it. Only a subprocess with the two streams merged can see this: ``capsys``
+    keeps them apart, which is exactly how the whole suite stayed green through it.
+    """
+    inputs = tmp_path / "submission-form.json"
+    inputs.write_text(json.dumps(form(command=UNQUOTED_COMMAND)), encoding="utf-8")
+    published = tmp_path / "published-image.json"
+    published.write_text(json.dumps(resolved()), encoding="utf-8")
+
+    # One pipe for both streams, which is what a workflow log is and the only arrangement
+    # in which the ordering exists to be asserted.
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(PROJECT_ROOT / "tools" / "compile_submission.py"),
+            "--inputs",
+            str(inputs),
+            "--config-dir",
+            str(CONFIG_DIR),
+            "--published-images",
+            str(published),
+            "--submitter",
+            SUBMITTER,
+            "--client-version",
+            "3.4.7",
+            "--repository-url",
+            REPOSITORY_URL,
+            "--output",
+            str(tmp_path / "compiled-submission.json"),
+            "--run-id",
+            RUN_ID,
+        ],
+        cwd=PROJECT_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    assert result.returncode == EXIT_REFUSED
+    assert result.stdout.index("Submitted by edullm 3.4.7.") < result.stdout.index(
+        "does not compile into a valid manifest"
+    )
 
 
 def test_an_old_install_is_told_to_reinstall_rather_than_to_quote_what_it_unquoted(

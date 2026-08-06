@@ -249,8 +249,14 @@ def main(argv: list[str] | None = None) -> int:
     # Read first and printed first, so the log says which install typed this above whatever
     # happens next. On stdout rather than beside the refusals, because it is a fact about
     # every submission rather than a complaint about this one.
+    #
+    # FLUSHED, AND THE FIRST LIVE RUN IS WHY. stdout is block-buffered when it is not a
+    # terminal and stderr is not, so on a runner this line was held until the process
+    # exited and arrived *below* the refusal it was supposed to introduce -- naming the
+    # install after the paragraph that needed it. Nothing in this file's own output
+    # revealed that, because everything else it prints goes to stderr.
     client = read_client_version(args.client_version)
-    print(submitted_by_said(client))
+    print(submitted_by_said(client), flush=True)
     installs_with = install_command(repository=PLATFORM_REPOSITORY)
 
     try:
