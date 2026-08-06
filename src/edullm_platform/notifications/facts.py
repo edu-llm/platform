@@ -589,12 +589,17 @@ def _cell_index(job_id: object) -> int | None:
 
 def _cells_spent(
     lister: CellLister | None, *, array_job_id: object
-) -> tuple[int, int, tuple[int, ...]] | None:
+) -> tuple[int, int, tuple[int, ...] | None] | None:
     """What an array's cells actually ran for, how many were read, and which ones failed.
 
     None where no listing happened, and None rather than a zero for every way it can fail.
     A sweep whose cells nobody read is not a sweep that cost nothing, and ``$0.00 spent`` is
-    the cheapest-looking wrong answer in the field's range.
+    the cheapest-looking wrong answer in the field's range. That sentence was here before the
+    listing that answers with nothing was, and the two exits at the bottom are what make it
+    true of a call that succeeded as well as of one that did not.
+
+    The third element is None rather than empty wherever this listing named no failed cell,
+    which is a separate unknown from the spend and is described where it is decided.
 
     Never raises, for the reason ``submitter_of`` never does. The cell counts are in the
     event and are worth posting on their own, so a refused listing costs the message a figure
@@ -644,7 +649,31 @@ def _cells_spent(
         # ways a listing can fail is open. Narrowed by what it does rather than by what it
         # catches, exactly as `checkpoints_under` is.
         return None
-    return seconds, measured, tuple(sorted(failed))
+    if measured == 0:
+        # THE WAY THIS FAILS WITHOUT FAILING, WHICH IS THE ONE NO GUARD ABOVE CATCHES.
+        #
+        # Every other exit here is a call that refused or a page count that ran out. This is
+        # a call that succeeded and answered with nothing, and it arrived at the sum as a
+        # complete reading of zero cells: `at least $0.00 spent over the 0 cells that were
+        # read`, which is this function's own docstring's cheapest-looking wrong answer,
+        # printed in the slot a measurement goes in.
+        #
+        # Zero terminal children under a terminal parent is never true of the account. Batch
+        # holds the parent until the last child moves, so at the instant this runs there is
+        # at least one. Reading none back is this side failing to see them, and the ordinary
+        # cause is mundane: Batch ages terminal job records out after about a day, so every
+        # redelivery, dead-letter replay and hand invocation older than that lands here, and
+        # the sweep being priced at nothing is by definition one that finished a while ago.
+        return None
+    # AN EMPTY SET OF INDEXES IS NOT THE SAME CLAIM AS AN EMPTY SWEEP, AND ONLY THE CALLER
+    # KNOWS WHICH THIS IS. The count of dead cells comes off the event and the indexes come
+    # off this listing, two services read seconds apart. Where the event reports a dead cell
+    # and this page named none, the honest answer is that the indexes were not read, and
+    # `read_run_ended` is where the two sources meet, so it decides. Handed an empty tuple it
+    # cannot tell that apart from a sweep that lost nothing, and the sentence it built for
+    # the difference was `Cells  failed.` with the numbers missing.
+    named = tuple(sorted(failed))
+    return seconds, measured, named if named else None
 
 
 def _checkpoint_state(

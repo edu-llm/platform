@@ -509,6 +509,86 @@ def test_a_read_fan_out_says_what_it_spent_and_which_cell_died(catalogs: Catalog
     assert {call["arrayJobId"] for call in lister.arguments} == {ARRAY_PARENT_JOB_ID}
 
 
+def test_a_listing_that_found_no_cells_at_all_is_a_read_that_failed(
+    catalogs: Catalogs,
+) -> None:
+    """FOUND BY INVOKING THE DEPLOYED FUNCTION ON 2026-08-06, NOT BY READING THE CODE.
+
+    Batch answered the array listing with an empty ``jobSummaryList`` and every guard in
+    ``_cells_spent`` let it through, because none of them fires on a call that worked. The
+    sum was zero over zero cells and the message that came out said ``at least $0.00 spent
+    over the 0 cells that were read``, which is a measurement claim with no measurement under
+    it, in the field this module's own docstring calls the cheapest-looking wrong answer in
+    its range.
+
+    A terminal array parent has at least one terminal child, always: Batch does not move the
+    parent until every child has moved. So zero terminal children read back is never the
+    account describing a sweep and always this reader failing to see one. The realistic cause
+    is not an exotic one either. Batch ages terminal job records out after about a day, so
+    any redelivery, any dead-letter replay and any hand invocation of a fixture older than
+    that lands exactly here, and the sweep that gets priced at nothing is an old one, which
+    is to say a large one.
+
+    The failed indexes go with it. ``cells_failed`` comes off the event and the indexes come
+    off the listing, so an event reporting a dead cell and a listing naming none is a
+    disagreement between two sources rather than a sweep that lost nothing, and it rendered
+    as the sentence ``Cells  failed.`` with the numbers missing and the double space still in
+    it.
+    """
+    empty = FakeCellLister({"SUCCEEDED": [], "FAILED": []})
+
+    facts = read_run_ended(
+        envelope("batch-array-parent-failed"), catalogs=catalogs, cell_lister=empty
+    )
+
+    assert facts is not None
+    assert facts.cells_total == 20
+    assert facts.cells_failed == 1
+    assert facts.spent_usd is None
+    assert facts.cells_measured is None
+    assert facts.failed_cell_indexes is None
+    assert facts.authorised_usd == Decimal("55.83"), (
+        "the ceiling is read off the event and survives a listing that read nothing"
+    )
+
+
+def test_a_listing_that_named_no_failed_cell_never_renders_an_empty_list(
+    catalogs: Catalogs,
+) -> None:
+    """Mutation: pass the empty tuple through. It renders as ``Cells  failed.``
+
+    Distinct from the case above, and it is the one that survives a listing that mostly
+    worked. The count of dead cells is the event's and the indexes are the listing's, and the
+    two are read seconds apart from different services. A listing that priced all twenty
+    windows while the FAILED page came back empty is a real answer to one question and a
+    missing answer to the other, so the indexes are unknown while the spend is not.
+    """
+    parent = ARRAY_PARENT_JOB_ID
+    disagreeing = FakeCellLister(
+        {
+            "SUCCEEDED": [
+                {
+                    "jobId": f"{parent}:{index}",
+                    "status": "SUCCEEDED",
+                    "startedAt": 1785965337885,
+                    "stoppedAt": 1785965337885 + 1_800_000,
+                }
+                for index in range(20)
+            ],
+            "FAILED": [],
+        }
+    )
+
+    facts = read_run_ended(
+        envelope("batch-array-parent-failed"), catalogs=catalogs, cell_lister=disagreeing
+    )
+
+    assert facts is not None
+    assert facts.cells_measured == 20
+    assert facts.spent_usd == Decimal("18.61")
+    assert facts.failed_cell_indexes is None
+
+
 def test_a_refused_cell_listing_leaves_the_spend_unknown_and_never_raises(
     catalogs: Catalogs,
 ) -> None:
