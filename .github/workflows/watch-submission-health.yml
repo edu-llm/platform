@@ -1,0 +1,130 @@
+# WHETHER RESEARCHERS CAN SUBMIT, ASKED ON A CLOCK RATHER THAN WHEN SOMEBODY WONDERS.
+#
+# On 2026-08-06 submit-run.yml failed seven times between 05:33 and 06:50 UTC. Six were one
+# defect in edullm submit and one was the platform correctly refusing a commit with no
+# image. Nothing noticed. It was found by an agent working the merge queue that happened to
+# look at a run list, and filed as outside its remit because it blocked no merge.
+#
+# The three places that could have caught it are all blind for the same structural reason:
+# every alarm is on AWS/Lambda or AWS/SQS, the notifier consumes Batch job state changes,
+# and the audit reads the account. All three watch AWS. These submissions died in the
+# compile job, on a GitHub runner, before admission was ever called, so AWS emitted nothing
+# about any of them. That is why this reads the Actions API and holds no credential.
+#
+# It goes red on two things and deliberately not on a third. It goes red on a failure that
+# is never a judgement, and on one reason refusing several unrelated submissions. It stays
+# green on a submission refused for a good reason, because an unregistered dataset or a
+# commit nobody built is the platform working and going red on those is how a signal gets
+# ignored. tools/watch_submission_health.py argues the distinction and the tests hold it.
+name: Is submission healthy
+
+on:
+  schedule:
+    # Every half hour. The window it was written for was seventy-seven minutes long, so this
+    # sees a repeat of it while it is still happening rather than the next morning.
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "ISO instant to look from, e.g. 2026-08-06T05:00:00Z"
+        required: false
+      until:
+        description: "ISO instant to look to, defaulting to now"
+        required: false
+
+# No AWS role is assumed anywhere in this file and no id-token is requested, because there
+# is nothing in AWS to ask. actions:read is the whole grant the check needs; issues:write is
+# how it reaches a person.
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: watch-submission-health
+  cancel-in-progress: false
+
+jobs:
+  submissions:
+    name: Can a researcher submit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # Two hours rather than a day. Long enough for three failures to accumulate into the
+      # repetition that separates a defect from a refusal, and short enough that the check
+      # goes green on its own once a fix lands instead of staying red until a window rolls.
+      - name: Read what submissions did
+        id: read
+        run: |
+          set -uo pipefail
+          if [[ -n "${WATCH_SINCE}" ]]; then
+            set -- --since "${WATCH_SINCE}"
+          else
+            set -- --hours 2
+          fi
+          if [[ -n "${WATCH_UNTIL}" ]]; then
+            set -- "$@" --until "${WATCH_UNTIL}"
+          fi
+          # The verdict is the exit code and the prose is for a person, so the code is
+          # captured rather than allowed to end the step, and the prose is kept whatever it
+          # says. Exit 2 is not exit 1: it means the check could not look, which must not be
+          # reported as submissions being healthy nor as them being broken.
+          status=0
+          uv run --frozen python tools/watch_submission_health.py "$@" > verdict.txt 2>&1 || status=$?
+          echo "status=${status}" >> "$GITHUB_OUTPUT"
+          cat verdict.txt
+          {
+            echo "## Can a researcher submit"
+            echo
+            echo '```'
+            cat verdict.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WATCH_SINCE: ${{ inputs.since }}
+          WATCH_UNTIL: ${{ inputs.until }}
+
+      # A red run in a list nobody opens is exactly how the seven were missed, so the
+      # verdict is carried to somewhere with a notification attached. One open issue at a
+      # time: an outage lasting an hour would otherwise file two every hour, and a hundred
+      # duplicates is the same as none.
+      - name: Tell somebody
+        if: steps.read.outputs.status != '0'
+        run: |
+          set -euo pipefail
+          existing="$(gh issue list --state open --search "${TITLE} in:title" \
+            --json number --jq 'length')"
+          if [[ "${existing}" != "0" ]]; then
+            echo "an open issue already says this; not filing another"
+            exit 0
+          fi
+          gh issue create --title "${TITLE}" --body-file - <<'BODY_END'
+          A scheduled check read the recent submit-run.yml runs and something in them is not
+          a submitter's fault. The verdict is in the job summary of the run that filed this.
+
+          This is closed by fixing what it names, or by the next scheduled run going green on
+          its own once a fix has landed. Re-running the failed submissions does not close it.
+          BODY_END
+          gh issue comment "$(gh issue list --state open --search "${TITLE} in:title" \
+            --json number --jq '.[0].number')" --body-file verdict.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE: Submissions are failing for a reason no submitter can fix
+
+      - name: Report the verdict as this job's own outcome
+        if: steps.read.outputs.status != '0'
+        run: |
+          echo "::error::watch_submission_health exited ${{ steps.read.outputs.status }}."
+          exit 1
