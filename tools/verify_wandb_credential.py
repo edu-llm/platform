@@ -9,6 +9,12 @@ identity the submit path can obtain holds the read this tool makes and
 ``verdict`` and ``checked_at`` fields are for: a second reader deciding "refused" by
 matching strings against ``looks_wrong``, which is a list of sentences written for a human,
 would be a second definition of the word that drifts from this one without failing.
+
+TWO LISTS, AND ONLY ONE OF THEM STOPS A SUBMISSION. ``looks_wrong`` is why the key cannot
+log at all, and the verdict derived from it refuses submissions. ``attribution_looks_wrong``
+is why the key logs to the wrong author, which is a record problem rather than a running
+problem and must not take the platform down. ``what_attribution_looks_wrong`` argues the
+split where it is made.
 """
 
 from __future__ import annotations
@@ -43,7 +49,12 @@ LEGACY_KEY_LENGTH = 40
 #: and those two must never be separated by a string literal written twice.
 UNREACHABLE_PREFIX = "could not reach W&B"
 
+#: Where a fault that leaves the key working goes. Deliberately not ``looks_wrong``: that
+#: list is what ``verdict_for`` reads, and the verdict is what stops a submission.
+ATTRIBUTION_FIELD = "attribution_looks_wrong"
+
 __all__ = [
+    "ATTRIBUTION_FIELD",
     "CHECKED_AT_FIELD",
     "LEGACY_KEY_LENGTH",
     "SECRET_NAME",
@@ -58,6 +69,7 @@ __all__ = [
     "main",
     "read_the_secret",
     "verdict_for",
+    "what_attribution_looks_wrong",
     "what_looks_wrong",
 ]
 
@@ -149,6 +161,50 @@ def ask_wandb_who_this_is(value: str, *, timeout: int = 30) -> dict[str, Any]:
     return {"entity": viewer.get("entity"), "username": viewer.get("username")}
 
 
+def what_attribution_looks_wrong(answer: dict[str, Any]) -> list[str]:
+    """Faults that leave the key working and the author of every run wrong.
+
+    KEPT OUT OF ``looks_wrong`` ON PURPOSE, AND THAT IS THE WHOLE OF THE DESIGN HERE. That
+    list is what ``verdict_for`` reads and the verdict is what ``submit-run.yml`` refuses
+    on. A key with this fault authenticates, logs every metric and finishes every run; the
+    only casualty is whose name is on it. Refusing submissions over that would stop jobs in
+    order to protect the record, which is the wrong way round -- ``docs`` records the
+    settled ordering and ``Add information, remove gates`` says what to do instead, which
+    is to report it where somebody sees it.
+
+    WHAT IT DETECTS. W&B names no user on the viewer for a service account, so a viewer
+    carrying a username is a person's key. ``WANDB_USERNAME`` is how a run gets attributed
+    to the human who submitted it -- ``config/organization.yaml`` carries one for thirty of
+    the thirty-five people on the roster -- and W&B honours it only for a service account.
+    Under a person's key all thirty stop working at once, silently, and every run is
+    authored by whoever owns the key.
+
+    THIS HAS ALREADY HAPPENED AND NOTHING NOTICED. The value stored between
+    2026-07-28T15:51Z and 2026-07-31T02:22Z resolved to the user ``philote``, which
+    ``config/organization.yaml`` records as a human member of the roster. Two container
+    logs on 2026-07-29 print it in as many words: ``Currently logged in as: philote
+    (eduLLM)``. It was replaced by a service-account key without anybody establishing that
+    it had been one, and this check is what would have said so.
+
+    An answer W&B never gave produces nothing, and one condition covers every way that
+    happens: an outage reply carries no ``username`` at all, and neither does a reply that
+    carries the field as null. An earlier version guarded on ``entity`` being present as
+    well, which read as care and was unreachable, because no answer this module can build
+    has a username without one.
+    """
+    named = answer.get("username")
+    if not isinstance(named, str) or not named:
+        return []
+    return [
+        (
+            f"W&B resolves this key to the user {named!r}, so it is a person's key rather "
+            "than the team service account. WANDB_USERNAME is ignored for a key that is "
+            "not a service account's, so every run is authored by that person and the "
+            "roster's attributions do nothing."
+        )
+    ]
+
+
 def verdict_for(answer: dict[str, Any], *, faults: Sequence[str]) -> Verdict:
     """What W&B's answer amounts to, in the vocabulary the submit path reads.
 
@@ -198,6 +254,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     # ages the verdict off this field, so it has to be the moment the answer was true.
     report[CHECKED_AT_FIELD] = datetime.now(tz=UTC).isoformat()
 
+    # Separate from `faults` all the way down, and never merged into it. See
+    # what_attribution_looks_wrong: this one reddens the audit and changes no verdict.
+    attribution: list[str] = []
+
     if not options.offline:
         answer = ask_wandb_who_this_is(value.strip())
         report["wandb"] = answer
@@ -207,13 +267,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             faults = [*faults, answer["error"]]
         report["looks_wrong"] = faults
         report[VERDICT_FIELD] = verdict_for(answer, faults=faults)
+        attribution = what_attribution_looks_wrong(answer)
+        report[ATTRIBUTION_FIELD] = attribution
     # No verdict at all under --offline, rather than one derived from the shape. A shape
     # check is not W&B's answer, and the last incident was a key of exactly the right shape
     # that W&B refused; publishing "accepted" for it would be the preflight passing on the
     # strength of the measurement that already failed to catch it.
 
     print(json.dumps(report, indent=2, sort_keys=True))
-    return 1 if faults else 0
+    # Non-zero for either, because both are things a person has to go and fix. Which one it
+    # was is read off the report rather than off this number: audit.yml prints a different
+    # sentence for each, and only one of them stops submissions.
+    return 1 if faults or attribution else 0
 
 
 if __name__ == "__main__":

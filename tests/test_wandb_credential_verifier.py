@@ -125,6 +125,80 @@ def test_a_key_for_another_entity_fails(monkeypatch: pytest.MonkeyPatch) -> None
     assert module.main(["--expect-entity", "eduLLM"]) == 1
 
 
+def viewer_returning(viewer: dict[str, Any] | None) -> type:
+    class Response:
+        def read(self) -> bytes:
+            return json.dumps({"data": {"viewer": viewer}}).encode()
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    return Response
+
+
+def test_a_persons_key_is_reported_and_refuses_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The fault that was live for three days in July and that nothing looked for.
+
+    W&B accepted the key, so every run logged and every run worked. What broke is who they
+    were logged as: `WANDB_USERNAME` is honoured only for a service account, so all thirty
+    attributions in config/organization.yaml stopped meaning anything at once.
+
+    The audit has to go red and the submit path must not. A refusal here would stop jobs to
+    protect the record, and the settled ordering in this repository is the other way round.
+    """
+    module = load()
+    response = viewer_returning({"entity": "eduLLM", "username": "philote"})
+    monkeypatch.setattr(module.urllib.request, "urlopen", lambda *a, **k: response())
+    monkeypatch.setattr(module, "read_the_secret", lambda *a, **k: LOOKS_LIKE_A_KEY)
+
+    assert module.main(["--expect-entity", "eduLLM"]) == 1
+
+    report = json.loads(capsys.readouterr().out)
+    assert report[module.VERDICT_FIELD] == "accepted"
+    assert report["looks_wrong"] == [], "this must never reach the submission gate"
+    assert "philote" in report[module.ATTRIBUTION_FIELD][0]
+    assert "service account" in report[module.ATTRIBUTION_FIELD][0]
+
+
+def test_the_service_account_the_platform_actually_uses_reports_nothing() -> None:
+    """W&B names no user on the viewer for a service account, which is the healthy answer."""
+    module = load()
+
+    assert module.what_attribution_looks_wrong({"entity": "eduLLM", "username": None}) == []
+    assert module.what_attribution_looks_wrong({"entity": "eduLLM", "username": ""}) == []
+
+
+def test_an_outage_establishes_nothing_about_who_the_key_belongs_to() -> None:
+    """An answer W&B never gave is not evidence, and a missing field is not a null one."""
+    module = load()
+
+    assert module.what_attribution_looks_wrong({"error": "could not reach W&B: URLError"}) == []
+    assert module.what_attribution_looks_wrong({}) == []
+
+
+def test_an_attribution_fault_does_not_reach_the_submission_preflight() -> None:
+    """The two lists are separate all the way to the thing that spends money."""
+    from datetime import UTC, datetime
+
+    from edullm_platform.wandb_preflight import Outcome, decide
+
+    module = load()
+    checked_at = datetime.now(tz=UTC)
+    report = {
+        module.VERDICT_FIELD: "accepted",
+        module.CHECKED_AT_FIELD: checked_at.isoformat(),
+        "looks_wrong": [],
+        module.ATTRIBUTION_FIELD: ["W&B resolves this key to the user 'philote'"],
+    }
+
+    assert decide(report=report, now=checked_at).outcome is Outcome.PROCEED
+
+
 def test_the_entity_checked_is_the_one_the_container_is_told() -> None:
     """Resolved from `execution.WANDB_ENTITY` at call time rather than copied here."""
     from edullm_platform.execution import WANDB_ENTITY

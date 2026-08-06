@@ -581,6 +581,35 @@ def test_a_key_wandb_would_refuse_fails_the_audit(
     assert "dispatch this workflow again" in finished.stderr
 
 
+def test_a_key_that_names_a_person_reddens_the_audit_and_claims_no_refusal(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: branch on the exit code alone, which is what this step used to do.
+
+    Two faults exit 1 now and only one of them closes the submission gate. A key W&B
+    accepts that belongs to a person logs every run under that person's name and stops
+    nothing, so telling the reader "submissions are refused while this stands" would send
+    them to repair a gate that is open, on the one night they are reading at 05:00.
+    """
+    finished = run_wandb_check(
+        workflow,
+        tmp_path,
+        exit_code=1,
+        report=(
+            '{"looks_wrong": [], "verdict": "accepted", '
+            '"attribution_looks_wrong": ["W&B resolves this key to the user \'philote\'"]}'
+        ),
+    )
+
+    assert finished.returncode != 0
+    assert "wandb_key_attributes_to_a_person" in finished.stderr
+    assert "wandb_credential_would_be_refused" not in finished.stderr
+    assert "Submissions are refused" not in finished.stderr
+    # And it still says what to do, because the repair is the same kind of thing: a person
+    # writing the secret from a laptop, then dispatching this workflow.
+    assert "dispatch this workflow again" in finished.stderr
+
+
 def test_a_key_wandb_accepts_passes(workflow: dict[str, Any], tmp_path: Path) -> None:
     finished = run_wandb_check(
         workflow, tmp_path, exit_code=0, report='{"looks_wrong": [], "verdict": "accepted"}'
