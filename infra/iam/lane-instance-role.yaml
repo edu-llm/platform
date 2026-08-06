@@ -53,10 +53,16 @@ Resources:
             Version: "2012-10-17"
             Statement:
               # The whole bucket rather than one prefix, and that is deliberate. The machine syncs
-              # into whichever <team>/<person>/<project>/ the person who started it named, and the
+              # into whichever <person>/<project>/ the person who started it named, and the
               # instance profile has no way to know which that is: a tag is not a condition key on
               # the instance's own calls. The boundary between two people lives on the researcher's
               # role, where the source identity is available, and this one is bounded by the bucket.
+              #
+              # SO THE LAYOUT CHANGING DOES NOT CHANGE THIS GRANT, WHICH IS WORTH SAYING RATHER
+              # THAN LEAVING FOR SOMEBODY TO CHECK. The tier lost its <team>/ segment on
+              # 2026-08-05 and these two ARNs name the bucket and everything in it, which is the
+              # same set before and after. A grant here written to the old shape would fail loudly
+              # at the sync rather than silently, which is the better failure and still a failure.
               #
               # ListBucket is on the bucket ARN and the object actions are on the object ARNs,
               # because s3:ListBucket authorizes against the bucket and an object action against

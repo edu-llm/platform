@@ -285,6 +285,18 @@ def test_the_seventh_property_names_the_working_tier_and_fences_it_by_source_ide
     directions. The rest of the list is deliberately not frozen -- the template says a bucket
     added later and not listed is a write that fails, so the list is meant to grow -- and it is
     the working tier alone that may hold exactly one entry.
+
+    A FIFTH MUTATION ARRIVED WITH THE LAYOUT, AND IT IS WHY THE SEPARATOR IS PART OF THE
+    COMPARISON. The tier was <team>/<person>/ until 2026-08-05 and this entry read
+    edullm-scratch/*/${aws:SourceIdentity}/*, so a segment has just been removed and the two
+    spellings of that edit fail in opposite directions. Leaving the stale */ in place denies
+    every write the lane makes, because the excepted path then wants three segments where a key
+    has two, and the denial names no bucket and no key. Dropping the trailing separator instead,
+    to edullm-scratch/${aws:SourceIdentity}*, reads as the same fence and is not one: it excuses
+    every prefix the identity is a leading substring of, so "amy" is handed "amy.lin" and a
+    person who never typed a wrong path loses files to somebody whose name merely starts the
+    same way. Neither is a membership failure and both are set-equality failures, which is the
+    argument for comparing the exact string rather than looking for the identity variable in it.
     """
     entry = statement("DenyWorkingTierWritesOutsideYourOwnPrefix")
     excepted = as_list(entry["NotResource"])
@@ -294,11 +306,14 @@ def test_the_seventh_property_names_the_working_tier_and_fences_it_by_source_ide
     assert entry["Effect"] == "Deny"
     assert "Resource" not in entry
     assert "s3:PutObject" in set(as_list(entry["Action"]))
-    assert into_the_tier == {f"arn:aws:s3:::{WORKING_BUCKET}/*/${{aws:SourceIdentity}}/*"}, (
+    assert into_the_tier == {f"arn:aws:s3:::{WORKING_BUCKET}/${{aws:SourceIdentity}}/*"}, (
         "The working tier is excepted by something other than one person's own prefix, or by "
         "that prefix and something wider beside it. A second exception naming the tier does "
         "not narrow the first one, it replaces it: any request matching either entry escapes "
-        "the deny, so the widest entry present is the whole fence."
+        "the deny, so the widest entry present is the whole fence. The layout is "
+        "<person>/<project>/ and the excepted path carries exactly one segment above the "
+        "objects, so a leftover team wildcard denies every write and a missing trailing "
+        "separator hands one person every prefix their name begins."
     )
     assert naming_the_tier == ["DenyWorkingTierWritesOutsideYourOwnPrefix"], (
         "The working tier is named in no statement, or in more than one. Either the seventh "

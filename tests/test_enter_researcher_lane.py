@@ -52,14 +52,17 @@ def test_the_source_identity_agrees_with_the_prefix_the_working_tier_deny_fences
     Mutation: strip the dot, lowercase, or otherwise normalise the person's name here.
 
     infra/iam/researcher-role.yaml's seventh statement excepts
-    arn:aws:s3:::edullm-scratch/*/${aws:SourceIdentity}/* and denies every other object write, so
+    arn:aws:s3:::edullm-scratch/${aws:SourceIdentity}/* and denies every other object write, so
     the string this function returns is literally the directory name a lane session may write
     into. The exploration route picks the same person out of the same caller ARN when it
     chooses that prefix. The day the two disagree, every write the lane makes is denied and the
     denial names no bucket, no key and no reason.
 
     Asserted against the tree's own template rather than against a literal, so a fence rewritten
-    to some other variable fails here rather than at somebody's first upload.
+    to some other variable fails here rather than at somebody's first upload. The excepted path
+    lost its leading team wildcard on 2026-08-05, and the exact string is compared rather than
+    searched for so that the old three-segment spelling coming back is a red test here as well
+    as in tests/test_researcher_role_template.py.
     """
     template = (INFRA_ROOT / "iam" / "researcher-role.yaml").read_text(encoding="utf-8")
     arn = (
@@ -67,7 +70,12 @@ def test_the_source_identity_agrees_with_the_prefix_the_working_tier_deny_fences
         "broker-frank.gonzalez-1785873426"
     )
 
-    assert "arn:aws:s3:::edullm-scratch/*/${aws:SourceIdentity}/*" in template
+    assert "arn:aws:s3:::edullm-scratch/${aws:SourceIdentity}/*" in template
+    assert "arn:aws:s3:::edullm-scratch/*/${aws:SourceIdentity}/*" not in template, (
+        "the working tier is laid out <person>/<project>/ and the excepted path has one segment "
+        "above the objects; the three-segment form matches no key the lane writes, so every "
+        "sync is denied and the denial names no bucket, no key and no reason"
+    )
     assert source_identity_from(arn) == "frank.gonzalez"
     assert "/" not in source_identity_from(arn), (
         "a source identity carrying a slash would spread one person across two segments of "

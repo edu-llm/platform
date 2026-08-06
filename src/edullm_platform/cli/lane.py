@@ -144,21 +144,36 @@ def load_working_tier_settings(
     return load_yaml(path, WorkingTierSettings)
 
 
-def working_prefix(*, team: str, person: str) -> str:
+def working_prefix(*, person: str) -> str:
     """Where one person's working set lives, as an S3 prefix ending in a separator.
 
-    Team first, which is the overview's order and not a preference: a team's whole working set is
-    then one listing under one prefix. The trailing separator is what makes this a directory to
-    every tool that lists one, and without it a prefix search for one person also finds everybody
-    whose name starts the same way.
+    **THE PERSON SEGMENT IS NOT ACCESS CONTROL AND THAT IS WORTH READING BEFORE ARGUING WITH
+    IT.** The researcher role's seventh statement fences on ``${aws:SourceIdentity}``, which is
+    self-asserted: ``docs-frank/reference/aws-spend-controls.md``, "What the lane does not
+    cover", records that nothing stops somebody passing another person's. What the segment buys
+    is that two people on one project sync into two prefixes rather than one. Sharing a prefix,
+    each ``aws s3 sync`` deletes what the other wrote and neither is told. That is a collision
+    and not a breach, and somebody who takes it for a security boundary will eventually notice
+    it is a weak one and remove it.
+
+    NO TEAM SEGMENT ABOVE IT, WHICH THERE WAS UNTIL 2026-08-05. The fence never enforced one, so
+    it was a label; seven people sit on two groups so a lane would have had to resolve a team to
+    know where to sync; and ``config/organization.yaml`` defines this tier as the work costed to
+    nobody, which is the one dimension a team segment would organise it by.
+    ``docs-frank/reference/decisions.md`` carries the ruling and says why the outputs bucket
+    keeps its own team segment rather than being tidied to match.
+
+    The trailing separator is what makes this a directory to every tool that lists one, and
+    without it a prefix search for one person also finds everybody whose name starts the same
+    way. It is the same character the role's excepted path carries for the same reason.
     """
-    return f"{_UNSAFE_IN_A_SEGMENT.sub('-', team)}/{_UNSAFE_IN_A_SEGMENT.sub('-', person)}/"
+    return f"{_UNSAFE_IN_A_SEGMENT.sub('-', person)}/"
 
 
-def working_uri(*, team: str, person: str, project: str) -> str:
+def working_uri(*, person: str, project: str) -> str:
     """The s3:// address one project's working set is synced to and from."""
     segment = _UNSAFE_IN_A_SEGMENT.sub("-", project)
-    return f"s3://{SCRATCH_BUCKET}/{working_prefix(team=team, person=person)}{segment}/"
+    return f"s3://{SCRATCH_BUCKET}/{working_prefix(person=person)}{segment}/"
 
 
 def person_from_caller_arn(caller_arn: str) -> str | None:
@@ -186,13 +201,18 @@ def person_from_caller_arn(caller_arn: str) -> str | None:
 class LaneRequest:
     """What a lane verb was asked for, after the flags and the caller identity are merged.
 
-    Four fields, against the fifteen a submission carries. That difference is the slice: a
+    Three fields, against the fifteen a submission carries. That difference is the slice: a
     submission is a record and needs everything a record names, and a lane ask is a machine and a
     place to put files.
+
+    NO TEAM, AND ITS ABSENCE IS THE FIELD WORTH A SENTENCE. There was one until 2026-08-05,
+    carried solely because the working tier was laid out ``<team>/<person>/``. It is
+    ``<person>/`` now, nothing else on this route reads a group, and a lane that resolved one
+    anyway would make ``edullm run`` refuse ``team_is_ambiguous`` to decide a segment that no
+    longer exists.
     """
 
     project: str
-    team: str
     person: str
     compute_profile: str
 
@@ -264,13 +284,18 @@ def placement_warning(configuration: ReviewedConfiguration, profile_name: str) -
 def lane_refusals(
     request: LaneRequest, *, configuration: ReviewedConfiguration
 ) -> tuple[Refusal, ...]:
-    """Everything the lane refuses, which is four things and is the whole list.
+    """Everything the lane refuses, which is three things and is the whole list.
 
-    **NOTHING HERE IS A PERMISSION AND THAT IS THE TEST EVERY CANDIDATE HAS TO PASS.** Three of
-    the four say a destination is misspelled, and the fourth says the caller cannot be named. Add
-    a fifth only if the same is true of it, and read
+    **NOTHING HERE IS A PERMISSION AND THAT IS THE TEST EVERY CANDIDATE HAS TO PASS.** Two of
+    the three say a destination is misspelled, and the third says the caller cannot be named. Add
+    a fourth only if the same is true of it, and read
     ``docs-frank/superpowers/specs/2026-08-04-platform-buildout-design.md`` under "The exploration
     route is a slice, not a non-goal" first.
+
+    IT WAS FOUR UNTIL 2026-08-05 AND THE ONE THAT LEFT IS THE ONE TO NOT PUT BACK.
+    ``unknown_team`` checked the spelling of a segment the working tier no longer has. With the
+    tier laid out ``<person>/<project>/`` there is no group in the path, so a group named here
+    would be withheld rather than misdirected, and that is a permission.
 
     ``Refusal`` is imported from ``cli/preflight.py`` and no rule there is called. A frozen
     dataclass of two strings is a shape rather than a judgement, and a second refusal type would
@@ -300,19 +325,6 @@ def lane_refusals(
                     "volume, it is the last segment of the working prefix, and it is what cost "
                     "attribution reads. There is no default for it, because a default would put "
                     "two unrelated pieces of work under one name and one bill."
-                ),
-            )
-        )
-    declared = {team.team_id for team in configuration.inventory.team_bindings.teams}
-    if request.team not in declared:
-        refusals.append(
-            Refusal(
-                code="unknown_team",
-                detail=(
-                    f"{request.team!r} is not a team config/organization.yaml declares. "
-                    f"Declared: {', '.join(sorted(declared))}. Team is the first segment of your "
-                    "working prefix, so a name nothing declares puts your files where no listing "
-                    "of any group's work will find them."
                 ),
             )
         )
