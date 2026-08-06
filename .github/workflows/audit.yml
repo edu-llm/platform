@@ -72,6 +72,32 @@ name: The audit (what the platform recorded, against what is actually there)
 #     the budget, which needs Cost Explorer and a credential; the page says so where the
 #     figures would be.
 #
+#   the-gate-still-exists — the one whose subject is a setting rather than a file, and the
+#     only check anywhere that reads the control deciding whether a run waits for a person.
+#     `run-approval-lead` is an environment protection rule in GitHub's settings: a browser,
+#     an admin, ten seconds, no commit. Every other control here is a reviewed file, and this
+#     one was a recollection plus a capture with a thirty-day expiry, which says nothing at
+#     all about the days in between -- and thirty days is how long the ninth member of the
+#     reviewer team went unnoticed.
+#
+#     WHAT IT IS ACTUALLY WATCHING FOR IS AN ABSENCE. Required reviewers on an environment
+#     are offered for public repositories on every plan and for private ones only above Free.
+#     This organization is Free and this repository is public, so converting it to private
+#     does not weaken the gate, it deletes it: the protection rule goes, every waiting job
+#     proceeds, and nothing turns red, because a job whose environment carries no protection
+#     rule is a job that runs. Five repositories in this organization are already private, so
+#     that is a habit rather than a hypothetical. No diff to this repository can cause it and
+#     no pull-request check could see it, which is what puts it here.
+#
+#     It holds no credential of any kind. The environment protection rules and the
+#     repository's visibility are readable on a public repository by the token the runner
+#     already has -- verified anonymously against this repository on 2026-08-06, HTTP 200 with
+#     no session at all -- so this job has none of the credential preamble its neighbours
+#     carry. The one thing it cannot read is the reviewer team's membership, which needs the
+#     Members organization permission that no GITHUB_TOKEN holds; it says so in those words
+#     rather than passing over it, and tools/verify_the_gate.py --check-team-membership is the
+#     same comparison from a laptop.
+#
 #   registered-dockerfiles — the seventh, and the only one whose subject is other people's
 #     repositories. It reads the research repositories over the GitHub API to ask whether
 #     each registration's dockerfile_path is actually on the branch it names, which is a
@@ -242,6 +268,38 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  the-gate-still-exists:
+    name: the gate that stops a run is still the one this repository declares
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # First in the file on purpose. Everything else here asks whether a record matches
+      # what happened; this asks whether the thing that decides who may spend money is
+      # still switched on, and a morning where the answer is no makes the rest moot.
+      #
+      # No credential and no repository variable, so it has none of the three ways its
+      # neighbours can go red before starting. The GITHUB_TOKEN is more than enough: both
+      # endpoints answer an anonymous request on a public repository, which is itself the
+      # dependency being watched -- the day they stop answering is the day the gate is gone.
+      #
+      # No translation of the exit code. The tool prints the reason and the paragraph, and
+      # tells a setting that moved apart from a check that could not look. Restating that
+      # here would be a second place for the two to drift.
+      - name: Check the approval environments against what this repository declares
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --frozen python tools/verify_the_gate.py --repository "${{ github.repository }}"
+
   registered-dockerfiles:
     name: every registration names a Dockerfile that is there
     runs-on: ubuntu-latest

@@ -22,6 +22,67 @@ four on the CPU queue and five on the GPU one. Eight reached AWS Batch and ran; 
 was refused at admission before anything was launched, which is also a result worth keeping.
 What each of the nine left behind is committed under `fixtures/evidence/`.
 
+## Do not make this repository private
+
+**The approval gate exists because this repository is public, and converting it to private
+deletes the gate rather than weakening it.** There is no warning, no failure and no red run.
+Every job that was waiting for a lead proceeds, submissions carry on working, and the only
+difference is that nobody is asked.
+
+GitHub offers required reviewers on an environment for public repositories on every plan, and
+for private repositories only on Pro, Team or Enterprise. Read from the account on
+2026-08-06:
+
+```bash
+$ gh api orgs/edu-llm --jq '.plan.name'
+free
+$ gh api repos/edu-llm/platform --jq '.visibility'
+public
+```
+
+So the gate holds by the narrowest margin GitHub sells. A job whose environment carries no
+protection rule is a job that runs, which is why the failure is silent: there is nothing for
+it to fail. Five repositories in this organization are already private, so this is a thing
+somebody here does by habit rather than a hypothetical.
+
+**If the repository has to become private, move the organization off Free first**, and
+re-read `run-approval-lead` afterwards to confirm the protection rule survived:
+
+```bash
+gh api repos/edu-llm/platform/environments/run-approval-lead \
+  --jq '[.protection_rules[].type]'
+```
+
+`required_reviewers` must be in that list. If it is not, no submission should be dispatched
+until it is back.
+
+**What actually catches this is not this paragraph.** Nobody reads a file before changing a
+repository setting. The guard is `the-gate-still-exists`, the first job in
+`.github/workflows/audit.yml`, which reads the live environments every morning and goes red on
+either the visibility or the protection rule; and `tools/verify_the_gate.py`, which is what
+that job runs and which anybody can run by hand in about four seconds:
+
+```bash
+uv run python tools/verify_the_gate.py
+uv run python tools/verify_the_gate.py --check-team-membership   # needs a session that can list the team
+```
+
+What the repository declares the gate must be is `DECLARED_GATES` in
+`src/edullm_platform/approval_gate.py`. That constant is the first time the approval
+environments have been written down anywhere in this tree: everything else this platform
+enforces is a reviewed file, and the control deciding whether a run waits for a person was a
+browser setting plus a capture with a thirty-day expiry. **Changing an approval environment in
+GitHub means changing that constant in the same ten minutes**, which is the point — it is the
+commit those changes have never had, and the audit names the line when the two disagree.
+
+The one thing neither can see is who is in the `team-leads` team, because listing a team needs
+the Members organization permission and no `GITHUB_TOKEN` holds one. That half is the
+`lead-gate` job beside it, which compares the committed capture against the roster and puts a
+clock over how old the capture is; `--check-team-membership` above is the same comparison
+against live GitHub, from a session that can list the team. Between the two jobs: `lead-gate`
+asks who stands behind the reviewer slot, `the-gate-still-exists` asks whether the slot is
+still there, and neither substitutes for the other.
+
 ## Layout
 
 | Path | Contents |
