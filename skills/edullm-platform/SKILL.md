@@ -55,7 +55,7 @@ below names the copy this install is reading.
 ## Where the command comes from
 
 There is no flag that carries the command. `.edullm/run.yaml` holds what is a property of the
-code, and everything a run is charged against is supplied at submit time instead. So one
+code, and everything a run is charged against is supplied at submit time instead, because one
 commit run by two people belongs to two teams.
 
 ```yaml
@@ -261,7 +261,10 @@ edullm status --json <run-id>
 ```
 
 This answers from GitHub and dispatches nothing, so it costs no runner and you may call it
-in a loop. Read `admitted` and `needs_a_dispatch`.
+in a loop. Read `admitted` and `needs_a_dispatch`. On a run still at a gate, `gate` and
+`reviewers` name who is being waited on and `you_can_release` says whether the submitter is
+one of them, which is the difference between telling somebody to wait and telling them to
+open the run page.
 
 When `needs_a_dispatch` is true the answer has moved into AWS and the rest of it costs a
 workflow. `edullm status <run-id>` without `--json` pays for that, and `edullm logs <run-id>`
