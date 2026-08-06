@@ -1107,6 +1107,21 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # records, so no earlier change is riding along and this difference is entirely
     # notifications/messages.py. No file under config/ moved, so the other three zips are
     # untouched and the janitor's entry below is unaffected.
+    #
+    # AND IT IS EXTENDED RATHER THAN JOINED, WHICH IS THE FOURTEENTH ENTRY'S FINDING ARRIVING
+    # FOR THE THIRD TIME IN TWO DAYS. `edullm studio` adds config/reports/studio.yaml, adding a
+    # reviewed configuration file means adding a ConfigFile member because
+    # tests/test_config_resolution.py holds the vocabulary and the contents of config/ level in
+    # both directions, researcher_lane.py imports that enum, and this zip carries
+    # researcher_lane.py for two tag keys and a role name. So a new line in a StrEnum moves a
+    # Lambda digest again, and the coupling the fourteenth entry named as the finding is still
+    # the finding: the vocabulary reaches three zips through a module none of them reads it in.
+    #
+    # NOTHING THE JANITOR DOES CHANGES BY A BYTE OF IT. janitor_handler.py imports
+    # WARNING_TAG_KEY and LaneSettings and builds its settings in `_settings_from_environment`,
+    # so it never opens a configuration file and never reaches the enum member that moved. The
+    # sweep is unaware Studio exists, which is also the honest statement of what this verb does
+    # not get: no janitor arm, no ExpiresAt, and `--stop` as the only thing that stops an app.
     releases: tuple[PendingRelease, ...] = (
         PendingRelease(
             function="notifier",
@@ -1128,10 +1143,14 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "edullm stop lets a researcher end their own machine inside the window "
                 "between this sweep's describe and its stop, and the handler now reads the "
                 "two EC2 codes that mean the machine is already off the clock as an outcome "
-                "rather than as a refusal that fails the invocation."
+                "rather than as a refusal that fails the invocation. The digest then moved "
+                "again for a second cause with no behaviour behind it at all: edullm studio "
+                "adds a ConfigFile member, researcher_lane.py imports that enum, and this zip "
+                "carries researcher_lane.py -- which the fourteenth entry in this register "
+                "recorded as a coupling rather than a one-off, and here it is again."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function janitor",
-            builds_to="7f9040edf6156ce9ffa84219503b16cb5b5cedf875074ee7ff8e18136e735e37",
+            builds_to="d9cb4a6fd46205883cc724cdd6b56e328cba0a3f1df05a0a823dd19484baa9e5",
             released="e07efe963ec9cadb79f7345a14d9074c125e359a588e0661f99db687a757e96a",
             recorded_on=date(2026, 8, 6),
         ),

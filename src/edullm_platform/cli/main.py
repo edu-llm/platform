@@ -178,6 +178,7 @@ from edullm_platform.cli.lane import (
 from edullm_platform.cli.machine import (
     check_document,
     emit,
+    envelope,
     refusal_document,
     status_document,
     status_listing_document,
@@ -217,6 +218,35 @@ from edullm_platform.cli.spec import (
     SpecUnreadableError,
     find_spec,
     load_spec,
+)
+from edullm_platform.cli.studio import (
+    STUDIO_CONFIG_FILE,
+    RunningApp,
+    StudioRequest,
+    StudioSettings,
+    StudioShape,
+    already_running_said,
+    could_not_resolve_the_image,
+    create_app_argv,
+    create_space_argv,
+    create_user_profile_argv,
+    delete_app_argv,
+    describe_app_argv,
+    describe_space_argv,
+    describe_user_profile_argv,
+    image_account_argv,
+    image_arn_for,
+    load_studio_settings,
+    nothing_to_stop,
+    presigned_url_argv,
+    price_said,
+    running_app,
+    shape_for,
+    studio_document,
+    studio_name_for,
+    studio_refusals,
+    unpriced_shape,
+    unstopped_said,
 )
 from edullm_platform.cli.workspace import (
     CommandRunner,
@@ -345,6 +375,7 @@ BUILT_TODAY: Final = {
     "run": "ship this working tree to a machine and stream the output back",
     "shell": "a terminal on a machine of your own, or a notebook on it",
     "stop": "end the machine those two started, and say what it cost",
+    "studio": "open your SageMaker Studio space, or --stop it",
 }
 
 #: What each built verb does, in the sentence its own ``--help`` opens with.
@@ -406,6 +437,11 @@ WHAT_A_VERB_DOES: Final = {
         "Terminates the machine you have for this project and says what it ran up. Your "
         "files in the scratch bucket survive it; the machine's own disk does not. Nobody "
         "else's machine is reachable from here."
+    ),
+    "studio": (
+        "Starts or resumes your own SageMaker Studio space and prints a sign-in URL, after "
+        "saying what an hour of it costs. --stop ends the compute and keeps the disk. "
+        "Nothing here is checked, priced against a policy or recorded as a run you can cite."
     ),
 }
 
@@ -694,6 +730,32 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
     # underneath -- see ``find_lane_machines_argv`` -- so the absence of the flag is the fence.
     stop.add_argument("--project", required=True, help="the machine for this project")
 
+    studio = verb_parser("studio", WHAT_A_VERB_DOES["studio"])
+    # ``--project`` IS NOT ``required=True`` HERE AND IT IS ON ``stop``, WHICH LOOKS LIKE AN
+    # OVERSIGHT AND IS THE LANE'S OWN SPLIT. argparse's answer to a missing required flag is a
+    # usage line and exit 2, which is right for a verb that can do nothing at all without one.
+    # This verb can: ``--stop`` needs no project, because the space it acts on is the caller's
+    # own and there is only ever one. So absence is judged by ``studio_refusals``, which answers
+    # ``no_project`` with a code a skill can match on rather than a usage line it cannot.
+    studio.add_argument("--project", help="what this space is for, which is what the tags carry")
+    studio.add_argument(
+        "--instance-type",
+        help=(
+            "a SageMaker shape other than the default, from the ones "
+            f"{STUDIO_CONFIG_FILE} prices. Not an EC2 instance type: Studio has its own "
+            "rate card and its own ml. names."
+        ),
+    )
+    studio.add_argument(
+        "--stop",
+        action="store_true",
+        help=(
+            "end the compute and keep the disk. This is the one that matters -- nothing else "
+            "stops an app, and the domain has no idle shutdown"
+        ),
+    )
+    _add_json(studio)
+
     built: dict[str, argparse.ArgumentParser] = {
         "check": check,
         "submit": submit,
@@ -705,6 +767,7 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         "run": run,
         "shell": shell,
         "stop": stop,
+        "studio": studio,
     }
     for verb, plan in NOT_BUILT_YET.items():
         # THE SENTENCE IS THE PLAN'S, READ RATHER THAN REWRITTEN. An unbuilt verb's help
@@ -1181,6 +1244,8 @@ def main(
             )
         if verb == "stop":
             return _stop(arguments, runner=command_runner, out=stdout, err=stderr)
+        if verb == "studio":
+            return _studio(arguments, runner=command_runner, out=stdout, err=stderr)
     except KeyboardInterrupt:
         # CAUGHT BECAUSE IT IS NOT AN ``Exception`` AND SO SLIPPED PAST EVERYTHING BELOW.
         # The handler two blocks down exists so that a researcher never meets a traceback,
@@ -2314,6 +2379,368 @@ def _stop(
     return EXIT_OK
 
 
+def _studio(
+    arguments: argparse.Namespace,
+    *,
+    runner: CommandRunner,
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """Open this person's Studio space, or stop it, having first said what it costs.
+
+    **IT ENTERS THE LANE THE WAY EVERY OTHER AWS-TOUCHING VERB DOES.** The researcher role's
+    own policy allows ``Action: "*"`` narrowed by seven denies, none of which names a
+    SageMaker Studio action, and ``InternSandboxBoundary`` v5 is an ``AdminCeiling`` allow
+    with denies that do not either -- so every call below is permitted without an IAM change.
+    That was measured with ``iam simulate-principal-policy`` against the deployed role rather
+    than reasoned about, because reasoning about an effective policy is how people end up
+    building against permissions that do not exist.
+
+    **IT DOES NOT GO THROUGH ``_lane_session``, FOR ``_stop``'S REASON AND ONE MORE.** That
+    function starts an EC2 instance where it finds none, and it demands the Session Manager
+    plugin. Studio is reached through a browser, so a laptop with no plugin can use this verb,
+    which is most of why Studio is the exploration surface at all.
+
+    **THE ORDER OF THE FOUR CALLS IS THE VERB.** Price, then profile, then space, then app.
+    Everything before the app is free and idempotent, so a first invocation sets somebody up
+    without anybody doing it by hand, and the one call that costs money happens last and after
+    the rate has already been printed.
+    """
+    configuration = _configuration(arguments)
+    settings = load_studio_settings(configuration.directory)
+    wanted = arguments.instance_type
+    shape = shape_for(settings, wanted)
+    if shape is None:
+        # BEFORE THE IDENTITY CALL, BECAUSE IT NEEDS NEITHER A NETWORK NOR A CREDENTIAL. A
+        # misspelled shape answered with "log in first" is a refusal about the wrong thing.
+        unpriced: tuple[Refusal, ...] = (unpriced_shape(settings, str(wanted)),)
+        if arguments.json:
+            emit(refusal_document("studio", unpriced), out=out)
+        else:
+            print(render_refusals(unpriced), end="", file=err)
+        return EXIT_REFUSED
+
+    identity = runner(("aws", "sts", "get-caller-identity", "--output", "json"))
+    if not identity.ok:
+        print(_no_aws_session(identity.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+    facts = json.loads(identity.stdout)
+    person = person_from_caller_arn(str(facts["Arn"])) or ""
+    request = StudioRequest(
+        person=person,
+        studio_name=studio_name_for(person),
+        # ``--stop`` NEEDS NO PROJECT AND THE PLACEHOLDER IS WHAT SAYS SO. The space is the
+        # caller's own and there is one of them, so nothing about stopping it depends on what
+        # it was for. Standing a value in here rather than making the field optional keeps
+        # ``studio_refusals`` a function of one shape instead of two.
+        project=arguments.project or ("--stop" if arguments.stop else ""),
+    )
+    refusals = studio_refusals(request)
+    if refusals:
+        if arguments.json:
+            emit(refusal_document("studio", refusals), out=out)
+        else:
+            print(render_refusals(refusals), end="", file=err)
+        return EXIT_REFUSED
+
+    assumed = runner(
+        assume_lane_argv(
+            account=str(facts["Account"]),
+            project=request.project,
+            person=request.person,
+            lifetime_hours=load_lane_settings(configuration.directory).default_lifetime_hours,
+        )
+    )
+    if not assumed.ok:
+        print(_cannot_enter_the_lane(assumed.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+    environment = credentials_environment(json.loads(assumed.stdout)["Credentials"])
+
+    described = runner(describe_app_argv(settings=settings, request=request), env=environment)
+    app = running_app(described.stdout) if described.ok else None
+
+    if arguments.stop:
+        return _stop_the_studio_app(
+            request,
+            settings=settings,
+            app=app,
+            shape=shape,
+            runner=runner,
+            environment=environment,
+            out=out,
+            err=err,
+            as_document=bool(arguments.json),
+        )
+    return _open_the_studio_space(
+        request,
+        settings=settings,
+        app=app,
+        shape=shape,
+        runner=runner,
+        environment=environment,
+        out=out,
+        err=err,
+        as_document=bool(arguments.json),
+    )
+
+
+def _stop_the_studio_app(
+    request: StudioRequest,
+    *,
+    settings: StudioSettings,
+    app: RunningApp | None,
+    shape: StudioShape,
+    runner: CommandRunner,
+    environment: dict[str, str],
+    out: TextIO,
+    err: TextIO,
+    as_document: bool,
+) -> int:
+    """End the compute and keep the disk, which is the verb's whole reason for existing.
+
+    **EXIT_OK WHERE THERE IS NOTHING TO STOP**, which is ``_stop``'s ruling and holds here for
+    the same reason: the state this exists to produce is already the state, and a cleanup
+    command nobody can run twice is one nobody puts in a script. The refusal's *code* is still
+    published under ``--json``, because "there was nothing running" and "I stopped something"
+    are different facts to a program even where they are the same outcome to a person.
+    """
+    if app is None or not app.is_billing:
+        told = nothing_to_stop(request)
+        if as_document:
+            emit(
+                {
+                    **envelope("studio"),
+                    **studio_document(request=request, settings=settings, shape=shape, app=app),
+                    "stopped": False,
+                    "refused": False,
+                    "refusals": [{"code": told.code, "detail": told.detail}],
+                },
+                out=out,
+            )
+        else:
+            print("\n".join(_wrapped(told.detail, indent="")), file=out)
+        return EXIT_OK
+
+    ended = runner(delete_app_argv(settings=settings, request=request), env=environment)
+    if not ended.ok:
+        print(_could_not_stop_the_studio_app(request, ended.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+
+    monthly = settings.volume_gib_month_usd * settings.volume_gib
+    said = (
+        f"Stopped the app on {request.studio_name}. The hourly charge has ended. Your files "
+        f"are on the space's {settings.volume_gib} GB volume and are not affected, and that "
+        f"volume goes on costing about ${monthly:.2f} a month. Running edullm studio again "
+        "brings the same disk back under a new app."
+    )
+    if as_document:
+        emit(
+            {
+                **envelope("studio"),
+                **studio_document(request=request, settings=settings, shape=shape, app=app),
+                "stopped": True,
+                "said": said,
+                "refused": False,
+                "refusals": [],
+            },
+            out=out,
+        )
+    else:
+        print("\n".join(_wrapped(said, indent="")), file=out)
+    return EXIT_OK
+
+
+def _open_the_studio_space(
+    request: StudioRequest,
+    *,
+    settings: StudioSettings,
+    app: RunningApp | None,
+    shape: StudioShape,
+    runner: CommandRunner,
+    environment: dict[str, str],
+    out: TextIO,
+    err: TextIO,
+    as_document: bool,
+) -> int:
+    """Start or resume, and hand back a link. The price is printed before anything is bought.
+
+    **A RUNNING APP IS ANSWERED WITH ITS LINK AND NEVER WITH A SECOND APP.** Studio permits
+    more than one app on a space, so "start or resume" read carelessly is a second instance on
+    the same person's name, billing beside the first, with nothing in either the console or
+    this verb saying which one anybody is looking at.
+    """
+    print("\n".join(_wrapped(price_said(shape, settings), indent="")), file=err)
+    print(file=err)
+
+    if app is None or not app.is_billing:
+        # ASKED FOR BEFORE ANYTHING IS CREATED, BECAUSE THE SPACE NEEDS IT TOO AND A LOOKUP
+        # THAT FAILS HALFWAY WOULD LEAVE A PROFILE AND NO SPACE.
+        published = runner(image_account_argv(), env=environment)
+        if not published.ok or not published.text:
+            unreadable: tuple[Refusal, ...] = (could_not_resolve_the_image(),)
+            if as_document:
+                emit(refusal_document("studio", unreadable), out=out)
+            else:
+                print(render_refusals(unreadable), end="", file=err)
+            return EXIT_UNREACHABLE
+        image = image_arn_for(settings, shape, account=published.text)
+        # THE PROFILE AND THE SPACE ARE CREATED BEFORE THE APP AND BOTH ARE FREE. Neither call
+        # allocates an instance, so the ordinary first invocation sets somebody up entirely and
+        # the only thing they had to know was the verb.
+        made = _ensure_the_studio_space(
+            request,
+            settings=settings,
+            shape=shape,
+            image_arn=image,
+            runner=runner,
+            environment=environment,
+            err=err,
+        )
+        if made is not None:
+            return made
+        print("\n".join(_wrapped(unstopped_said(), indent="")), file=err)
+        print(file=err)
+        started = runner(
+            create_app_argv(settings=settings, request=request, shape=shape, image_arn=image),
+            env=environment,
+        )
+        if not started.ok:
+            print(_could_not_start_the_studio_app(request, started.stderr), end="", file=err)
+            return EXIT_UNREACHABLE
+
+    signed = runner(presigned_url_argv(settings=settings, request=request), env=environment)
+    if not signed.ok:
+        print(_could_not_sign_in_to_studio(request, signed.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+
+    if as_document:
+        # THE URL IS NOT IN THE DOCUMENT AND ``cli/studio.py`` SAYS WHY. It is a bearer
+        # credential with a five-minute life, and a document is the thing somebody redirects
+        # into a file and pastes into an issue.
+        emit(
+            {
+                **envelope("studio"),
+                **studio_document(request=request, settings=settings, shape=shape, app=app),
+                "stopped": False,
+                "refused": False,
+                "refusals": [],
+            },
+            out=out,
+        )
+        return EXIT_OK
+    if app is not None and app.is_billing:
+        print(already_running_said(app, url=signed.text), file=out)
+    else:
+        print(signed.text, file=out)
+    return EXIT_OK
+
+
+def _ensure_the_studio_space(
+    request: StudioRequest,
+    *,
+    settings: StudioSettings,
+    shape: StudioShape,
+    image_arn: str,
+    runner: CommandRunner,
+    environment: dict[str, str],
+    err: TextIO,
+) -> int | None:
+    """Make the user profile and the space where they do not exist, or say why that failed.
+
+    ``None`` for "there is a space now", which covers both the first invocation and every one
+    after it. Create is attempted only where describe says there is nothing, rather than
+    attempted-and-forgiven, so a ``ResourceInUse`` from this is a real collision rather than
+    the ordinary path.
+    """
+    profile = runner(
+        describe_user_profile_argv(settings=settings, request=request), env=environment
+    )
+    if not profile.ok:
+        made = runner(create_user_profile_argv(settings=settings, request=request), env=environment)
+        if not made.ok:
+            print(_could_not_make_a_studio_space(request, made.stderr), end="", file=err)
+            return EXIT_UNREACHABLE
+    space = runner(describe_space_argv(settings=settings, request=request), env=environment)
+    if not space.ok:
+        made = runner(
+            create_space_argv(settings=settings, request=request, shape=shape, image_arn=image_arn),
+            env=environment,
+        )
+        if not made.ok:
+            print(_could_not_make_a_studio_space(request, made.stderr), end="", file=err)
+            return EXIT_UNREACHABLE
+    return None
+
+
+def _could_not_make_a_studio_space(request: StudioRequest, said: str) -> str:
+    """Setting somebody up failed, so nothing was started and nothing is billing."""
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                f"SageMaker would not create the space {request.studio_name}, so nothing was "
+                "started and nothing is billing. That is a call that failed rather than "
+                f"anything about what you typed. What AWS said: {said.strip()}",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+def _could_not_start_the_studio_app(request: StudioRequest, said: str) -> str:
+    """The one call that costs money did not go through, which is the cheap failure."""
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                f"SageMaker would not start an app on {request.studio_name}, so nothing is "
+                "billing by the hour. Your space and its volume are there either way. What "
+                f"AWS said: {said.strip()}",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+def _could_not_sign_in_to_studio(request: StudioRequest, said: str) -> str:
+    """A link that could not be minted, over an app that may well be running.
+
+    **IT NAMES ``--stop`` AND THAT IS THE POINT OF THE SENTENCE.** This is the one failure
+    here that can leave an instance billing with no way in, so a message that stopped at "the
+    URL failed" would leave somebody paying for a machine they cannot reach and cannot see.
+    """
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                "SageMaker would not mint a sign-in URL. If an app was started just now it is "
+                "running and it is billing, so run edullm studio --stop if you do not want it. "
+                f"What AWS said: {said.strip()}",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+def _could_not_stop_the_studio_app(request: StudioRequest, said: str) -> str:
+    """Stopping failed, which is the failure worth being blunt about: it is still costing."""
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                f"SageMaker would not stop the app on {request.studio_name}, so it is still "
+                "running and still billing by the hour. Running this again is the remedy. "
+                f"What AWS said: {said.strip()}",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
 def _could_not_look_for_a_machine(said: str) -> str:
     """EC2 would not say what this person has, so nothing was ended.
 
@@ -2506,9 +2933,7 @@ def _submit(
     submitter = github_login(runner, allow_network=True)
     declared = arguments.spec if arguments.spec else find_spec(cwd)
     spec = load_spec(declared) if declared is not None else None
-    preflight = _preflight(
-        arguments, configuration, facts, spec, submitter, spec_path=declared
-    )
+    preflight = _preflight(arguments, configuration, facts, spec, submitter, spec_path=declared)
 
     if preflight.refused and not arguments.force:
         # THE VERB, SO THE LINE A READER COPIES IS THE COMMAND THEY RAN. The fields block
@@ -2536,9 +2961,7 @@ def _submit(
     dispatched_at = datetime.now(UTC)
     actions.dispatch(
         SUBMIT_WORKFLOW,
-        _submission_form(
-            preflight.request, edullm_version=installed_version().version
-        ),
+        _submission_form(preflight.request, edullm_version=installed_version().version),
         courtesy=(EDULLM_VERSION_FIELD,),
     )
     print(f"dispatching {SUBMIT_WORKFLOW} ... queued", file=out)
@@ -2711,9 +3134,7 @@ def _say_whether_this_edullm_is_current(
         print(file=err)
 
 
-def _submission_form(
-    request: SubmissionRequest, *, edullm_version: str | None
-) -> dict[str, str]:
+def _submission_form(request: SubmissionRequest, *, edullm_version: str | None) -> dict[str, str]:
     """``SubmissionInputs`` field for field, plus the one input that is not one of them.
 
     ``image_digest`` is deliberately absent rather than empty. The workflow derives it from

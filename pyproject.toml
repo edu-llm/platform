@@ -35,7 +35,7 @@ name = "edullm"
 #
 # 0.2.0 rather than 0.1.1 because 0.1.0 was never released and nothing was ever installed
 # from a tag; the first tag this repository has should not look like the second.
-# WHY THIS IS A MINOR RATHER THAN A PATCH. edullm run and edullm shell pick up the AWS profile the credential broker wrote, so AWS_PROFILE no longer has to be set in every terminal, and a laptop with no broker is refused by name instead of failing with a shell error.
+# WHY THIS IS A MINOR RATHER THAN A PATCH. placeholder rewritten by tools/next_version.py once the merged tree is complete
 version = "4.3.0"
 requires-python = ">=3.12"
 dependencies = [

@@ -51,6 +51,7 @@ from tests.cli_support import (
     invoke,
     lane_answers,
     ok,
+    studio_answers,
     write_spec,
 )
 
@@ -264,6 +265,11 @@ def a_platform(
     # after the gh answers and not before, so a case that hands one ``gh`` answer to every call
     # still overrides the ones it means to.
     answers.update(lane_answers())
+    # ``studio`` drives SageMaker rather than EC2, and it is in the population these cases run
+    # over, so its calls belong here for the reason the lane's do. Its own answers rather than
+    # a widened ``lane_answers``: the two are different surfaces, and a lane test carrying a
+    # Studio domain it never reaches would be a fixture describing something untrue.
+    answers.update(studio_answers())
     return FakeRunner(answers)
 
 
