@@ -819,33 +819,25 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # can meet changes. What waits is the improvement. The validator and the notifier read
     # the contract and neither reads this field, so for them the window is bytes and no
     # behaviour at all.
+    #
+    # THE TENTH AND ELEVENTH WERE CLEARED BY THE RELEASES THAT CARRY THIS DELETION AND THE
+    # TWELFTH WAS DELIBERATELY LEFT STANDING, WHICH IS THE FIRST TIME THIS REGISTER HAS BEEN
+    # CLEARED IN PART ON PURPOSE. The recorder was uploaded as object version
+    # x3ZwR.bxnokkwdBGyk9RV9udNpANux8y and the validator as
+    # LNv7E3nuhEowl_a7C7BQZys.g7190V13, both cut from 5ca93d2, and both templates and both
+    # release records name the digests those builds produced.
+    #
+    # The notifier entry below is not an oversight and must not be tidied away with them.
+    # edullm/the-approval-message is in flight over exactly this zip -- it adds
+    # notifications/approval.py, notifications/messages.py and notifications/overnight.py,
+    # rewrites notifier_handler.py and edits tools/build_notifier_lambda.py -- and it had no
+    # pull request at all when these three were cut. Releasing the notifier from under it
+    # would upload bytes somebody is midway through changing, and the branch landing an hour
+    # later would owe a second release of one function from two branches, which is the
+    # arrangement the "released twice in the space of an hour" paragraph above was written
+    # about. The entry stands until that branch lands, and whoever merges it cuts the
+    # release and deletes the entry in that commit.
     releases: tuple[PendingRelease, ...] = (
-        PendingRelease(
-            function="recorder",
-            reason=(
-                "ResultManifest.attempt_id is nullable, so a terminal Batch job with no "
-                "attempt now yields a result record carrying the reason it never started. "
-                "Until the upload, MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT and a queue "
-                "cancellation both go on being written nowhere, which is today's behaviour "
-                "rather than a regression."
-            ),
-            cleared_by="uv run python tools/release_lambda.py --function recorder",
-            builds_to="11d4c78a8ddc2b22c8a43dd5224d00a3e038f86403a8ba2e50c8f88a6d92c8b1",
-            released="b577164f077a7541b0e3efefbae9c11878af725908649b8edfd9ee1dfe1aa7ce",
-            recorded_on=date(2026, 8, 6),
-        ),
-        PendingRelease(
-            function="validator",
-            reason=(
-                "The same nullable attempt_id, reached by importing contracts/results.py. "
-                "The validator does not read the field, so its packaged bytes move and "
-                "nothing it decides does."
-            ),
-            cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="df9952459e54ff0ebbce89660b5faf3b7a87bae47d2a0856c2553c9735d2740f",
-            released="da7313e1055d1abdafb79d7a83c344bdbde32cc7a6739b36df99291c0643f2e9",
-            recorded_on=date(2026, 8, 6),
-        ),
         PendingRelease(
             function="notifier",
             reason=(
@@ -858,38 +850,31 @@ def pending_releases() -> tuple[PendingRelease, ...]:
             released="b85765ebc5f0c14ae8b28ebfd088a36475c242b6261028955bc3d4f2f943cbe3",
             recorded_on=date(2026, 8, 6),
         ),
-    # A THIRTEENTH, AND IT IS THE FIRST ONE HERE WHERE THE FUNCTION IS A BYSTANDER TO ITS OWN
-    # ENTRY. The janitor's zip carries researcher_lane.py for two tag keys and a role name,
-    # and researcher_lane.py is where `load_lane_settings` lives. That function defaulted to
-    # `"config/reports/researcher-lane.yaml"`, a path against the working directory, which is
-    # the defect that made `edullm run` and `edullm shell` unusable outside a platform
-    # checkout; fixing it changes the module and therefore the bytes of a zip that never
-    # calls it. The janitor reads its three numbers from the environment -- see
-    # tools/build_janitor_lambda.py's header for why it carries no configuration at all --
-    # so nothing this function does can differ before and after the release, and the window
-    # this record covers has no observable behaviour in it at all.
+    # A THIRTEENTH WAS OPENED AND CLEARED WITHIN THE HOUR, AND WHAT IS WORTH KEEPING IS THAT
+    # THE THING IT WAS WAITING FOR HAD ALREADY HAPPENED WHEN IT WAS WRITTEN. The janitor's
+    # zip carries researcher_lane.py for two tag keys and a role name, and #318 moved that
+    # module by routing `load_lane_settings` through
+    # edullm_platform.reviewed_configuration. janitor_handler.py imports WARNING_TAG_KEY and
+    # LaneSettings from it and builds its settings in `_settings_from_environment`, so it
+    # never calls the function that changed and nothing it does can differ across the
+    # release.
     #
-    # Recorded rather than released here for one reason worth writing down: a second branch
-    # is in flight over the same zip, reworking the handler so that one unreachable machine
-    # cannot end a sweep. Two releases of one function from two branches is the arrangement
-    # that produced the "released twice in the space of an hour" paragraph above, and this
-    # one is avoidable by waiting. Whichever lands second cuts the release, and this record
-    # is deleted in that commit.
-        PendingRelease(
-            function="janitor",
-            reason=(
-                "researcher_lane.py stopped naming config/reports/researcher-lane.yaml by a "
-                "path against the working directory, which is what made edullm run and "
-                "edullm shell raise FileNotFoundError for anybody outside a platform "
-                "checkout. The janitor carries that module for its tag keys and reads its "
-                "own three numbers from the environment, so its behaviour is unchanged and "
-                "only the packaged bytes moved."
-            ),
-            cleared_by="uv run python tools/release_lambda.py --function janitor",
-            builds_to="50922d41d3750af154e3b2342cfe634c4105b398ed2895a2de585b48579b98d9",
-            released="10f94f8a70828c7b6d4c70ab99319ac0e6de037f4710e9ae105df31f0806aace",
-            recorded_on=date(2026, 8, 6),
-        ),
+    # The entry declined to cut the release because a second branch was in flight over the
+    # same zip, reworking the handler so one unreachable machine cannot end a sweep, and it
+    # said whichever landed second should cut it. That branch was #301 and it had merged at
+    # 05:17:08Z, two and a half hours before #318 -- and it had cut and deployed its own
+    # release a minute later, which is why the account was running 10f94f8a7082 rather than
+    # 11a0f7a07e26. So the entry was written waiting on an event that had already passed.
+    #
+    # WHY THAT WAS HARD TO SEE FROM THE BRANCH, BECAUSE IT WILL BE HARD TO SEE AGAIN. Every
+    # merge here is a squash, so the branch's own commits stay unreachable from main and
+    # `git rev-list --count origin/main..origin/<branch>` answers a non-zero number forever.
+    # origin/edullm/janitor-one-machine-cannot-stop-the-sweep still reads two commits ahead
+    # today and has been merged since 05:17. A branch that looks unmerged is not evidence
+    # that it is; the pull request state is, and so is the digest -- building the zip at
+    # each of the last twenty commits of main showed the janitor moving to 10f94f8a7082
+    # exactly at #301's commit and not moving again until #318's, which settles both halves
+    # at once and needs nobody's memory.
     )
     return one_record_per_function(releases)
 
