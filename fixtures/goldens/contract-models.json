@@ -124,14 +124,14 @@
       "module": "edullm_platform.contracts.dataset_registry",
       "name": "DatasetRegistry",
       "schema_version": "1",
-      "structural_digest": "sha256:2eb0a2e62fd359c2fb927c1f5060546cd2093d8b6d7a599b77a4a328313653ae"
+      "structural_digest": "sha256:99751cfe74f0f16f03010ed5197bcb8776fe81be6a0e6e3a7e179b77026fb177"
     },
     {
       "base": false,
       "module": "edullm_platform.contracts.dataset_registry",
       "name": "PublishedDatasetReference",
       "schema_version": "unversioned",
-      "structural_digest": "sha256:281fc1b6cf010f71cde18e94c44d8f6400cb9d0685d7e21ded46247478aeb41c"
+      "structural_digest": "sha256:bbad21d60bb3c0c17f8e4dd0ba78accebe1be60de73f37f261692611224b925f"
     },
     {
       "base": false,

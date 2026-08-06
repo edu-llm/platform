@@ -223,12 +223,14 @@ published:
     dataset_id: tokenizer/dolma2-bpe
     version: v1
     manifest_sha256: "b37b8954f767a351b726aa66f47867c299be41f96aee7b17171bf8851a772267"
+    payload_profile: tokenizer/v1
     tokenizer: null
   - reference_id: fineweb-edu-1b-v2
     uri: "s3://edullm-data/pretrain/fineweb-edu-1b/v2/"
     dataset_id: pretrain/fineweb-edu-1b
     version: v2
     manifest_sha256: "047d001de3d08d443f99f1b12a7c998dc06bdef57a914e26f7feeaf4601be2ca"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/smollm2-bpe
     # Superseded by v6, which is its owner's answer and not something this file can compute.
     # Both remain published and sealed, so the entry stays and the menu item goes.
@@ -238,6 +240,7 @@ published:
     dataset_id: pretrain/fineweb-edu-1b
     version: v6
     manifest_sha256: "047d001de3d08d443f99f1b12a7c998dc06bdef57a914e26f7feeaf4601be2ca"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/smollm2-bpe
   # NOT A SMALLER fineweb-edu-1b, WHICH THE NAMES INVITE AND THE DIGESTS REFUSE. It is a
   # separate corpus on the same tokenizer, 749,587,434 train tokens and 1,125,064 val over
@@ -250,6 +253,7 @@ published:
     dataset_id: pretrain/fineweb-edu-750m
     version: v2
     manifest_sha256: "4b0737a8dd08b220ba2f3cb6644c52bc3a3607c1f888bc299eba427c7bad7ef6"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/smollm2-bpe
   # THE ONE ENTRY WHOSE PAYLOAD IS TEXT AND WHOSE FAMILY SAYS CORPUS. Its single group is
   # `text` at profile `text-corpus/v1` holding `.jsonl`, rather than a `tokens` group holding
@@ -259,18 +263,31 @@ published:
   # wrote.
   #
   # SO IT IS OFF THE FORM BY THE SAME JOIN AS math-sft-60m, AND UNLIKE math-sft-60m IT IS IN A
-  # TRAINABLE FAMILY. That second half is what earns the paragraph. `pretrain` is in
-  # TRAINABLE_FAMILIES, so `dataset_is_not_a_corpus` does not fire, and a submission naming
-  # this by a route that never touched the dropdown compiles clean, classifies routine and is
-  # admitted. What it reaches is a reader asking OLMo-core to memmap gzipped JSON as tokens.
-  # That is the failure the tokenizer join already prevents for the three sft corpora,
-  # arriving in a trainable family for the first time, and it is why this name joins the set
-  # in tests/test_submission_form_options.py that records what only the option list refuses.
+  # TRAINABLE FAMILY. That second half is what earned the refusal below. `pretrain` is in
+  # TRAINABLE_FAMILIES, so for as long as the family was the whole rule
+  # `dataset_is_not_a_corpus` did not fire, and a submission naming this by a route that never
+  # touched the dropdown compiled clean, classified routine and was admitted. What it reached
+  # is a reader asking OLMo-core to memmap gzipped JSON as tokens: no crash, and a loss curve
+  # that looks ordinary.
+  #
+  # `payload_profile` IS WHAT REFUSES IT NOW, AND THE FIELD EXISTS BECAUSE OF THIS ENTRY.
+  # is_a_corpus_a_run_may_read asks the family and the payload, and text-corpus/v1 is not in
+  # CORPUS_PAYLOAD_PROFILES, so this is the one registered name in the file that
+  # dataset_is_not_a_corpus refuses on its payload rather than on its prefix.
+  #
+  # THE RULE THAT WOULD HAVE BEEN CHEAPER WAS MEASURED AND REFUSED. "Refuse a trainable family
+  # that declares no tokenizer" needs no new field and catches this entry -- and also catches
+  # frontload-cl-chat-sft-v1, math-sft-60m-v1 and pedagogy70-normal30-v1, where a null
+  # tokenizer is the honest answer because the conversations are pre-tokenization. One of those
+  # is the corpus TRAINABLE_FAMILIES names as its whole reason for admitting `sft`. Four
+  # refusals to prevent one, undoing a recorded decision on the way, against one field read off
+  # the same group whose digest is already pinned two lines above.
   - reference_id: fineweb2-equal-bytes-v1
     uri: "s3://edullm-data/pretrain/fineweb2-equal-bytes/v1/"
     dataset_id: pretrain/fineweb2-equal-bytes
     version: v1
     manifest_sha256: "5ad228082cc0ace73b15771734cbd3e4db3f40638f9673187f465362b01cc2b8"
+    payload_profile: text-corpus/v1
     tokenizer: null
   # Plan B Phase-0 equal-token ~2B path-check corpora (100M). Equal tokens/lang subsampled
   # from the UniMax 20B arms. Digests from live promote 2026-08-04. Listed before UniMax so
@@ -280,12 +297,14 @@ published:
     dataset_id: pretrain/fineweb2-phase0-equal-bpe-2b
     version: v1
     manifest_sha256: "d0700b75c2559c66d759ee8cace02a40bea3c33de692a07b6925b9e751e7350e"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/gigatoken-bpe
   - reference_id: fineweb2-phase0-equal-superbpe-2b-v1
     uri: "s3://edullm-data/pretrain/fineweb2-phase0-equal-superbpe-2b/v1/"
     dataset_id: pretrain/fineweb2-phase0-equal-superbpe-2b
     version: v1
     manifest_sha256: "1e0ce0c008a0baa2c866e09c7ccf866eaeb6f0e01441501c374e945f6a85a9dc"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/gigatoken-superbpe
   # Plan B UniMax 20B equal-byte token corpora (BPE / SuperBPE). Digests read live from
   # dataset.json group + _VALIDATED.json on 2026-08-04. Offered on the form only after
@@ -296,12 +315,14 @@ published:
     dataset_id: pretrain/fineweb2-unimax-bpe-20b
     version: v1
     manifest_sha256: "5f2889e8cd3c9101f2e0481d58450c27cbe98925224186a005f9ca79896abb0e"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/gigatoken-bpe
   - reference_id: fineweb2-unimax-superbpe-20b-v1
     uri: "s3://edullm-data/pretrain/fineweb2-unimax-superbpe-20b/v1/"
     dataset_id: pretrain/fineweb2-unimax-superbpe-20b
     version: v1
     manifest_sha256: "7257157825e59319697a270f76a7fde2f8e3f93cea15596671b10dc4e287c210"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/gigatoken-superbpe
   # THE ONE ENTRY HERE THAT IS OFFERED ON A TOKENIZER NOTHING COULD BUILD UNTIL TODAY, which
   # is the case the paragraph above says resolves itself: `tokenizer/qwen25-vendored` names
@@ -326,6 +347,7 @@ published:
     dataset_id: pretrain/formal-proof-premises-500m
     version: v2
     manifest_sha256: "3adad2a090b62cb3815952b56254c9965afa1a082a4ab61028012727330d843b"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/qwen25-vendored
     # THE ONE RETIREMENT IN THIS FILE THE BUCKET DECIDES RATHER THAN A PERSON, which is
     # exactly what the fineweb-edu-1b pair above does not have. v3's own version block reads
@@ -343,6 +365,7 @@ published:
     dataset_id: pretrain/formal-proof-premises-500m
     version: v3
     manifest_sha256: "ef320b4345493de7fa38bf197e05756315ace192566eef76c56f88b292d42a58"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/qwen25-vendored
   # Frontload-cl early-behavior-primer corpora. Digests read live 2026-08-05 from
   # each group's manifest_sha256 in dataset.json and the matching map in _VALIDATED.json.
@@ -354,12 +377,14 @@ published:
     dataset_id: pretrain/frontload-cl-10b
     version: v1
     manifest_sha256: "86936bebd4beeab04aa65a394588d0b300242c0fb6a04291fc7164e89337d708"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/dolma2-bpe
   - reference_id: frontload-cl-chat-sft-v1
     uri: "s3://edullm-data/sft/frontload-cl-chat-sft/v1/"
     dataset_id: sft/frontload-cl-chat-sft
     version: v1
     manifest_sha256: "e0158978a129e8e103854b762d430a1b3e508d74e6a383baa17501d7d47f5464"
+    payload_profile: sft-conversations/v1
     tokenizer: null
   # Plan A scale gigatoken pair. Unreachable as a corpus by family; registered so UniMax /
   # Phase-0 corpora can pin them by digest and admission can resolve lineage. Digests read
@@ -370,18 +395,21 @@ published:
     dataset_id: tokenizer/gigatoken-bpe
     version: v1
     manifest_sha256: "5e4b1e06caf52cf0d066436ea20779891f20ab20da684586d7907db3c25ee3db"
+    payload_profile: tokenizer/v1
     tokenizer: null
   - reference_id: gigatoken-superbpe-v1
     uri: "s3://edullm-data/tokenizer/gigatoken-superbpe/v1/"
     dataset_id: tokenizer/gigatoken-superbpe
     version: v1
     manifest_sha256: "4a5662af770e218c0ebd3cb576492a4115729ea828750826bf9df6d7adb95096"
+    payload_profile: tokenizer/v1
     tokenizer: null
   - reference_id: lean4-mathlib-bytes-v3
     uri: "s3://edullm-data/pretrain/lean4-mathlib-bytes/v3/"
     dataset_id: pretrain/lean4-mathlib-bytes
     version: v3
     manifest_sha256: "2b8bb3786e0920078794c5aaa91c311790f693a47a362aebce64beff0b6f55ad"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/bytes-utf8
   # dolma2, so this one is offered the day it is registered rather than waiting on anything.
   # 99,793,454 train tokens and 226,553 val over three objects and 400,080,028 bytes.
@@ -390,12 +418,14 @@ published:
     dataset_id: pretrain/math-frontload-100m
     version: v1
     manifest_sha256: "f1fa04487acaecee730b966049494a4099c4ee5510429b647e3da0f1475b28b4"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/dolma2-bpe
   - reference_id: math-memory-full-v1
     uri: "s3://edullm-data/pretrain/math-memory-full/v1/"
     dataset_id: pretrain/math-memory-full
     version: v1
     manifest_sha256: "be0bd3ed9ecb2df8846ea184fa0c7919a9883dc055c216436a283dd29a06ac03"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/bytes-utf8
   # Pre-tokenization conversation text, so `tokenizer` is null rather than unknown. 203,324
   # train rows and 2,078 val over two objects and 71,278,801 bytes. Its licence is declared as
@@ -405,24 +435,28 @@ published:
     dataset_id: sft/math-sft-60m
     version: v1
     manifest_sha256: "af2fa14d3f3d818f7a99a60543d9a5800fc3351295e3a497c2e13dfb8742382e"
+    payload_profile: sft-conversations/v1
     tokenizer: null
   - reference_id: olmo-127b-v1
     uri: "s3://edullm-data/pretrain/olmo-127b/v1/"
     dataset_id: pretrain/olmo-127b
     version: v1
     manifest_sha256: "3db5574f0bc38cb5120020bdbf45913d4082b8021f26360dacb210a23941cdaa"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/dolma2-bpe
   - reference_id: olmo-150b-dolma2-v1
     uri: "s3://edullm-data/pretrain/olmo-150b-dolma2/v1/"
     dataset_id: pretrain/olmo-150b-dolma2
     version: v1
     manifest_sha256: "3f00499dbed01bc01a57097e84ae38ccd670b2b9d7981587d5fc828466ccf699"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/dolma2-bpe
   - reference_id: olmo-original-30b-v1
     uri: "s3://edullm-data/pretrain/olmo-original-30b/v1/"
     dataset_id: pretrain/olmo-original-30b
     version: v1
     manifest_sha256: "7371ce63878d9a4525ac82fcba151665d1711563b14bd93b1083116bc03d00bc"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/dolma2-bpe
   # A verbatim vendor mirror for reward and reasoning work, four jsonl files over 477,105,425
   # bytes, with no partitions and so no train split to read. Its own limitations block says any
@@ -434,6 +468,7 @@ published:
     dataset_id: vendor/openai-prm800k
     version: v1
     manifest_sha256: "f7d678ba40d48403fec9be0db53bc78d991b6b755af72143d0f7476ae7255822"
+    payload_profile: vendored/v1
     tokenizer: null
   # The P7 tutor corpus. Pre-tokenization conversation text, so `tokenizer` is null rather than
   # unknown, 25,329 train rows and 2,401 val over two objects and 21,630,120 bytes.
@@ -450,6 +485,7 @@ published:
     dataset_id: sft/pedagogy70-normal30
     version: v1
     manifest_sha256: "527f66916a4995f52ea667e6dc2008e7ecf83cdeb1886df9387bf04cc3b495fd"
+    payload_profile: sft-conversations/v1
     tokenizer: null
   # TWO GROUPS, AND ONLY THE PAYLOAD ONE IS PINNED, which is the fineweb-edu-1b-v6 shape
   # rather than a new one. `tokens` is 3,942,810,012 train and 5,994,057 val over `.u32le.bin`
@@ -462,18 +498,21 @@ published:
     dataset_id: pretrain/refhq-instruct
     version: v3
     manifest_sha256: "9876b122bafd594effcf9f5c8467e9023691612f791dc36dbaac29e397af1a37"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/dolma2-bpe
   - reference_id: refhq-regmix-5p5b-v2
     uri: "s3://edullm-data/pretrain/refhq-regmix-5p5b/v2/"
     dataset_id: pretrain/refhq-regmix-5p5b
     version: v2
     manifest_sha256: "e3558e3acb51c0b4ec41699542d35ae33b4e2be2d5836065d3ea6ea68fc9a158"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/dolma2-bpe
   - reference_id: regmix-10b-v1
     uri: "s3://edullm-data/pretrain/regmix-10b/v1/"
     dataset_id: pretrain/regmix-10b
     version: v1
     manifest_sha256: "a24992f53dc4a900bacf8fa571d77e343fd28ffa9054c14b93d54204b0a38cb4"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/dolma2-bpe
   # THE LARGEST CORPUS THIS REGISTRY HAS EVER NAMED. 1,004,872,007,680 bytes over 10,049
   # payload objects, 250,242,924,544 train tokens and 975,077,376 val, eight source categories
@@ -492,6 +531,7 @@ published:
     dataset_id: pretrain/reservoir-dolma2
     version: v1
     manifest_sha256: "aba31c73d40e4473867bb8e76e6d42c5949ab67657512b6ebc7ceec79a8db388"
+    payload_profile: pretrain-tokens/v1
     tokenizer: tokenizer/dolma2-bpe
   # Registered because both fineweb-edu-1b entries pin this digest in their `depends_on`, and
   # unreachable as a corpus by family. Its dataset.json names HuggingFaceTB/SmolLM2-135M as its
@@ -501,4 +541,5 @@ published:
     dataset_id: tokenizer/smollm2-bpe
     version: v1
     manifest_sha256: "354a65ca1bd51076f972205fe1fbb8f261c6a022787be84f3bbae4aa13d3c529"
+    payload_profile: tokenizer/v1
     tokenizer: null

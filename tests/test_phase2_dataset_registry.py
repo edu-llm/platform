@@ -56,6 +56,7 @@ def published_reference_payload(**overrides: object) -> dict[str, object]:
         "dataset_id": "pretrain/olmo-150b-dolma2",
         "version": "v1",
         "manifest_sha256": PUBLISHED_DIGEST,
+        "payload_profile": "pretrain-tokens/v1",
         "tokenizer": "tokenizer/dolma2-bpe",
     }
     payload.update(overrides)
@@ -376,6 +377,7 @@ def test_is_a_trainable_corpus_separates_what_resolves_from_what_a_run_may_read(
             uri="s3://edullm-data/tokenizer/smollm2-bpe/v1/",
             dataset_id="tokenizer/smollm2-bpe",
             manifest_sha256="354a65ca1bd51076f972205fe1fbb8f261c6a022787be84f3bbae4aa13d3c529",
+            payload_profile="tokenizer/v1",
             tokenizer=None,
         ),
     ]
