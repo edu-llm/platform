@@ -19,9 +19,11 @@ from typing import Final
 import pytest
 
 from edullm_platform.cli.actions import (
+    ADMITTED,
     CANCEL_WORKFLOW,
     COMPLETION_ATTEMPTS,
     COMPLETION_INTERVAL,
+    DECLINED,
     NEW_RUN_ATTEMPTS,
     NEW_RUN_INTERVAL,
     PLATFORM_REPOSITORY,
@@ -39,6 +41,7 @@ from edullm_platform.cli.configuration import (
     find_config_directory,
 )
 from edullm_platform.cli.main import EXIT_UNUSABLE, NOT_BUILT_YET, _SignOfLife
+from edullm_platform.lifecycle_projection import BATCH_JOB_STATUSES
 from edullm_platform.cli.workspace import SubprocessRunner, read_git_facts
 from edullm_platform.operational_inventory import EXPECTED_GITHUB_ORG, EXPECTED_GITHUB_REPOSITORY
 from tests.cli_support import PROJECT_ROOT, FakeRunner, invoke, ok
@@ -72,7 +75,7 @@ def test_both_workflows_this_drives_are_files_in_this_repository(workflow: str) 
         ({"status": "waiting", "conclusion": None}, "PENDING_APPROVAL"),
         ({"status": "queued", "conclusion": None}, "DISPATCHED"),
         ({"status": "in_progress", "conclusion": None}, "COMPILING"),
-        ({"status": "completed", "conclusion": "success"}, "SUBMITTED"),
+        ({"status": "completed", "conclusion": "success"}, ADMITTED),
         ({"status": "completed", "conclusion": "failure"}, "REFUSED"),
         ({"status": "completed", "conclusion": "cancelled"}, "CANCELLED"),
     ],
@@ -88,6 +91,63 @@ def test_githubs_status_pair_reads_as_the_thing_it_means_to_a_submitter(
     to go and message somebody.
     """
     assert submission_state(run) == expected
+
+
+#: Everything GitHub can put in a workflow run's ``status``, and everything it can put in a
+#: ``conclusion``, so the case below drives every pair rather than the six anybody thought of.
+GITHUB_RUN_STATUSES: Final = (
+    "queued",
+    "in_progress",
+    "completed",
+    "requested",
+    "waiting",
+    "pending",
+)
+GITHUB_RUN_CONCLUSIONS: Final = (
+    None,
+    "success",
+    "failure",
+    "neutral",
+    "cancelled",
+    "skipped",
+    "timed_out",
+    "action_required",
+    "stale",
+    "startup_failure",
+)
+
+
+def test_no_word_this_prints_for_a_submission_is_a_word_batch_prints_for_a_job() -> None:
+    """Mutation: restore ``SUBMITTED`` as the answer for a workflow run that succeeded.
+
+    **THE TWO VOCABULARIES MET IN ONE OUTPUT AND SHARED A WORD THAT MEANT DIFFERENT THINGS
+    IN EACH.** This function describes a submission workflow. Batch describes a job. They
+    are printed within a few lines of each other by ``edullm status <run-id>`` -- the
+    heading comes from here and the report table below it comes from ``describe-jobs`` --
+    and ``SUBMITTED`` was in both sets. In this one it meant the workflow had finished and
+    the job was placed; in Batch's it means the job is held with its dependencies not yet
+    evaluated, which is very nearly the opposite. Measured on 2026-08-06,
+    ``run_019fd676-62f0`` printed ``SUBMITTED`` in the heading and ``SUCCEEDED`` in the
+    table eight lines below it.
+
+    Held as an emptiness rather than as an equality against a list, because the property is
+    that the two vocabularies stay disjoint and not that either has a particular size. Batch
+    owns seven words and this owns however many it owns; adding one on either side that the
+    other already has is the failure, whichever side adds it.
+
+    ``BATCH_JOB_STATUSES`` is imported from ``lifecycle_projection`` rather than spelled
+    here, because that module is where the seven are ruled and it refuses an eighth.
+    """
+    printed = {
+        submission_state({"status": status, "conclusion": conclusion})
+        for status in GITHUB_RUN_STATUSES
+        for conclusion in GITHUB_RUN_CONCLUSIONS
+    } | {ADMITTED, DECLINED}
+
+    assert printed & set(BATCH_JOB_STATUSES) == set(), (
+        "a word this prints about a submission is also a word Batch prints about a job, so "
+        "one output carries it twice meaning two things"
+    )
 
 
 @pytest.mark.parametrize(

@@ -42,7 +42,7 @@ from collections.abc import Iterable, Sequence
 from decimal import Decimal
 from pathlib import Path
 
-from edullm_platform.cli.actions import RunFacts, elapsed_said
+from edullm_platform.cli.actions import ADMITTED, RunFacts, elapsed_said
 from edullm_platform.cli.configuration import PACKAGED_CONFIG_DIRECTORY, ReviewedConfiguration
 from edullm_platform.cli.preflight import DEFERRED_TO_SUBMIT, Preflight, Refusal
 from edullm_platform.contracts.admission import ApprovalEnvironment
@@ -267,6 +267,15 @@ def render_run_listing(rows: Iterable[tuple[str, str, str, str]]) -> str:
     Run, state, how long it has been in it, and what it is for. The waiting time is third
     because it is the field that changes between two invocations a minute apart, and the
     experiment is last because it is the widest.
+
+    **AND THEN WHERE THIS VIEW STOPS, WHICH IS THE HALF IT USED TO LEAVE A READER TO WORK
+    OUT.** Every word in the table is about a submission workflow, and a submitter reads it
+    as being about their run. Those agree right up to admission and then part company for
+    the hours that matter: on 2026-08-06 eight rows here read the same word, and Batch had
+    five of them succeeded, one failed and two it held no record of at all. Renaming that
+    word to :data:`~edullm_platform.cli.actions.ADMITTED` stops it claiming an outcome it
+    cannot know; the sentence below is what stops the absence of an outcome reading as an
+    oversight.
     """
     listed = list(rows)
     if not listed:
@@ -279,7 +288,33 @@ def render_run_listing(rows: Iterable[tuple[str, str, str, str]]) -> str:
         f"{row[0]:<{widths[0]}}  {row[1]:<{widths[1]}}  {row[2]:<{widths[2]}}  {row[3]}".rstrip()
         for row in listed
     ]
+    lines.extend(_where_github_stops(listed))
     return "\n".join(lines) + "\n"
+
+
+def _where_github_stops(listed: Sequence[tuple[str, str, str, str]]) -> list[str]:
+    """The boundary sentence, on the listings that have crossed it and not on the others.
+
+    Read off the rows that were just rendered rather than recomputed from the runs, so the
+    sentence cannot describe a table this is not printing.
+
+    Silent where nothing reads ``ADMITTED``. A listing of submissions still compiling or
+    parked at a gate is wholly about things that are still happening on GitHub, so every
+    word of it is true of the run as well, and a warning about a boundary nobody has reached
+    is a paragraph a reader learns to skip -- which is how the one that matters gets skipped
+    too.
+    """
+    if not any(row[1] == ADMITTED for row in listed):
+        return []
+    return [
+        "",
+        *_wrap(
+            f"{ADMITTED} is where GitHub stops knowing. The job reached AWS, and a run that "
+            "finished an hour ago reads exactly like one still queued for a machine. "
+            "edullm status <run-id> asks AWS what one of them is doing, and spends a "
+            "runner to do it."
+        ),
+    ]
 
 
 def _manifest_block(preflight: Preflight) -> str:

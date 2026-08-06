@@ -31,19 +31,21 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pytest
 import yaml
 
 from edullm_platform.cli.actions import (
     ADMISSION_JOB,
+    ADMITTED,
     CANCEL_WORKFLOW,
     PRINTED_RUN_ID,
     SUBMIT_WORKFLOW,
     report_ceiling_seconds,
 )
 from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED, build_parser_and_verbs
+from edullm_platform.lifecycle_projection import BATCH_JOB_STATUSES
 from tests.cli_support import PROJECT_ROOT, FakeRunner, failed, invoke, ok
 
 RUN_ID = "run_019fd2a1-4e07-7a3c-9d55-1b2f8c0e6a41"
@@ -74,6 +76,13 @@ REPORT_LOG = "\n".join(
             "```",
         ]
     )
+)
+
+#: The same report for a job that has finished, which is the state the heading used to
+#: contradict. ``run_019fd676-62f0`` looked exactly like this on 2026-08-06 under a heading
+#: that called it ``SUBMITTED``.
+SUCCEEDED_REPORT_LOG = REPORT_LOG.replace("`RUNNABLE`", "`SUCCEEDED`").replace(
+    "no compute environment capacity yet", "Essential container in task exited"
 )
 
 
@@ -902,6 +911,231 @@ def test_an_uncertain_run_this_did_find_is_still_asked_after_without_a_flag(
     assert runner.ran("gh", "workflow", "run") != []
     assert "run_id_not_found" not in err
     assert "does not say whether it got as far as starting the run" in " ".join(out.split())
+
+
+# ---------------------------------------------------------------------------------------
+# one answer, whether or not you name the run
+# ---------------------------------------------------------------------------------------
+
+#: What the approvals endpoint carries after a lead declines. Copied in shape from the real
+#: rejection on workflow run 31094100261, which is the one that showed the two views
+#: disagreeing: ``philote-dev`` rejected ``run_019fd6a8-96e1`` at ``run-approval-lead`` on
+#: 2026-08-06 with a sentence in the box.
+REJECTED_AT_THE_GATE: tuple[dict[str, Any], ...] = (
+    {
+        "state": "rejected",
+        "user": {"login": "philote-dev"},
+        "comment": "the envelope proof already produced the message, so nothing needs to run",
+        "comment_created_at": "2099-01-01T00:04:00Z",
+    },
+)
+
+#: Every state a run can be in that GitHub alone can settle, as the fixture arguments that
+#: produce it. The four states past admission -- queued for a machine, running, finished, and
+#: placed nowhere -- are deliberately absent: they live in Batch, no reader on this side can
+#: tell them apart, and ``ADMITTED`` is the one honest word for all four.
+STATES_GITHUB_CAN_SETTLE: Final = {
+    "PENDING_APPROVAL": {"status": "waiting", "conclusion": None, "admission": None},
+    "COMPILING": {"status": "in_progress", "conclusion": None, "admission": None},
+    "ADMITTED": {"conclusion": "success", "admission": "success"},
+    "DECLINED": {
+        "conclusion": "failure",
+        "admission": "failure",
+        "approvals": REJECTED_AT_THE_GATE,
+    },
+    "REFUSED": {"conclusion": "failure", "admission": "skipped"},
+    "CANCELLED": {"conclusion": "cancelled", "admission": "skipped"},
+}
+
+
+def state_in_the_listing(output: str) -> str:
+    """The second column of the first row, which is the word a listing reader reads."""
+    return output.splitlines()[0].split()[1]
+
+
+def state_in_the_heading(output: str) -> str:
+    """The same word in the single-run view, which is the first line it prints."""
+    return output.splitlines()[0].split()[1]
+
+
+@pytest.mark.parametrize("expected", sorted(STATES_GITHUB_CAN_SETTLE))
+def test_one_run_reads_the_same_whether_or_not_you_name_it(
+    expected: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: change the state either view derives, in either direction.
+
+    **THEY DISAGREED, AND THE DISAGREEMENT WAS MEASURED RATHER THAN IMAGINED.** On
+    2026-08-06 ``edullm status`` listed ``run_019fd6a8-96e1`` as ``DECLINED`` and
+    ``edullm status run_019fd6a8-96e1`` called the same run ``REFUSED``. One of those sends
+    a researcher to ask the lead who said no and the other sends them to read a workflow log
+    for a defect that is not there, and the tool printed both within a minute of each other.
+
+    Two readers of one fact is the arrangement that produced it: the listing gated its
+    decline lookup on the submission's own state and the single-run view gated it on the
+    admission job's conclusion, and the account marks that job ``failure`` where the suite's
+    fixtures marked it ``skipped``. :func:`declined_at_the_gate` is now the one place either
+    asks.
+
+    Held over every state GitHub can settle rather than over the one that broke, because
+    the property is that these two views cannot diverge and not that this row was patched.
+    """
+    runner = submission(**STATES_GITHUB_CAN_SETTLE[expected])  # type: ignore[arg-type]
+    _, listing, _ = invoke(["status"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+    _, named, error = invoke(
+        ["status", RUN_ID],
+        runner=submission(**STATES_GITHUB_CAN_SETTLE[expected]),  # type: ignore[arg-type]
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert state_in_the_listing(listing) == expected, listing
+    assert state_in_the_heading(named) == expected, named + error
+
+
+def test_the_listing_never_says_a_run_is_queued_when_it_cannot_know_that(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: return ``SUBMITTED`` from ``submission_state`` for a succeeded workflow.
+
+    **THE LAST FALSE WORD, AND IT WAS FALSE ABOUT EIGHT ROWS OUT OF TEN.** Read against
+    Batch on 2026-08-06, the eight runs this listing called ``SUBMITTED`` were five
+    succeeded, one failed, and two Batch held no record of at all. Not one of them was
+    queued, which is the single thing the word invites a reader to conclude, and the
+    conclusion it invites is to wait.
+
+    The assertion is on the word rather than on the sentence beside it, because the word is
+    what a reader takes away from a table and it is what somebody pastes into a thread.
+    """
+    runner = submission()
+
+    code, out, err = invoke(["status"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+
+    assert code == EXIT_OK, out + err
+    assert state_in_the_listing(out) == ADMITTED
+    assert "SUBMITTED" not in out
+    assert runner.ran("gh", "workflow", "run") == []
+
+
+def test_the_listing_says_where_githubs_knowledge_of_a_run_stops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: print the table and nothing under it.
+
+    Renaming the word stops the listing claiming an outcome. It does not tell a reader where
+    to get one, and a reader who has just learned that this view cannot answer their question
+    is exactly the reader who needs the verb that can, with its price attached. Both halves
+    are asserted: that the boundary is named, and that the command past it is named with what
+    it costs -- an unnamed cost is how somebody Ctrl-Cs a dispatch at ninety seconds.
+    """
+    code, out, err = invoke(
+        ["status"], runner=submission(), cwd=tmp_path, monkeypatch=monkeypatch
+    )
+    said = " ".join(out.split())
+
+    assert code == EXIT_OK, out + err
+    assert f"{ADMITTED} is where GitHub stops knowing" in said
+    assert "finished an hour ago reads exactly like one still queued" in said
+    assert "edullm status <run-id> asks AWS" in said
+    assert "spends a runner" in said
+
+
+def test_a_listing_that_has_reached_no_boundary_carries_no_paragraph_about_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: print the boundary sentence under every listing.
+
+    A listing of submissions still compiling or parked at a gate is wholly about things that
+    are still happening on GitHub, so every word of it is true of the run as well and there
+    is no boundary to warn about. A paragraph that appears whatever the table says is a
+    paragraph a reader learns to skip in a week, and the week after that they skip the one
+    that mattered.
+    """
+    runner = submission(status="waiting", conclusion=None, admission=None)
+
+    code, out, err = invoke(["status"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+
+    assert code == EXIT_OK, out + err
+    assert state_in_the_listing(out) == "PENDING_APPROVAL"
+    assert "GitHub stops knowing" not in out
+    assert out.strip().splitlines()[-1].startswith("run_")
+
+
+def test_the_heading_of_one_run_does_not_contradict_the_batch_status_beneath_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: restore ``SUBMITTED`` as the word for a succeeded submission workflow.
+
+    **THE TWO HALVES OF ONE SCREEN SAID DIFFERENT THINGS ABOUT ONE RUN.** Measured against
+    the platform on 2026-08-06, ``edullm status run_019fd676-62f0`` opened with
+    ``run_019fd676-62f0  SUBMITTED  1h02m`` and then printed ``| Status | `SUCCEEDED` |``
+    eight lines further down, in the same output, from the same invocation.
+
+    The assertion is that the heading's word is not one of Batch's, rather than that it is
+    any particular word. A heading using Batch's vocabulary reads as a Batch status whatever
+    it was meant to mean, and the table below is where Batch's actual answer goes.
+    """
+    runner = submission(log=SUCCEEDED_REPORT_LOG)
+
+    code, out, err = invoke(["status", RUN_ID], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+
+    assert code == EXIT_OK, out + err
+    assert state_in_the_heading(out) not in BATCH_JOB_STATUSES, out.splitlines()[0]
+    assert "| Status | `SUCCEEDED` |" in out
+
+
+@pytest.mark.parametrize("admission", ["failure", "skipped"])
+def test_a_run_a_lead_declined_spends_no_runner_however_the_gated_job_is_marked(
+    admission: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: ask about a decline only where the admission job is absent or ``skipped``.
+
+    That was the gate, and this account does not produce that shape. A rejected deployment
+    review leaves the gated job with an empty ``steps`` list and a conclusion of ``failure``
+    -- read off workflow run 31094100261 -- so a declined run fell past every decline branch
+    into the honest-uncertainty tail and dispatched ``cancel-run.yml`` to describe a Batch
+    job the gate had already prevented. That cost two minutes and six seconds on 2026-08-06
+    and came back saying the report named no section this verb reads, because there was no
+    job to report on.
+
+    Both markings are driven, because which one GitHub uses is GitHub's business and the
+    gate is upstream of admission either way. ``skipped`` is what the suite assumed until
+    now and it has to keep working.
+    """
+    runner = submission(
+        conclusion="failure", admission=admission, approvals=REJECTED_AT_THE_GATE
+    )
+
+    code, out, err = invoke(["status", RUN_ID], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+
+    assert code == EXIT_OK, out + err
+    assert runner.ran("gh", "workflow", "run") == [], "a runner was spent on a run nobody ran"
+    assert state_in_the_heading(out) == "DECLINED"
+    assert "philote-dev" in out
+    assert "It did not fail and nothing about it is broken" in " ".join(out.split())
+    assert "nothing was dispatched to answer this." in out
+
+
+def test_a_run_that_failed_on_its_own_is_still_not_reported_as_declined(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half, and the one the widened gate could have broken.
+
+    Mutation: read any badly-ended submission as a decline without asking the approvals
+    endpoint. The decline branch now runs before the admission job is looked at, so a
+    submission that genuinely broke reaches it first -- and a compile refusal reported as
+    "a lead said no" would send somebody to ask a person who never saw it. Only
+    ``/approvals`` separates the two, and an empty answer has to mean nobody did.
+    """
+    runner = submission(conclusion="failure", admission="failure", approvals=())
+
+    code, out, err = invoke(["status", RUN_ID], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+
+    assert code == EXIT_OK, out + err
+    assert state_in_the_heading(out) == "REFUSED"
+    assert "declined" not in out.lower()
+    # Still uncertain, so it still asks. A failed admission job says nothing about whether
+    # it got as far as starting the run, and that has to stay true.
+    assert runner.ran("gh", "workflow", "run") != []
 
 
 def test_the_admission_job_is_named_the_way_the_workflow_names_it() -> None:
