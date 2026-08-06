@@ -441,3 +441,127 @@ def test_a_malformed_run_id_is_a_document_on_stdout_and_still_exits_one(
     assert code == EXIT_REFUSED, out + err
     document = only_document(out)
     assert [refusal["code"] for refusal in document["refusals"]] == ["run_id_not_well_formed"]
+
+
+DECLINED_RUNS = """{"workflow_runs": [
+  {"id": 41, "status": "completed", "conclusion": "failure",
+   "created_at": "2026-08-05T10:00:00Z",
+   "html_url": "https://github.com/edu-llm/platform/actions/runs/41"}
+]}"""
+
+SKIPPED_JOBS = """{"jobs": [
+  {"name": "Submit the approved manifest to admission", "conclusion": "skipped"}
+]}"""
+
+REJECTED = """[
+  {"state": "rejected", "user": {"login": "alsy7009"},
+   "comment": "the 24h bound is a typo, this shape takes an hour",
+   "comment_created_at": "2026-08-05T10:04:00Z"}
+]"""
+
+
+def declined_runner(tmp_path: Path, approvals: str) -> FakeRunner:
+    """A submission whose admission job never ran, with the approvals endpoint deciding why.
+
+    THE TWO CASES DIFFER IN ONE ENDPOINT AND IN NOTHING ELSE, WHICH IS THE FINDING. GitHub
+    gives a rejected deployment review the same run conclusion it gives a compile refusal and
+    the same skipped admission job, so the runs list and the jobs list are byte-identical
+    here between a decline and a crash. Only ``/approvals`` can tell them apart.
+    """
+
+    def api(argv: tuple[str, ...]) -> Any:
+        path = argv[-1]
+        if "/workflows/submit-run.yml/runs" in path:
+            return ok(DECLINED_RUNS)
+        if path.endswith("/41/jobs"):
+            return ok(SKIPPED_JOBS)
+        if path.endswith("/41/approvals"):
+            return ok(approvals)
+        return ok("{}")
+
+    def download(argv: tuple[str, ...]) -> Any:
+        destination = Path(argv[argv.index("--dir") + 1])
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "compiled-submission.json").write_text(COMPILED, encoding="utf-8")
+        return ok("")
+
+    return FakeRunner(
+        {("gh", "api"): api, ("gh", "run", "download"): download}
+    )  # type: ignore[arg-type]
+
+
+def test_status_json_tells_a_declined_run_from_a_failed_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: leave both reading REFUSED.
+
+    A lead saying no and a runner dying installing uv produced the same word, the same row and
+    the same document, and a researcher reading it went looking for a bug in a submission a
+    person had simply declined. Those send somebody to different places, and the second one
+    has a name attached to it.
+    """
+    code, out, err = invoke(
+        ["status", "--json", "run_019fcf3c-9878-7c1a-8f00-1c2d3e4f5a6b"],
+        runner=declined_runner(tmp_path, REJECTED),
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    document = only_document(out)
+    assert document["submission"]["state"] == "DECLINED"
+    assert document["declined"] == {
+        "by": "alsy7009",
+        "reason": "the 24h bound is a typo, this shape takes an hour",
+        "at": "2026-08-05T10:04:00+00:00",
+    }
+    assert document["admitted"] == "no"
+    assert document["needs_a_dispatch"] is False
+
+
+def test_a_run_nobody_declined_still_reads_as_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half. A compile refusal is not a decline and must not gain a name.
+
+    ``declined`` is present and null rather than absent, so a caller branching on it gets an
+    answer rather than a ``KeyError`` on every run that went the ordinary way.
+    """
+    code, out, err = invoke(
+        ["status", "--json", "run_019fcf3c-9878-7c1a-8f00-1c2d3e4f5a6b"],
+        runner=declined_runner(tmp_path, "[]"),
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    document = only_document(out)
+    assert document["declined"] is None
+    assert document["submission"]["state"] == "REFUSED"
+    assert "finished without running its admission job" in document["because"]
+
+
+def test_a_decline_with_no_reason_says_none_was_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GitHub's comment box is optional and every one of the 34 real approvals left it empty.
+
+    So the common case is a decline with no sentence, and "no reason given" is what tells a
+    submitter to go and ask. A blank reads as a tool that did not look.
+    """
+    code, out, err = invoke(
+        ["status", "run_019fcf3c-9878-7c1a-8f00-1c2d3e4f5a6b"],
+        runner=declined_runner(
+            tmp_path, '[{"state": "rejected", "user": {"login": "alsy7009"}, "comment": ""}]'
+        ),
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "DECLINED" in out
+    assert "declined by" in out
+    assert "reason" in out and "none given" in out
+    # Unwrapped, because the paragraph below the rows is wrapped to the terminal width and
+    # asserting the sentence as one line would be asserting the wrap point.
+    assert "It did not fail and nothing about it is broken." in " ".join(out.split())

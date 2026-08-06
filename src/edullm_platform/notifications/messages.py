@@ -319,6 +319,30 @@ def _arithmetic(facts: ApprovalRequestedFacts) -> str:
         f"${plain(cost.hourly_rate_usd)}/hour x {_count(cost.nodes, 'node')} x "
         f"{plain(cost.maximum_runtime_hours)}h x {_count(cost.maximum_attempts, 'attempt')} x "
         f"{_count(cost.cells, 'cell')}. A ceiling rather than an estimate."
+        f"{_over_the_profile(facts)}"
+    )
+
+
+def _over_the_profile(facts: ApprovalRequestedFacts) -> str:
+    """Whether the hours asked for are more than the workload says its runs take.
+
+    A TYPED-IN ZERO PRICES AS CLEANLY AS A PLAN AND READS THE SAME. ``olmo-core-train``
+    declares twenty-four hours, a submission naming ten thousand compiles clean, and the
+    arithmetic on the line above is correct at $10,520 on a T4. Nothing else on this message
+    would tell a lead that a bound had been crossed, because the crossing is between two
+    numbers only one of which is on the page.
+
+    Empty for every submission at or under the bound, which is nearly all of them. A clause
+    saying "within the profile's bound" on every message is a clause that stops being read
+    before the one that matters arrives.
+    """
+    if facts.cost is None or facts.profile_hours is None:
+        return ""
+    if facts.cost.maximum_runtime_hours <= facts.profile_hours:
+        return ""
+    return (
+        f" It asks for {plain(facts.cost.maximum_runtime_hours)}h where "
+        f"{facts.workload_profile} declares {plain(facts.profile_hours)}h."
     )
 
 

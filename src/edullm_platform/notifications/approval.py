@@ -49,6 +49,8 @@ __all__ = [
     "MANIFEST_FIELDS",
     "PLATFORM_EVENT_SOURCE",
     "POLICY_FILENAME",
+    "RUNG_SAID",
+    "SHAPE_FIELDS",
     "ApprovalRequestedFacts",
     "Shape",
     "load_policy",
@@ -150,6 +152,15 @@ class ApprovalRequestedFacts:
     experiment: str | None
     repository: str
     compute_profile: str
+    workload_profile: str
+    #: What the workload profile declares its runs may take, against what this submission
+    #: asked for. ``None`` where the catalog names no such workload.
+    #:
+    #: CARRIED BECAUSE THE ARITHMETIC BEING RIGHT IS NOT THE SAME AS THE NUMBER BEING RIGHT.
+    #: A submission naming ten thousand hours on a workload that declares twenty-four
+    #: compiles clean and prices clean, and a lead who does not know the catalog by heart
+    #: reads $10,520 on a T4 as a plan rather than as a typed-in zero.
+    profile_hours: Decimal | None
     #: The five factors and their product, or ``None`` because the catalog prices no profile
     #: by this name. Never a partial answer: a rate with no node count is how the total ends
     #: up short by a machine.
@@ -351,6 +362,7 @@ def read_approval_requested(
     if team is None or repository is None or profile is None:
         return None
 
+    workload = _text(manifest, "workload_profile") or "a workload this event does not name"
     submitter = _text(detail, "submitter")
     return ApprovalRequestedFacts(
         run_id=run_id,
@@ -360,6 +372,15 @@ def read_approval_requested(
         experiment=_text(detail, "experiment"),
         repository=repository,
         compute_profile=profile,
+        workload_profile=workload,
+        profile_hours=next(
+            (
+                entry.maximum_runtime_hours
+                for entry in catalogs.catalog.workloads
+                if entry.name == workload
+            ),
+            None,
+        ),
         cost=_cost(manifest, catalogs.catalog),
         approval_class=_text(detail, "approval_class") or "routine",
         gate=_text(detail, "approving_environment") or "run-approval-lead",

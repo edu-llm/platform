@@ -403,3 +403,78 @@ def test_the_release_registry_knows_about_the_notifier() -> None:
     assert "notifier" in FUNCTIONS
     assert FUNCTIONS["notifier"].s3_key == "notifier/notifier.zip"
     assert FUNCTIONS["notifier"].template.name == "notifications.yaml"
+
+
+def test_the_morning_schedule_sends_an_envelope_the_handler_recognises() -> None:
+    """Mutation: change the detail-type in the template and not in the reader.
+
+    A schedule has no event of its own, so the envelope is a constant written into a
+    CloudFormation string that nothing type-checks. Get either key wrong and the delivery
+    arrives, every reader answers ``None`` because it is not their envelope, the handler
+    reports success, and the morning page silently never happens. That is the same shape as
+    the 2026-08-06 outage: a string in a template disagreeing with a string in the code, with
+    every check green.
+    """
+    import json
+
+    from edullm_platform.notifications.approval import PLATFORM_EVENT_SOURCE
+    from edullm_platform.notifications.overnight import (
+        DEFAULT_WINDOW_HOURS,
+        OVERNIGHT_DETAIL_TYPE,
+    )
+
+    rule = template("notifications.yaml")["Resources"]["MorningPageSchedule"]
+    target = rule["Properties"]["Targets"][0]
+    envelope = json.loads(target["Input"])
+
+    assert envelope["source"] == PLATFORM_EVENT_SOURCE
+    assert envelope["detail-type"] == OVERNIGHT_DETAIL_TYPE
+    assert envelope["detail"]["hours"] == DEFAULT_WINDOW_HOURS
+
+
+def test_the_morning_schedule_may_write_to_the_queue_it_targets() -> None:
+    """Mutation: leave the queue policy naming only the lifecycle rule.
+
+    An SQS queue policy conditioned on one rule ARN refuses every other publisher, and
+    EventBridge reports that as a failed invocation on the rule rather than anywhere a person
+    looks. The schedule would fire every morning and nothing would arrive.
+
+    Both queues, because EventBridge writes to a target's dead-letter queue under the rule's
+    own ARN, and the delivery worth keeping is the one that did not arrive.
+    """
+    resources = template("notifications.yaml")["Resources"]
+    statements = resources["NotifierQueuePolicy"]["Properties"]["PolicyDocument"]["Statement"]
+    allowed = next(
+        statement
+        for statement in statements
+        if statement["Sid"] == "AllowTheMorningScheduleToDeliver"
+    )
+
+    assert allowed["Condition"]["ArnEquals"]["aws:SourceArn"] == {
+        "Fn::GetAtt": ["MorningPageSchedule", "Arn"]
+    }
+    assert allowed["Resource"] == [
+        {"Fn::GetAtt": ["NotifierQueue", "Arn"]},
+        {"Fn::GetAtt": ["NotifierDeadLetterQueue", "Arn"]},
+    ]
+
+
+def test_the_morning_page_fires_once_a_day_and_covers_the_gap_since_the_last_one() -> None:
+    """Mutation: a twelve-hour window on a rule that fires every six hours, or the reverse.
+
+    A window shorter than the interval loses whatever ran in the gap and nothing says so. A
+    window longer than the interval reports the same failures two mornings running, which is
+    how a reader learns the page repeats itself and stops reading it.
+    """
+    import json
+    import re
+
+    rule = template("notifications.yaml")["Resources"]["MorningPageSchedule"]["Properties"]
+    hours = json.loads(rule["Targets"][0]["Input"])["detail"]["hours"]
+    minute, hour, day, month, weekday, year = re.fullmatch(
+        r"cron\((.+) (.+) (.+) (.+) (.+) (.+)\)", rule["ScheduleExpression"]
+    ).groups()
+
+    assert (minute, day, month, weekday, year) == ("0", "*", "*", "?", "*")
+    assert hour.isdigit(), "one fixed hour a day, so the window below is the whole of the gap"
+    assert hours <= 24, "a page cannot cover more than the day it fires on"

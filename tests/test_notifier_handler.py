@@ -216,3 +216,101 @@ def test_the_handler_imports_no_sdk_at_module_load() -> None:
     assert "boto3" not in top_level
     assert "botocore" not in top_level
     assert "boto3" in Path("src/edullm_platform/notifier_handler.py").read_text(encoding="utf-8")
+
+
+def test_one_queue_carries_three_shapes_and_the_handler_picks_between_them(
+    catalogs: Catalogs,
+) -> None:
+    """Mutation: route every delivery to ``render_run_ended``.
+
+    Batch's own state changes, the platform's approval requests and the morning trigger all
+    arrive on one queue, because the queue is where a message that could not be posted goes
+    to be found and all three failures are the same incident. What that costs is that the
+    handler has to pick, and picking wrongly is silent: ``read_run_ended`` answers ``None``
+    for an approval envelope, so the message would simply never be sent.
+    """
+    from edullm_platform.notifications.approval import load_policy
+    from edullm_platform.run_history import load_run_history
+
+    transport = Collector()
+    config = PROJECT_ROOT / "config"
+
+    answer = handler(
+        {
+            "Records": [
+                record("batch-succeeded", "m1"),
+                record("approval-requested", "m2"),
+                record("batch-running", "m3"),
+            ]
+        },
+        transport=transport,
+        catalogs=catalogs,
+        policy=load_policy(config),
+        history=load_run_history(config),
+    )
+
+    assert answer == {BATCH_ITEM_FAILURES_KEY: []}
+    assert len(transport.delivered) == 2, "a run ended and a lead was asked, and RUNNING owes none"
+    assert transport.delivered[0].text.startswith("Aryan Verma · ")
+    assert transport.delivered[1].text.startswith("$781.82 · context-length-sweep · ")
+
+
+def test_a_run_ended_message_never_opens_the_policy_or_the_history(
+    catalogs: Catalogs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: load both files eagerly beside the catalogs.
+
+    Nine deliveries in ten are Batch state changes owing a run-ended line, and that line
+    reads neither file. Eagerly loading them would make every one of those invocations pay
+    for two reads it does not use, and would lose a message about a run that demonstrably
+    happened to a policy file it never opens.
+
+    Pointed at an empty directory rather than watched for a call, because that is the failure
+    as it would actually arrive: a deployment whose zip is missing one of the five files, or
+    a ``EDULLM_CONFIG_DIRECTORY`` set to somewhere wrong, which is the 2026-08-06 outage.
+    """
+    monkeypatch.setenv("EDULLM_CONFIG_DIRECTORY", str(PROJECT_ROOT / "no" / "such" / "place"))
+    transport = Collector()
+
+    answer = handler(
+        {"Records": [record("batch-succeeded", "m1")]},
+        transport=transport,
+        catalogs=catalogs,
+    )
+
+    assert answer == {BATCH_ITEM_FAILURES_KEY: []}
+    assert len(transport.delivered) == 1
+
+
+def test_the_morning_trigger_measures_its_window_from_the_delivery(catalogs: Catalogs) -> None:
+    """Mutation: take the time from the clock instead of the record.
+
+    SQS stamps ``SentTimestamp`` when the schedule fired, so a retry after a cold start
+    measures the window the first attempt would have. A clock read here would slide the
+    window by however long the retries took, which is exactly when a page is most likely to
+    be re-sent.
+    """
+    asked: list[dict[str, object]] = []
+
+    class Lister:
+        def list_jobs(self, **arguments: object) -> object:
+            asked.append(arguments)
+            return {"jobSummaryList": []}
+
+    fired = 1_785_984_000_000
+    transport = Collector()
+    handler(
+        {
+            "Records": [
+                {**record("overnight-activity", "m1"), "attributes": {"SentTimestamp": str(fired)}}
+            ]
+        },
+        transport=transport,
+        catalogs=catalogs,
+        cell_lister=Lister(),
+    )
+
+    assert asked, "no queue was listed"
+    assert asked[0]["filters"] == [
+        {"name": "AFTER_CREATED_AT", "values": [str(fired - 12 * 3600 * 1000)]}
+    ]
