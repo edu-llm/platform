@@ -23,6 +23,7 @@ from typing import Any
 
 import pytest
 import yaml
+from infrastructure_support import ACCOUNT_LITERAL
 from workflow_support import (
     EXPRESSION_PATTERN,
     PROJECT_ROOT,
@@ -670,7 +671,7 @@ def test_every_python_invocation_comes_from_the_locked_environment() -> None:
 def test_the_workflow_never_embeds_an_account_identifier_or_a_registry_host() -> None:
     text = WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    assert not re.search(r"(?<!\d)\d{12}(?!\d)", text)
+    assert not ACCOUNT_LITERAL.search(text)
     assert not re.search(r"\d\.dkr\.ecr\.", text)
     assert "get-caller-identity" not in text
     # All four ARNs are composed from the assumed identity, which is why the account id

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from infrastructure_support import ACCOUNT_LITERAL
 from workflow_support import (
     WORKFLOWS_ROOT,
     aws_commands,
@@ -267,7 +268,7 @@ def test_verification_reads_the_live_shape_and_never_prints_an_account_id() -> N
 
     # The state machine ARN is fetched from a stack output rather than assembled from an
     # account id, so nothing here has to know the account number to run.
-    assert not re.search(r"(?<!\d)\d{12}(?!\d)", verify_script)
+    assert not ACCOUNT_LITERAL.search(verify_script)
     assert "get-caller-identity" not in verify_script
     assert "roleArn" not in verify_script
 

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from infrastructure_support import ACCOUNT_LITERAL
 from workflow_support import (
     PROJECT_ROOT,
     WORKFLOWS_ROOT,
@@ -1527,7 +1528,7 @@ def test_every_run_body_enables_strict_bash() -> None:
 def test_workflow_never_embeds_an_aws_account_identifier_or_registry_host() -> None:
     text = WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    assert not re.search(r"(?<!\d)\d{12}(?!\d)", text)
+    assert not ACCOUNT_LITERAL.search(text)
     assert "repositoryUri" not in text
     assert "registryId" not in text
     assert not re.search(r"\d\.dkr\.ecr\.", text)
