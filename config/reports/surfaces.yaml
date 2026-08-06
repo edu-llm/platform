@@ -870,13 +870,25 @@ slices:
         deployed: {not_applicable: a check that does not exist}
         proven: {not_reached: nothing checks it}
 
+      # THE GENERATOR EXISTS AND NO PAGE READS IT YET, WHICH IS WHY DEPLOYED IS A `no` RATHER
+      # THAN AN `n/a`. `tools/render_profile_table.py` writes the profiles out of the reviewed
+      # catalogue with a `provisioned` column no hand table carries, and `guides/olmo-core.md`
+      # still holds two tables somebody typed. The guide is another owner's page, so this row
+      # goes yes then no on purpose: there is a thing, and nobody has wired it in.
+      #
+      # IT CANNOT WRITE TWO OF THE GUIDE'S COLUMNS AND THAT GAP IS SHARED. The `Device` and
+      # `Memory` columns need the card behind an instance type and the memory on it, and
+      # neither figure is in any configuration file. `size-to-node` below is blocked on the
+      # same missing thing, because nothing can say whether a model fits on a shape without
+      # knowing what memory the shape has. One reviewed table of accelerator and memory per
+      # profile moves both rows.
       - id: profile-table
         name: The generated profile table
         designed: {reached: overview draws it}
         planned: {not_reached: no plan reaches it}
-        built: {not_reached: the table is written by hand}
-        deployed: {not_applicable: a generator that does not exist}
-        proven: {not_reached: the generator does not exist}
+        built: {exists: tools/render_profile_table.py}
+        deployed: {not_reached: no guide carries its output}
+        proven: {tests: [tests/test_render_profile_table.py]}
 
       - id: boundary-principal-deny
         name: A boundary deny conditioned on the principal
