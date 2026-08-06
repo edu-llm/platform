@@ -208,6 +208,85 @@ Resources:
                 # scope above: sbsandbox-intern- alone is every intern's prefix.
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-*
+              # THE WORKING TIER, GRANTED BY ITS EXACT NAME, AND THE EXACT NAME IS THE
+              # WHOLE POINT OF THE STATEMENT. infra/scratch-bucket.yaml declares
+              # edullm-scratch, which the prefix scope above does not match and must never
+              # be widened to match.
+              #
+              # WHY NOT WIDEN THE SCOPE ABOVE TO arn:aws:s3:::edullm-* INSTEAD. Because
+              # edullm-data is the sealed bucket and edullm-landing is the airlock in
+              # front of it, and both would come inside a pipeline's reach on the day
+              # that wildcard is written. Nothing writes into the sealed bucket except a
+              # validator identity assumable only by a container, no principal may delete
+              # a published object, and decisions.md's "The airlock is a latch" already
+              # records that the delete protection lives in a bucket policy this list
+              # holds s3:PutBucketPolicy over. A deploy credential that could replace
+              # that policy is the one principal the whole data-flow design assumes does
+              # not exist. One exact name costs one statement; a wildcard costs that
+              # property, and the wildcard is the tidier-looking of the two, which is why
+              # this paragraph is here rather than in a commit message.
+              #
+              # THE WRITE HALF IS EXACTLY WHAT infra/scratch-bucket.yaml SETS AND NOTHING
+              # ELSE, which is the same rule the statement below this one is chosen by.
+              # BucketName is s3:CreateBucket, LifecycleConfiguration is
+              # s3:PutLifecycleConfiguration, PublicAccessBlockConfiguration is
+              # s3:PutBucketPublicAccessBlock, and BucketEncryption is
+              # s3:PutEncryptionConfiguration. That template sets no versioning, no
+              # tagging, no object lock and no bucket policy, so none of the matching
+              # verbs is here and adding one of those properties is a deploy failure
+              # naming the action rather than a silently wider deployer.
+              #
+              # s3:DeleteBucket IS DELIBERATELY ABSENT AND THAT IS NOT AN OVERSIGHT. The
+              # template carries DeletionPolicy: Retain and UpdateReplacePolicy: Retain,
+              # so CloudFormation never calls it -- measured here rather than assumed,
+              # because the outputs bucket proved it: its Phase 3 deploy was denied
+              # s3:PutLifecycleConfiguration after CreateBucket had already succeeded and
+              # Retain left the bucket behind rather than removing it. A deployer able to
+              # delete the working tier could take work that exists nowhere else, and
+              # nothing in the template would ever ask it to.
+              #
+              # s3:Get* RATHER THAN THE TWENTY READS SPELLED OUT, AND THIS IS THE ONE
+              # ACTION WILDCARD IN THIS FILE, SO IT NEEDS ITS TWO REASONS.
+              #
+              # First, it reaches no object. Every object-level S3 action authorizes
+              # against arn:aws:s3:::edullm-scratch/*, which this statement does not name, so
+              # s3:GetObject is not granted here and CI cannot read one researcher's
+              # working file. On a bucket ARN alone, s3:Get* is precisely "read this
+              # bucket's configuration", which is the set the AWS::S3::Bucket handler
+              # reads on every Read whether or not the template sets it -- the reason the
+              # statement below carries twenty of them.
+              #
+              # Second, the twenty do not fit. Without this statement the role renders to
+              # 9571 bytes of inline policy against IAM's 10240-byte aggregate cap,
+              # measured the way tests/test_phase2_infrastructure.py measures it. The
+              # spelled-out list comes to 741 bytes and takes the role to 10313. That
+              # deploy fails with ServiceLimitExceeded and rolls back, leaving the account
+              # on the previous grant, which is the 2026-08-02 incident
+              # pending_amendments.py records against the admission role. This statement
+              # is 210 bytes and leaves 459.
+              #
+              # The wildcard is also the safer half on its own terms, which is worth
+              # saying so nobody "fixes" it back. The list below fails closed when AWS
+              # adds a twenty-first configuration surface, and failing closed there means
+              # a CI deploy of a bucket no laptop is required for suddenly needs one.
+              #
+              # THE OBJECT ARN IS NOT HERE AND ITS ABSENCE IS THE OTHER HALF OF THE Get*
+              # ARGUMENT. Every action in this statement authorizes against the bucket,
+              # so arn:aws:s3:::edullm-scratch/* would grant nothing CloudFormation asks
+              # for and would turn the s3:Get* above into s3:GetObject over every
+              # researcher's working set. infra/iam/lane-instance-role.yaml names both
+              # ARNs because a lane instance reads and writes the objects; this role only
+              # ever creates and configures the bucket that holds them.
+              - Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:Get*
+                  - s3:ListBucket
+                  - s3:PutBucketPublicAccessBlock
+                  - s3:PutEncryptionConfiguration
+                  - s3:PutLifecycleConfiguration
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::edullm-scratch
               # Objects in the artifacts bucket only, not in every bucket carrying our
               # prefix. CloudFormation needs to read the packaged zip to create the
               # function, and the release procedure needs to upload it. Neither reason

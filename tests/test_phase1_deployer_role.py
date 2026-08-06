@@ -1,3 +1,4 @@
+import fnmatch
 from typing import Any
 
 import pytest
@@ -63,6 +64,11 @@ ROLE_ARN = "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/%s"
 STACK_RESOURCE = {"Fn::Sub": REGIONAL_ARN % ("cloudformation", f"stack/{RESOURCE_PREFIX}*/*")}
 REPOSITORY_RESOURCE = {"Fn::Sub": REGIONAL_ARN % ("ecr", f"repository/{RESOURCE_PREFIX}*")}
 BUCKET_RESOURCE = {"Fn::Sub": BUCKET_ARN % f"{RESOURCE_PREFIX}*"}
+#: The one bucket this role reaches by its whole name rather than through the project prefix.
+#: Spelled with the partition pseudo-parameter like every other ARN in the template, which
+#: costs nothing: CloudFormation resolves it before IAM sees the document, so the policy IAM
+#: stores is the same bytes either way.
+SCRATCH_BUCKET_ARN = {"Fn::Sub": "arn:${AWS::Partition}:s3:::edullm-scratch"}
 ARTIFACT_OBJECT_RESOURCE = {"Fn::Sub": BUCKET_ARN % f"{RESOURCE_PREFIX}artifacts/*"}
 #: The artifacts bucket itself, not its objects. Lambda's fetch of a versioned code
 #: object needs a bucket-level action, and it is scoped here rather than folded into the
@@ -94,6 +100,7 @@ SCOPED_RESOURCES = [
     STACK_RESOURCE,
     REPOSITORY_RESOURCE,
     BUCKET_RESOURCE,
+    SCRATCH_BUCKET_ARN,
     ARTIFACT_OBJECT_RESOURCE,
     ARTIFACT_BUCKET_RESOURCE,
     STATE_MACHINE_RESOURCE,
@@ -226,6 +233,30 @@ EXPECTED_LOG_GROUP_ACTIONS = {
     "logs:TagResource",
     "logs:UntagResource",
 }
+
+#: The two buckets that must stay outside anything this role can name, and the reason the
+#: grant above is an exact name rather than an ``arn:aws:s3:::edullm-*`` wildcard. Nothing
+#: writes into the sealed bucket except a validator identity assumable only by a container,
+#: and this role holds s3:PutBucketPolicy, which is what the airlock's delete protection is
+#: written in.
+UNREACHABLE_BUCKETS = ("edullm-data", "edullm-landing")
+
+#: Every action wildcard this role is allowed to carry, which is one.
+#:
+#: An inventory rather than a ban, for the reason ``UNSCOPED_STATEMENTS`` is an inventory
+#: rather than a ban: the widening worth catching is a second `*` that looks like the first.
+#: A blanket refusal reads as the stricter choice and is the weaker one, because the day a
+#: statement genuinely needs a wildcard the refusal is edited away and nothing replaces it.
+#:
+#: ``s3:Get*`` is scoped to :data:`SCRATCH_BUCKET_ARN` and to nothing else, and the bucket ARN
+#: is what bounds it. Every object-level S3 action authorizes against
+#: ``arn:aws:s3:::edullm-scratch/*``, which this role does not name, so this cannot read a
+#: researcher's working file; on a bucket ARN alone the reachable set is the configuration
+#: surfaces the AWS::S3::Bucket handler reads, which is the same set
+#: :data:`EXPECTED_BUCKET_ACTIONS` spells out for the prefixed buckets. It is spelled as a
+#: wildcard there and only there because this role renders to within a few hundred bytes of
+#: IAM's 10240-byte aggregate inline cap and the twenty reads written out do not fit.
+PERMITTED_ACTION_WILDCARDS = {"s3:Get*"}
 
 #: The retired shared role could reach Batch and EC2. Nothing this repository deploys
 #: needs either, and sts: is here because a deploy credential that can mint a second
@@ -490,12 +521,108 @@ def test_objects_are_reachable_only_inside_the_artifacts_bucket() -> None:
     objects = [name for name in buckets if "/" in name]
 
     assert objects == [f"{RESOURCE_PREFIX}artifacts/*"]
-    # Three S3 ARNs: every bucket for the configuration surfaces the bucket handler
-    # reads, the artifacts objects, and the artifacts bucket itself for the one
-    # bucket-level action Lambda needs to fetch a versioned code object. The last is
-    # named rather than folded into the first so that enumerating versions stops at the
-    # bucket holding deployment zips.
-    assert buckets == [f"{RESOURCE_PREFIX}*", *objects, f"{RESOURCE_PREFIX}artifacts"]
+    # Four S3 ARNs: every prefixed bucket for the configuration surfaces the bucket handler
+    # reads, the working tier by its whole name, the artifacts objects, and the artifacts
+    # bucket itself for the one bucket-level action Lambda needs to fetch a versioned code
+    # object. The last is named rather than folded into the first so that enumerating
+    # versions stops at the bucket holding deployment zips.
+    #
+    # The working tier is a bucket ARN and not an object one, which is what keeps it out of
+    # the list above. That is the property, not an accident of how it happens to be written:
+    # its statement carries s3:Get*, and an object ARN beside it would turn that into
+    # s3:GetObject over every researcher's working set.
+    assert buckets == [
+        f"{RESOURCE_PREFIX}*",
+        "edullm-scratch",
+        *objects,
+        f"{RESOURCE_PREFIX}artifacts",
+    ]
+
+
+def test_no_s3_scope_this_role_holds_can_ever_reach_the_sealed_bucket() -> None:
+    """THE PROPERTY THE EXACT NAME EXISTS FOR, CHECKED BY MATCHING RATHER THAN BY READING.
+    Mutation: widen the working tier's scope to arn:aws:s3:::edullm-*. Mutation: add
+    arn:aws:s3:::edullm-data to any statement in the file.
+
+    A test that asserted the template contains the string arn:aws:s3:::edullm-scratch would
+    pass under both, because both leave that string in place -- the first adds a wildcard
+    that also matches it and the second adds a bucket beside it. So this does not look for
+    a name. It expands every S3 scope the role holds into the IAM wildcard match it
+    actually performs, and asks whether the two buckets that must stay out are in it.
+
+    edullm-data is where a published corpus lives once it is sealed, and edullm-landing is
+    the airlock in front of it. Neither may be reachable by anything a pipeline assumes:
+    this role holds s3:PutBucketPolicy and s3:DeleteBucketPolicy, so a scope that reached
+    edullm-data would let a CI deploy replace the very bucket policy that refuses the
+    deletes -- decisions.md, "The airlock is a latch", is the record of how thin that
+    protection already is.
+    """
+    # Every scope of every statement that grants an S3 action, including a Resource "*"
+    # if one ever appears in such a statement. Selecting by the statement's actions rather
+    # than by the shape of the ARN is what makes the "*" case count: the two unscoped
+    # statements in this role grant no S3 action today, and a future one that did would be
+    # exactly the widening this test should catch.
+    scopes = [
+        (resource["Fn::Sub"] if isinstance(resource, dict) else resource).replace(
+            "${AWS::Partition}", "aws"
+        )
+        for statement in _all_statements()
+        if any(action.startswith("s3:") for action in statement_actions(statement))
+        for resource in _resources(statement)
+    ]
+
+    assert scopes, "no S3 scope found at all, so this test proved nothing"
+    for bucket in UNREACHABLE_BUCKETS:
+        for suffix in ("", "/*", "/some/published/object.parquet"):
+            target = f"arn:aws:s3:::{bucket}{suffix}"
+            matched = [scope for scope in scopes if fnmatch.fnmatchcase(target, scope)]
+            assert not matched, (
+                f"{target} is inside the deployer's reach through {matched}. The sealed "
+                "side of the data flow is unreachable by any automation by design, and "
+                "the working tier is granted by its whole name rather than by an "
+                "edullm-* wildcard precisely so that this stays true."
+            )
+
+
+def test_the_working_tier_is_granted_by_its_whole_name_and_only_what_it_creates() -> None:
+    """Mutation: add s3:DeleteBucket, or s3:PutBucketPolicy, to the working tier statement.
+    Mutation: add arn:aws:s3:::edullm-scratch/* beside the bucket ARN.
+
+    The action set is read off infra/scratch-bucket.yaml rather than chosen: BucketName is
+    CreateBucket, LifecycleConfiguration is PutLifecycleConfiguration,
+    PublicAccessBlockConfiguration is PutBucketPublicAccessBlock and BucketEncryption is
+    PutEncryptionConfiguration. That template sets no versioning, no tagging, no object
+    lock and no bucket policy, so the matching verbs are absent and adding one of those
+    properties is a deploy failure naming the action -- the fail-closed direction the
+    prefixed bucket statement is chosen by too.
+
+    s3:DeleteBucket is the one worth pinning. The template retains the bucket on delete and
+    on replace, so CloudFormation never calls it, and the working tier holds work that
+    exists nowhere else: a deployer able to remove it could take a person's files in a
+    rollback they were not party to.
+
+    The second mutation is the quiet one. Adding the object ARN grants nothing this stack
+    needs, because every action here authorizes against the bucket, and it would turn the
+    s3:Get* in the list into s3:GetObject over every researcher's working set.
+    """
+    statement = _statement_scoped_to(SCRATCH_BUCKET_ARN)
+    actions = statement_actions(statement)
+
+    assert statement["Effect"] == "Allow"
+    assert set(actions) == {
+        "s3:CreateBucket",
+        "s3:Get*",
+        "s3:ListBucket",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:PutEncryptionConfiguration",
+        "s3:PutLifecycleConfiguration",
+    }
+    assert len(actions) == len(set(actions))
+    assert _resources(statement) == [SCRATCH_BUCKET_ARN], (
+        "the working tier is scoped to something other than the bucket ARN alone. An "
+        "object ARN here would make the statement's s3:Get* reach every object in the "
+        "tier, and no action in this statement needs one."
+    )
 
 
 def test_deployer_resource_scopes_never_widen_to_the_shared_intern_prefix() -> None:
@@ -510,12 +637,21 @@ def test_deployer_resource_scopes_never_widen_to_the_shared_intern_prefix() -> N
     ]
 
     assert scoped == [resource["Fn::Sub"] for resource in SCOPED_RESOURCES]
-    assert all(RESOURCE_PREFIX in arn for arn in scoped)
-    assert not [arn for arn in scoped if f"{SHARED_PREFIX}*" in arn]
+    # The working tier is the one scope that carries no sbsandbox-intern- segment at all,
+    # because the bucket carries none: a person types edullm-scratch and both reference
+    # documents draw it. It is excluded here by name rather than by loosening the rule, so
+    # that a second scope leaving the prefix is a red test. What keeps it safe is not this
+    # assertion but test_no_s3_scope_this_role_holds_can_ever_reach_the_sealed_bucket,
+    # which asks what the scope actually matches rather than what it is spelled.
+    prefixed = [arn for arn in scoped if arn != SCRATCH_BUCKET_ARN["Fn::Sub"]]
+
+    assert len(prefixed) == len(scoped) - 1
+    assert all(RESOURCE_PREFIX in arn for arn in prefixed)
+    assert not [arn for arn in prefixed if f"{SHARED_PREFIX}*" in arn]
     # Every occurrence, not just the first: an ARN naming two resources would otherwise
     # be judged on the one that happens to come first.
     assert all(
-        rest.startswith("edullm-") for arn in scoped for rest in arn.split(SHARED_PREFIX)[1:]
+        rest.startswith("edullm-") for arn in prefixed for rest in arn.split(SHARED_PREFIX)[1:]
     )
 
 
@@ -597,7 +733,10 @@ def test_deployer_grants_nothing_outside_the_services_the_two_phases_deploy() ->
         action for action in actions if action.lower().startswith(FORBIDDEN_ACTION_PREFIXES)
     ]
     assert all(action.startswith(ALLOWED_ACTION_PREFIXES) for action in actions)
-    assert not any("*" in action for action in actions)
+    # Compared as a set rather than refused outright, because one statement carries a
+    # wildcard on purpose and a bare `not any("*" in action)` would have to be deleted to
+    # let it through -- taking the check for every other statement with it.
+    assert {action for action in actions if "*" in action} == PERMITTED_ACTION_WILDCARDS
 
 
 #: Every wildcard the Phase 3 policy adds, in the order the template writes them. An
@@ -686,6 +825,11 @@ def test_deployer_template_wildcards_are_only_the_declared_scopes() -> None:
         # The Phase 2 policy opens with its own unscoped grant, before its scoped ones.
         "*",
         BUCKET_RESOURCE["Fn::Sub"],
+        # The working tier's one action wildcard, which sits between the prefixed bucket
+        # scope and the artifacts objects because that is where the template writes it.
+        # It is an Action rather than a Resource, and it is in this list because this list
+        # is every `*` in the file rather than every scope in it.
+        *sorted(PERMITTED_ACTION_WILDCARDS),
         ARTIFACT_OBJECT_RESOURCE["Fn::Sub"],
         STATE_MACHINE_RESOURCE["Fn::Sub"],
         FUNCTION_RESOURCE["Fn::Sub"],

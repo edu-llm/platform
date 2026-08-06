@@ -11,7 +11,7 @@ Description: The working tier. Where the exploration route puts a person's files
 #
 # APPLIED BY HAND, AND NOT FOR THE REASON EVERY OTHER HAND-APPLIED STACK HERE IS.
 # This creates no IAM role. sbsandbox-intern-edullm-infra-deployer scopes every S3 grant it holds
-# to arn:aws:s3:::sbsandbox-intern-edullm-*, and this bucket is edullm-work, so CI is denied at
+# to arn:aws:s3:::sbsandbox-intern-edullm-*, and this bucket is edullm-scratch, so CI is denied at
 # CreateBucket. Widening that scope is itself an IAM change applied by hand, to let a pipeline
 # create one bucket that is created once, which is a worse trade than applying this once.
 #
@@ -26,7 +26,7 @@ Description: The working tier. Where the exploration route puts a person's files
 # the arrows between them.
 
 Resources:
-  WorkBucket:
+  ScratchBucket:
     Type: AWS::S3::Bucket
     # Retained, for the reason infra/outputs-bucket.yaml gives and one more. That bucket holds a
     # team's job output; this one holds work in progress that exists nowhere else by design, and a
@@ -36,7 +36,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      BucketName: edullm-work
+      BucketName: edullm-scratch
       # NO VERSIONING, AND IT IS A DECISION RATHER THAN AN OMISSION. The outputs bucket versions
       # because a retried attempt overwrites its own keys and the first attempt's partial output
       # would otherwise be gone with no trace. Nothing retries in the lane. Versioning here would
@@ -45,7 +45,7 @@ Resources:
       LifecycleConfiguration:
         Rules:
           # NINETY DAYS, AND THE NUMBER IS config/reports/working-tier.yaml'S RATHER THAN THIS
-          # FILE'S. tests/test_work_bucket_template.py holds the two equal, so changing one
+          # FILE'S. tests/test_scratch_bucket_template.py holds the two equal, so changing one
           # without the other is a red test rather than a deployed rule that disagrees with what
           # the CLI tells a researcher. The tier is "yours until you promote it" and a promotion
           # is a copy into landing, so nothing here is the only copy of anything that matters.
@@ -81,9 +81,9 @@ Resources:
 Outputs:
   BucketName:
     Value:
-      Ref: WorkBucket
+      Ref: ScratchBucket
   BucketArn:
     Value:
       Fn::GetAtt:
-        - WorkBucket
+        - ScratchBucket
         - Arn

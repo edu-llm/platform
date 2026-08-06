@@ -35,7 +35,7 @@ Description: The bounded role a researcher assumes to reach AWS directly, declar
 #
 # ALL SEVEN PROPERTIES ARE HERE, AND THE SEVENTH IS WRITTEN AHEAD OF WHAT IT NAMES.
 # system-overview.md draws seven and the seventh is the write into
-# edullm-work/<team>/<person>/, the working tier the exploration route defaults its output to.
+# edullm-scratch/<team>/<person>/, the working tier the exploration route defaults its output to.
 # The bucket does not exist yet -- it is absent from list-buckets -- and the grant is written
 # now anyway. docs-frank/superpowers/specs/2026-08-04-platform-buildout-design.md, under "The
 # exploration route is a slice, not a non-goal", names the bucket and this statement as two of
@@ -319,7 +319,7 @@ Resources:
                   - arn:aws:s3:::edullm-landing/*
               # PROPERTY SEVEN: writes into the working tier, and only into your own part of it.
               #
-              # A DENY WITH NotResource, WHICH IS FORCED. The fence is "inside edullm-work but
+              # A DENY WITH NotResource, WHICH IS FORCED. The fence is "inside edullm-scratch but
               # outside my own segment", and IAM cannot say that as a condition. S3 publishes no
               # condition key carrying the object key, so there is nothing for a StringNotLike to
               # test against. A Deny on the bucket with a narrow Allow beside it does not work
@@ -373,7 +373,7 @@ Resources:
                   - s3:DeleteObjectVersion
                   - s3:AbortMultipartUpload
                 NotResource:
-                  - arn:aws:s3:::edullm-work/*/${aws:SourceIdentity}/*
+                  - arn:aws:s3:::edullm-scratch/*/${aws:SourceIdentity}/*
                   - arn:aws:s3:::edullm-landing/*
                   - arn:aws:s3:::sbsandbox-intern-edullm-outputs/*
               # BEYOND THE OVERVIEW'S SEVEN, and both are in aws-spend-controls.md's policy.

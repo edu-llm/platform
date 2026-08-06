@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from edullm_platform.cli.lane import LANE_INSTANCE_PROFILE, WORK_BUCKET
+from edullm_platform.cli.lane import LANE_INSTANCE_PROFILE, SCRATCH_BUCKET
 from tests.infrastructure_support import INFRA_ROOT, load_template
 
 TEMPLATE_PATH = INFRA_ROOT / "iam" / "lane-instance-role.yaml"
@@ -86,7 +86,7 @@ def test_the_machine_reaches_the_working_tier_and_no_other_bucket() -> None:
     """THE STATEMENT THAT DECIDES WHAT A LANE MACHINE CAN TOUCH.
     Mutation: add the outputs bucket, or the sealed one.
 
-    The lane's files go to edullm-work and the machine syncs them both ways. Reaching further
+    The lane's files go to edullm-scratch and the machine syncs them both ways. Reaching further
     would make a machine nobody reviews into a principal that can read the sealed corpora every
     comparable result depends on, and the researcher's own session already reaches those under a
     role that is reviewed and bounded.
@@ -100,8 +100,8 @@ def test_the_machine_reaches_the_working_tier_and_no_other_bucket() -> None:
         "s3:ListBucket",
     }
     assert set(as_list(entry["Resource"])) == {
-        f"arn:aws:s3:::{WORK_BUCKET}",
-        f"arn:aws:s3:::{WORK_BUCKET}/*",
+        f"arn:aws:s3:::{SCRATCH_BUCKET}",
+        f"arn:aws:s3:::{SCRATCH_BUCKET}/*",
     }
 
 

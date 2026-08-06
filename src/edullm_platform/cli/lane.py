@@ -51,9 +51,9 @@ __all__ = [
     "GPU_AMI_PARAMETER",
     "LANE_INSTANCE_PROFILE",
     "LANE_TAG_KEY",
+    "SCRATCH_BUCKET",
     "SESSION_PLUGIN",
     "WORKING_TIER_SETTINGS_PATH",
-    "WORK_BUCKET",
     "LaneRequest",
     "WorkingTierSettings",
     "agent_online_argv",
@@ -85,8 +85,8 @@ __all__ = [
 #: NO sbsandbox-intern-edullm- PREFIX, and that has a consequence somebody will otherwise
 #: rediscover at deploy time. sbsandbox-intern-edullm-infra-deployer scopes every S3 grant it
 #: holds to arn:aws:s3:::sbsandbox-intern-edullm-*, so CI cannot create this bucket and
-#: infra/work-bucket.yaml is applied by hand. The name is the overview's and a person types it.
-WORK_BUCKET: Final = "edullm-work"
+#: infra/scratch-bucket.yaml is applied by hand. The name is the overview's and a person types it.
+SCRATCH_BUCKET: Final = "edullm-scratch"
 
 #: The instance profile the lane machine carries. infra/iam/lane-instance-role.yaml creates it,
 #: and the launch passes it as ``--iam-instance-profile Name=<this>``. A rename on either side is
@@ -158,7 +158,7 @@ def working_prefix(*, team: str, person: str) -> str:
 def working_uri(*, team: str, person: str, project: str) -> str:
     """The s3:// address one project's working set is synced to and from."""
     segment = _UNSAFE_IN_A_SEGMENT.sub("-", project)
-    return f"s3://{WORK_BUCKET}/{working_prefix(team=team, person=person)}{segment}/"
+    return f"s3://{SCRATCH_BUCKET}/{working_prefix(team=team, person=person)}{segment}/"
 
 
 def person_from_caller_arn(caller_arn: str) -> str | None:

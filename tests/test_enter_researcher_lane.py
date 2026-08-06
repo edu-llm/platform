@@ -52,7 +52,7 @@ def test_the_source_identity_agrees_with_the_prefix_the_working_tier_deny_fences
     Mutation: strip the dot, lowercase, or otherwise normalise the person's name here.
 
     infra/iam/researcher-role.yaml's seventh statement excepts
-    arn:aws:s3:::edullm-work/*/${aws:SourceIdentity}/* and denies every other object write, so
+    arn:aws:s3:::edullm-scratch/*/${aws:SourceIdentity}/* and denies every other object write, so
     the string this function returns is literally the directory name a lane session may write
     into. The exploration route picks the same person out of the same caller ARN when it
     chooses that prefix. The day the two disagree, every write the lane makes is denied and the
@@ -67,7 +67,7 @@ def test_the_source_identity_agrees_with_the_prefix_the_working_tier_deny_fences
         "broker-frank.gonzalez-1785873426"
     )
 
-    assert "arn:aws:s3:::edullm-work/*/${aws:SourceIdentity}/*" in template
+    assert "arn:aws:s3:::edullm-scratch/*/${aws:SourceIdentity}/*" in template
     assert source_identity_from(arn) == "frank.gonzalez"
     assert "/" not in source_identity_from(arn), (
         "a source identity carrying a slash would spread one person across two segments of "

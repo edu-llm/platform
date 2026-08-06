@@ -2071,12 +2071,12 @@ Anything other than `0` means every message is coming from the fallback.
 
 | # | Stack | Template | Roles or resources | Applied from |
 | --- | --- | --- | --- | --- |
-| 1 | `sbsandbox-intern-edullm-work` | `infra/work-bucket.yaml` | the `edullm-work` bucket | laptop |
+| 1 | `sbsandbox-intern-edullm-scratch` | `infra/scratch-bucket.yaml` | the `edullm-scratch` bucket | laptop |
 | 2 | `sbsandbox-intern-edullm-lane-instance-iam` | `infra/iam/lane-instance-role.yaml` | `edullm-lane-instance` and its instance profile | laptop |
 
 Both from a laptop, and the first one is not an IAM stack.
 `sbsandbox-intern-edullm-infra-deployer` scopes every S3 grant it holds to
-`arn:aws:s3:::sbsandbox-intern-edullm-*`, and the bucket is `edullm-work`, so CI is denied at
+`arn:aws:s3:::sbsandbox-intern-edullm-*`, and the bucket is `edullm-scratch`, so CI is denied at
 `CreateBucket`. Widening that scope is itself a hand-applied IAM change, to let a pipeline create
 one bucket that is created once.
 
@@ -2088,8 +2088,8 @@ nothing and getting it wrong is hard to see.
 
 ```bash
 aws cloudformation deploy \
-  --stack-name sbsandbox-intern-edullm-work \
-  --template-file infra/work-bucket.yaml \
+  --stack-name sbsandbox-intern-edullm-scratch \
+  --template-file infra/scratch-bucket.yaml \
   --profile sbsandbox \
   --region us-east-1
 ```
@@ -2098,11 +2098,11 @@ Then read the account back rather than the template:
 
 ```bash
 aws s3api get-bucket-lifecycle-configuration \
-  --bucket edullm-work \
+  --bucket edullm-scratch \
   --profile sbsandbox --region us-east-1
 
 aws s3api get-public-access-block \
-  --bucket edullm-work \
+  --bucket edullm-scratch \
   --profile sbsandbox --region us-east-1
 ```
 
@@ -2145,5 +2145,5 @@ aws iam get-instance-profile \
 nobody reviews is the widening least likely to be noticed. The instance profile must carry the
 role, and the profile name must be the one `run_instances_argv` passes as
 `--iam-instance-profile Name=`; a mismatch there fails a launch after a machine has been priced.
-Any bucket other than `edullm-work` in the inline policy means the machine reaches past the
+Any bucket other than `edullm-scratch` in the inline policy means the machine reaches past the
 working tier and the role should be narrowed rather than left.

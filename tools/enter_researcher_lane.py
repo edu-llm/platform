@@ -38,7 +38,7 @@ __all__ = ["build_parser", "expires_at", "main", "source_identity_from"]
 #: ``=``, ``,``, ``@`` and every non-ASCII letter ``\w`` would have kept. What is left is exactly
 #: ``edullm_platform.cli.lane._UNSAFE_IN_A_SEGMENT``, because the string this produces is also
 #: the working-tier directory name that module picks, and ``infra/iam/researcher-role.yaml``'s
-#: seventh statement excepts only ``edullm-work/*/${aws:SourceIdentity}/*`` from a deny on every
+#: seventh statement excepts only ``edullm-scratch/*/${aws:SourceIdentity}/*`` from a deny on every
 #: object write. Two derivations of one string, and the wider one loses: a session named
 #: ``broker-frank+ops-1234`` produced the identity ``frank+ops`` and the prefix ``frank-ops``,
 #: so the lane wrote to a path its own role denied and the denial named nothing.
@@ -60,7 +60,7 @@ def source_identity_from(caller_arn: str) -> str:
 
     THE STRING THIS RETURNS IS ALSO A DIRECTORY NAME, which is the part worth not breaking.
     ``infra/iam/researcher-role.yaml``'s seventh statement excepts
-    ``edullm-work/*/${aws:SourceIdentity}/*`` from a deny on every object write, so whatever
+    ``edullm-scratch/*/${aws:SourceIdentity}/*`` from a deny on every object write, so whatever
     comes back here is the only segment of the working tier this session may write into. The
     exploration route derives the same person from the same caller ARN when it picks that
     prefix. Change the derivation on one side only and every lane write is denied, naming
