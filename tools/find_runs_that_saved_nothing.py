@@ -80,6 +80,15 @@ reasons for each are forgotten. The list is longer to write and says something t
 
 An entry that no longer covers a finding is reported rather than left in place, because a
 list that only ever grows stops describing anything.
+
+**IT SAYS WHICH RUN IT IS READING, AND THAT IS NOT A CONVENIENCE.** This printed nothing at
+all until the report was finished, and on 2026-08-06 that cost the audit its only property
+worth having: the job took forty minutes, held the workflow's concurrency group for all of
+them, and looked from outside exactly like one wedged on a call that would never return.
+Two people watched it and could not tell, and two hand dispatches were discarded by a
+scheduled run while they waited. A line per run on stderr settles it -- a log that stops
+advancing is hung and one that advances slowly is slow -- and the time each run took is
+what says whether the answer is to make it faster or to stop asking it this way.
 """
 
 from __future__ import annotations
@@ -91,6 +100,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -206,6 +216,24 @@ class CommandLineObjectStore:
 
     Reads only. The Protocol names ``put_object`` and this refuses it, because a report that
     can write to the bucket it is auditing is a report that can create the evidence it finds.
+
+    **EVERY CALL IS AN ``aws`` PROCESS, WHICH IS WHY THE LISTING ANSWERS AS MUCH AS IT CAN.**
+    One CLI invocation costs about a second before it has spoken to S3 at all, and that is
+    the whole cost model here: what makes this report slow is the number of processes, not
+    the number of bytes. A listing already carries every key under the prefix with its size
+    and its write time, so the reads that only want those are answered from it rather than
+    paid for again. :func:`_newest_write` heads every object in a step directory for its
+    ``LastModified``, and a distributed run's step directory holds one object per rank, so
+    that alone was hundreds of processes per run.
+
+    Measured against the audit's own account on 2026-08-06: eighty-three contracted runs took
+    thirty-nine minutes at about twenty-one processes a run, nearly all of them heads on the
+    twelve prefixes holding a checkpoint deep enough to describe. The job had been taking
+    around forty minutes for at least eleven hours -- 38, 43, 45, 44, 39 across five
+    consecutive runs -- and it grows with the intent tree, so it was on its way to being
+    slower than the schedule it runs on. It also held the workflow's concurrency group for
+    every one of those minutes, which is the part that made the audit undispatchable rather
+    than merely slow, and audit.yml is where that half is fixed.
     """
 
     def __init__(self, *, profile: str | None = None, region: str | None = None) -> None:
@@ -285,10 +313,49 @@ class CommandLineObjectStore:
         # the prefix while claiming truncation would hand back the same page for ever.
         return {"Contents": list(cached), "IsTruncated": False}
 
+    def _listed(self, bucket: str, key: str) -> tuple[bool, Mapping[str, Any] | None]:
+        """What an already-fetched listing says about one key, and whether one covers it.
+
+        A listing here is complete for its prefix -- the CLI follows the continuation itself
+        and ``list_objects_v2`` above says so -- so a cached listing whose prefix contains
+        this key is authoritative about whether the key is there. That is the only reason
+        an absence may be answered without asking S3, and it is worth stating because
+        getting it wrong in the lenient direction would have this report accuse a run of
+        saving nothing on the strength of a listing that had been truncated.
+
+        Three answers rather than two, and the middle one is the one that matters.
+        ``(False, None)`` is nobody has listed a prefix containing this key, so only S3
+        knows. ``(True, None)`` is a listing covers it and does not hold it, so the object
+        is not there. ``(True, entry)`` is what the listing said about it.
+        """
+        for (listed_bucket, prefix), contents in self._listings.items():
+            if listed_bucket != bucket or not key.startswith(prefix):
+                continue
+            for entry in contents:
+                if str(entry.get("Key", "")) == key:
+                    return True, entry
+            return True, None
+        return False, None
+
     def head_object(self, **arguments: Any) -> Any:
-        call = ["s3api", "head-object", "--bucket", str(arguments["Bucket"])]
-        call += ["--key", str(arguments["Key"])]
+        bucket = str(arguments["Bucket"])
+        key = str(arguments["Key"])
         mode = arguments.get("ChecksumMode")
+        # A checksum is the one thing a listing does not carry, so the digest verification
+        # path still pays for its own call. Everything else a head answers here -- the write
+        # time and the size -- was in the listing, and asking again buys the same numbers for
+        # a second of process startup each.
+        if not mode:
+            covered, entry = self._listed(bucket, key)
+            if covered and entry is None:
+                raise ObjectMissing(
+                    "NotFound",
+                    f"An error occurred (NotFound) when calling the HeadObject operation: "
+                    f"s3://{bucket}/{key} is not in the listing of its own prefix",
+                )
+            if entry is not None:
+                return self._head_from(entry)
+        call = ["s3api", "head-object", "--bucket", bucket, "--key", key]
         if mode:
             call += ["--checksum-mode", str(mode)]
         head = dict(self._json(call))
@@ -299,9 +366,42 @@ class CommandLineObjectStore:
             head["LastModified"] = datetime.fromisoformat(written)
         return head
 
+    @staticmethod
+    def _head_from(entry: Mapping[str, Any]) -> dict[str, Any]:
+        """One listing entry in the shape a head returns, and no field it did not carry.
+
+        ``ContentLength`` rather than ``Size`` because that is what a head is asked for, and
+        nothing invented beside it: a head answers more than this, and a caller reaching for
+        a field a listing has no equivalent of should find it absent rather than guessed at.
+        """
+        head: dict[str, Any] = {}
+        written = entry.get("LastModified")
+        if isinstance(written, str):
+            written = datetime.fromisoformat(written)
+        if isinstance(written, datetime):
+            head["LastModified"] = written
+        size = entry.get("Size")
+        if isinstance(size, int) and not isinstance(size, bool):
+            head["ContentLength"] = size
+        tag = entry.get("ETag")
+        if isinstance(tag, str):
+            head["ETag"] = tag
+        return head
+
     def get_object(self, **arguments: Any) -> Any:
-        call = ["s3api", "get-object", "--bucket", str(arguments["Bucket"])]
-        call += ["--key", str(arguments["Key"])]
+        bucket = str(arguments["Bucket"])
+        key = str(arguments["Key"])
+        # The marker read is one of these per run and it almost always misses, because a
+        # library-written checkpoint carries no marker of ours. A listing that covers the
+        # prefix has already said the key is not there.
+        covered, entry = self._listed(bucket, key)
+        if covered and entry is None:
+            raise ObjectMissing(
+                "NoSuchKey",
+                f"An error occurred (NoSuchKey) when calling the GetObject operation: "
+                f"s3://{bucket}/{key} is not in the listing of its own prefix",
+            )
+        call = ["s3api", "get-object", "--bucket", bucket, "--key", key]
         with tempfile.TemporaryDirectory() as directory:
             landing = Path(directory) / "object"
             finished = self._call([*call, str(landing)])
@@ -519,14 +619,42 @@ def checkpoint_states(
     # are collected and said out loud.
     retired: set[str] = set()
     states: list[RunCheckpointState] = []
+    # Chosen before the loop rather than inside it so the progress line below can say how
+    # many runs there are. A count arriving only at the end is what made a slow job and a
+    # wedged one read the same.
+    asked: list[IntentRecord] = []
     for record in records:
+        if record.manifest.workload_profile not in known:
+            retired.add(record.manifest.workload_profile)
+            continue
+        if record.manifest.workload_profile not in contracted:
+            continue
+        asked.append(record)
+    started = time.monotonic()
+    for number, record in enumerate(asked, start=1):
         manifest = record.manifest
-        if manifest.workload_profile not in known:
-            retired.add(manifest.workload_profile)
-            continue
-        if manifest.workload_profile not in contracted:
-            continue
         prefix = output_prefix(team=manifest.team, run_id=record.run_id) + "checkpoints/"
+        # SAID BEFORE THE RUN IS READ RATHER THAN AFTER, WHICH IS THE WHOLE POINT. This
+        # printed nothing until the report was finished, so a job forty minutes into a
+        # bucket looked identical from outside to one wedged on a call that would never
+        # return -- and on 2026-08-06 two people had to guess which they were watching. A
+        # line naming the run it is about to read distinguishes them: a log that stops
+        # advancing is hung and one that advances slowly is slow. Every line here is
+        # timestamped by the runner, so the rate is readable without this counting anything.
+        print(
+            f"note: reading {number}/{len(asked)} {record.run_id} "
+            f"({time.monotonic() - started:.0f}s elapsed)",
+            file=sys.stderr,
+            flush=True,
+        )
+        # LISTED BEFORE IT IS INSPECTED, WHICH BUYS THE ONE READ THE INSPECTION MAKES TOO
+        # EARLY TO COVER ITSELF. inspect_checkpoint reads the marker first, deliberately, so
+        # that a prefix with none costs one call rather than a description; but a marker read
+        # before anything has been listed is a call the store cannot answer, and it misses on
+        # every library-written checkpoint, which is all of them. One listing first and the
+        # store already knows the marker is not there. Everything after it is covered
+        # whichever way round these two go, because the inspection lists before it heads.
+        objects = _objects_under(reader, prefix)
         inspected = inspect_checkpoint(reader, prefix=prefix)
         states.append(
             RunCheckpointState(
@@ -534,7 +662,7 @@ def checkpoint_states(
                 team=manifest.team,
                 workload_profile=manifest.workload_profile,
                 prefix=prefix,
-                objects=_objects_under(reader, prefix),
+                objects=objects,
                 state=inspected.state,
                 detail=inspected.detail,
                 outcome=None if outcomes is None else outcomes.get(record.run_id),

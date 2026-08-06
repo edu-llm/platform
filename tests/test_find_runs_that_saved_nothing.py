@@ -37,6 +37,7 @@ from find_runs_that_saved_nothing import (
     ACKNOWLEDGEMENTS_PATH,
     CheckpointAcknowledgements,
     CommandLineObjectStore,
+    ObjectMissing,
     ReportInputError,
     RunCheckpointState,
     _load_acknowledgements,
@@ -57,7 +58,8 @@ from tests.fake_object_store import FakeObjectStore
 RUN_ID = "run_019fa446-8a4e-7094-9e29-d44fffbd2491"
 TEAM = "memory-split"
 CHECKPOINTS = output_prefix(team=TEAM, run_id=RUN_ID) + "checkpoints/"
-KEY = CHECKPOINTS.split("sbsandbox-intern-edullm-outputs/", 1)[1]
+BUCKET = "sbsandbox-intern-edullm-outputs"
+KEY = CHECKPOINTS.split(f"{BUCKET}/", 1)[1]
 
 #: What eight runs carrying a checkpoint contract actually wrote, whole. Rank 0's trainer
 #: state at step zero, 15317 bytes of it, and nothing else in the account.
@@ -324,6 +326,232 @@ def test_a_code_that_is_not_about_a_missing_object_stops_the_report(
 
     with pytest.raises(ReportInputError, match="ExpiredToken"):
         CommandLineObjectStore().list_objects_v2(Bucket="b", Prefix="teams/")
+
+
+def _counting_cli(
+    listing: dict[str, Any],
+) -> tuple[list[list[str]], Any]:
+    """A CLI that answers one listing and records every command it was asked to run.
+
+    The count is the assertion in the tests below, because what made this job take forty
+    minutes was the number of processes rather than anything about the bytes.
+    """
+    seen: list[list[str]] = []
+    # A head that answers properly, so a store which regressed to calling one fails the count
+    # below and nothing else. Answering `{}` here would fail it too, on a missing write time,
+    # which is a test that passes for the wrong reason and would keep passing if the count
+    # stopped being the thing that mattered.
+    head = json.dumps({"LastModified": "2026-08-06T07:28:28+00:00", "ContentLength": 4096})
+
+    def run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        seen.append(list(command))
+        if "list-objects-v2" in command:
+            return subprocess.CompletedProcess(
+                args=command, returncode=0, stdout=json.dumps(listing), stderr=""
+            )
+        if "head-object" in command:
+            return subprocess.CompletedProcess(
+                args=command, returncode=0, stdout=head, stderr=""
+            )
+        # No marker, which is the truth for every library-written checkpoint and the answer
+        # the listing gives for free. Refused in the CLI's own words so that a caller which
+        # asked for it anyway fails the count below rather than on a missing temporary file.
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=254,
+            stdout="",
+            stderr=(
+                "\naws: [ERROR]: An error occurred (NoSuchKey) when calling the GetObject "
+                "operation: The specified key does not exist.\n"
+            ),
+        )
+
+    return seen, run
+
+
+def test_a_step_directory_of_any_width_costs_one_listing_and_no_heads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """THE ONE THAT MATTERS. Mutation: head each object for its write time, as this did.
+
+    ``_newest_write`` asks the store for every object in the chosen step directory to find
+    when the directory became complete, and each of those was an ``aws`` process costing about
+    a second before it had spoken to S3 at all. A distributed run writes one object per rank
+    per step, so the bill scales with the width of the job, and on 2026-08-06 eighty-three
+    contracted runs took thirty-nine minutes at roughly twenty-one processes each. The
+    listing already carries every write time it was asking for.
+
+    Sixty-four shards here rather than eight, so a store that regressed to heading them is a
+    failure of arithmetic and not of luck.
+    """
+    names = (
+        ".metadata.json",
+        "config.json",
+        "model_and_optim/.metadata",
+        *(f"model_and_optim/__0_{shard}.distcp" for shard in range(64)),
+        "train/rank0.pt",
+    )
+    listing = {
+        "Contents": [
+            {
+                "Key": f"{KEY}step7/{name}",
+                "Size": 4096,
+                "LastModified": "2026-08-06T07:28:28+00:00",
+            }
+            for name in names
+        ]
+    }
+    seen, run = _counting_cli(listing)
+    monkeypatch.setattr("find_runs_that_saved_nothing.subprocess.run", run)
+    store = CommandLineObjectStore()
+
+    from edullm_platform.checkpoints import inspect_checkpoint
+
+    store.list_objects_v2(Bucket=BUCKET, Prefix=KEY)
+    inspected = inspect_checkpoint(store, prefix=f"s3://{BUCKET}/{KEY}")
+
+    assert inspected.state is CheckpointState.COMMITTED
+    assert len(seen) == 1, [command[:3] for command in seen]
+    assert inspected.manifest is not None
+    assert inspected.manifest.created_at.isoformat() == "2026-08-06T07:28:28+00:00", (
+        "the write time served from the listing is the one a head would have returned"
+    )
+
+
+def test_one_run_costs_one_aws_process(
+    catalog: WorkloadCatalog,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One contracted run, one ``aws`` process, asserted end to end rather than per method.
+
+    Mutation: swap the two reads in ``checkpoint_states``. ``inspect_checkpoint`` reads the
+    marker before it lists anything, which is the right order for it and the wrong one here:
+    a marker read before any listing exists is a call the store cannot answer out of one, and
+    it misses on every library-written checkpoint because none of them carry a marker of ours.
+    That is one process per contracted run bought back for a line's ordering, and nothing
+    about behaviour notices if it goes -- the report is identical either way, which is exactly
+    why the cost is asserted as a number.
+
+    The heads are the larger saving and they are covered by the test above rather than here,
+    because the inspection lists before it heads and so pays for them either way round.
+    """
+    listing = {
+        "Contents": [
+            {
+                "Key": f"{KEY}step7/{name}",
+                "Size": 4096,
+                "LastModified": "2026-08-06T07:28:28+00:00",
+            }
+            for name in FULL_STEP
+        ]
+    }
+    seen, run = _counting_cli(listing)
+    monkeypatch.setattr("find_runs_that_saved_nothing.subprocess.run", run)
+
+    states = checkpoint_states([intent("olmo-core-train")], catalog)
+
+    assert states[0].state is CheckpointState.COMMITTED
+    assert len(seen) == 1, (
+        f"one run cost {len(seen)} aws processes: {[command[1:3] for command in seen]}"
+    )
+
+
+def test_a_key_no_listing_covers_is_still_asked_of_the_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """THE DANGEROUS MUTATION. Treat an uncached key as absent rather than unknown.
+
+    The store answers an absence out of a listing that covers the key, which is sound only
+    because a listing here is complete for its prefix. Answering one for a key nobody has
+    listed is the same sentence with the guard removed, and it does not fail loudly: every
+    prefix in the account reads as empty and the report accuses eighty-three runs at once of
+    having saved nothing. That is this tool's own false alarm pointed the wrong way.
+    """
+    seen, run = _counting_cli({"Contents": []})
+    monkeypatch.setattr("find_runs_that_saved_nothing.subprocess.run", run)
+
+    CommandLineObjectStore().head_object(Bucket=BUCKET, Key="nobody/listed/this")
+
+    assert [command[1] for command in seen] == ["s3api"]
+    assert any("head-object" in command for command in seen), (
+        "with no listing covering it, only the bucket knows whether the key is there"
+    )
+
+
+def test_a_head_that_needs_a_checksum_still_pays_for_its_own_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: serve the checksum path from the listing too.
+
+    A listing carries a size and a write time and no digest at all, so the one read that
+    exists to verify an attested checksum has to reach S3. Answered from the listing it would
+    find no ``ChecksumSHA256``, report the payload as uncertified, and turn the marker
+    protocol's verification into a check that always fails.
+    """
+    listing = {
+        "Contents": [
+            {"Key": f"{KEY}payload", "Size": 11, "LastModified": "2026-08-06T07:28:28+00:00"}
+        ]
+    }
+    seen, run = _counting_cli(listing)
+    monkeypatch.setattr("find_runs_that_saved_nothing.subprocess.run", run)
+    store = CommandLineObjectStore()
+    store.list_objects_v2(Bucket=BUCKET, Prefix=KEY)
+
+    store.head_object(Bucket=BUCKET, Key=f"{KEY}payload", ChecksumMode="ENABLED")
+
+    assert [command for command in seen if "head-object" in command], (
+        "only S3 holds the digest, so this read cannot be served from a listing"
+    )
+
+
+def test_a_key_a_listing_covers_and_does_not_hold_is_an_absence_not_an_outage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: raise ReportInputError, or return an empty head, for a key the listing lacks.
+
+    ``checkpoints`` recognises a missing object by the code on the response, so the shape the
+    store raises has to be the one it reads. An empty head instead would report a checkpoint
+    with no write time, which ``_newest_write`` turns into an unreadable-checkpoint error on
+    a prefix that is merely empty; and a ReportInputError would stop the whole report on the
+    ordinary case of a run that wrote no marker.
+    """
+    seen, run = _counting_cli({"Contents": [{"Key": f"{KEY}step0/train/rank0.pt", "Size": 1}]})
+    monkeypatch.setattr("find_runs_that_saved_nothing.subprocess.run", run)
+    store = CommandLineObjectStore()
+    store.list_objects_v2(Bucket=BUCKET, Prefix=KEY)
+    before = len(seen)
+
+    from edullm_platform.checkpoints import _is_missing
+
+    with pytest.raises(ObjectMissing) as raised:
+        store.get_object(Bucket=BUCKET, Key=f"{KEY}.edullm-checkpoint.json")
+
+    assert _is_missing(raised.value), "checkpoints reads the code off the response"
+    assert len(seen) == before, "the listing had already said the marker is not there"
+
+
+def test_the_report_says_which_run_it_is_reading_before_it_reads_it(
+    catalog: WorkloadCatalog,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mutation: drop the progress line, or print it after the run has been read.
+
+    This printed nothing until the whole report was finished, and that is what cost the audit
+    its usefulness on 2026-08-06 rather than the runtime alone. Forty minutes of silence looks
+    exactly like a call that will never return, two people watched it and could not tell which
+    they had, and the answer to those two is not the same: one is a bucket that has grown and
+    the other is a defect. A line naming the run before it is read distinguishes them, because
+    a log that stops advancing is hung and one that advances slowly is slow.
+
+    Printed to stderr, since stdout is the report when no ``--output`` is given.
+    """
+    checkpoint_states([intent("olmo-core-train")], catalog, store=FakeObjectStore())
+
+    printed = capsys.readouterr().err
+
+    assert f"1/1 {RUN_ID}" in printed
+    assert "elapsed" in printed, "the rate is what says whether slow is the whole answer"
 
 
 def test_the_report_cannot_write_to_the_bucket_it_is_auditing() -> None:
