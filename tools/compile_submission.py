@@ -329,6 +329,15 @@ def main(argv: list[str] | None = None) -> int:
         # is what an approver releases, and a field folded into the hashed document changes
         # the digest of every record written before that field existed.
         "experiment": submission.experiment,
+        # THE SAME VERDICT THE NOTE ABOVE PRINTS, WRITTEN DOWN RATHER THAN ONLY PRINTED.
+        # The approval message #337 added carries a clause naming an unreviewed scan as one
+        # of the three things holding a cheap single cell back from releasing itself, and
+        # that clause reads this field off the envelope. Nothing put it in the document, so
+        # the clause was unreachable: an absent field reads as reviewed, which is the
+        # permissive direction and exactly the one a lead should not be defaulted into.
+        # A sibling for the same reason `experiment` is -- it is a fact about how the image
+        # was judged, not about what will run, and the manifest is hashed.
+        "image_scan_reviewed": submission.facts.image_scan_reviewed,
     }
     args.output.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 

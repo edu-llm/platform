@@ -2100,6 +2100,60 @@ aws logs filter-log-events \
 ```
 
 Anything other than `0` means every message is coming from the fallback.
+
+### The stack that lets anything send an approval request, deployed 2026-08-06
+
+The notifier could render an approval request from the day #337 merged and nothing put one on
+its queue, so what a lead actually received when a submission reached the gate was GitHub's
+own deployment notification: a workflow run name, and no cost, machine, hours or cell count.
+`.github/workflows/notify-approval-requested.yml` is the producer and this is the identity it
+assumes.
+
+| # | Stack | Template | Roles or resources | Applied from |
+| --- | --- | --- | --- | --- |
+| 1 | `sbsandbox-intern-edullm-notifier-publisher-iam` | `infra/iam/notifier-publisher-role.yaml` | `…-notifier-publisher` | laptop |
+| 2 | `sbsandbox-intern-edullm-audit-reader-iam` | `infra/iam/audit-reader-role.yaml` (amended) | `…-audit-reader` gains one `cloudformation:GetTemplate` ARN | laptop |
+
+```bash
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-notifier-publisher-iam \
+  --template-file infra/iam/notifier-publisher-role.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --no-fail-on-empty-changeset \
+  --profile sbsandbox --region us-east-1
+
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-audit-reader-iam \
+  --template-file infra/iam/audit-reader-role.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --no-fail-on-empty-changeset \
+  --profile sbsandbox --region us-east-1
+
+gh variable set AWS_NOTIFIER_PUBLISHER_ROLE_ARN --body "$(
+  aws cloudformation describe-stacks \
+    --stack-name sbsandbox-intern-edullm-notifier-publisher-iam \
+    --query "Stacks[0].Outputs[?OutputKey=='RoleArn'].OutputValue" --output text \
+    --profile sbsandbox --region us-east-1
+)"
+```
+
+Stack 2 is not optional and is not cosmetic. Every stack in `STACK_TEMPLATES` is read back by
+`tools/verify_deployed_stacks.py` through `cloudformation:GetTemplate`, and that grant names
+each stack ARN one at a time — so a new stack without the amendment reports a denial in the
+nightly audit rather than a comparison. The variable is not optional either: without it the
+announce job fails at the credentials step with an empty role ARN, which reads as a broken
+workflow rather than as half a step, the same way `AWS_RUN_CANCELLER_ROLE_ARN` did.
+
+**The trust pins the called workflow and not the one somebody dispatches, which is the line to
+read twice.** A job that calls a reusable workflow presents the *called* file in
+`job_workflow_ref`, so the pin names `notify-approval-requested.yml` even though the run is a
+run of `submit-run.yml`. Pinning the caller instead would refuse the job outright, and the
+correction somebody would reach for — pinning both — undoes the whole arrangement: the two
+roles that matter in `submit-run.yml` pin that file, a trust policy cannot distinguish jobs
+within a workflow, so the announce job would become a principal under the admission role and
+this role would become assumable by `resolve` and `deny-unapproved`.
+`tests/test_notify_approval_workflow.py` refuses both spellings.
+
 ## The exploration route's stacks, in dependency order
 
 | # | Stack | Template | Roles or resources | Applied from |
