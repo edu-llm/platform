@@ -657,6 +657,30 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # that releases follow code, and the entry that will be missed is the one where somebody
     # adds a line to a YAML file and merges it. The tripwire catches it, which is the whole
     # argument for the tripwire; nothing warns them in advance.
+    #
+    # AND A NINTH, WHICH IS THE SAME EDIT MOVING A SECOND ZIP, AND IT WAS INVISIBLE UNTIL THE
+    # CHECK ABOVE LANDED. The eighth entry was written believing config/organization.yaml
+    # reached one function. It reaches two: `NOTIFIER_CONFIG` in tools/build_notifier_lambda.py
+    # names organization.yaml, workload-catalog.yaml and execution-targets.yaml, so the roster
+    # moves the notifier's packaged bytes by exactly the same mechanism that moves the
+    # validator's. Nothing said so at the time, because the notifier was the one function of
+    # the four with no digest comparison, which is the silence the paragraph above describes.
+    #
+    # THIS IS THAT PARAGRAPH'S ARGUMENT COLLECTING ON ITSELF WITHIN THE HOUR, AND IT IS THE
+    # reason to prefer one parametrized check over three copies rather than merely a tidier
+    # arrangement. The eighth entry and the consolidation were written in the same evening by
+    # different hands; the entry named one function because the author could only see the
+    # functions that had tripwires, and the consolidation gave the fourth one a tripwire
+    # without knowing an unrecorded change to it was already in flight. They met at the merge,
+    # where the new case went red on the notifier and printed both digests and the record to
+    # write. Neither change could have found this alone.
+    #
+    # It grants nothing and it changes nobody's authorization, for the reason the eighth entry
+    # gives at length: the roster edit binds a second AWS role to a login already on the
+    # roster and excludes two task roles nobody can assume. What the notifier reads the roster
+    # for is deciding who to tell about a run, so the window is a notification addressed by
+    # the roster as it was, which is the same reporting gap the entry above describes and not
+    # a second kind of hazard.
     releases: tuple[PendingRelease, ...] = (
         PendingRelease(
             function="validator",
@@ -687,6 +711,36 @@ def pending_releases() -> tuple[PendingRelease, ...]:
             cleared_by="uv run python tools/release_lambda.py --function validator",
             builds_to="da7313e1055d1abdafb79d7a83c344bdbde32cc7a6739b36df99291c0643f2e9",
             released="e4a45e5666ccd3648b29687c77e513460d91ef14af1c353325c921b0f25ed804",
+            recorded_on=date(2026, 8, 6),
+        ),
+        PendingRelease(
+            function="notifier",
+            reason=(
+                "THE SAME ROSTER EDIT AS THE VALIDATOR ENTRY ABOVE, REACHING A SECOND ZIP. "
+                "NOTIFIER_CONFIG in tools/build_notifier_lambda.py names organization.yaml "
+                "alongside workload-catalog.yaml and execution-targets.yaml, so binding "
+                "Intern-langming.xing-sbsandbox to meric233 and excluding the two "
+                "Intern-p3math-* task roles moves this function's packaged bytes by the same "
+                "mechanism it moves the validator's."
+                "\n\n"
+                "IT WAS UNRECORDED FOR AN HOUR AND THE REASON IS WORTH KEEPING. The validator "
+                "entry was written when the notifier was the one function of the four with no "
+                "digest comparison, so the author saw one moved zip where there were two. "
+                "tests/test_released_zips.py, parametrized over release_lambda.FUNCTIONS, "
+                "found the second at the merge and printed the record to write. This entry "
+                "exists because that check exists."
+                "\n\n"
+                "It grants nothing. The roster edit binds a second AWS role to a login "
+                "already admitted and excludes two roles whose trust policies name a service "
+                "rather than the credential broker, so no authorization moves in either "
+                "function. What this one reads the roster for is deciding who to notify "
+                "about a run, so the window is a notification addressed by the roster as it "
+                "was -- the same reporting gap the validator entry describes, not a second "
+                "kind of hazard."
+            ),
+            cleared_by="uv run python tools/release_lambda.py --function notifier",
+            builds_to="3b54966b1ac2e52ad4296c7ec212ba2024f18d732d725fe40d9ea164cb3323c2",
+            released="5bb5c9d1b63696fc9ef23573456a8b54263a3015f1dc61dcd5bb81846a0953ec",
             recorded_on=date(2026, 8, 6),
         ),
     )
