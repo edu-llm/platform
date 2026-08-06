@@ -113,6 +113,30 @@ path is enough; ruff reads a file it is handed:
 uv run ruff check src/edullm_platform/some_ignored_file.py
 ```
 
+**Do not run `uv run ruff format`, and do not commit what it writes.** Nothing in CI runs
+it, `ruff check .` is the whole of what lint means here, and this tree has never been
+formatted by it. Measured on 2026-08-05 under ruff 0.16.0, it rewrites 201 of the 366
+Python files: 1,583 lines out, 1,081 in, a tree some 500 lines shorter. That is not a lint
+failure being repaired. It is a repository-wide diff that conflicts with every branch open
+at the time, and an agent who runs it and commits the result hands that conflict to
+everybody else.
+
+**It is not a stale setting**, which is worth ruling out first because it would be the
+cheap fix. `line-length = 100` already disagrees least: the formatter rewrites 243 files at
+96, 213 at 99, 214 at 101 and 290 at 110. One hundred is the floor, so there is no number
+to change it to, and no configuration that makes the command a no-op.
+
+**Reformatting is the right end state, and the reason to defer it is timing rather than
+risk.** That was measured against a copy rather than argued about: not one `#` comment
+changes, in any of the 366 files, because ruff reflows no comment and `docstring-code-format`
+is off, so the dense reasoning this repository is written in survives it exactly. The only
+docstring change anywhere is a space inserted after `"""` in the three files whose text
+opens with a quote, and no other AST moves. So run it on a day the branch list is short, as
+one commit that does nothing else, and add `ruff format --check .` to `ci.yml` in that same
+commit so that the command run here and the gate in CI can never drift apart again. Until
+that day the formatter wanting to change things is known, and is not yours to fix in
+passing.
+
 **If `mypy` reports errors here that CI does not, delete `.mypy_cache` before believing
 them.** The cache records where each module was resolved from, and it survives deleting
 `.venv` and re-syncing — so a virtualenv built once on the wrong interpreter goes on
