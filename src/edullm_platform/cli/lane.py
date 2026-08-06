@@ -753,11 +753,17 @@ def run_instances_argv(
     machine through the agent's own outbound call, so there is nothing to open and no key to
     distribute. The security group this is given has zero ingress rules and that is correct.
 
-    **ON-DEMAND UNLESS ASKED OTHERWISE, WHICH IS THE ONE PLACE THIS PARTS FROM
-    ``system-overview.md``.** A one-time Spot instance cannot be stopped, so the plain reading of
-    that document hands the expiry janitor a machine it cannot reclaim. ``--spot`` builds the one
-    form ``RunInstances`` will make that ``StopInstances`` accepts, and ``decisions.md`` records
-    the departure under "The lane runs On-Demand and --spot is the persistent stop form".
+    **ON-DEMAND UNLESS ASKED OTHERWISE, BECAUSE THE EXPIRY JANITOR HAS TO BE ABLE TO RECLAIM
+    THE MACHINE.** A one-time Spot instance can only be terminated, so the plain form of Spot
+    hands the sweep the one machine it cannot stop. ``--spot`` builds the persistent,
+    stop-on-interrupt form, which is the one shape ``RunInstances`` will make that
+    ``StopInstances`` accepts. ``decisions.md`` carries what was measured under "The lane runs
+    On-Demand and --spot is the persistent stop form".
+
+    This called itself a departure from ``system-overview.md`` until 2026-08-06, and that
+    document now says the same thing in its own voice, so there is nothing here to flag. Kept
+    as a note rather than deleted because the departure is the thing somebody who read the old
+    version will come here looking for.
     """
     tags = (
         f"ResourceType=instance,Tags=["
