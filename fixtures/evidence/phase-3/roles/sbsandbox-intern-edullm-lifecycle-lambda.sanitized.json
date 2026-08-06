@@ -54,6 +54,23 @@
         {
           "action_match": {
             "actions": [
+              "s3:GetObject"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:s3:::sbsandbox-intern-edullm-outputs/teams/*/runs/*/metrics.json"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
               "sqs:ReceiveMessage",
               "sqs:DeleteMessage",
               "sqs:GetQueueAttributes"
@@ -93,7 +110,7 @@
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-08-04T22:22:19Z",
+  "observed_at": "2026-08-06T00:24:02Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "sbsandbox-intern-edullm-lifecycle-lambda",
   "source": "aws",
