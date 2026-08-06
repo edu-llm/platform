@@ -41,13 +41,29 @@ SKILLS = PROJECT_ROOT / ".cursor" / "skills"
 SUBMITTING = SKILLS / "submitting-a-run" / "SKILL.md"
 REGISTERING = SKILLS / "registering-a-repository" / "SKILL.md"
 
+#: THE ONE DOCUMENT IN THIS LAYER THAT LEAVES THE REPOSITORY, AND THE DIFFERENCE DECIDES
+#: WHERE IT LIVES. The two above sit under ``.cursor/`` and are loaded by an agent working
+#: on this platform, which is not who the layer was asked for. A researcher's agent works in
+#: OLMo-core or in a codebase of its own, never has this checkout, and so reads neither
+#: ``AGENTS.md`` nor anything under ``.cursor/``. This one is copied into their tree instead,
+#: which is why it is committed outside both and why it may lean on nothing else.
+RESEARCHER_SKILL = PROJECT_ROOT / "skills" / "edullm-platform" / "SKILL.md"
+SKILLS_README = PROJECT_ROOT / "skills" / "README.md"
+
 #: Every document in this layer. The shared properties below are parametrized over it, so a
 #: skill added later cannot arrive unheld.
-AGENT_DOCUMENTS: tuple[Path, ...] = (AGENTS, SUBMITTING, REGISTERING)
+AGENT_DOCUMENTS: tuple[Path, ...] = (
+    AGENTS,
+    SUBMITTING,
+    REGISTERING,
+    RESEARCHER_SKILL,
+    SKILLS_README,
+)
 
-#: Every skill in this layer, which is AGENT_DOCUMENTS minus the always-on rule. Held apart
-#: because the frontmatter and the length budget are properties of a skill and not of a rule.
-SKILL_DOCUMENTS: tuple[Path, ...] = (SUBMITTING, REGISTERING)
+#: Every skill in this layer, which is AGENT_DOCUMENTS minus the always-on rule and the page
+#: that says where to put one. Held apart because the frontmatter and the length budget are
+#: properties of a skill and not of a rule.
+SKILL_DOCUMENTS: tuple[Path, ...] = (SUBMITTING, REGISTERING, RESEARCHER_SKILL)
 
 #: What a SKILL.md body is allowed to run to. The context window is shared with the
 #: conversation, the other skills and the request, so a long skill costs every turn rather
@@ -406,17 +422,50 @@ def test_the_skill_reads_the_machine_form_rather_than_the_paragraphs(skill: Path
 
 
 def refusal_codes_the_tree_can_produce() -> set[str]:
-    """Every code a refusal can arrive under, from both halves of the vocabulary.
+    """Every code a refusal can arrive under, from all three halves of the vocabulary.
 
-    Read rather than listed, which is the point. One half is the exception classes, which
-    ``tests/test_refusal_codes.py`` already derives from the raise sites, and the other is the
+    Read rather than listed, which is the point. One is the exception classes, which
+    ``tests/test_refusal_codes.py`` already derives from the raise sites, and another is the
     ``Refusal(code=...)`` literals in the CLI package, which are the checks a laptop makes
     that the compile step has no exception for. A skill matches on a code without caring
     which half it came from, so a rule about a skill must not care either.
+
+    **THE THIRD IS A HOLE THIS FILE HAD, AND ``unprovisioned_compute_profile`` IS THE ONE THAT
+    FOUND IT.** ``raise_sites`` walks the package for anything raising a subclass of
+    ``SubmissionRefusedError``, and ``ComputeProfileResolutionError`` in
+    ``contracts/workload.py`` is a ``ValueError`` that carries a ``reason_code`` and is not
+    one. ``cli/preflight.py`` catches it and builds ``Refusal(code=type(exc).reason_code)``,
+    so the code reaches a caller's ``refusals`` exactly as the others do, and
+    ``edullm check --compute gpu-8xh100`` prints it today. A skill tabulating it was being
+    told nothing raises it, which is the shape of wrongness that gets a correct row deleted.
+
+    So the class attribute is read wherever it is carried, by walking the same modules
+    ``raise_sites`` walks and taking every ``reason_code`` assigned a string at class scope.
+    That is wider than the raise sites and deliberately so, since what a caller can see is
+    every code ``preflight`` can put on a ``Refusal`` rather than only the ones whose class
+    happens to sit under one base.
     """
-    from tests.test_refusal_codes import raise_sites
+    from tests.test_refusal_codes import REASON_CODE, package_modules, raise_sites
 
     found = {site.code for site in raise_sites() if site.code}
+    for _module, tree in package_modules():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for statement in node.body:
+                targets: list[ast.expr] = []
+                if isinstance(statement, ast.AnnAssign):
+                    targets = [statement.target]
+                elif isinstance(statement, ast.Assign):
+                    targets = list(statement.targets)
+                value = getattr(statement, "value", None)
+                if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+                    continue
+                if any(
+                    isinstance(target, ast.Name) and target.id == REASON_CODE
+                    for target in targets
+                ):
+                    found.add(value.value)
     for module in sorted((PROJECT_ROOT / "src" / "edullm_platform" / "cli").glob("*.py")):
         tree = ast.parse(module.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
@@ -462,6 +511,10 @@ def test_the_vocabulary_a_skill_is_held_against_is_not_empty() -> None:
 
     assert "unregistered_repository" in codes, "the CLI's own literals are not being read"
     assert "no_published_image" in codes, "the exception classes are not being read"
+    assert "unprovisioned_compute_profile" in codes, (
+        "a reason_code carried on a class outside the SubmissionRefusedError hierarchy is "
+        "not being read, so a skill naming one is told nothing raises it"
+    )
 
 
 @pytest.mark.parametrize("skill", SKILL_DOCUMENTS, ids=lambda path: path.parent.name)
@@ -536,3 +589,248 @@ def test_the_registration_skill_resolves_against_the_approved_base_images() -> N
         "approved ones, so a Never list saying it does is the only thing left saying it"
     )
     assert "base image" in procedure.lower()
+
+
+# ---------------------------------------------------------------------------------------
+# The researcher's skill, which is the only document here that leaves this repository.
+#
+# EVERY CASE BELOW IS A THING THE SHARED ONES ABOVE CANNOT SEE. They hold a document to the
+# binary's vocabulary: verbs it has, flags it takes, codes it can raise, no bound written
+# out. A skill can pass all of that and still send somebody to `uv tool install edullm`,
+# quote an approval class the policy cannot return, or print a bfloat16 spelling the guard
+# stopped recognising. Those are claims rather than vocabulary, and a claim has to be held
+# against the thing that decides it.
+# ---------------------------------------------------------------------------------------
+
+
+def researcher_skill() -> str:
+    return RESEARCHER_SKILL.read_text(encoding="utf-8")
+
+
+def fenced_lines(text: str) -> list[str]:
+    """Every line inside a fenced block, which is what a reader copies rather than reads."""
+    lines: list[str] = []
+    inside = False
+    for line in text.splitlines():
+        if line.startswith("```"):
+            inside = not inside
+            continue
+        if inside:
+            lines.append(line)
+    return lines
+
+
+def first_column_under(header: str, *, text: str) -> set[str]:
+    """The backticked first cell of every row of one table, and of no other table.
+
+    Stops at the first line that is not a row, which is the whole of the care needed here.
+    A scanner that filtered rather than stopped would run out of the table it was pointed at
+    and into every one below it, and would then report the refusal codes as document keys.
+    """
+    lines = text.splitlines()
+    assert header in lines, f"no table under {header!r}"
+    found: set[str] = set()
+    for line in lines[lines.index(header) + 2 :]:
+        if not line.startswith("|"):
+            break
+        match = re.match(r"^\|\s*`([a-z][a-z0-9_]*)`\s*\|", line)
+        if match is not None:
+            found.add(match.group(1))
+    return found
+
+
+def test_the_researcher_skill_prints_the_install_line_the_binary_itself_prints() -> None:
+    """Mutation: pin a tag into it, or write ``uv tool install edullm-platform``.
+
+    ``cli/release.py``'s header records that the wrong install command sat in
+    ``pyproject.toml`` for as long as it existed, and this skill is read by an agent that has
+    no binary yet and therefore cannot ask it. So the line has to be the one the tool would
+    have printed, read out of ``install_command`` rather than typed here, and unpinned: a tag
+    written into a document is a version the document has to be edited for.
+    """
+    from edullm_platform.cli.actions import PLATFORM_REPOSITORY
+    from edullm_platform.cli.release import install_command
+
+    expected = install_command(repository=PLATFORM_REPOSITORY)
+    printed = [line.strip() for line in fenced_lines(researcher_skill())]
+
+    assert expected in printed, (
+        f"no line the skill prints is exactly {expected!r}. A line with a tag on the end "
+        "is not it: that is a version this file has to be edited for, and the line above "
+        "is true after every release"
+    )
+
+
+def test_the_researcher_skill_names_the_distribution_rather_than_the_executable() -> None:
+    """Mutation: leave the near miss out, on the grounds that the right line is above it.
+
+    ``uv tool install edullm`` is the command somebody reaches for and uv answers
+    ``not found in the package registry``, and ``uv tool upgrade`` answers
+    ``Nothing to upgrade`` for a tool installed from git however far behind it is. Both were
+    verified on uv 0.9.17 rather than assumed. An agent that hits either concludes the tool
+    does not exist or that it is current, and the second is the one that costs a researcher
+    a day of running against a configuration that has moved.
+    """
+    from edullm_platform.cli.release import DISTRIBUTION
+
+    text = researcher_skill()
+
+    assert DISTRIBUTION in text, (
+        f"the skill never names {DISTRIBUTION}, so nothing tells a reader why "
+        "`uv tool install edullm` finds nothing"
+    )
+    assert "uv tool upgrade" in text, "the skill does not warn off the upgrade that is a no-op"
+
+
+def test_every_approval_class_the_researcher_skill_tabulates_is_one_the_policy_returns() -> None:
+    """Mutation: keep a class the policy stopped returning, or invent a fourth.
+
+    THE SKILL'S WHOLE ANSWER TO "WHO RELEASES THIS" IS THIS FIELD, WHICH IS THE POINT.
+    ``config/policy.yaml``'s v5 note is a record of the classes being re-cut underneath
+    everybody, and a skill that computed the answer from a threshold instead would have been
+    silently wrong from that merge onwards. Reading ``approval_class`` is right and it only
+    stays right while the values in the table are the values the enum has.
+    """
+    from edullm_platform.contracts.policy import ApprovalClass
+
+    known = {member.value for member in ApprovalClass}
+    tabulated = first_column_under(
+        "| `approval_class` | Who releases the run |", text=researcher_skill()
+    )
+
+    assert tabulated, "the table under that heading has no rows"
+    assert tabulated == known, (
+        f"the skill tabulates {sorted(tabulated)} and ApprovalClass has {sorted(known)}"
+    )
+
+
+def test_the_researcher_skill_names_every_placement_verdict_capacity_can_carry() -> None:
+    """Mutation: promote a fourth verdict and leave the skill reading the file for three.
+
+    ``edullm check`` says nothing at all about whether EC2 will supply a shape, and a job it
+    cannot supply sits in ``RUNNABLE`` with no error against it, which is indistinguishable
+    from being queued. So the skill sends a reader at ``config/capacity.yaml`` in the
+    install's own configuration directory, and a verdict it does not explain is one somebody
+    reads off that file and cannot act on.
+    """
+    from edullm_platform.placement import PLACES_AFTER_A_WAIT, PLACES_RELIABLY, PLACES_UNRELIABLY
+
+    text = researcher_skill()
+    known = {PLACES_RELIABLY, PLACES_AFTER_A_WAIT, PLACES_UNRELIABLY}
+    # Out of the table rather than out of the prose. A verdict named in a sentence and
+    # missing from the table is one a reader meets with no reading against it, which is the
+    # half that decides whether they pick the shape.
+    tabulated = first_column_under("| What `places` says | What it means |", text=text)
+
+    assert tabulated == known, (
+        f"the skill tabulates {sorted(tabulated)} and capacity.yaml can carry {sorted(known)}"
+    )
+    assert "capacity.yaml" in text, "the skill sends nobody at the file that holds the verdicts"
+
+
+def test_the_bfloat16_spelling_the_researcher_skill_prints_is_one_the_guard_reads() -> None:
+    """**THE MOST EXPENSIVE THING THIS SKILL TEACHES, AND THE ONE MOST LIKELY TO ROT.**
+
+    ``precision.py`` reads the text of a command and cannot see a dtype the program sets in
+    code, and its own header names OLMo-core's entry point as the miss. So the skill tells an
+    agent to write the dtype into the command, which turns a job that dies on a Turing card
+    after being priced, released and placed into a refusal that costs nothing.
+
+    That instruction is worth exactly as much as the spelling beside it. Held by running the
+    detector over the line the skill prints rather than by searching for a word, so a
+    narrowed :data:`~edullm_platform.precision.BFLOAT16_SPELLINGS` or a changed detector
+    fails here instead of leaving a worked example that quietly stopped working.
+    """
+    import shlex
+
+    from edullm_platform.errors import Bfloat16NotInTheHardwareError
+    from edullm_platform.precision import bfloat16_request_in
+
+    text = researcher_skill()
+    assert Bfloat16NotInTheHardwareError.reason_code in text, (
+        "the skill never names the refusal this whole section is about"
+    )
+
+    read = [
+        found
+        for line in fenced_lines(text)
+        if "bfloat16" in line and not line.lstrip().startswith("#")
+        and (found := bfloat16_request_in(shlex.split(line)))
+    ]
+
+    assert read, (
+        "no command the skill prints is one bfloat16_request_in reads as a bfloat16 "
+        "request, so the worked example teaches a way of naming the dtype that the guard "
+        "no longer recognises and the refusal it promises would never fire"
+    )
+
+
+def test_every_key_the_researcher_skill_tabulates_is_a_key_a_check_emits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: rename a field in ``cli/machine.py`` and leave the skill reading the old one.
+
+    The skill tells an agent to branch on ``refused``, read ``refusals``, price off ``cost``
+    and route off ``approval_class``, and every one of those is a key rather than a word. A
+    renamed key reaches the agent as a ``KeyError`` in the middle of somebody's request, and
+    what it does next is read the paragraphs, which is the one thing the document exists to
+    stop.
+
+    Driven off a real invocation rather than off the source of ``check_document``, so the
+    keys compared are the keys a caller sees.
+    """
+    import json
+
+    from edullm_platform.cli.main import EXIT_OK
+    from tests.cli_support import FakeRunner, git_answers, invoke, write_spec
+
+    write_spec(tmp_path, compute="gpu-1xa10g")
+    code, out, err = invoke(
+        ["check", "--json", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
+        runner=FakeRunner(git_answers(tmp_path)),
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+    assert code == EXIT_OK, out + err
+    document = json.loads(out)
+
+    tabulated = first_column_under("| Key | What it holds |", text=researcher_skill())
+
+    assert tabulated, "the table under that heading has no rows"
+    assert tabulated <= set(document), (
+        f"the skill tabulates keys a check does not emit: {sorted(tabulated - set(document))}"
+    )
+
+    factors = [
+        line for line in fenced_lines(researcher_skill()) if "maximum_compute_cost_usd =" in line
+    ]
+    assert factors, (
+        "the skill no longer writes the product a fan-out multiplies, so nothing tells an "
+        "agent that quoting one cell understates what somebody is approving"
+    )
+    named = set(re.findall(r"[a-z][a-z_]+", factors[0]))
+    assert named == set(document["cost"]), (
+        f"the cost arithmetic names {sorted(named)} and the document carries "
+        f"{sorted(document['cost'])}"
+    )
+
+
+def test_the_page_that_installs_the_skill_points_at_a_file_that_is_here() -> None:
+    """Mutation: rename the skill's folder and leave the copy line naming the old one.
+
+    Nobody in the organization has this checkout, so the raw URL in that page is the whole
+    of how the file reaches anybody. A dead one is a researcher who runs three commands, gets
+    an empty file or an HTML error page, and concludes the skill does not exist.
+
+    The branch in the URL is not checked, because nothing here can know what ``main`` holds.
+    What is checked is the path under it, which is the half a rename breaks.
+    """
+    text = SKILLS_README.read_text(encoding="utf-8")
+    paths = set(re.findall(r"raw\.githubusercontent\.com/[^/]+/[^/]+/[^/]+/(\S+)", text))
+
+    assert paths, "the page carries no copy line at all"
+    missing = sorted(path for path in paths if not (PROJECT_ROOT / path).is_file())
+    assert not missing, f"the page points at files that are not in this tree: {missing}"
+
+    expected = RESEARCHER_SKILL.relative_to(PROJECT_ROOT).as_posix()
+    assert expected in paths, f"the page never sends anybody at {expected}"
