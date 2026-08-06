@@ -297,7 +297,7 @@ def pending_for(role_name: str) -> PendingAmendment | None:
 # THE SAME SHAPE AS AN UNDEPLOYED AMENDMENT, ARRIVED AT FROM THE OTHER END, AND IT WAS
 # COSTING AN ADMIN MERGE EVERY TIME. `tools/build_admission_lambda.py` packages the modules
 # the handler imports and the seven config files it reads, so a change to any of them moves
-# the release digest and `tests/test_phase2_lambda_package.py` goes red until the zip is
+# the release digest and `tests/test_released_zips.py` goes red until the zip is
 # uploaded and `infra/admission-validator-release.yaml` records it. The upload needs AWS
 # credentials, and the only path to them that is always available is
 # `deploy-phase2-admission.yml`, which runs from `main` and nowhere else.
@@ -629,6 +629,21 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     #
     # All three are released now, so this deletion is bookkeeping rather than a decision. The
     # notifier's missing tripwire is not, and it outlives these entries.
+    #
+    # IT WAS CLOSED THE SAME NIGHT, AND NOT BY GIVING THE NOTIFIER A FOURTH COPY. The three
+    # that existed were three copies of one idea, each written by copying the last, and that
+    # arrangement is why the fourth function was missed: adding the tripwire was a step
+    # somebody had to remember rather than something the register did on its own. It is one
+    # test now, `tests/test_released_zips.py::test_the_released_zip_is_the_one_this_tree_builds`,
+    # parametrized over `tools/release_lambda.py`'s FUNCTIONS -- the table a function has to be
+    # in before a release can be cut for it at all -- so a fifth feeds this register from the
+    # day it is added rather than from the day somebody deploys by hand and notices.
+    #
+    # Two further silences went with it. Every `AWS::Lambda::Function` under `infra/` is now
+    # held to being releasable, so a function CI can deploy and no record describes fails on the
+    # change that declares it; and every `tripwire` citation is resolved rather than read, which
+    # is the check that would have caught this one. The notifier's named a real module full of
+    # real assertions and no digest comparison, and both tools that cite it believed it.
     #
     # AN EIGHTH, AND IT IS THE FIRST ONE HERE THAT CARRIES NO CODE AT ALL. Every entry above
     # moved a digest by changing a module; this one moves it by editing

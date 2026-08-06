@@ -61,7 +61,8 @@
 # KEEPING. Adding PublishedDatasetReference to
 # src/edullm_platform/contracts/dataset_registry.py changed the bytes of a module the
 # handler imports, so the digest moved and
-# tests/test_phase2_lambda_package.py::test_the_released_zip_is_the_one_this_tree_builds
+# tests/test_released_zips.py::test_the_released_zip_is_the_one_this_tree_builds[validator]
+# (which lived in tests/test_phase2_lambda_package.py at the time)
 # went red. It was left red rather than papered over. The two ways to make it green without
 # uploading anything are both worse: writing a digest for a zip nobody uploaded would defeat
 # the one mechanism here that detects deployed-versus-tree skew, and would do it by making

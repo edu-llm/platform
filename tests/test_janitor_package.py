@@ -1,14 +1,33 @@
-"""The zip the account runs against the zip this tree builds, for the third function.
+"""What the expiry janitor's deployment zip has to be, beyond what its digest says.
 
-Mirrors tests/test_phase3_lifecycle_package.py deliberately: same assertions, same
-release-record shape, same slow marker on the one that builds. A third function checked a third
-way is how infra/README.md's release procedure stops describing all of them.
+**THE DIGEST COMPARISON LEFT THIS FILE AND THE ARGUMENT THAT PUT IT HERE IS WHY.** This module
+opened by saying it mirrored tests/test_phase3_lifecycle_package.py, which had said it mirrored
+tests/test_phase2_lambda_package.py, on the reasoning that a third function checked a third way
+is how the release procedure stops describing all of them. That reasoning was right and it did
+not go far enough: the notifier arrived after all three, was mirrored by nobody, and drifted
+with nothing going red until #294 deployed three functions by hand and somebody noticed only
+two of them had reached the pending register. The comparison is now written once over
+release_lambda.FUNCTIONS in tests/test_released_zips.py.
 
-THE FAILURE THIS ONE CATCHES IS THE QUIETEST OF THE THREE. A validator running stale bytes
+The janitor's own argument against the ``compare_release`` escape hatch survives that move and
+is worth keeping here, because this is still the function it is about: nothing is running these
+bytes, so there is no deployed function to be stale, and a tolerance recorded ahead of the thing
+it tolerates is a tolerance nobody can tell from a bug. Consulting the register is not writing
+in it. The register is empty, an unexplained difference is reported as SKEWED exactly as a bare
+comparison would report it, and an entry for this function would still have to be written by
+hand into a reviewed diff.
+
+THE FAILURE THAT COMPARISON CATCHES IS THE QUIETEST OF THE FOUR. A validator running stale bytes
 refuses a submission for a reason correct about the bytes and wrong about the account. A
-recorder running stale bytes writes lineage that looks right and does not join. A janitor
-running stale bytes stops nothing, and a sweep that stops nothing is indistinguishable from a
-quiet morning -- there is no researcher waiting on it and no record that fails to parse.
+recorder running stale bytes writes lineage that looks right and does not join. A notifier
+running stale bytes posts a message that is wrong about the money. A janitor running stale bytes
+stops nothing, and a sweep that stops nothing is indistinguishable from a quiet morning -- there
+is no researcher waiting on it and no record that fails to parse.
+
+What is left here is what is this function's own: that the record and the template name one
+object and one version, that the template runs the entry point its builder packages for, that
+the archive carries no configuration, and that the never-uploaded placeholder is in all three
+places that name it or in none.
 """
 
 from __future__ import annotations
@@ -74,26 +93,17 @@ def package(tmp_path_factory: pytest.TempPathFactory) -> dict[str, object]:
     )
 
 
-def test_the_record_and_the_template_name_the_same_object() -> None:
-    """Mutation: edit the key in one and not the other.
+def test_the_record_and_the_template_name_the_key_this_builder_writes() -> None:
+    """Mutation: edit the key in one of the three places and not the others.
 
-    Two files name the artifact and neither is derived from the other, so a record describing a
-    different object than the template deploys is a record about bytes nothing runs.
+    Three things name this artifact and none is derived from another: the builder writes an
+    object, the template deploys one, and the record describes one. That the record and the
+    template agree with each other is asserted once for all four functions in
+    tests/test_released_zips.py; what is this function's own is that both of them agree with
+    the constant its builder uploads under.
     """
-    code = janitor_function()["Code"]
-
     assert release_record()["s3_key"] == ARTIFACT_KEY
-    assert code["S3Key"] == ARTIFACT_KEY
-
-
-def test_the_record_and_the_template_pin_the_same_object_version() -> None:
-    """Mutation: paste a new version id into the template and leave the record behind.
-
-    The version is what makes a code change a stack change. A template pinned to one version and
-    a record naming another means the digest below is being compared against bytes the account
-    is not running.
-    """
-    assert release_record()["s3_object_version"] == janitor_function()["Code"]["S3ObjectVersion"]
+    assert janitor_function()["Code"]["S3Key"] == ARTIFACT_KEY
 
 
 def test_the_template_runs_the_entry_point_the_builder_packages_for() -> None:
@@ -105,27 +115,6 @@ def test_the_template_runs_the_entry_point_the_builder_packages_for() -> None:
     reaches.
     """
     assert janitor_function()["Handler"] == HANDLER_ENTRY_POINT
-
-
-@pytest.mark.slow
-def test_the_released_zip_is_the_one_this_tree_builds(package: dict[str, object]) -> None:
-    """THE TRIPWIRE. Mutation: change a module the janitor imports and do not release.
-
-    The build is deterministic, so a rebuild that changed nothing reproduces the recorded digest
-    exactly. A digest that has moved means this tree describes a function the account is not
-    running, and the repair is a release rather than an edit to the number in the record.
-
-    No ``compare_release`` escape hatch, unlike the other two. That register exists for the
-    window between a change merging and somebody with AWS credentials uploading the zip, and it
-    is not needed until there is a deployed function to be stale: nothing is running these bytes
-    yet. Add the hatch with the first real release, not before -- a tolerance recorded ahead of
-    the thing it tolerates is a tolerance nobody can tell from a bug.
-    """
-    assert package["sha256"] == release_record()["sha256"], (
-        "the packaged bytes have moved since the last build; run "
-        "`uv run --frozen python tools/release_lambda.py --function janitor` and land the new "
-        "version id and digest in the same change"
-    )
 
 
 @pytest.mark.slow

@@ -32,5 +32,5 @@ s3_key: expiry-janitor/expiry-janitor.zip
 s3_object_version: PLACEHOLDER-UNTIL-THE-FIRST-UPLOAD
 # The 64 hex characters tools/build_janitor_lambda.py printed under "sha256". The build is
 # deterministic, so re-running it on an unchanged tree reproduces this exactly -- which is what
-# tests/test_janitor_package.py compares against.
+# tests/test_released_zips.py compares against, in the case parametrized [janitor].
 sha256: 11a0f7a07e266678ff19f57f793531dba410dbd7dd9c689c1082a2d87a5db6ac

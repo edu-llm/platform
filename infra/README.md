@@ -1357,7 +1357,7 @@ the laptop group the order above is the one that works.
   previous zip reads `$.execution.register_request` from a payload that has no such key and
   fails at `States.Runtime`, which is precisely the failure the second validator release was
   bought with. Follow *Releasing the admission validator* above and land the new
-  `S3ObjectVersion` in the same change; `tests/test_phase2_lambda_package.py` fails until the
+  `S3ObjectVersion` in the same change; `tests/test_released_zips.py` fails until the
   released zip is the one this tree builds, which is the tripwire Phase 4 did not have when
   it needed it.
 

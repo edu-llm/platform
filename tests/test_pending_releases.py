@@ -1,12 +1,18 @@
 """The one thing allowed to turn a red release tripwire green, and its limits.
 
-`tests/test_phase2_lambda_package.py::test_the_released_zip_is_the_one_this_tree_builds`
-and its Phase 3 sibling compare a zip built from this tree against the digest the release
-record says is deployed. They are the only things in the repository that see
-deployed-versus-tree skew, and `infra/admission-validator-release.yaml` records what one
-missed release cost: a GPU submission refused with `unprovisioned_compute_profile` by a
-validator holding the previous catalog, correct for its own bytes and wrong about the
+`tests/test_released_zips.py::test_the_released_zip_is_the_one_this_tree_builds` compares a
+zip built from this tree against the digest the release record says is deployed, once for
+every function `tools/release_lambda.py` can release. It is the only thing in the repository
+that sees deployed-versus-tree skew, and `infra/admission-validator-release.yaml` records
+what one missed release cost: a GPU submission refused with `unprovisioned_compute_profile`
+by a validator holding the previous catalog, correct for its own bytes and wrong about the
 account.
+
+That it is one test over a table rather than one per function is a repair rather than tidying,
+and this register is where the cost of the old arrangement was paid. Three functions had a
+copy each and the notifier had none, so on 2026-08-06 three zips moved on one contract change
+and only two of them earned an entry here. A register is only as complete as the tripwires
+that feed it, and the function with no tripwire is not recorded as fine -- it is not recorded.
 
 They were also unclearable before the merge that caused them. The zip is uploaded by
 `deploy-phase2-admission.yml`, which runs from `main` and nowhere else, so a change to a
