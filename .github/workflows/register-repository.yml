@@ -159,7 +159,7 @@ jobs:
       # files gives back the bytes the tool produced whatever is in them, and `git commit`
       # and `gh pr create` both accept a path instead of a string.
       #
-      # `--pathspec-from-file` stages the three paths the tool declares rather than a list
+      # `--pathspec-from-file` stages the paths the tool declares rather than a list
       # repeated here, so a fourth file added to a registration is committed without this
       # step having to be remembered. It also means an untracked file a future step leaves
       # behind cannot ride along in the commit.

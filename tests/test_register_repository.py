@@ -1,4 +1,4 @@
-"""Registering a repository, held to the shape the five files it touches already have.
+"""Registering a repository, held to the shape the eight files it touches already have.
 
 REGISTRATION WAS NEVER ONE FILE, AND THAT IS WHAT THE TOOL UNDER TEST IS FOR. An entry in
 ``config/repositories.yaml`` on its own lands a red pull request. The ECR template must
@@ -65,6 +65,27 @@ TOUCHED = (
     ".github/workflows/submit-run.yml",
     "infra/ecr-repositories.yaml",
     "infra/iam/ecr-publisher-role.yaml",
+    "infra/iam/batch-roles.yaml",
+    "infra/iam/batch-gpu-roles.yaml",
+    "infra/iam/admission-service-roles.yaml",
+)
+
+#: The five roles that have to reach an image the registration has not built yet, paired
+#: with the template that declares each. Duplicated from ``IMAGE_PULLING_ROLES`` in
+#: ``tests/test_phase3_infrastructure.py`` and one entry of the states role's grant, because
+#: what is being asserted here is different: that module holds the shipped files equal to
+#: the shipped registry, and this one holds the tool to writing every one of them for a
+#: registration that has not shipped. A shared constant would make a tool that writes none
+#: of them pass both.
+PULL_GRANTS = (
+    ("infra/iam/batch-roles.yaml", "sbsandbox-intern-edullm-batch-execution"),
+    ("infra/iam/batch-roles.yaml", "sbsandbox-intern-edullm-batch-instance"),
+    ("infra/iam/batch-gpu-roles.yaml", "sbsandbox-intern-edullm-batch-gpu-execution"),
+    ("infra/iam/batch-gpu-roles.yaml", "sbsandbox-intern-edullm-batch-gpu-instance"),
+    (
+        "infra/iam/admission-service-roles.yaml",
+        "sbsandbox-intern-edullm-admission-states",
+    ),
 )
 
 REASON = (
@@ -213,6 +234,78 @@ def test_a_registration_satisfies_every_invariant_the_suite_asserts_about_these_
         for resource in as_list(statement["Resource"])
         if isinstance(resource, dict)
     } == {item.ecr_repository for item in registry.repositories}
+
+
+def reachable_ecr_repositories(tree: Path, relative: str, role_name: str) -> set[str]:
+    """Every ECR repository one role's policies name, read out of a written template."""
+    template = loaded(tree, relative)
+    role = next(
+        resource
+        for resource in template["Resources"].values()
+        if resource.get("Type") == "AWS::IAM::Role"
+        and resource["Properties"].get("RoleName") == role_name
+    )
+    return {
+        str(resource["Fn::Sub"]).rsplit(":repository/", 1)[1]
+        for policy in role["Properties"].get("Policies", [])
+        for statement in policy["PolicyDocument"]["Statement"]
+        for resource in as_list(statement["Resource"])
+        if isinstance(resource, dict) and ":repository/" in str(resource.get("Fn::Sub", ""))
+    }
+
+
+def test_the_registration_can_pull_the_image_it_can_push(
+    tree: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: widen the publisher role and none of the other four.
+
+    THIS IS THE ONE THAT WOULD HAVE CAUGHT THE GAP THIS TOOL SHIPPED WITH. Until 2026-08-05
+    it wrote the publisher role and nothing else, so a registration made with it could push
+    an image and no identity in the account could fetch it back. The failure arrives last
+    and reads least like its cause: the scan is read, the decision recorded, the job
+    definition registered, the job submitted, the queue finds capacity and an instance
+    scales up and joins the cluster, and what lands is a CannotPullContainerError inside a
+    job that has already cost money, naming a registry path rather than a policy.
+
+    All five grants are asserted in one pass because widening four is the likelier mistake
+    than widening none: the two batch roles are spelled twice, once per compute stack, so a
+    CPU-only widening leaves every CPU submission working and every GPU one dead.
+    """
+    assert run(tree, capsys).code == 0
+
+    destinations = {item.ecr_repository for item in registry_of(tree).repositories}
+    assert "sbsandbox-intern-edullm-olmo-mixer" in destinations
+    for relative, role_name in PULL_GRANTS:
+        assert destinations <= reachable_ecr_repositories(tree, relative, role_name), (
+            f"{role_name} in {relative} cannot reach every registered repository"
+        )
+
+
+def test_a_grant_list_that_stopped_naming_repositories_is_a_refusal_rather_than_a_guess(
+    tree: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: return the text unchanged instead of raising when nothing was widened.
+
+    The insertion anchors on a ``Resource`` list already naming a registered repository,
+    which is what lets it find five statements across three files without being told which
+    roles they belong to. The cost of that is that a template rewritten to scope its grants
+    some other way -- a wildcard over the project prefix, say, which would be a perfectly
+    good change -- offers nothing to anchor on. Writing the other seven files and quietly
+    skipping that one is the failure this tool exists to prevent, so it refuses instead and
+    leaves the tree untouched.
+    """
+    path = tree / "infra/iam/batch-gpu-roles.yaml"
+    before = path.read_text(encoding="utf-8")
+    path.write_text(
+        before.replace(":repository/sbsandbox-intern-edullm-", ":repository/unrelated-"),
+        encoding="utf-8",
+    )
+
+    result = run(tree, capsys)
+
+    assert result.code == register_repository.EXIT_UNUSABLE
+    assert "no_per_repository_grant_to_widen:infra/iam/batch-gpu-roles.yaml" in result.stderr
+    assert "olmo-mixer" not in (tree / "config/repositories.yaml").read_text(encoding="utf-8")
 
 
 def test_the_new_repository_carries_the_properties_every_other_one_carries(
@@ -685,19 +778,36 @@ def test_every_follow_up_names_something_that_is_still_there() -> None:
             assert (PROJECT_ROOT / relative).exists(), f"{item.summary}: {relative}"
 
 
-def test_the_runbook_names_the_laptop_deploy_and_says_no_workflow_can_do_it() -> None:
-    """The step that cannot be automated, and the one most likely to be assumed away.
+def test_the_runbook_names_every_laptop_deploy_and_says_no_workflow_can_do_them() -> None:
+    """The steps that cannot be automated, and the ones most likely to be assumed away.
 
     ``InternSandboxBoundary`` withholds ``iam:CreateRole`` and the rest of the role
-    lifecycle from every CI role in this account, deliberately, so the publisher widening
-    is a laptop operation and no amount of workflow design changes that. A runbook that
-    listed it beside four things a tool can do would read as one more command to run.
-    """
-    laptop = register_repository.FOLLOW_UPS[0]
+    lifecycle from every CI role in this account, deliberately, so an IAM widening is a
+    laptop operation and no amount of workflow design changes that. A runbook that listed
+    one beside four things a tool can do would read as one more command to run.
 
-    assert "laptop" in laptop.summary.lower()
-    assert "sbsandbox-intern-edullm-ecr-publisher-iam" in laptop.detail
-    assert "no workflow can do this" in laptop.detail
+    FOUR STACKS RATHER THAN ONE, WHICH IS THE PART THAT WAS MISSING. The publisher stack is
+    what lets a build push. The other three are what let anything pull, and a registration
+    that deploys only the first produces a repository that publishes an image nothing may
+    fetch. Every stack a registration moves is asserted here by name, so adding a grant to a
+    template without adding its deploy to the runbook is a red test.
+    """
+    laptop = [
+        item
+        for item in register_repository.FOLLOW_UPS
+        if "laptop" in item.summary.lower()
+    ]
+    detail = " ".join(item.detail for item in laptop)
+
+    assert len(laptop) == 2
+    for stack in (
+        "sbsandbox-intern-edullm-ecr-publisher-iam",
+        "sbsandbox-intern-edullm-phase3-batch-iam",
+        "sbsandbox-intern-edullm-phase4-gpu-iam",
+        "sbsandbox-intern-edullm-phase2-admission-service-roles",
+    ):
+        assert stack in detail
+    assert "no workflow can do this" in detail
 
 
 def test_the_workflow_reaches_no_aws_account_at_all(
