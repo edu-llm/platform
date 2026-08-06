@@ -87,6 +87,7 @@ ROSTER_JOB = "roster-against-the-account"
 #: The first job in the file and the one the informational check had never covered. Found by
 #: the sweep below on the morning a tenth job was added, which is what the sweep is for.
 DOCKERFILES_JOB = "registered-dockerfiles"
+LEAD_GATE_JOB = "lead-gate"
 
 RECONCILE_TOOL = "tools/find_runs_that_saved_nothing.py"
 WANDB_TOOL = "tools/verify_wandb_credential.py"
@@ -97,6 +98,7 @@ PLACEMENT_TOOL = "tools/verify_placement_verdicts.py"
 CAPTURE_TOOL = "tools/read_substrate.py"
 ACTIVITY_TOOL = "tools/report_activity.py"
 ASKS_TOOL = "tools/report_asks.py"
+LEAD_GATE_TOOL = "tools/report_who_can_open_the_lead_gate.py"
 
 RECONCILE_STEP = "Reconcile what those runs actually wrote"
 WANDB_STEP = "Ask W&B whether it would accept the stored key"
@@ -113,6 +115,7 @@ ACTIVITY_UPLOAD_STEP = "Publish the page"
 ACTIVITY_HISTORY_STEP = "Keep the page on the machine/activity branch"
 ASKS_STEP = "Count the open asks"
 DOCKERFILES_STEP = "Check every registration against the repository it names"
+LEAD_GATE_STEP = "Compare the captured team against the roster, and say how old the capture is"
 GUARD_STEP = "Check the audit reader role is deployed"
 
 #: Where a reading is kept, and what it is called there. Both are spelled here because the
@@ -1569,6 +1572,53 @@ def test_the_asks_job_writes_its_answer_where_a_person_will_see_it(
     assert 'GITHUB_STEP_SUMMARY' in body
 
 
+def test_the_lead_gate_job_takes_no_credential_of_any_kind(workflow: dict[str, Any]) -> None:
+    """Mutation: give it the credential preamble its neighbours carry.
+
+    It reads two committed files. A role, a repository variable or an id-token would each be a
+    way for it to go red for a reason outside the question it was asked, which is the state
+    the visibility board spent its first weeks in. There is nothing here for a credential to
+    fetch: the one thing a credential could buy is reading the GitHub team live, and no token
+    available on this schedule can do that at all.
+    """
+    job = workflow["jobs"][LEAD_GATE_JOB]
+
+    assert "permissions" not in job
+    assert [one for one in job["steps"] if "aws-actions/" in one.get("uses", "")] == []
+    assert GUARD_STEP not in [one.get("name") for one in job["steps"]]
+
+
+def test_the_lead_gate_job_writes_its_answer_where_a_person_will_see_it(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: drop the redirect and let it print to the log.
+
+    Unlike the asks job this one is red on a finding, so the log is read on the mornings that
+    matter. The summary is for the other mornings: the age it prints is the number that says
+    how much the green tick is worth, and a green tick nobody can price is the thing this job
+    was built to replace.
+    """
+    body = step(workflow["jobs"][LEAD_GATE_JOB], LEAD_GATE_STEP)["run"]
+
+    assert LEAD_GATE_TOOL in body
+    assert "GITHUB_STEP_SUMMARY" in body
+
+
+def test_the_lead_gate_job_does_not_swallow_the_tool_exit_code(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: let the redirect's own status stand as the step's.
+
+    The tool's answer is its exit code and the step wraps it in a pipeline that writes a
+    summary. Losing the code between the two is the quietest way to build a check that cannot
+    fail, and it looks exactly like a job that passes every morning.
+    """
+    body = step(workflow["jobs"][LEAD_GATE_JOB], LEAD_GATE_STEP)["run"]
+
+    assert "status=$?" in body
+    assert 'exit "${status}"' in body
+
+
 @pytest.mark.parametrize(
     ("job_id", "step_name"),
     [
@@ -1581,6 +1631,7 @@ def test_the_asks_job_writes_its_answer_where_a_person_will_see_it(
         (CAPTURE_JOB, CAPTURE_STEP),
         (ASKS_JOB, ASKS_STEP),
         (DOCKERFILES_JOB, DOCKERFILES_STEP),
+        (LEAD_GATE_JOB, LEAD_GATE_STEP),
     ],
 )
 def test_nothing_in_any_of_these_jobs_is_allowed_to_be_informational(
@@ -1633,6 +1684,7 @@ def test_every_job_in_this_file_is_either_checked_above_or_excused_by_name(
         ASKS_JOB,
         DOCKERFILES_JOB,
         ROSTER_JOB,
+        LEAD_GATE_JOB,
     }
     unaccounted = set(workflow["jobs"]) - checked - set(NEEDS_ITS_PREDECESSOR)
 

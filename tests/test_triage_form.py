@@ -17,7 +17,7 @@ from pathlib import Path
 
 import yaml
 
-from edullm_platform.cli.intake import ASK_KINDS
+from edullm_platform.cli.intake import ASK_KINDS, ASK_QUEUE_LABEL
 from edullm_platform.contracts.inventory import PersonRef
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -145,15 +145,57 @@ def test_the_form_says_that_access_is_four_things_in_three_systems() -> None:
     assert "Approval authority" in preamble
 
 
-def test_every_ask_lands_in_the_one_queue_the_counter_reads() -> None:
-    """Mutation: drop the `ask` label, or replace it with a kind.
+#: What somebody reporting a wall has that nobody answering it can derive. The command and
+#: its output identify the refusal, the repository and the profile decide which of several
+#: answers is the right one, and the version says whether the install is checking against
+#: configuration this repository has since changed. Named here rather than counted, so that
+#: dropping one is a named failure rather than a number going down.
+WHAT_A_WALL_REPORT_NEEDS = ("command", "output", "repository", "compute_profile", "cli_version")
 
-    tools/report_asks.py asks GitHub for open issues labelled `ask` and then groups them by
-    kind. A form issue that does not carry it is invisible to the count however it is
+
+def test_the_form_asks_for_everything_a_wall_report_needs_to_be_answerable() -> None:
+    """Mutation: take the run-problem fields off and leave the free-text box to carry them.
+
+    "I cannot do X" is the ask this form receives most on a first day and the one it was
+    worst at. `what` is two sentences of prose, and a person who has just hit a wall describes
+    the wall rather than quoting it, so the answer to every one of these arrives as a question
+    back. Five fields turn one round trip into none.
+
+    Every one is optional and that is deliberate rather than weak. The same form is filled in
+    by people whose problem is that they cannot reach a command at all, and a required field
+    they cannot answer is a form they do not send.
+    """
+    missing = set(WHAT_A_WALL_REPORT_NEEDS) - field_ids()
+
+    assert not missing, f"a run-problem cannot be acted on without {sorted(missing)}"
+    for identifier in WHAT_A_WALL_REPORT_NEEDS:
+        assert field(identifier)["validations"]["required"] is False
+
+
+def test_the_form_asks_for_the_output_verbatim_rather_than_retyped() -> None:
+    """Mutation: make the output field a plain textarea.
+
+    `render:` puts the answer in a fenced block, which is what stops GitHub reading a refusal
+    code as markdown and what makes a paste survive as a paste. The reason it matters here is
+    the JSON documents: `edullm check --json` is the machine-readable form somebody is meant
+    to quote, and its braces and quotes are exactly what unfenced markdown mangles.
+    """
+    assert field("output")["attributes"]["render"] == "text"
+
+
+def test_every_ask_lands_in_the_one_queue_the_counter_reads() -> None:
+    """Mutation: drop the queue label, or replace it with a kind.
+
+    tools/report_asks.py asks GitHub for open issues carrying ASK_QUEUE_LABEL and then groups
+    them by kind. A form issue that does not carry it is invisible to the count however it is
     otherwise labelled, and a form that carried one kind unconditionally would file every ask
     under it -- a GitHub issue form cannot set a label conditionally on a dropdown value, which
     is why the kind is the triager's one job.
+
+    Held against the constant rather than against the string, because the counter, this form
+    and `edullm ask` are three readers of one queue name and two of them are code. Spelled
+    here it would be the fourth copy, and a rename would move three of the four.
     """
     labels = form()["labels"]
 
-    assert labels == ["ask"]
+    assert labels == [ASK_QUEUE_LABEL]

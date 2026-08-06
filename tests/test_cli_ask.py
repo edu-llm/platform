@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from edullm_platform.cli.intake import ASK_KINDS, issue_body
+from edullm_platform.cli.intake import ASK_KINDS, ASK_QUEUE_LABEL, issue_body
 from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED, NOT_BUILT_YET
 from tests.cli_support import CONFIG_DIR, FakeRunner, failed, invoke, ok
 
@@ -97,12 +97,17 @@ def test_the_kinds_this_verb_offers_are_the_kinds_the_forms_offer() -> None:
     assert set(ASK_KINDS) == declared_kinds()
 
 
-def test_an_ask_is_filed_with_its_kind_as_the_label(
+def labels_on(argv: tuple[str, ...]) -> list[str]:
+    """Every ``--label`` value in one gh invocation, in the order it was asked for."""
+    return [argv[index + 1] for index, part in enumerate(argv) if part == "--label"]
+
+
+def test_an_ask_is_filed_with_its_kind_as_a_label(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Mutation: file every ask unlabelled and let a human triage it.
 
-    Counting groups on the label. An unlabelled ask is uncounted, and an uncounted ask is
+    Counting groups on the kind. An unlabelled ask is uncounted, and an uncounted ask is
     exactly the one that gets asked a third time without anybody noticing it should have
     become a config change.
     """
@@ -125,9 +130,47 @@ def test_an_ask_is_filed_with_its_kind_as_the_label(
 
     assert code == EXIT_OK, out + err
     assert ISSUE_URL in out
-    created = runner.ran("gh", "issue", "create")[0]
-    assert "--label" in created
-    assert created[created.index("--label") + 1] == "access-request"
+    assert "access-request" in labels_on(runner.ran("gh", "issue", "create")[0])
+
+
+def test_an_ask_filed_from_a_terminal_lands_in_the_queue_the_counter_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: send the kind alone, which is what this verb did until 2026-08-06.
+
+    THIS IS THE DEFECT THE COLLAPSE TO ONE FORM EXISTED TO PREVENT, ARRIVING THROUGH THE
+    OTHER DOOR. tools/report_asks.py searches GitHub for issues carrying ASK_QUEUE_LABEL and
+    only then groups them by kind, and .github/ISSUE_TEMPLATE/ask.yml puts that label on
+    unconditionally. This verb put the kind on and nothing else, so an ask filed from a
+    terminal was correctly labelled on the issue, invisible to the count, and indistinguishable
+    on the board from an ask nobody made.
+
+    Asserted as a superset rather than an exact list so that a later kind or a triage label
+    does not fail a test about the queue. What must hold is that both are asked for in one
+    call, because gh attaches every label or none.
+    """
+    runner = ask_runner()
+
+    code, out, err = invoke(
+        [
+            "ask",
+            "--kind",
+            "run-problem",
+            "--title",
+            "submit refused a dataset the catalog lists",
+            "--detail",
+            "edullm check passes and submit refuses.",
+        ],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert set(labels_on(runner.ran("gh", "issue", "create")[0])) >= {
+        ASK_QUEUE_LABEL,
+        "run-problem",
+    }
 
 
 def test_a_label_the_repository_does_not_carry_still_files_the_ask(
