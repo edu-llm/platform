@@ -31,12 +31,13 @@ nobody got is never better than a message with a gap in it that says it is a gap
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final
 
+from ..accelerators import ACCELERATORS_FILENAME, AcceleratorRecord, read_accelerators, record_for
 from ..config import load_yaml
 from ..contracts.bindings import normalize_github_login
 from ..contracts.policy import ApprovalPolicy
@@ -53,6 +54,7 @@ __all__ = [
     "SHAPE_FIELDS",
     "ApprovalRequestedFacts",
     "Shape",
+    "load_accelerators",
     "load_policy",
     "read_approval_requested",
 ]
@@ -189,6 +191,17 @@ class ApprovalRequestedFacts:
     #: three things that hold a cheap single cell back from releasing itself, so the routing
     #: sentence has to be able to name it.
     scan_unreviewed: bool
+    #: What card the named profile puts under this run and how much memory is on it, or
+    #: ``None`` where the packaged measurement has no row for the profile.
+    #:
+    #: THE ONE FIGURE ON THIS MESSAGE THAT IS ABOUT THE MACHINE RATHER THAN THE MONEY, AND
+    #: IT IS HERE BECAUSE THE APPROVAL IS THE LAST MOMENT IT IS FREE. Three of the failures
+    #: analysed in the week to 2026-08-06 were CUDA out-of-memory, which is a fault a
+    #: researcher meets after the approval, after the queue and after the card has started
+    #: billing. Nothing here refuses anything on it, and nothing here can: a compiled
+    #: submission carries no model size, so a fit claim would be a guess wearing a refusal's
+    #: clothes. What it does is put the ceiling in front of the person releasing the spend.
+    accelerator: AcceleratorRecord | None
 
     @property
     def cells(self) -> int:
@@ -210,6 +223,25 @@ def load_policy(directory: Path) -> ApprovalPolicy:
     factor of a hundred once already.
     """
     return load_yaml(directory / POLICY_FILENAME, ApprovalPolicy)
+
+
+def load_accelerators(directory: Path) -> tuple[AcceleratorRecord, ...]:
+    """The measured cards, from the copy packaged beside this function.
+
+    Empty rather than raising where the file is not there, which is the shape
+    :func:`~edullm_platform.run_history.load_run_history` uses and for its reason: an
+    editable install and a configuration directory a test built both carry no measurement,
+    and neither is a broken deployment. The message then omits the clause rather than
+    guessing at a card, and a zip that declared the file and did not carry it is caught by
+    the builder before it is ever uploaded.
+
+    A file that is there and will not parse raises, also as ``load_run_history`` does. That
+    is a broken install rather than an absent measurement, and the two must not read alike.
+    """
+    path = directory / ACCELERATORS_FILENAME
+    if not path.is_file():
+        return ()
+    return read_accelerators(path)
 
 
 def _text(document: Mapping[str, Any], key: str) -> str | None:
@@ -334,6 +366,7 @@ def read_approval_requested(
     catalogs: Catalogs,
     policy: ApprovalPolicy,
     history: RunHistory | None = None,
+    accelerators: Sequence[AcceleratorRecord] = (),
 ) -> ApprovalRequestedFacts | None:
     """The facts a lead needs, or ``None`` because this delivery is not one of these.
 
@@ -344,6 +377,9 @@ def read_approval_requested(
 
     ``history`` defaults to ``None`` and the message then says the ceiling could not be
     checked against anything, which is a fact about this install rather than about the run.
+    ``accelerators`` defaults to empty and the message then says nothing about the machine's
+    memory, which is the one clause it omits rather than qualifies: an absent row means the
+    two reviewed files have parted company, and there is nothing about this run to report.
     """
     if envelope.get("source") != PLATFORM_EVENT_SOURCE:
         return None
@@ -391,4 +427,5 @@ def read_approval_requested(
         shape=_shape(manifest, history),
         url=_text(detail, "url"),
         scan_unreviewed=detail.get("image_scan_reviewed") is False,
+        accelerator=record_for(profile, accelerators=accelerators),
     )

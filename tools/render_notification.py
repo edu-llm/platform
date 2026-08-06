@@ -36,7 +36,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from edullm_platform.notifications.approval import load_policy
+from edullm_platform.notifications.approval import load_accelerators, load_policy
 from edullm_platform.notifications.facts import Catalogs
 from edullm_platform.notifier_handler import message_for
 from edullm_platform.run_history import load_run_history
@@ -90,6 +90,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         catalogs=catalogs,
         policy=lambda: load_policy(options.config),
         history=lambda: load_run_history(options.config),
+        accelerators=lambda: load_accelerators(options.config),
         intent_reader=None,
         lineage_bucket="",
         cell_lister=None,

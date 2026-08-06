@@ -1057,8 +1057,9 @@ unchanged. What moved is only which machine holds the credential.
 Functions are released together whenever a change reaches more than one, which since
 2026-08-04 means a change to `src/edullm_platform` rather than a change under `config/`.
 Each builder names the config files its own handler reads: the validator's seven, none at
-all for the recorder, and three for the notifier. A catalog edit reaches the validator and
-the notifier and not the recorder.
+all for the recorder, and the notifier's six — `organization.yaml`, `workload-catalog.yaml`,
+`execution-targets.yaml`, `policy.yaml`, `run-history.json` and `accelerators.yaml`. A catalog
+edit reaches the validator and the notifier and not the recorder.
 
 The step lives inside an existing deploy workflow rather than in a `release-lambda.yml` of
 its own, and that is the trust policy talking rather than a preference. The deployer role

@@ -45,8 +45,16 @@ Read with ``yaml`` rather than through a contract model, which is the choice
 belong on ``ComputeProfile`` beside ``provisioned``, and they are not there because that model
 forbids extra fields and its structural digest is in ``fixtures/goldens/contract-models.json``.
 ``ComputeProfile`` is also inside the admission Lambda's import closure, so putting them there
-would make a Lambda release out of a fact a renderer reads. Nothing here is packaged into either
-zip.
+would make a Lambda release out of a fact a renderer reads.
+
+**THIS MODULE AND ITS FILE ARE IN THE NOTIFIER'S ZIP, WHICH THEY WERE NOT WHEN THIS WAS
+WRITTEN.** The approval request names the machine somebody is being asked to pay for, and since
+2026-08-06 it names the memory on it, so ``config/accelerators.yaml`` is in
+``tools/build_notifier_lambda.py``'s ``NOTIFIER_CONFIG`` and this module is in that function's
+import closure. Editing either is now a notifier release --
+``tests/test_released_zips.py::test_the_released_zip_is_the_one_this_tree_builds[notifier]``
+says so before the change can merge. It is still absent from the admission validator's zip,
+which is the one the paragraph above is about: nothing on the submission path reads a card.
 """
 
 from __future__ import annotations
