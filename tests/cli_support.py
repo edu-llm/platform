@@ -294,6 +294,8 @@ def a_machine_you_have(
     state: str = "running",
     instance_type: str = LANE_MACHINE_TYPE,
     up_for: timedelta | None = LANE_MACHINE_UPTIME,
+    stopped_for: timedelta | None = None,
+    transition: str | None = None,
     spot: bool = False,
 ) -> dict[str, object]:
     """One entry in what ``find_lane_machines_argv`` gets back, in the account's own shape.
@@ -302,13 +304,33 @@ def a_machine_you_have(
     that decides whether the verb states a cost or says it cannot. ``lifecycle`` is omitted
     entirely for an On-Demand machine rather than set to a word, because that is what EC2 does
     and a fake that spelled it out would let a reader that keyed on the wrong absence pass.
+
+    ``stopped_for`` is a machine that has sat stopped that long: it is ``stopped``, and its
+    ``StateTransitionReason`` carries the instant in EC2's own words, which were read off
+    ``i-0303e11fbe92f4d9e`` in the sandbox account on 2026-08-06 and are ``User initiated
+    (2026-08-06 14:13:58 GMT)`` -- a space rather than a ``T``, no offset, and the zone spelled
+    ``GMT``. ``up_for`` still measures from the launch, so the two compose into a machine that
+    ran ``up_for - stopped_for``.
+
+    ``transition`` writes that field directly, for the reason with no instant in it that a
+    ``shutdown -h`` from inside the machine leaves. A ``state`` given without either is a
+    machine EC2 said nothing about, which is the same input one field further along.
     """
-    launched = None if up_for is None else datetime.now(tz=UTC) - up_for
+    # Whole seconds, because EC2 writes StateTransitionReason to the second and a fixture that
+    # kept microseconds on one endpoint and not the other would make the interval between them
+    # a fraction short -- and a cent of rounding that moves with the clock is a flaky case.
+    now = datetime.now(tz=UTC).replace(microsecond=0)
+    launched = None if up_for is None else now - up_for
+    stopped = None if stopped_for is None else now - stopped_for
+    said = transition
+    if said is None and stopped is not None:
+        said = f"User initiated ({stopped.strftime('%Y-%m-%d %H:%M:%S')} GMT)"
     return {
         "machine": machine,
-        "state": state,
+        "state": "stopped" if stopped_for is not None else state,
         "type": instance_type,
         "launched": None if launched is None else launched.isoformat(),
+        **({"transition": said} if said is not None else {}),
         **({"lifecycle": "spot"} if spot else {}),
         "tags": [
             {"Key": PROJECT_TAG_KEY, "Value": project},

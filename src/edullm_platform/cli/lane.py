@@ -69,6 +69,7 @@ __all__ = [
     "LaneMachine",
     "LaneRequest",
     "LaneSubnet",
+    "RanFor",
     "WorkingTierSettings",
     "ZoneAttempt",
     "agent_online_argv",
@@ -98,6 +99,7 @@ __all__ = [
     "placement_verdict",
     "placement_warning",
     "priced_as",
+    "ran_for",
     "ran_for_said",
     "refusal_code",
     "remote_command_argv",
@@ -737,6 +739,10 @@ class LaneMachine:
     #: guess, because this is the only input to what the machine cost and a guessed clock
     #: produces a figure that looks measured.
     launched: datetime | None
+    #: When EC2 says it stopped running, or nothing where it is still running or where the
+    #: reason it gave carries no instant. With :attr:`launched` this is the interval that was
+    #: billed; without it the clock is, and the clock is not the same number.
+    stopped: datetime | None
     #: Whether it was bought on Spot, which bills under the catalog's rate.
     spot: bool
 
@@ -759,6 +765,13 @@ def find_lane_machines_argv(*, person: str) -> tuple[str, ...]:
     and, when there is none, which projects they do have machines for -- and a mistyped
     ``--project`` that got back a bare "nothing found" would read as "nothing is billing", which
     is the wrong answer to give somebody who is asking precisely because something is.
+
+    ``StateTransitionReason`` is asked for beside the launch time because the two together are
+    the interval EC2 billed, and one of them alone is not. It reads ``User initiated (2026-08-06
+    13:30:50 GMT)`` on a machine the janitor stopped and is empty on one still running, so the
+    field that says *when* a machine stopped arrives in the answer this call already makes --
+    no second call, no CloudTrail, and no second of anybody's wait. :func:`ran_for` is what
+    spends it.
     """
     return (
         "aws",
@@ -770,7 +783,8 @@ def find_lane_machines_argv(*, person: str) -> tuple[str, ...]:
         "--query",
         (
             "Reservations[].Instances[].{machine:InstanceId,state:State.Name,"
-            "type:InstanceType,launched:LaunchTime,lifecycle:InstanceLifecycle,tags:Tags}"
+            "type:InstanceType,launched:LaunchTime,transition:StateTransitionReason,"
+            "lifecycle:InstanceLifecycle,tags:Tags}"
         ),
         "--output",
         "json",
@@ -792,6 +806,40 @@ def _launched_at(value: object) -> datetime | None:
     except ValueError:
         return None
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+#: The instant inside ``StateTransitionReason``, which is prose with a clock in the middle of it.
+#:
+#: ``User initiated (2026-08-06 14:13:58 GMT)`` is what a stopped machine carries -- read off
+#: ``i-0303e11fbe92f4d9e`` in the sandbox account, which also showed that EC2 writes it the moment
+#: the stop is asked for rather than when it completes, so a machine still ``stopping`` already
+#: has it. GMT is the only zone EC2 writes here. Anchored on the parenthesis rather than searched
+#: for loosely, so that a reason with no instant in it -- ``Client.InstanceInitiatedShutdown``,
+#: which a ``shutdown -h`` from inside the machine leaves -- matches nothing and is answered as
+#: unknown rather than as a date somebody's prose happened to contain.
+_TRANSITION_INSTANT: Final[re.Pattern[str]] = re.compile(
+    r"\((\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) GMT\)"
+)
+
+
+def _stopped_at(value: object, *, state: str) -> datetime | None:
+    """When EC2 stopped this machine, or nothing where it did not or would not say.
+
+    **THE STATE IS CHECKED AND NOT ONLY THE STRING, WHICH IS THE GUARD AGAINST A STALE REASON.**
+    ``StateTransitionReason`` describes the last transition EC2 recorded, and this reads it as
+    "the running interval ended here" -- a reading that is only true while the machine is not
+    running. Anything still running answers ``None`` without looking at the string, so no
+    transition from before a start can be mistaken for the end of the interval it precedes.
+
+    Unparseable is ``None`` rather than a guess, on :func:`_launched_at`'s rule and for its
+    reason: what cannot be read is said to be unknown, and the sentence that quotes it says so.
+    """
+    if state in ("pending", "running") or not isinstance(value, str):
+        return None
+    found = _TRANSITION_INSTANT.search(value)
+    if found is None:
+        return None
+    return datetime.fromisoformat(found.group(1)).replace(tzinfo=UTC)
 
 
 def lane_machines(described: str) -> tuple[LaneMachine, ...]:
@@ -824,13 +872,15 @@ def lane_machines(described: str) -> tuple[LaneMachine, ...]:
             ),
             "",
         )
+        state = str(entry.get("state") or "")
         found.append(
             LaneMachine(
                 machine=machine,
                 project=project,
-                state=str(entry.get("state") or ""),
+                state=state,
                 instance_type=str(entry.get("type") or ""),
                 launched=_launched_at(entry.get("launched")),
+                stopped=_stopped_at(entry.get("transition"), state=state),
                 # EC2 omits InstanceLifecycle entirely for On-Demand rather than saying so, so
                 # absent is the ordinary case and only the word "spot" means Spot.
                 spot=str(entry.get("lifecycle") or "") == "spot",
@@ -962,6 +1012,60 @@ def ran_for_said(ran: timedelta) -> str:
     return " ".join(parts)
 
 
+@dataclass(frozen=True)
+class RanFor:
+    """The interval a machine billed, and whether that interval is known or only bounded."""
+
+    #: Its launch to the end of its running interval, which is the stop where there was one and
+    #: now where there was not.
+    ran: timedelta
+    #: How long it has sat stopped since, where EC2 said when that began. ``None`` where the
+    #: machine was still running, and where it was stopped and EC2 would not say when.
+    stopped_for: timedelta | None
+    #: Whether :attr:`ran` is the interval or only a ceiling on it.
+    measured: bool
+
+
+def ran_for(machine: LaneMachine, *, now: datetime) -> RanFor | None:
+    """How long a machine was running, which is not how long ago it was launched.
+
+    **EC2 BILLS THE RUNNING STATE AND NOTHING ELSE, SO THE STOP IS AN ENDPOINT AND NOT A
+    DETAIL.** A machine the expiry janitor stopped goes on carrying a ``LaunchTime`` from hours
+    earlier while it bills nothing at all, and for that machine the clock since its launch is
+    the one number here certain to be wrong. ``StateTransitionReason`` is the other endpoint,
+    and it arrives in the describe :func:`find_lane_machines_argv` already makes -- so the
+    correct reading costs nothing over the wrong one, which is what settles whether to take it.
+
+    **ONE RUNNING INTERVAL, BECAUSE NOTHING IN THIS BINARY CAN PRODUCE A SECOND ONE.** A machine
+    stopped and started again has two, and a single stop instant would then describe only the
+    last of them and understate -- so the assumption is checked rather than assumed, and what
+    makes it hold is that no verb here ever starts a stopped machine. ``find_machine_argv``
+    looks for ``pending`` and ``running``, so the reuse in ``edullm run`` and ``edullm shell``
+    cannot see a stopped machine and starts a new one instead; :mod:`expiry_janitor` answers
+    ``already_stopped`` and only ever calls ``StopInstances``; and no module under ``cli/``
+    builds that argv at all, which ``tests/test_cli_stop.py`` holds by reading the parsed
+    source. Adding one makes this paragraph a red test rather than a figure that quietly
+    understates.
+
+    **CLAMPED INTO THE LAUNCH AND NOW, WHICH COSTS ONE COMPARISON AND RULES OUT THE ABSURD
+    ANSWER.** The two instants come from different fields written by different transitions and
+    are subtracted against a laptop's clock, so a negative duration or one longer than the
+    machine has existed is reachable without anything here being wrong. Either would print as a
+    figure, and a negative one is a number nobody can act on at all.
+    """
+    if machine.launched is None:
+        return None
+    ended = min(max(machine.stopped or now, machine.launched), now)
+    return RanFor(
+        ran=ended - machine.launched,
+        stopped_for=None if machine.stopped is None else now - ended,
+        # A machine still running ends at now, and that is the measurement rather than a bound
+        # on it. A stopped one whose transition carried no instant is the only case with
+        # neither endpoint, and it is the only case quoted as a ceiling.
+        measured=machine.state in ("pending", "running") or machine.stopped is not None,
+    )
+
+
 def _ran_up(rate_per_hour: Decimal, ran: timedelta) -> Decimal:
     """What a machine at one rate cost over one duration, to the cent.
 
@@ -993,13 +1097,23 @@ def what_stopping_did(
     unless it is said here.
 
     **THE COST IS QUOTED WITH WHAT IT IS AND IS NOT, RATHER THAN AS A NUMBER.** It is the
-    catalog's on-demand rate against the wall clock since ``LaunchTime``, so it excludes the
+    catalog's on-demand rate against the hours the machine was running, so it excludes the
     volume and the traffic and it is a ceiling for a machine bought on Spot. ``AGENTS.md``
     forbids quoting a price from memory or from a document; this reads it out of reviewed
     configuration at the moment of asking and names the file it came from, which is the same
     discipline pointed at a figure rather than at a refusal.
+
+    **THE HOURS IT RAN AND NOT THE HOURS SINCE IT LAUNCHED, WHICH IS WHAT THIS QUOTED UNTIL
+    2026-08-06.** The first machine this verb met that had spent time stopped ran fifty-nine
+    minutes and was told one hour twenty-four: the janitor had stopped it twenty-four minutes
+    earlier, and EC2 bills no instance hour for a stopped machine. It erred high, which risks
+    nothing and is not the point. The whole job of this sentence is saying what somebody spent,
+    the sentence it opens with had already said the machine was stopped, and a reader who can
+    see that the one number is wrong learns to skip it -- leaving a verb that has stopped
+    working by the morning the number is large. :func:`ran_for` works the interval out, off a
+    field the describe above already returns.
     """
-    ran = None if machine.launched is None else now - machine.launched
+    ran = ran_for(machine, now=now)
     return (
         (
             f"{machine.machine} is terminated, and it was {machine.state} until this ran. "
@@ -1016,38 +1130,62 @@ def what_stopping_did(
 
 
 def _what_it_ran_up(
-    machine: LaneMachine, *, ran: timedelta | None, profile: ComputeProfile | None
+    machine: LaneMachine, *, ran: RanFor | None, profile: ComputeProfile | None
 ) -> str:
     """The money sentence, composed from what is actually known rather than written once.
 
-    Four causes and four sentences, on the rule :meth:`LaneExpiry.said` states: a message two
+    A cause and a sentence each, on the rule :meth:`LaneExpiry.said` states: a message two
     causes share is a message doing none of its job. An unreadable ``LaunchTime`` and a shape
-    the catalog has stopped pricing are different reasons to have no figure, and a machine
-    bought on Spot has a figure that means something different from the same figure on demand.
+    the catalog has stopped pricing are different reasons to have no figure; a machine bought
+    on Spot has a figure that means something different from the same figure on demand; and a
+    machine that spent time stopped has a figure smaller than its own clock, which earns a
+    clause precisely because the reader can do that subtraction and would otherwise make the
+    figure wrong.
+
+    **THE MACHINE THAT NEVER STOPPED READS EXACTLY AS IT DID BEFORE.** Its clock and its running
+    hours are the same number, so it earns no clause and its sentence is unchanged to the byte.
+    Rewording the ordinary case would spend the settled shape of this message on a correction
+    that does not apply to it.
     """
     if ran is None:
         return (
             f"EC2 did not say when it started, so how long it ran and what it cost cannot be "
             f"stated here. It was a {machine.instance_type}."
         )
-    duration = ran_for_said(ran)
+    duration = ran_for_said(ran.ran)
     if profile is None:
         return (
-            f"It ran {duration} on a {machine.instance_type}, which "
-            "config/workload-catalog.yaml no longer prices, so what it cost is not something "
-            "this can say."
+            f"It ran {'' if ran.measured else 'at most '}{duration} on a "
+            f"{machine.instance_type}, which config/workload-catalog.yaml no longer prices, so "
+            "what it cost is not something this can say."
         )
     rate = serialize_decimal(profile.hourly_rate_usd)
-    spent = serialize_decimal(_ran_up(profile.hourly_rate_usd, ran))
+    spent = serialize_decimal(_ran_up(profile.hourly_rate_usd, ran.ran))
     spot = (
         " It was bought on Spot, which bills under that rate, so read the figure as a ceiling."
         if machine.spot
         else ""
     )
+    if not ran.measured:
+        return (
+            f"It ran at most {duration} on a {machine.instance_type}, which "
+            f"config/workload-catalog.yaml prices as {profile.name} at ${rate}/hour, so at most "
+            f"${spent}. EC2 did not say when it stopped, so that is the clock since it launched "
+            f"rather than the hours it billed. That is the machine and not its disk or its "
+            f"traffic.{spot}"
+        )
+    # Under a minute is a machine stopped while this verb was running, and a clause about it
+    # would explain a subtraction that moves neither the duration nor the cent.
+    stopped = (
+        f" It then sat stopped for {ran_for_said(ran.stopped_for)}, which is not in that "
+        "figure: EC2 bills no instance hour for a machine that is not running."
+        if ran.stopped_for is not None and ran.stopped_for >= timedelta(minutes=1)
+        else ""
+    )
     return (
         f"It ran {duration} on a {machine.instance_type}, which config/workload-catalog.yaml "
         f"prices as {profile.name} at ${rate}/hour, so roughly ${spent}. That is the machine "
-        f"and not its disk or its traffic.{spot}"
+        f"and not its disk or its traffic.{stopped}{spot}"
     )
 
 

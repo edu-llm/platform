@@ -13,6 +13,7 @@ reach. The third is the one to read first.
 
 from __future__ import annotations
 
+import ast
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -252,7 +253,7 @@ def test_a_machine_the_janitor_already_stopped_can_still_be_ended(
     means it has to be able to see a state no other verb has any use for.
     """
     laptop, code, out, err = stopping(
-        tmp_path, monkeypatch, stoppable=[a_machine_you_have(state="stopped")]
+        tmp_path, monkeypatch, stoppable=[a_machine_you_have(stopped_for=timedelta(minutes=8))]
     )
 
     assert code == EXIT_OK, out + err
@@ -351,6 +352,153 @@ def test_it_says_what_the_machine_ran_up_at_the_catalog_s_own_rate(
     assert profile.name in flat(out)
     assert "config/workload-catalog.yaml" in flat(out)
     assert "not its disk or its traffic" in flat(out)
+
+
+def test_the_time_a_machine_spent_stopped_is_not_in_what_it_cost(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**THE DEFECT THE FIRST REAL USE OF THIS VERB FOUND, ON 2026-08-06.**
+    Mutation: measure to now, which is what the docstring said it did.
+
+    ``i-00ea79d5c4a2c206b`` ran fifty-nine minutes and was told it had run one hour
+    twenty-four. The expiry janitor had stopped it twenty-four minutes before anybody typed
+    the verb, EC2 bills no instance hour for a stopped machine, and the sentence had already
+    said "it was stopped until this ran" -- so the reader was handed the clue and the number
+    did not use it. It errs high, which risks nothing and is not the point: the whole job of
+    this sentence is saying what somebody spent, and a figure a reader can see is wrong is one
+    they learn to skip.
+
+    The endpoint is ``StateTransitionReason``, which arrives in the describe the verb already
+    makes, so the right number costs no call and no second.
+    """
+    configuration = load_reviewed_configuration(CONFIG_DIR)
+    profile = priced_as(configuration, LANE_MACHINE_TYPE)
+    assert profile is not None, f"{LANE_MACHINE_TYPE} is no longer priced, so pick another"
+    ran = LANE_MACHINE_UPTIME - timedelta(minutes=24)
+    hours = Decimal(int(ran.total_seconds())) / Decimal(3600)
+    expected = (profile.hourly_rate_usd * hours).quantize(Decimal("0.01"))
+    clock = (profile.hourly_rate_usd * Decimal(135) / Decimal(60)).quantize(Decimal("0.01"))
+    assert expected != clock, "this case cannot tell the two readings apart"
+
+    _laptop, code, out, err = stopping(
+        tmp_path, monkeypatch, stoppable=[a_machine_you_have(stopped_for=timedelta(minutes=24))]
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "It ran 1 hour 51 minutes" in flat(out)
+    assert f"so roughly ${expected}." in flat(out)
+    assert f"${clock}" not in flat(out), "the clock since LaunchTime is not what was billed"
+    assert "sat stopped for 24 minutes" in flat(out)
+
+
+def test_a_machine_that_never_stopped_reads_exactly_as_it_did_before(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**THE CASE THE CORRECTION ABOVE MAY NOT REWORD, WHICH IS ALMOST EVERY CASE.**
+    Mutation: explain the running interval on every machine, now that the verb measures one.
+
+    A machine that ran from its launch until this verb ended it has a clock and a running
+    interval that are the same number, so a clause about the difference would be a sentence
+    about nothing -- printed to every researcher who ever stops a machine, to explain a
+    subtraction none of them can see. This message was written to a settled shape and proved
+    against two real machines; the defect was in one number in it and not in its shape.
+    """
+    _laptop, code, out, err = stopping(tmp_path, monkeypatch, stoppable=[a_machine_you_have()])
+
+    assert code == EXIT_OK, out + err
+    assert "sat stopped" not in flat(out)
+    assert "at most" not in flat(out)
+    assert "2 hours 15 minutes" in flat(out), "the clock is the running interval here"
+
+
+def test_a_stop_ec2_gave_no_instant_for_is_quoted_as_a_ceiling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: fall back to the clock and quote it as the figure, as before this change.
+
+    ``Client.InstanceInitiatedShutdown`` is what a ``shutdown -h`` from inside the machine
+    leaves behind, and it carries no clock. The machine is stopped, so the verb knows the
+    figure is above what was billed and by an unknown amount -- and printing it bare as
+    ``roughly`` would be the same defect one branch over, a knowably wrong number presented as
+    a measurement. Saying "at most" costs a word and keeps every figure this verb prints one a
+    reader can rely on.
+    """
+    _laptop, code, out, err = stopping(
+        tmp_path,
+        monkeypatch,
+        stoppable=[
+            a_machine_you_have(
+                state="stopped",
+                transition="Client.InstanceInitiatedShutdown: Instance initiated shutdown",
+            )
+        ],
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "It ran at most 2 hours 15 minutes" in flat(out)
+    assert "so at most $" in flat(out)
+    assert "roughly" not in flat(out)
+    assert "did not say when it stopped" in flat(out)
+
+
+def test_the_caveats_about_the_disk_the_traffic_and_spot_survive_a_stopped_machine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**PRECISION ABOUT THE INSTANCE HOUR DOES NOT MAKE THE FIGURE A BILL.**
+    Mutation: drop the caveats, on the grounds that the number is now measured.
+
+    Knowing the running interval exactly says nothing about the two hundred gibibytes of gp3
+    that billed beside it, nothing about egress, and nothing about what a Spot machine actually
+    paid. A figure that got more accurate and lost the sentence saying what it leaves out is a
+    figure more likely to be read as the bill, not less.
+    """
+    _laptop, code, out, err = stopping(
+        tmp_path,
+        monkeypatch,
+        stoppable=[a_machine_you_have(stopped_for=timedelta(minutes=24), spot=True)],
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "not its disk or its traffic" in flat(out)
+    assert "bought on Spot" in flat(out)
+    assert "read the figure as a ceiling" in flat(out)
+
+
+def test_nothing_in_the_cli_starts_a_stopped_machine(tmp_path: Path) -> None:
+    """**WHAT MAKES "ONE RUNNING INTERVAL" TRUE, AND THE ONLY THING THAT CAN.**
+    Mutation: give ``edullm run`` a reuse that starts the stopped machine it found.
+
+    ``ran_for`` reads one stop instant as the end of the machine's running interval, which is
+    the whole interval only while there was one. A machine stopped and started again has two,
+    and the figure would then describe the last of them and silently understate -- the same
+    class of defect as the one this change closed, in the other direction, where under is the
+    dangerous direction.
+
+    Nothing here can make EC2 refuse a start; a lane credential may call one, because
+    ``AllowResearchWorkingSet`` is ``"*"`` on ``"*"``. What can be held is that this binary
+    never does, and that is the assumption ``ran_for`` actually rests on. ``find_machine_argv``
+    filters to ``pending`` and ``running`` so reuse cannot see a stopped machine, and the
+    janitor only ever stops -- which leaves this: no module under ``cli/`` builds the call at
+    all. Adding one is a red test beside the paragraph that would need rewriting.
+    """
+    _ = tmp_path
+    cli = Path(__file__).resolve().parent.parent / "src" / "edullm_platform" / "cli"
+    # The parsed constants and not the text, because the paragraph in ``ran_for`` that this
+    # case exists to protect says the word, and a grep would read the promise as the breach.
+    building_one = sorted(
+        path.name
+        for path in cli.rglob("*.py")
+        if any(
+            isinstance(node, ast.Constant) and node.value == "start-instances"
+            for node in ast.walk(ast.parse(path.read_text()))
+        )
+    )
+
+    assert building_one == [], (
+        "ran_for takes one stop as the end of the one running interval a lane machine has. "
+        f"{', '.join(building_one)} would give it a second one, so that reading, its docstring "
+        "and this case all have to change together."
+    )
 
 
 def test_it_says_where_the_files_are_because_the_disk_has_just_gone(
