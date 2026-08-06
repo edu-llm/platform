@@ -9,15 +9,26 @@ Description: The working tier. Where the exploration route puts a person's files
 # prefix is not. The evidence for the last one is that the designed teams/<team>/scratch/ prefixes
 # hold zero objects while five personal buckets exist.
 #
-# APPLIED BY HAND, AND NOT FOR THE REASON EVERY OTHER HAND-APPLIED STACK HERE IS.
-# This creates no IAM role. sbsandbox-intern-edullm-infra-deployer scopes every S3 grant it holds
-# to arn:aws:s3:::sbsandbox-intern-edullm-*, and this bucket is edullm-scratch, so CI is denied at
-# CreateBucket. Widening that scope is itself an IAM change applied by hand, to let a pipeline
-# create one bucket that is created once, which is a worse trade than applying this once.
+# APPLIED BY CI, AND THIS PARAGRAPH SAID THE OPPOSITE UNTIL 2026-08-05. It said the deploy had to
+# be run from a laptop, because sbsandbox-intern-edullm-infra-deployer scoped every S3 grant it
+# held to arn:aws:s3:::sbsandbox-intern-edullm-* and this bucket is edullm-scratch. That was true
+# and it was fixed by neither of the two options that paragraph weighed. The bucket was not
+# renamed under the prefix and the scope was not widened to edullm-*, which would have brought
+# edullm-data and edullm-landing inside a pipeline's reach. infra/iam/infra-deployer-role.yaml
+# names arn:aws:s3:::edullm-scratch in full instead, and the statement beside that name carries
+# the reasoning at length.
+#
+# WHAT THAT COSTS, WHICH IS A COUPLING THIS FILE HAS TO HONOUR. The grant lists one action per
+# property set below and nothing else. Adding a property here without amending that role is a
+# stack that fails at deploy naming the missing action, rather than a red test. The deployer
+# amendment is recorded in edullm_platform.pending_amendments and until it is applied a CI deploy
+# of this stack is refused at CreateBucket, which reads like a broken template rather than a
+# missing grant.
 #
 # THE NAME IS THE OVERVIEW'S AND A PERSON TYPES IT. That is the same argument
-# infra/iam/researcher-role.yaml makes about edullm-researcher carrying no prefix, and it has the
-# same consequence: no pipeline here can touch it, which is correct.
+# infra/iam/researcher-role.yaml makes about edullm-researcher carrying no prefix. The consequence
+# is no longer that no pipeline can touch it, but it is still true that no pipeline can touch it
+# by pattern: one bucket is named, and the sealed side stays out of reach.
 #
 # WHAT LIVES HERE AND WHAT DOES NOT. Whatever a researcher puts under <person>/<project>/, and
 # what the lane syncs there. Not the checkpoints of a recorded run, which go to the outputs bucket
