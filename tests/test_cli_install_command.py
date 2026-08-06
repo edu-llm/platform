@@ -168,7 +168,14 @@ BROKEN_REFUTATIONS = ("does not match install request", "not found in the packag
 
 #: The suffixes a person reads instructions out of. Everything else this repository tracks
 #: is data, generated, or binary.
-READABLE_SUFFIXES = frozenset({".md", ".toml", ".yml", ".yaml", ".py", ".sh", ".txt"})
+#:
+#: ``.ps1`` IS HERE BECAUSE THE WINDOWS SETUP SCRIPT CARRIES THE INSTALL LINE AND WAS
+#: OTHERWISE THE ONE COPY OF IT NOTHING READ. ``tools/set-up-a-laptop.sh`` and
+#: ``tools/set-up-a-laptop.ps1`` say the same things to two populations, the ``.sh`` was swept
+#: by every rule below and the ``.ps1`` by none, and the unswept half is the one nobody here
+#: can run: this repository is developed on macOS, so a wrong install line in the PowerShell
+#: file would reach a Windows researcher before it reached any of us.
+READABLE_SUFFIXES = frozenset({".md", ".toml", ".yml", ".yaml", ".py", ".sh", ".ps1", ".txt"})
 
 
 def declared_version() -> str:
