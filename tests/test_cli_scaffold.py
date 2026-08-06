@@ -23,7 +23,15 @@ import pytest
 from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED, EXIT_UNUSABLE
 from edullm_platform.cli.spec import load_spec
 from edullm_platform.cli.workspace import CommandResult
-from tests.cli_support import CONFIG_DIR, FakeRunner, failed, git_answers, invoke, ok
+from tests.cli_support import (
+    CONFIG_DIR,
+    FakeRunner,
+    failed,
+    git_answers,
+    invoke,
+    ok,
+    write_spec,
+)
 
 FIRST_CHECK = ["check", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"]
 
@@ -43,6 +51,29 @@ def answers_reading_the_tree(root: Path) -> Answers:
     """
     def status(_: tuple[str, ...]) -> CommandResult:
         return ok("?? .edullm/\n" if (root / ".edullm").exists() else "")
+
+    return {**git_answers(root), ("git", "status", "--porcelain"): status}
+
+
+def answers_from_a_clone(root: Path, *, committed: frozenset[str]) -> Answers:
+    """``git status`` where ``.edullm/`` is tracked, so a new file in it is named on its own.
+
+    This is the shape of the clone the guide sends a researcher to. ``OLMo-core`` carries a
+    committed ``.edullm/`` holding a ``Dockerfile`` and an entry point, so the directory is
+    not new and git names ``.edullm/run.yaml`` on its own rather than collapsing to the
+    directory above it. Anything under the tree that ``committed`` does not name is reported
+    untracked, which is what makes the file the scaffold writes visible here.
+    """
+    def status(_: tuple[str, ...]) -> CommandResult:
+        found = sorted(path for path in root.rglob("*") if path.is_file())
+        return ok(
+            "".join(
+                f"?? {relative}\n"
+                for path in found
+                if (relative := path.relative_to(root).as_posix()) not in committed
+                and not relative.startswith(("_tools/", "_no-"))
+            )
+        )
 
     return {**git_answers(root), ("git", "status", "--porcelain"): status}
 
@@ -275,17 +306,21 @@ def test_the_check_that_writes_a_spec_and_the_one_after_it_tell_the_same_story(
 ) -> None:
     """Mutation: read the working tree before the scaffold rather than after it.
 
-    It did, and the two runs then disagreed about one repository thirty seconds apart: the
-    first said "no refusals" having just created an uncommitted ``.edullm/run.yaml``, and
-    the second refused with ``uncommitted_changes`` naming that file. The second was right.
-    The first was reporting a tree that had stopped existing halfway through its own
-    invocation, which is the one kind of wrong answer a checking tool cannot afford --
-    somebody who sees a verdict change under them has no way to know which reading to trust.
+    It did, and the two runs then disagreed about one repository thirty seconds apart. A
+    verdict that changes under somebody with nothing else changing is the one kind of wrong
+    answer a checking tool cannot afford: they have no way to know which reading to trust.
 
     So the facts are read again after the write, and the two runs are asserted to end
-    identically rather than merely to agree about one refusal. The ``wrote`` line carries
-    the difference between them, and it is the sentence that connects the file to the
-    refusal underneath it.
+    identically rather than merely to agree about one refusal. The ``wrote`` line is the
+    whole of the difference between them.
+
+    **WHICH REFUSAL THEY AGREE ON MOVED, AND THAT IS THE OTHER HALF OF THE PROPERTY.** It
+    was ``uncommitted_changes`` naming the file the first run had just written, which was
+    consistent and was a loop with no way out of it. It is now the scaffold's own default
+    command failing the checkpoint rule, which is a thing a person can fix. Asserting the
+    two runs are identical is what holds both fixes together: excluding the spec on the
+    invocation that wrote it and nowhere else would pass every other case here and fail
+    this one.
     """
     runner = FakeRunner(answers_reading_the_tree(tmp_path))
 
@@ -297,10 +332,106 @@ def test_the_check_that_writes_a_spec_and_the_one_after_it_tell_the_same_story(
     )
 
     assert first_code == second_code == EXIT_REFUSED
-    assert "refused  uncommitted_changes" in first
+    assert "refused  checkpoint_path_not_in_command" in first
+    assert "uncommitted_changes" not in first + second
     assert first.endswith(second)
     assert "wrote " in first and "wrote " not in second
-    assert "uncommitted_changes refusal below is naming" in " ".join(first.split())
+
+
+def test_the_spec_check_wrote_is_not_a_change_the_researcher_left_uncommitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE LOOP, WHICH IS WHAT THE GUIDE'S OWN FIRST COMMAND DID IN A FRESH CLONE.
+
+    ``guides/the-platform.md`` sends a researcher to a checkout of ``OLMo-core`` and tells
+    them to type one command. That clone has a committed ``.edullm/Dockerfile`` and no
+    ``run.yaml``, so ``check`` wrote one and then refused ``uncommitted_changes`` naming the
+    file it had just written. Both remedies the refusal offers fail: ``git stash -u`` deletes
+    the file, the next ``check`` writes it back, and the identical refusal prints again.
+    Measured against the real binary in ``/tmp/olmo-core-rt`` on 2026-08-06, byte for byte.
+
+    Mutation: count an untracked spec towards ``uncommitted_changes`` again. That is the
+    shipped behaviour and this is the case that catches it. The stash arm is asserted as
+    well as the first run, because a fix that only quietened the invocation that wrote the
+    file would leave the loop turning one command further along.
+
+    The three verdicts are compared to each other rather than only to ``EXIT_OK``, which is
+    what stops the opposite mutation: an exclusion that keys off "this invocation wrote it"
+    makes ``check`` and ``check`` again disagree about one unchanged tree, and a verdict that
+    flips under a researcher is the failure the whole re-read above this exists to prevent.
+    """
+    (tmp_path / ".edullm").mkdir()
+    (tmp_path / ".edullm" / "train_on_corpus.py").write_text("print(1)\n", encoding="utf-8")
+    runner = FakeRunner(
+        answers_from_a_clone(tmp_path, committed=frozenset({".edullm/train_on_corpus.py"}))
+    )
+    spec_path = tmp_path / ".edullm" / "run.yaml"
+
+    wrote_it, first, _ = invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+    again, second, _ = invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+    spec_path.unlink()
+    after_a_stash, third, _ = invoke(
+        FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch
+    )
+
+    assert wrote_it == again == after_a_stash == EXIT_OK, first + second + third
+    assert "uncommitted_changes" not in first + second + third
+    assert first.startswith("wrote ") and third.startswith("wrote ")
+    # The one that wrote nothing says the same thing about the same tree as the two that
+    # did, minus the line naming the file. Compared whole, because a fix that agreed on the
+    # exit code and disagreed on the cost block would be the same defect one layer down.
+    assert first.endswith(second) and third.endswith(second)
+
+
+def test_a_spec_that_is_in_the_repository_and_has_been_edited_still_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The boundary the exclusion above must not cross.
+
+    A spec that is committed is the repository's recorded recipe, and an edit to it that is
+    in no commit is a real uncommitted input: the next person to check out this commit gets
+    the recipe without the edit. Git already tells the two apart -- ``??`` is a file nobody
+    has ever committed, `` M`` is a change to one that is in the repository -- so the
+    exclusion is keyed on that rather than on the path.
+
+    Mutation: exclude ``.edullm/run.yaml`` by name whatever git says about it. The loop test
+    above passes either way, which is exactly why this one is written: the cheap fix and the
+    correct one are indistinguishable from the fresh-clone case alone.
+    """
+    write_spec(tmp_path)
+    runner = FakeRunner(git_answers(tmp_path, dirty=[".edullm/run.yaml"]))
+
+    code, out, _ = invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+
+    assert code == EXIT_REFUSED
+    assert "refused  uncommitted_changes" in out
+    assert ".edullm/run.yaml" in out
+
+
+def test_an_untracked_directory_holding_more_than_the_spec_still_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The collapsed entry, which is the one place the exclusion could hide somebody's work.
+
+    ``git status`` reports a wholly untracked directory as one line naming the directory, so
+    a repository whose ``.edullm/`` is new is reported as ``.edullm/`` however many files are
+    under it. Dropping that entry because the spec is inside it would take an uncommitted
+    ``Dockerfile`` with it -- and the image is built from the commit, so a Dockerfile that is
+    in no commit is the difference between a build and a refusal from the registry.
+
+    Mutation: drop any dirty entry that is a parent of the spec. It passes the loop test,
+    because there the only thing under ``.edullm/`` is the spec, and it silently stops
+    reporting the file that decides whether an image can be built at all.
+    """
+    (tmp_path / ".edullm").mkdir()
+    (tmp_path / ".edullm" / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+    runner = FakeRunner(answers_reading_the_tree(tmp_path))
+
+    code, out, _ = invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+
+    assert code == EXIT_REFUSED, out
+    assert "refused  uncommitted_changes" in out
+    assert ".edullm/" in out
 
 
 def test_the_scaffold_line_says_nothing_about_a_refusal_that_is_not_there(

@@ -60,6 +60,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
 from typing import Final
 
 from pydantic import ValidationError
@@ -425,7 +426,7 @@ def _price_and_derive_facts(
     return cost, facts
 
 
-def working_tree_refusals(facts: GitFacts) -> list[Refusal]:
+def working_tree_refusals(facts: GitFacts, *, spec_path: Path | None = None) -> list[Refusal]:
     """What the recorded path needs of a checkout, asked of this one.
 
     ``docs-frank/reference/decisions.md`` states the three in one clause -- the recorded
@@ -434,6 +435,30 @@ def working_tree_refusals(facts: GitFacts) -> list[Refusal]:
     produces an error later: a dirty tree submits the last commit and silently runs code
     that is not what is on the laptop, and an unpushed commit published no image, so the
     refusal arrives from the registry naming a digest instead of naming a push.
+
+    **A SPEC NOBODY HAS EVER COMMITTED IS EXCLUDED, AND THAT IS THE ONE CARVE-OUT.**
+    ``check`` writes ``.edullm/run.yaml`` into a registered repository that has none, and
+    then refused on the file it had just written. Neither remedy the refusal offers lands:
+    ``git stash -u`` deletes the file, the next ``check`` writes it back, and the identical
+    refusal prints again. Measured in a fresh ``git clone --depth 1`` of ``OLMo-core`` on
+    2026-08-06, running the command ``guides/the-platform.md`` gives -- four minutes into a
+    researcher's first day, in the flagship repository, on a file the tool created itself.
+
+    The sentence above it is what makes the carve-out narrow rather than a hole. A dirty
+    tree matters because the container is built from the commit and would run something
+    other than what is on the laptop, and *nothing in the image reads this file*: it is the
+    form, the command it carries travels on the submission and is recorded on the manifest,
+    and the build reads ``.edullm/Dockerfile`` and the source. So the paragraph's own
+    argument does not reach it.
+
+    **THE BOUNDARY IS WHAT GIT ALREADY KNOWS, WHICH IS WHY IT HOLDS ACROSS INVOCATIONS.**
+    Untracked is a file nobody has ever committed; modified is a change to the recipe this
+    repository carries, and the next person to check this commit out gets the recipe without
+    it. Only the first is excluded. Keying on "the file this invocation wrote" would have
+    been the narrower-sounding rule and the wrong one: ``check`` would clear a tree that
+    ``check`` again refuses, and ``submit`` -- which never scaffolds -- would refuse what
+    ``check`` had just passed, which is the divergence this module's header calls the
+    expensive direction.
     """
     if not facts.is_a_repository:
         return [
@@ -468,11 +493,12 @@ def working_tree_refusals(facts: GitFacts) -> list[Refusal]:
                 ),
             )
         )
-    if facts.dirty_paths:
-        shown = ", ".join(facts.dirty_paths[:DIRTY_PATH_SAMPLE])
+    dirty = _dirty_paths_that_are_the_researcher_s(facts, spec_path)
+    if dirty:
+        shown = ", ".join(dirty[:DIRTY_PATH_SAMPLE])
         more = (
-            f" and {len(facts.dirty_paths) - DIRTY_PATH_SAMPLE} more"
-            if len(facts.dirty_paths) > DIRTY_PATH_SAMPLE
+            f" and {len(dirty) - DIRTY_PATH_SAMPLE} more"
+            if len(dirty) > DIRTY_PATH_SAMPLE
             else ""
         )
         refusals.append(
@@ -500,6 +526,60 @@ def working_tree_refusals(facts: GitFacts) -> list[Refusal]:
             )
         )
     return refusals
+
+
+def _dirty_paths_that_are_the_researcher_s(
+    facts: GitFacts, spec_path: Path | None
+) -> tuple[str, ...]:
+    """``facts.dirty_paths`` minus a spec nobody has ever committed. See the caller's header.
+
+    Two spellings have to be recognised because ``git status --porcelain`` has two. A spec
+    written into a tracked ``.edullm/`` is reported as ``.edullm/run.yaml``, and a spec
+    written into a repository that had no ``.edullm/`` at all collapses to ``.edullm/``.
+
+    **THE COLLAPSED SPELLING IS DROPPED ONLY WHERE THE SPEC IS THE WHOLE OF WHAT IS UNDER
+    IT, AND THAT CONDITION IS THE POINT.** The entry stands for every file in that
+    directory, so dropping it because the spec is inside would take an uncommitted
+    ``.edullm/Dockerfile`` with it -- and the image is built from the commit, so a
+    Dockerfile in no commit is the difference between a build and a refusal naming a digest.
+    Asked of the filesystem rather than of git, because git has already said the whole
+    directory is untracked and a second ``git status`` would be a second moment.
+    """
+    if spec_path is None or facts.root is None:
+        return facts.dirty_paths
+    try:
+        relative = spec_path.resolve().relative_to(facts.root.resolve()).as_posix()
+    except (OSError, ValueError):
+        return facts.dirty_paths
+    untracked = set(facts.untracked_paths)
+    return tuple(
+        entry
+        for entry in facts.dirty_paths
+        if entry not in untracked
+        or not (
+            entry == relative
+            or (entry.endswith("/") and _the_only_file_under(facts.root / entry, spec_path))
+        )
+    )
+
+
+def _the_only_file_under(directory: Path, path: Path) -> bool:
+    """Whether ``path`` is the single file anywhere beneath ``directory``.
+
+    Bounded rather than a full walk: two files is already the answer, and the directory this
+    is asked about is one git has just reported as wholly untracked, which in the case this
+    exists for holds exactly the file ``check`` wrote a moment ago.
+    """
+    found = 0
+    for candidate in directory.rglob("*"):
+        if not candidate.is_file():
+            continue
+        if candidate != path:
+            return False
+        found += 1
+        if found > 1:
+            return False
+    return found == 1
 
 
 def resolve_team(
