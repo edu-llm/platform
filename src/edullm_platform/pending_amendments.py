@@ -1066,7 +1066,39 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # moved. Deferring would have saved one put-object and spent the failure this function's
     # release record names as its own: lineage written by code nobody can point at, which
     # reads exactly like lineage written by the right code and has no later reader.
-    releases: tuple[PendingRelease, ...] = ()
+    #
+    # AN EIGHTH ENTRY, AND IT IS THE FIRST ONE OPENED BY A CHANGE THAT EXISTS TO STOP THIS
+    # FUNCTION BEING PAGED ABOUT. `edullm stop` gives a researcher a way to end their own lane
+    # machine, which is a thing they can now do inside the five-minute window between the
+    # sweep's describe-instances and its stop-instances. Landing in that window, the stop
+    # answers IncorrectInstanceState or InvalidInstanceID.NotFound, and until this change that
+    # counted as a refusal and failed the invocation on purpose -- correctly, for a machine
+    # that is expired, warned and unstoppable, and exactly wrongly for one that is already
+    # terminated. So the handler now tolerates those two codes on the stop, records the
+    # outcome as `already_gone` rather than crediting itself with the reclaim, and goes on
+    # failing for everything else.
+    #
+    # THE ACCOUNT IS THE STRICT SIDE FOR AS LONG AS THIS STANDS, WHICH IS THE ROUND THE
+    # PRECEDING ENTRY ARGUES FOR. The deployed sweep will fail an invocation when a researcher
+    # ends a machine near its expiry, which is a page about a machine that is not billing --
+    # noisy and never wrong in the direction that costs money. The tree is the permissive side
+    # and it is the side under review, so nobody meets this until the release, and what they
+    # meet before it is a false alarm rather than a missed reclaim.
+    releases: tuple[PendingRelease, ...] = (
+        PendingRelease(
+            function="janitor",
+            reason=(
+                "edullm stop lets a researcher end their own machine inside the window "
+                "between this sweep's describe and its stop, and the handler now reads the "
+                "two EC2 codes that mean the machine is already off the clock as an outcome "
+                "rather than as a refusal that fails the invocation."
+            ),
+            cleared_by=f"uv run python {RELEASE_COMMAND} --function janitor",
+            builds_to="7f9040edf6156ce9ffa84219503b16cb5b5cedf875074ee7ff8e18136e735e37",
+            released="e07efe963ec9cadb79f7345a14d9074c125e359a588e0661f99db687a757e96a",
+            recorded_on=date(2026, 8, 6),
+        ),
+    )
     return one_record_per_function(releases)
 
 

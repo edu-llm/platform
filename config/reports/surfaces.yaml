@@ -1232,7 +1232,7 @@ slices:
       # contradicted itself in plain sight: `planned` says `settled and not built` one line above
       # a `built` that read yes. Nothing in `src/`, `tools/` or `tests/` reconciles a verb list --
       # `LANE_VERBS` is a two-element tuple `main.py` branches on, not a reconciliation -- and
-      # `cli-binary` already holds the claim that the nine verbs are there.
+      # `cli-binary` already holds the claim that every verb in `BUILT_TODAY` is there.
       #
       # `under test` WENT THE SAME WAY, AND THE TEST IS WHY I STOPPED HEDGING ABOUT IT. It read
       # `tests: [tests/test_cli_run_verbs.py]`, which `cli-binary` and `exploration-route` each

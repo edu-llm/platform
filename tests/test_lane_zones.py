@@ -35,6 +35,7 @@ from edullm_platform.cli.lane import (
     find_subnets_argv,
     lane_subnets,
     no_zone_had_this_shape,
+    refusal_code,
     subnets_to_try,
     zones_offering,
     zones_offering_argv,
@@ -296,6 +297,36 @@ def test_the_two_zone_shaped_codes_are_read_off_what_the_aws_cli_actually_prints
     assert another_zone_may_answer(wrong_zone)
     assert not another_zone_may_answer("An error occurred (VcpuLimitExceeded) when calling")
     assert not another_zone_may_answer("something with no code in it")
+
+
+def test_a_code_with_a_dot_in_it_is_read_as_the_code_it_is() -> None:
+    """**A LATENT WRONG ANSWER THAT ``edullm stop`` IS THE FIRST READER TO CARE ABOUT.**
+    Mutation: keep the character class alphanumeric.
+
+    A whole family of EC2 codes carries a dot -- ``InvalidInstanceID.NotFound``,
+    ``InvalidInstanceID.Malformed``, ``InvalidGroup.NotFound`` -- and the alphanumeric class
+    matched none of them, so :func:`refusal_code` answered ``None`` and
+    :attr:`ZoneAttempt.code` printed ``no error code`` at somebody who had one on the screen
+    in front of them.
+
+    It went unnoticed because the one reader was :func:`another_zone_may_answer`, where an
+    unreadable code stops the launch loop and stopping is the safe direction. ``edullm stop``
+    reads a code to recognise one particular outcome -- an instance EC2 no longer has, which
+    is the machine the janitor reached first -- and there ``None`` is the wrong answer.
+
+    The zone loop is asserted alongside, because widening a pattern that decides whether to
+    make a second ``RunInstances`` is the kind of change that has to be shown not to.
+    """
+    vanished = (
+        "An error occurred (InvalidInstanceID.NotFound) when calling the TerminateInstances "
+        "operation: The instance ID 'i-0000000000000aaaa' does not exist"
+    )
+
+    assert refusal_code(vanished) == "InvalidInstanceID.NotFound"
+    assert not another_zone_may_answer(vanished), (
+        "no code carrying a dot is one a second zone could answer differently, so widening "
+        "the pattern must not have bought the launch loop another attempt"
+    )
 
 
 # ---------------------------------------------------------------------------------------

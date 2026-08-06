@@ -128,26 +128,35 @@ from edullm_platform.cli.lane import (
     credentials_environment,
     default_compute_profile,
     expiry_for_a_new_machine,
+    find_lane_machines_argv,
     find_machine_argv,
     find_subnets_argv,
     instance_type_for,
+    lane_machines,
     lane_refusals,
     lane_subnets,
     load_working_tier_settings,
     machine_already_running,
+    machine_for_project,
     missing_plugin_refusal,
+    no_machine_to_stop,
     no_zone_had_this_shape,
     notebook_forward_argv,
     person_from_caller_arn,
     placement_said,
     placement_verdict,
     placement_warning,
+    priced_as,
+    refusal_code,
     remote_command_argv,
     remote_script,
     run_instances_argv,
     shell_session_argv,
     ssh_proxy_command,
     subnets_to_try,
+    terminate_argv,
+    what_stopping_did,
+    whose_machine_refusals,
     working_uri,
     zones_offering,
     zones_offering_argv,
@@ -318,6 +327,7 @@ BUILT_TODAY: Final = {
     "ask": "file an ask that a person answers",
     "run": "ship this working tree to a machine and stream the output back",
     "shell": "a terminal on a machine of your own, or a notebook on it",
+    "stop": "end the machine those two started, and say what it cost",
 }
 
 #: What each built verb does, in the sentence its own ``--help`` opens with.
@@ -375,6 +385,11 @@ WHAT_A_VERB_DOES: Final = {
         "A terminal on a machine of your own, or with --notebook a Jupyter you open in a "
         "browser on your laptop. The same machine edullm run uses for this project."
     ),
+    "stop": (
+        "Terminates the machine you have for this project and says what it ran up. Your "
+        "files in the scratch bucket survive it; the machine's own disk does not. Nobody "
+        "else's machine is reachable from here."
+    ),
 }
 
 #: The verbs that are settled and unbuilt, with the sentence each prints. Present so the
@@ -406,6 +421,12 @@ NOT_BUILT_YET: Final[dict[str, str]] = {}
 #:
 #: Read a second time by :func:`_no_such_verb`, which keeps both out of the spellings it
 #: offers for a word it does not know. They are the two that spend money ungated.
+#:
+#: **``stop`` IS A LANE VERB AND IS DELIBERATELY NOT IN THIS TUPLE**, which is worth saying
+#: because its absence looks like an omission. This list is two things and ``stop`` is neither:
+#: it takes no command for somebody else's program, so there is nothing to split at a ``--``,
+#: and it spends nothing, so keeping it out of the spellings offered for an unknown word would
+#: hide the one verb somebody reaching for "kill", "halt" or "terminate" is looking for.
 LANE_VERBS: Final = ("run", "shell")
 
 #: Words that are a request for the help rather than a guess at a verb. ``help`` is a verb in
@@ -642,6 +663,20 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         help="forward Jupyter to your laptop instead of opening a terminal",
     )
 
+    stop = verb_parser("stop", WHAT_A_VERB_DOES["stop"])
+    # NOT ``_add_lane_arguments``, AND THE THREE FLAGS IT WOULD ADD ARE THE ARGUMENT. --compute,
+    # --hours and --spot all describe a machine about to be bought. This verb acts on one that
+    # exists, whose shape, lifetime and market were settled when it started, so each of them
+    # would be a flag a researcher could pass, watch be accepted, and have no effect -- which is
+    # the shape of mistake ``_add_lane_arguments``' own note about --team argues against.
+    #
+    # AND NO ``--instance``, WHICH IS THE FLAG THIS VERB WILL NOT HAVE. It is the natural next
+    # request and it is the one way past the fence: the machine acted on is whatever came back
+    # from a describe filtered on the caller's own person tag, so an id typed here would be an
+    # id that filter never saw. ``infra/iam/researcher-role.yaml`` does not fence this from
+    # underneath -- see ``find_lane_machines_argv`` -- so the absence of the flag is the fence.
+    stop.add_argument("--project", required=True, help="the machine for this project")
+
     built: dict[str, argparse.ArgumentParser] = {
         "check": check,
         "submit": submit,
@@ -652,6 +687,7 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         "ask": ask,
         "run": run,
         "shell": shell,
+        "stop": stop,
     }
     for verb, plan in NOT_BUILT_YET.items():
         # THE SENTENCE IS THE PLAN'S, READ RATHER THAN REWRITTEN. An unbuilt verb's help
@@ -1125,6 +1161,8 @@ def main(
                 out=stdout,
                 err=stderr,
             )
+        if verb == "stop":
+            return _stop(arguments, runner=command_runner, out=stdout, err=stderr)
     except KeyboardInterrupt:
         # CAUGHT BECAUSE IT IS NOT AN ``Exception`` AND SO SLIPPED PAST EVERYTHING BELOW.
         # The handler two blocks down exists so that a researcher never meets a traceback,
@@ -1916,6 +1954,163 @@ def _shell_takes_no_command(given: Sequence[str]) -> str:
             ),
             "",
             f"  edullm run --project {'...'} --compute ... -- {' '.join(given)}",
+            "",
+        ]
+    )
+
+
+# ---------------------------------------------------------------------------------------
+# stop
+# ---------------------------------------------------------------------------------------
+
+
+def _stop(
+    arguments: argparse.Namespace,
+    *,
+    runner: CommandRunner,
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """End the machine this person has for this project, and say what it cost.
+
+    **IT DOES NOT GO THROUGH ``_lane_session``, WHICH IS THE FIRST THING SOMEBODY WILL TRY TO
+    TIDY.** That function's job is to hand back a machine, and it starts one where it finds
+    none. A verb whose whole purpose is that nothing is billing must not be able to buy an
+    instance on a mistyped project, so the two share the identity call and the lane entry and
+    nothing after them. ``tests/test_cli_stop.py`` pins that no ``run-instances`` is ever
+    reachable from here.
+
+    **IT NEEDS NO SESSION MANAGER PLUGIN, AND THAT IS A PROPERTY RATHER THAN AN OVERSIGHT.**
+    Every other lane verb opens a session and refuses without the plugin. This one makes one
+    EC2 call and opens nothing, so a laptop whose plugin has broken can still end a machine it
+    can no longer connect to -- which is exactly the laptop most likely to need this verb.
+    """
+    configuration = _configuration(arguments)
+    settings = load_working_tier_settings(configuration.directory)
+    identity = runner(("aws", "sts", "get-caller-identity", "--output", "json"))
+    if not identity.ok:
+        print(_no_aws_session(identity.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+    facts = json.loads(identity.stdout)
+    person = person_from_caller_arn(str(facts["Arn"])) or ""
+    project = arguments.project or ""
+    refusals = whose_machine_refusals(person=person, project=project)
+    if refusals:
+        print(render_refusals(refusals), end="", file=err)
+        return EXIT_REFUSED
+
+    assumed = runner(
+        assume_lane_argv(
+            account=str(facts["Account"]),
+            project=project,
+            person=person,
+            # THE SESSION'S DECLARED LIFETIME AND NEVER THE MACHINE'S. The trust policy demands
+            # a non-empty ``lifetime`` session tag and this satisfies it; the machine's own
+            # lifetime is on its ExpiresAt tag and this verb is about to make it moot. Reading
+            # the lane's default keeps the number one that reviewed configuration chose rather
+            # than one written here.
+            lifetime_hours=load_lane_settings(configuration.directory).default_lifetime_hours,
+        )
+    )
+    if not assumed.ok:
+        print(_cannot_enter_the_lane(assumed.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+    environment = credentials_environment(json.loads(assumed.stdout)["Credentials"])
+
+    found = runner(find_lane_machines_argv(person=person), env=environment)
+    if not found.ok:
+        print(_could_not_look_for_a_machine(found.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+    machines = lane_machines(found.stdout)
+    machine = machine_for_project(machines, project=project)
+    if machine is None:
+        # EXIT_OK AND NOT A REFUSAL. Nothing has to change: the state this verb exists to
+        # produce is already the state. A cleanup verb that exited non-zero on the second call
+        # would be one nobody could put in a script, and the mistyped-project case -- the one
+        # reading of this that is genuinely wrong -- is answered by naming the projects that do
+        # have machines rather than by an exit code nobody reads.
+        print(
+            "\n".join(_wrapped(no_machine_to_stop(machines, project=project), indent="")), file=out
+        )
+        return EXIT_OK
+
+    ended = runner(terminate_argv(machine.machine), env=environment)
+    if not ended.ok:
+        # ALREADY GONE IS NOT A FAILURE, AND THIS IS ONE HALF OF NOT FIGHTING THE JANITOR. The
+        # sweep runs every five minutes and the window between this verb's describe and its
+        # terminate is open to it. A machine EC2 no longer knows about is a machine that is not
+        # billing, which is what was asked for.
+        if refusal_code(ended.stderr) == "InvalidInstanceID.NotFound":
+            print(
+                "\n".join(
+                    _wrapped(
+                        f"{machine.machine} is already gone -- EC2 no longer has it, so "
+                        "something ended it between this command looking and this command "
+                        "acting. Nothing of yours is billing for this project.",
+                        indent="",
+                    )
+                ),
+                file=out,
+            )
+            return EXIT_OK
+        print(_could_not_end_the_machine(machine.machine, ended.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+
+    for paragraph in what_stopping_did(
+        machine,
+        now=datetime.now(tz=UTC),
+        profile=priced_as(configuration, machine.instance_type),
+        # THE MACHINE'S OWN PROJECT TAG AND NOT THE FLAG. They agree here by construction, the
+        # flag being what matched it, and reading the tag is what keeps the printed prefix the
+        # one this machine actually synced to rather than the one it was asked for.
+        uri=working_uri(person=person, project=machine.project),
+        object_expiry_days=settings.object_expiry_days,
+    ):
+        print("\n".join(_wrapped(paragraph, indent="")), file=out)
+        print(file=out)
+    return EXIT_OK
+
+
+def _could_not_look_for_a_machine(said: str) -> str:
+    """EC2 would not say what this person has, so nothing was ended.
+
+    Separate from the message below, because the two leave different worlds behind. This one
+    acted on nothing and whatever is running is still running; that one names a machine that is
+    still billing and has to be dealt with.
+    """
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                "EC2 would not say which machines you have, so nothing was ended and anything "
+                "you had is still running. That is a call that failed rather than anything "
+                f"about what you typed, and running this again is the remedy. What AWS said: "
+                f"{said.strip()}",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+def _could_not_end_the_machine(machine: str, said: str) -> str:
+    """**THE ONE MESSAGE HERE THAT HAS TO NAME A MACHINE, BECAUSE ONE IS STILL BILLING.**
+
+    The same rule :func:`_machine_never_answered` follows. Somebody who typed this verb did so
+    to stop paying for something, and a refusal that did not name what is still running would
+    leave them with the charge and no id. The expiry is what bounds it, so it is said: the
+    janitor stops this machine at its ExpiresAt tag whatever happens to this command.
+    """
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                f"{machine} could not be ended, so it is still running and still billing. Its "
+                "expiry tag still holds, so the janitor stops it on schedule whatever happens "
+                "next, and running this again is worth trying first. What AWS said: "
+                f"{said.strip()}",
+                indent="",
+            ),
             "",
         ]
     )

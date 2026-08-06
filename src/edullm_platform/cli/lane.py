@@ -24,7 +24,8 @@ import re
 import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Final, Literal
 
@@ -61,9 +62,11 @@ __all__ = [
     "PLATFORM_NETWORK_NAME",
     "SCRATCH_BUCKET",
     "SESSION_PLUGIN",
+    "STOPPABLE_STATES",
     "ZONE_SHAPED_REFUSALS",
     "DefaultedCompute",
     "LaneExpiry",
+    "LaneMachine",
     "LaneRequest",
     "LaneSubnet",
     "WorkingTierSettings",
@@ -76,20 +79,26 @@ __all__ = [
     "default_compute_profile",
     "expires_at",
     "expiry_for_a_new_machine",
+    "find_lane_machines_argv",
     "find_machine_argv",
     "find_subnets_argv",
     "instance_type_for",
+    "lane_machines",
     "lane_refusals",
     "lane_subnets",
     "load_working_tier_settings",
     "machine_already_running",
+    "machine_for_project",
     "missing_plugin_refusal",
+    "no_machine_to_stop",
     "no_zone_had_this_shape",
     "notebook_forward_argv",
     "person_from_caller_arn",
     "placement_said",
     "placement_verdict",
     "placement_warning",
+    "priced_as",
+    "ran_for_said",
     "refusal_code",
     "remote_command_argv",
     "remote_script",
@@ -97,7 +106,10 @@ __all__ = [
     "shell_session_argv",
     "ssh_proxy_command",
     "subnets_to_try",
+    "terminate_argv",
     "under_a_shell",
+    "what_stopping_did",
+    "whose_machine_refusals",
     "working_prefix",
     "working_uri",
     "zones_offering",
@@ -471,6 +483,43 @@ def _defaulted_compute_said(
     )
 
 
+def whose_machine_refusals(*, person: str, project: str) -> tuple[Refusal, ...]:
+    """The two refusals every lane verb makes, which are about whose machine and which one.
+
+    **SHARED RATHER THAN RESTATED, BECAUSE ``stop`` MAKES EXACTLY THESE TWO AND NO OTHERS.**
+    It resolves no shape -- it acts on a machine that already exists, whatever the catalog now
+    says about that machine's type -- so :func:`lane_refusals`' third refusal is not one it can
+    make. Two copies of a detail string is how the copy nobody reviewed ends up in front of
+    somebody, and both of these name a file and a consequence at length.
+    """
+    refusals: list[Refusal] = []
+    if not person:
+        refusals.append(
+            Refusal(
+                code="cannot_tell_who_you_are",
+                detail=(
+                    "this session is already inside the lane, and sts:GetCallerIdentity does not "
+                    "return the source identity, so which person's working prefix to use cannot "
+                    "be read from it. Run this from your ordinary session and it enters the lane "
+                    "itself, which is one command rather than two."
+                ),
+            )
+        )
+    if not project:
+        refusals.append(
+            Refusal(
+                code="no_project",
+                detail=(
+                    "--project names what this machine is for. It tags the instance and the "
+                    "volume, it is the last segment of the working prefix, and it is what cost "
+                    "attribution reads. There is no default for it, because a default would put "
+                    "two unrelated pieces of work under one name and one bill."
+                ),
+            )
+        )
+    return tuple(refusals)
+
+
 def lane_refusals(
     request: LaneRequest, *, configuration: ReviewedConfiguration
 ) -> tuple[Refusal, ...]:
@@ -493,31 +542,7 @@ def lane_refusals(
     submission path makes is ruled on one at a time, and it fails when a new one is added there
     without a ruling here.
     """
-    refusals: list[Refusal] = []
-    if not request.person:
-        refusals.append(
-            Refusal(
-                code="cannot_tell_who_you_are",
-                detail=(
-                    "this session is already inside the lane, and sts:GetCallerIdentity does not "
-                    "return the source identity, so which person's working prefix to use cannot "
-                    "be read from it. Run this from your ordinary session and it enters the lane "
-                    "itself, which is one command rather than two."
-                ),
-            )
-        )
-    if not request.project:
-        refusals.append(
-            Refusal(
-                code="no_project",
-                detail=(
-                    "--project names what this machine is for. It tags the instance and the "
-                    "volume, it is the last segment of the working prefix, and it is what cost "
-                    "attribution reads. There is no default for it, because a default would put "
-                    "two unrelated pieces of work under one name and one bill."
-                ),
-            )
-        )
+    refusals = list(whose_machine_refusals(person=request.person, project=request.project))
     if instance_type_for(configuration, request.compute_profile) is None:
         refusals.append(
             Refusal(code="unknown_machine", detail=_no_machine_detail(configuration, request))
@@ -681,6 +706,349 @@ def machine_already_running(described: str) -> tuple[str, LaneExpiry] | None:
         )
         return machine, LaneExpiry(value=str(found or ""), found_running=True)
     return None
+
+
+#: Every state ``stop`` can find a machine in and has something to say about.
+#:
+#: **WIDER THAN :func:`find_machine_argv`'S TWO, AND THE EXTRA TWO ARE THE POINT.** ``pending``
+#: and ``running`` are what the other verbs look for, because those are the states a session can
+#: be opened on. A machine the janitor has already stopped is in neither, and it is invisible to
+#: every other verb in this binary while its two hundred gibibytes keep billing: ``run`` will not
+#: find it and starts a second machine, and ``expiry_janitor`` decides ``already_stopped`` and
+#: leaves it for ever. So the only route out of that state is a verb that can see it, and this
+#: is that verb.
+STOPPABLE_STATES: Final[tuple[str, ...]] = ("pending", "running", "stopping", "stopped")
+
+
+@dataclass(frozen=True)
+class LaneMachine:
+    """One machine in a person's lane, with everything ``stop`` reports about it.
+
+    The project is carried out of the tag rather than passed in beside it, which is what lets
+    one call answer both "is there one for this project" and "which projects do you have
+    machines for" -- and the second of those is what a mistyped ``--project`` needs.
+    """
+
+    machine: str
+    project: str
+    state: str
+    instance_type: str
+    #: When EC2 says it started, or nothing where that could not be read. ``None`` rather than a
+    #: guess, because this is the only input to what the machine cost and a guessed clock
+    #: produces a figure that looks measured.
+    launched: datetime | None
+    #: Whether it was bought on Spot, which bills under the catalog's rate.
+    spot: bool
+
+
+def find_lane_machines_argv(*, person: str) -> tuple[str, ...]:
+    """Every machine in this person's lane, whatever project it is for and whatever state.
+
+    **THE PERSON TAG IS THE WHOLE FENCE AND IT IS THE ONLY FILTER THAT MATTERS HERE.** The value
+    comes from :func:`person_from_caller_arn` reading the caller's own ARN, so a person asking
+    this question can only ever ask it about themselves, and somebody else's machine is not in
+    the answer to be acted on. ``infra/iam/researcher-role.yaml`` does not fence this -- its
+    ``AllowResearchWorkingSet`` statement is ``"*"`` on ``"*"`` and every deny in the policy
+    names ``ec2:RunInstances``, ``ec2:CreateTags`` or a bucket -- so a lane credential can
+    terminate anything in the account and the refusal has to be built here rather than found
+    there. That is why no verb above this takes an instance id: an id typed on a command line
+    is an id this filter never saw, and it would be the one way through.
+
+    **THE PROJECT IS NOT FILTERED ON, WHICH IS DELIBERATE AND COSTS NOTHING.** One call answers
+    both questions a person asking to stop something can have -- the machine for this project,
+    and, when there is none, which projects they do have machines for -- and a mistyped
+    ``--project`` that got back a bare "nothing found" would read as "nothing is billing", which
+    is the wrong answer to give somebody who is asking precisely because something is.
+    """
+    return (
+        "aws",
+        "ec2",
+        "describe-instances",
+        "--filters",
+        f"Name=tag:{LANE_TAG_KEY},Values={person}",
+        f"Name=instance-state-name,Values={','.join(STOPPABLE_STATES)}",
+        "--query",
+        (
+            "Reservations[].Instances[].{machine:InstanceId,state:State.Name,"
+            "type:InstanceType,launched:LaunchTime,lifecycle:InstanceLifecycle,tags:Tags}"
+        ),
+        "--output",
+        "json",
+    )
+
+
+def _launched_at(value: object) -> datetime | None:
+    """``LaunchTime`` as an instant, or nothing where it is not one.
+
+    The same rule :mod:`edullm_platform.expiry_janitor` follows for ``ExpiresAt`` and for the
+    same reason: a value that cannot be read is a machine whose cost cannot be stated, and a
+    ``TypeError`` comparing a naive instant against an aware one would be a traceback in front
+    of somebody trying to stop a machine that is billing.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def lane_machines(described: str) -> tuple[LaneMachine, ...]:
+    """:func:`find_lane_machines_argv`'s answer as the machines it is, skipping anything odd.
+
+    An entry that is not an object, or that carries no instance id, is skipped rather than
+    unpacked -- the rule :func:`machine_already_running` and :func:`lane_subnets` already hold,
+    for the reason their own notes give. Skipping reads as one fewer machine, which is a verb
+    that says it found nothing rather than a verb that raises, and nothing here invents one.
+
+    A machine with no ``Project`` tag keeps an empty project rather than being dropped. The
+    launch cannot produce one -- ``RequireProjectTagMatchingTheSessionTag`` denies a
+    ``RunInstances`` that omits it -- so this is a machine from before the tag or one somebody
+    edited, and it is still a machine of theirs that is billing. Dropping it would hide the one
+    kind of machine nothing else can find.
+    """
+    found: list[LaneMachine] = []
+    for entry in json.loads(described.strip() or "[]"):
+        if not isinstance(entry, dict):
+            continue
+        machine = str(entry.get("machine") or "")
+        if not machine:
+            continue
+        tags = entry.get("tags") or []
+        project = next(
+            (
+                str(tag.get("Value") or "")
+                for tag in tags
+                if isinstance(tag, dict) and tag.get("Key") == PROJECT_TAG_KEY
+            ),
+            "",
+        )
+        found.append(
+            LaneMachine(
+                machine=machine,
+                project=project,
+                state=str(entry.get("state") or ""),
+                instance_type=str(entry.get("type") or ""),
+                launched=_launched_at(entry.get("launched")),
+                # EC2 omits InstanceLifecycle entirely for On-Demand rather than saying so, so
+                # absent is the ordinary case and only the word "spot" means Spot.
+                spot=str(entry.get("lifecycle") or "") == "spot",
+            )
+        )
+    return tuple(found)
+
+
+def machine_for_project(machines: Sequence[LaneMachine], *, project: str) -> LaneMachine | None:
+    """The one machine this person has for this project, or nothing where they have none.
+
+    The first, where a person somehow has two. The lane starts one per person and project and
+    :func:`find_machine_argv` reuses it, so a second is a machine started while the first was
+    still ``pending`` -- and stopping one of them is strictly better than refusing to stop
+    either, which is what an ambiguity refusal here would amount to. Running the verb again
+    reaches the second.
+    """
+    return next((one for one in machines if one.project == project), None)
+
+
+def no_machine_to_stop(machines: Sequence[LaneMachine], *, project: str) -> str:
+    """What to say to somebody whose ``--project`` matched nothing they have.
+
+    **IT NAMES THE PROJECTS THEY DO HAVE MACHINES FOR, WHICH IS THE WHOLE REASON THE FINDER
+    DOES NOT FILTER ON ONE.** A person types this verb because they believe something is
+    billing. Answering a mistyped project with "nothing found" tells them the opposite of the
+    truth in the exact words that sound like reassurance, and they stop looking. Listing what
+    is actually running turns a wrong answer into the right one at no extra call.
+    """
+    others = sorted({one.project or "(no project tag)" for one in machines})
+    if not others:
+        return (
+            f"you have no machine in the lane, for {project!r} or for anything else, so there "
+            "is nothing to stop and nothing of yours is billing. This looked for machines "
+            "tagged with your own name and no other person's, which is the only kind this can "
+            "reach."
+        )
+    return (
+        f"you have no machine for {project!r}. You do have one for each of: "
+        f"{', '.join(others)}. Nothing was stopped, because a project name is what says which "
+        "machine you meant and this verb will not guess at one that is billing."
+    )
+
+
+def terminate_argv(instance_id: str) -> tuple[str, ...]:
+    """End one machine, releasing its volume with it.
+
+    **TERMINATE AND NOT STOP, WHICH IS THE DECISION THIS VERB IS AND IS WORTH THE PARAGRAPHS.**
+    The expiry janitor calls ``StopInstances`` and that is the right call *for the janitor*: it
+    acts on a machine nobody asked it to touch, on a clock rather than on a person's word, so it
+    takes the expensive half off the bill and leaves every recovery open. This verb is the
+    person saying they are finished. Those are different acts and they get different calls.
+
+    Three things make stop the wrong one here, and each is enough on its own.
+
+    ``find_machine_argv`` looks for ``pending`` and ``running``, so **a stopped machine is
+    invisible to ``edullm run`` and ``edullm shell``**: the next invocation does not find it and
+    starts a second one. ``expiry_janitor._decide`` answers ``already_stopped`` for anything not
+    running, so **nothing ever reclaims it**. And its root volume is two hundred gibibytes of
+    gp3 that goes on billing while it sits there. A verb whose ordinary use leaves one of those
+    behind each time is a leak that compounds silently, which is a worse failure than the hour
+    of billing it was built to save.
+
+    **AND THE VOLUME IS SCRATCH BY CONSTRUCTION RATHER THAN BY THIS CHOICE.** ``remote_script``
+    syncs ``/work/<project>`` down from ``edullm-scratch`` before every ``edullm run`` and back
+    up after it, and ``edullm shell`` prints in its own first lines that what survives the
+    machine is the bucket. The durable thing is the prefix and the disk is a cache of it, so the
+    machine is the part that is meant to be disposable. Terminating is that layout taken at its
+    word; stopping preserves a copy of something the design already says is not the copy.
+
+    It is also the more forgiving call to make twice. ``TerminateInstances`` on an
+    already-terminated machine succeeds, where ``StopInstances`` on one refuses.
+    """
+    return (
+        "aws",
+        "ec2",
+        "terminate-instances",
+        "--instance-ids",
+        instance_id,
+        "--query",
+        "TerminatingInstances[0].CurrentState.Name",
+        "--output",
+        "text",
+    )
+
+
+def priced_as(configuration: ReviewedConfiguration, instance_type: str) -> ComputeProfile | None:
+    """The catalog entry for one instance type, or nothing where the catalog prices none.
+
+    Keyed on the instance type because that is what EC2 reports and the profile name is on
+    nothing the machine carries. Sorted by name where two profiles share a type, so which one
+    is quoted does not depend on the order a file happens to be written in;
+    :func:`instance_types_the_catalog_prices` already records that sharing is permitted.
+
+    Nothing here is a refusal. A machine of a shape the catalog has stopped pricing is still a
+    machine that has to be stoppable, and :func:`what_stopping_did` says the cost is unknown
+    rather than declining to end it.
+    """
+    matching = sorted(
+        (
+            profile
+            for profile in configuration.catalog.compute_profiles
+            if profile.instance_type == instance_type
+        ),
+        key=lambda profile: profile.name,
+    )
+    return matching[0] if matching else None
+
+
+def ran_for_said(ran: timedelta) -> str:
+    """How long a machine was up, in the words somebody would use for it.
+
+    Days and hours, or hours and minutes, or minutes -- never all three, and never seconds. The
+    figure this decorates is approximate by construction, so a duration precise to the second
+    beside it would be claiming an accuracy the money does not have.
+    """
+    minutes = max(int(ran.total_seconds() // 60), 0)
+    if minutes < 1:
+        return "less than a minute"
+    days, rest = divmod(minutes, 60 * 24)
+    hours, left = divmod(rest, 60)
+    parts = [
+        *([f"{days} day{'s' if days != 1 else ''}"] if days else []),
+        *([f"{hours} hour{'s' if hours != 1 else ''}"] if hours else []),
+        # Dropped once a machine has run for days: "2 days 3 hours 7 minutes" is three
+        # numbers where the third cannot matter to anybody reading the first.
+        *([f"{left} minute{'s' if left != 1 else ''}"] if left and not days else []),
+    ]
+    return " ".join(parts)
+
+
+def _ran_up(rate_per_hour: Decimal, ran: timedelta) -> Decimal:
+    """What a machine at one rate cost over one duration, to the cent.
+
+    ``Decimal`` throughout and never a float, which is ``presentation.py``'s rule and this
+    repository's: a rate of ``0.8048`` through binary floating point is not the number in
+    ``config/workload-catalog.yaml``, and a figure a researcher compares against a bill has to
+    be arithmetic they can repeat.
+    """
+    hours = Decimal(int(ran.total_seconds())) / Decimal(3600)
+    return (rate_per_hour * hours).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def what_stopping_did(
+    machine: LaneMachine,
+    *,
+    now: datetime,
+    profile: ComputeProfile | None,
+    uri: str,
+    object_expiry_days: int,
+) -> tuple[str, ...]:
+    """What the researcher reads after their machine is gone: what it was, what it cost, and
+    where their files are.
+
+    **THREE FACTS AND ALL THREE ARE LOAD-BEARING.** A verb that said only "terminated" would
+    leave somebody guessing at the bill they were trying to stop, and guessing at whether the
+    work went with the disk. The one that is easy to leave out is the last: the scratch prefix
+    survives the machine, which is the whole reason the layout puts the durable half in a
+    bucket, and a person who has just watched an instance disappear has no way to know that
+    unless it is said here.
+
+    **THE COST IS QUOTED WITH WHAT IT IS AND IS NOT, RATHER THAN AS A NUMBER.** It is the
+    catalog's on-demand rate against the wall clock since ``LaunchTime``, so it excludes the
+    volume and the traffic and it is a ceiling for a machine bought on Spot. ``AGENTS.md``
+    forbids quoting a price from memory or from a document; this reads it out of reviewed
+    configuration at the moment of asking and names the file it came from, which is the same
+    discipline pointed at a figure rather than at a refusal.
+    """
+    ran = None if machine.launched is None else now - machine.launched
+    return (
+        (
+            f"{machine.machine} is terminated, and it was {machine.state} until this ran. "
+            + _what_it_ran_up(machine, ran=ran, profile=profile)
+        ),
+        (
+            f"Your files are at {uri}, which survives the machine and holds what is in it "
+            f"for {object_expiry_days} days. The machine's own disk went with the machine, "
+            "which is what it was for: edullm run syncs that prefix down before your command "
+            "and back up after it, so a new machine for this project picks up where this one "
+            "left off."
+        ),
+    )
+
+
+def _what_it_ran_up(
+    machine: LaneMachine, *, ran: timedelta | None, profile: ComputeProfile | None
+) -> str:
+    """The money sentence, composed from what is actually known rather than written once.
+
+    Four causes and four sentences, on the rule :meth:`LaneExpiry.said` states: a message two
+    causes share is a message doing none of its job. An unreadable ``LaunchTime`` and a shape
+    the catalog has stopped pricing are different reasons to have no figure, and a machine
+    bought on Spot has a figure that means something different from the same figure on demand.
+    """
+    if ran is None:
+        return (
+            f"EC2 did not say when it started, so how long it ran and what it cost cannot be "
+            f"stated here. It was a {machine.instance_type}."
+        )
+    duration = ran_for_said(ran)
+    if profile is None:
+        return (
+            f"It ran {duration} on a {machine.instance_type}, which "
+            "config/workload-catalog.yaml no longer prices, so what it cost is not something "
+            "this can say."
+        )
+    rate = serialize_decimal(profile.hourly_rate_usd)
+    spent = serialize_decimal(_ran_up(profile.hourly_rate_usd, ran))
+    spot = (
+        " It was bought on Spot, which bills under that rate, so read the figure as a ceiling."
+        if machine.spot
+        else ""
+    )
+    return (
+        f"It ran {duration} on a {machine.instance_type}, which config/workload-catalog.yaml "
+        f"prices as {profile.name} at ${rate}/hour, so roughly ${spent}. That is the machine "
+        f"and not its disk or its traffic.{spot}"
+    )
 
 
 def assume_lane_argv(
@@ -927,7 +1295,18 @@ ZONE_SHAPED_REFUSALS: Final[frozenset[str]] = frozenset(
 
 #: How the AWS CLI spells an API error code in what it writes to stderr. The rest of that line
 #: is prose AWS rewords, which is the thing ``AGENTS.md`` tells every caller not to match on.
-_AWS_ERROR_CODE = re.compile(r"An error occurred \(([A-Za-z][A-Za-z0-9]*)\)")
+#:
+#: **THE DOT IS IN THE CLASS AND IT WAS NOT UNTIL 2026-08-06.** A whole family of EC2 codes is
+#: spelled with one -- ``InvalidInstanceID.NotFound``, ``InvalidInstanceID.Malformed``,
+#: ``InvalidGroup.NotFound`` -- and against the alphanumeric-only class this matched none of
+#: them and answered ``None``. That is the safe direction for :func:`another_zone_may_answer`,
+#: which is why it went unnoticed: an unreadable code stops the launch loop, which is what an
+#: unreadable code should do. It is the wrong direction everywhere a code is read to recognise
+#: one particular outcome, and ``edullm stop`` reads exactly one -- an instance EC2 no longer
+#: has, which is the machine the expiry janitor got to first. Widening changes nothing about
+#: the zone loop: no code in :data:`ZONE_SHAPED_REFUSALS` carries a dot, so a dotted code is
+#: still not one a second zone could answer differently.
+_AWS_ERROR_CODE = re.compile(r"An error occurred \(([A-Za-z][A-Za-z0-9.]*)\)")
 
 
 def refusal_code(said: str) -> str | None:
