@@ -12,12 +12,23 @@ instruction now lives in :mod:`edullm_platform.cli.release` and every other copy
 against it here. The same rule catches the other half: ``uv tool upgrade`` reports
 ``Nothing to upgrade`` for a git-installed tool, so a guide that suggests it tells a
 researcher they are current when they are not, and no file may say it without saying that.
+
+THREE RULES ARE READ OVER THE TRACKED TREE, AND THE THIRD IS THE ONE THAT WAS MISSING. No
+file may recommend the upgrade command, no file may name the wrong install line, and no
+file may carry the right install line without saying that re-running it is the upgrade.
+The third was the gap: a file that mentions ``uv tool upgrade`` nowhere passes the first
+rule by saying nothing, which is exactly what ``README.md`` did while carrying the install
+line on the front page. The corpus is ``git ls-files`` rather than a walk of the checkout,
+because the walk read whatever a working directory happened to hold and failed on one
+laptop over a gitignored document, which is a failure nobody in CI can see and therefore
+nobody owns.
 """
 
 from __future__ import annotations
 
 import os
 import shlex
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -41,16 +52,21 @@ UPGRADE_COMMAND = "uv tool upgrade"
 #: it and recommending it.
 UPGRADE_REFUTATION = "Nothing to upgrade"
 
-#: The suffixes a person reads instructions out of. Everything else in this tree is data,
-#: generated, or binary.
-READABLE_SUFFIXES = frozenset({".md", ".toml", ".yml", ".yaml", ".py", ".sh", ".txt"})
+#: The console script written where a distribution belongs. Both wrong install lines this
+#: project has evidence of start here: ``uv tool install edullm --from git+...``, which sat
+#: in ``pyproject.toml``'s comment unrun, and a bare ``uv tool install edullm``, which the
+#: owner was handed by an assistant and which answers "not found in the package registry".
+BROKEN_INSTALL = "uv tool install edullm"
 
-#: Directories with nothing addressed to a researcher in them, pruned rather than filtered
-#: so the walk does not descend into a virtualenv. ``docs-frank`` is not listed because it
-#: is not in this repository at all.
-PRUNED = frozenset(
-    {".git", ".venv", ".mypy_cache", ".pytest_cache", "__pycache__", "schemas", "proof"}
-)
+#: uv's answer to the ``--from`` form, and the phrase every file that quotes the wrong line
+#: already carries. Same bargain as ``UPGRADE_REFUTATION``: naming the broken command is
+#: allowed, because it has to be written down somewhere or the next person reinvents it,
+#: but only beside the sentence that says it does not work.
+BROKEN_REFUTATION = "does not match install request"
+
+#: The suffixes a person reads instructions out of. Everything else this repository tracks
+#: is data, generated, or binary.
+READABLE_SUFFIXES = frozenset({".md", ".toml", ".yml", ".yaml", ".py", ".sh", ".txt"})
 
 
 def declared_version() -> str:
@@ -58,15 +74,51 @@ def declared_version() -> str:
 
 
 def readable_files() -> list[Path]:
-    found: list[Path] = []
-    for directory, subdirectories, filenames in os.walk(PROJECT_ROOT):
-        subdirectories[:] = [name for name in subdirectories if name not in PRUNED]
-        found.extend(
-            Path(directory) / filename
-            for filename in filenames
-            if Path(filename).suffix in READABLE_SUFFIXES
-        )
-    return sorted(found)
+    """Every tracked file a person reads instructions out of.
+
+    ASKED OF GIT RATHER THAN OF THE FILESYSTEM, BECAUSE THE FILESYSTEM ANSWERS A DIFFERENT
+    QUESTION ON EVERY MACHINE. This used to be an ``os.walk`` of the checkout with a prune
+    list, which reads whatever a working directory happens to contain -- so the rules below
+    matched a gitignored planning document under ``docs-frank/`` that exists on one laptop
+    and nowhere else. Three agents in one evening hit that failure, each confirmed it also
+    failed on ``main``, each correctly concluded it was not theirs, and none of them owned
+    it, which is what a test that cannot fail in CI buys.
+
+    Tracked, rather than a hand-written list of the four documents that carry the install
+    line today. The bug being policed is a wrong line *spreading*: it reached two terminal
+    transcripts before anybody ran it, and neither of those would have been on a list.
+    ``git ls-files`` is the same set on every machine and in CI, it is exactly what a push
+    carries, and a guide added tomorrow is inside it without anybody remembering to say so.
+    The prune list went with the walk: nothing in ``.git``, ``.venv`` or a cache is tracked,
+    and the generated trees that were pruned by name hold no readable suffix.
+
+    A tracked path deleted in the working tree is skipped rather than read. It has no
+    content to police, and the guard below is what keeps that from quietly emptying this.
+    """
+    listing = subprocess.run(
+        ("git", "ls-files", "-z"),
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return sorted(
+        path
+        for name in listing.split("\0")
+        if name and Path(name).suffix in READABLE_SUFFIXES
+        if (path := PROJECT_ROOT / name).is_file()
+    )
+
+
+def flattened(path: Path) -> str:
+    """The file as one line, so a rule below is not defeated by where a sentence wrapped.
+
+    Every phrase these rules look for is long enough to wrap, and two of them already do:
+    ``release.py``'s docstring breaks the wrong install line after ``install`` and breaks
+    uv's answer after ``match``. A rule that a reformat can switch off is a rule nobody can
+    rely on, so the comparison is made against text with its line breaks collapsed.
+    """
+    return " ".join(path.read_text(encoding="utf-8", errors="replace").split())
 
 
 def test_the_command_in_pyproject_is_the_one_the_code_spells() -> None:
@@ -220,8 +272,7 @@ def test_nothing_recommends_the_upgrade_command_that_does_not_work() -> None:
     offenders = [
         str(path.relative_to(PROJECT_ROOT))
         for path in readable_files()
-        if UPGRADE_COMMAND in (text := path.read_text(encoding="utf-8", errors="replace"))
-        and UPGRADE_REFUTATION not in text
+        if UPGRADE_COMMAND in (text := flattened(path)) and UPGRADE_REFUTATION not in text
     ]
 
     assert not offenders, (
@@ -233,8 +284,91 @@ def test_nothing_recommends_the_upgrade_command_that_does_not_work() -> None:
     )
 
 
-def test_the_rule_above_is_reading_files_that_exist() -> None:
-    """Guards the walk: a bad prune list would make the case above vacuously pass."""
-    names = {path.name for path in readable_files()}
+def test_nothing_tells_anybody_to_install_the_console_script() -> None:
+    """Mutation: write the old ``--from`` line, or a bare ``uv tool install edullm``, into
+    a tracked document.
 
-    assert {"pyproject.toml", "README.md", "release-tag.yml", "main.py"} <= names
+    The rule above catches a *replaced* install line, because it asserts the right one is
+    present. It cannot catch an *added* wrong one, and added is how this shipped: the
+    broken command lived in a comment beside nothing, was read by no test and no linter,
+    and was copied into two transcripts as the first thing a researcher types. Tonight the
+    owner typed the other spelling of the same confusion, a bare ``uv tool install
+    edullm``, and got "not found in the package registry" -- so the failure is not one
+    historical line but the console script standing where the distribution belongs.
+
+    Both spellings begin the same way, which is what makes one cheap phrase enough.
+    """
+    offenders = [
+        str(path.relative_to(PROJECT_ROOT))
+        for path in readable_files()
+        if BROKEN_INSTALL in (text := flattened(path)) and BROKEN_REFUTATION not in text
+    ]
+
+    assert not offenders, (
+        f"these name `{BROKEN_INSTALL}` without saying that uv refuses it -- `edullm` is "
+        f"the console script and {DISTRIBUTION} is the distribution:\n  "
+        + "\n  ".join(offenders)
+        + f"\nWrite {install_command(repository=PLATFORM_REPOSITORY)} instead, or quote "
+        f"uv's answer ({BROKEN_REFUTATION!r}) beside it."
+    )
+
+
+def test_every_file_that_says_how_to_install_says_how_to_upgrade() -> None:
+    """Mutation: delete the upgrade sentence from ``README.md``.
+
+    The two halves were held separately and only one of them was enforced everywhere. Any
+    file may be checked for recommending ``uv tool upgrade``, but a file that never
+    mentions it passes that check by saying nothing -- and saying nothing is the failure.
+    Somebody who installs successfully reaches for ``upgrade`` next, and uv answers
+    ``Nothing to upgrade`` with a zero exit whatever the state of the install, so the
+    obvious command tells them they are current when they are months behind.
+
+    ``README.md`` was in exactly that state when this rule was written: it carried the
+    install line, in the one paragraph on the front page addressed to somebody about to
+    type it, and said nothing about what to do next. So the pairing is the rule. A file
+    that tells a researcher how to install has to tell them how to stay current, because it
+    is the only file some of them will read.
+    """
+    unpinned = install_command(repository=PLATFORM_REPOSITORY)
+    offenders = [
+        str(path.relative_to(PROJECT_ROOT))
+        for path in readable_files()
+        if unpinned in (text := flattened(path)) and UPGRADE_REFUTATION not in text
+    ]
+
+    assert not offenders, (
+        "these carry the install line without saying that re-running it is the upgrade, "
+        f"so a reader who reaches for `{UPGRADE_COMMAND}` is told {UPGRADE_REFUTATION!r} "
+        "and believes it:\n  "
+        + "\n  ".join(offenders)
+        + f"\nSay beside the line that {UPGRADE_COMMAND} answers {UPGRADE_REFUTATION!r} "
+        "for a git-installed tool and that re-running the line is how you upgrade."
+    )
+
+
+def test_the_rules_above_read_the_repository_and_not_somebody_s_working_directory() -> None:
+    """Guards the corpus at both ends, because it has already been wrong at both.
+
+    Too narrow is the shape this repository keeps finding: a scan scoped until it matches
+    nothing passes forever and reports success. So the files the three rules exist for are
+    named here, and losing any of them is a failure rather than a quiet green.
+
+    Too wide is the bug this scoping fixed, and it is asserted rather than described. An
+    untracked file is written into the checkout and the corpus must not contain it, which
+    is the whole difference between the old walk and ``git ls-files``. It carries no phrase
+    any rule looks for, so the workers this suite runs beside cannot trip over it while it
+    exists.
+    """
+    assert {"pyproject.toml", "README.md", "release-tag.yml", "main.py"} <= {
+        path.name for path in readable_files()
+    }
+
+    probe = PROJECT_ROOT / f".untracked-probe-{os.getpid()}.md"
+    probe.write_text("Written and removed by the test below it.\n", encoding="utf-8")
+    try:
+        assert probe not in readable_files(), (
+            f"{probe.name} is untracked and was read anyway, so these rules answer "
+            "differently depending on what is lying around in somebody's checkout"
+        )
+    finally:
+        probe.unlink()
