@@ -41,6 +41,8 @@ import yaml
 from infrastructure_support import ACCOUNT_LITERAL, INFRA_ROOT
 from workflow_support import WORKFLOWS_ROOT, aws_commands, load_workflow
 
+from edullm_platform.stack_templates import STACK_TEMPLATES
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TOOL = PROJECT_ROOT / "tools" / "verify_deployed_stacks.py"
 
@@ -473,8 +475,12 @@ def test_a_deployed_stack_the_table_does_not_claim_is_a_finding(
     assert "deployed_stack_is_unaccounted_for" in err
     assert UNMAPPED_STACK in err
     # Naming the table is the actionable half: the reader has to decide whether the stack
-    # belongs, and either way the next edit is in one file.
-    assert "tools/verify_deployed_stacks.py" in err
+    # belongs, and either way the next edit is in one file. This asserted the tool's own
+    # path until 2026-08-06, and went on asserting it after the table moved to the library,
+    # so the one instruction the audit gives about an unclaimed stack pointed at a derived
+    # comprehension and a test held it there.
+    assert module.STACK_TABLE in err
+    assert "verify_deployed_stacks" not in err
 
 
 def test_a_table_entry_that_is_not_deployed_is_also_a_finding(
@@ -730,7 +736,7 @@ def test_a_stack_nothing_accounts_for_is_a_finding_in_every_status_it_can_exist_
     assert "deployed_stack_is_unaccounted_for" in err
     # Naming the table is the actionable half whatever the status: the reader has to decide
     # whether the stack belongs before deciding anything about the state it is in.
-    assert "tools/verify_deployed_stacks.py" in err
+    assert module.STACK_TABLE in err
     assert f"{UNMAPPED_STACK} is deployed from" not in out
 
 
@@ -1226,6 +1232,19 @@ def test_every_stack_a_workflow_deploys_carries_the_prefix(module: Any) -> None:
     """
     for name, _ in sorted(workflow_deploys()):
         assert name.startswith(module.STACK_NAME_PREFIX), name
+
+
+def test_the_table_the_finding_names_is_the_one_a_reader_has_to_edit(module: Any) -> None:
+    """Mutation: write the path out, which is what went stale.
+
+    `STACKS` in the tool is a resolution of the table and not the table, and it kept that
+    name when the table moved to the library, so an instruction naming the tool's own file
+    sends a reader to a dict comprehension -- which accepts the edit and drops it on the next
+    run. Derived from the imported module here, so it cannot name a table that is not there.
+    """
+    where, _, attribute = module.STACK_TABLE.rpartition(".")
+
+    assert getattr(importlib.import_module(where), attribute) == STACK_TEMPLATES
 
 
 def test_every_committed_template_is_claimed_by_a_stack(module: Any) -> None:
