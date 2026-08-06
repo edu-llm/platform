@@ -547,28 +547,123 @@ def test_a_status_holding_no_deployed_template_is_not_read_as_a_deployed_stack(
     assert "declared_stack_is_not_deployed" in err
 
 
-def test_a_status_this_check_has_never_heard_of_is_compared_rather_than_dropped(
+def test_only_the_three_statuses_that_mean_a_template_took_are_read_as_deployed(
+    module: Any,
+) -> None:
+    """The allow-list is exactly the three terminal successes, and nothing has crept in.
+
+    Enumerated from the ``StackStatus`` valid values on the ``Stack`` and ``StackSummary``
+    types in the CloudFormation API reference, which lists twenty-three. Asserted as a set
+    rather than by membership so that widening it is an edit to this line: the way this
+    check goes quiet again is somebody adding a status here to make a red run green.
+    """
+    assert module.STATUSES_WITH_A_TEMPLATE_APPLIED == frozenset(
+        {"CREATE_COMPLETE", "UPDATE_COMPLETE", "IMPORT_COMPLETE"}
+    )
+    assert not (
+        module.STATUSES_WITH_A_TEMPLATE_APPLIED & module.STATUSES_WITHOUT_A_DEPLOYED_TEMPLATE
+    )
+
+
+#: Every status the CloudFormation API reference lists for ``StackStatus``, less the three
+#: that mean the template took and the two that mean the name exists with nothing under it.
+#: Each of these must be a finding, and the list is written out rather than derived so that a
+#: status dropping out of it is a visible edit.
+UNHEALTHY_STATUSES = [
+    "CREATE_IN_PROGRESS",
+    "CREATE_FAILED",
+    "ROLLBACK_IN_PROGRESS",
+    "ROLLBACK_FAILED",
+    "ROLLBACK_COMPLETE",
+    "DELETE_IN_PROGRESS",
+    "DELETE_FAILED",
+    "UPDATE_IN_PROGRESS",
+    "UPDATE_COMPLETE_CLEANUP_IN_PROGRESS",
+    "UPDATE_FAILED",
+    "UPDATE_ROLLBACK_IN_PROGRESS",
+    "UPDATE_ROLLBACK_FAILED",
+    "UPDATE_ROLLBACK_COMPLETE_CLEANUP_IN_PROGRESS",
+    "UPDATE_ROLLBACK_COMPLETE",
+    "IMPORT_IN_PROGRESS",
+    "IMPORT_ROLLBACK_IN_PROGRESS",
+    "IMPORT_ROLLBACK_FAILED",
+    "IMPORT_ROLLBACK_COMPLETE",
+]
+
+
+@pytest.mark.parametrize("status", [*UNHEALTHY_STATUSES, "SOME_STATUS_INVENTED_IN_2027"])
+def test_a_status_that_does_not_mean_the_template_took_is_a_finding(
     module: Any,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     agreeing: dict[str, str],
+    status: str,
 ) -> None:
-    """Mutation: name the statuses that count and ignore everything else.
+    """Everything outside the allow-list fails, including a status nobody anticipated.
 
-    AWS adds stack statuses. An allow-list would drop a stack into a status added after this
-    was written, silently, which is the failure this whole module is about pointed at itself.
-    The exclusion list is two statuses long and everything outside it is looked at.
+    This is the property, and it is worth more than a case asserting ROLLBACK_COMPLETE
+    fails. A test naming one status catches that status; this one catches the next status
+    AWS invents, which is the failure the exclusion list this replaced was built around --
+    it dropped a stack into an unrecognised status silently, and silence here reads as a
+    pass.
+
+    The account answers with the committed templates throughout, so the stack under test
+    agrees with main in every respect except its status. A check that compared it would go
+    green. That is exactly what happened to sbsandbox-intern-edullm-notifications on
+    2026-08-05 and why the comparison is not reached from here.
     """
     answer_cloudformation_with(
         monkeypatch,
         module,
         agreeing,
-        statuses={GPU_ROLES_STACK: "SOME_STATUS_INVENTED_IN_2027"},
+        statuses={GPU_ROLES_STACK: status},
     )
 
     code, _, err = run_main(module, capsys)
 
-    assert code == module.EXIT_OK, err
+    assert code == module.EXIT_DISAGREES
+    assert "deployed_stack_is_not_healthy" in err
+    assert GPU_ROLES_STACK in err
+    assert status in err
+    # Not reported as a mismatch of content, which would send a reader to diff a template
+    # that is not the problem, and not as unreadable, which would send them to a grant.
+    assert "deployed_stack_is_not_main" not in err
+    assert "deployed_stack_unreadable" not in err
+
+
+def test_the_rolled_back_create_that_this_check_called_a_pass(
+    module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    agreeing: dict[str, str],
+) -> None:
+    """The 2026-08-05 outage, as the account held it, end to end.
+
+    CI created sbsandbox-intern-edullm-notifications at 23:42 UTC, lambda:CreateFunction was
+    refused for want of iam:PassRole on sbsandbox-intern-edullm-notifier-lambda, and the
+    stack rolled back six seconds later holding none of its four resources. get-template
+    went on returning the template it had tried, so this check compared that against main,
+    found nothing, and printed a pass -- while every dispatch of deploy-phase3-batch.yml
+    died on the stack being unupdatable.
+
+    Named separately from the parametrised case above because the repair differs: this is
+    the one status where deleting the stack is both safe and necessary, and the message has
+    to say so.
+    """
+    stack = "sbsandbox-intern-edullm-notifications"
+    answer_cloudformation_with(
+        monkeypatch,
+        module,
+        agreeing,
+        statuses={stack: "ROLLBACK_COMPLETE"},
+    )
+
+    code, out, err = run_main(module, capsys)
+
+    assert code == module.EXIT_DISAGREES
+    assert "deployed_stack_is_not_healthy" in err
+    assert f"{stack} is deployed from" not in out
+    assert "delete the stack" in err
 
 
 # ----------------------------------------------------------------------------------------

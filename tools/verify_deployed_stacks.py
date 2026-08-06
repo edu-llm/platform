@@ -33,6 +33,14 @@ comment in ``infra/outputs-bucket.yaml`` alone would make a text comparison red 
 for four of the twenty-one stacks. Key order, indentation and quoting are all free to move as
 well. A check that cries wolf gets ignored, which is the same as not having one.
 
+**A stack is compared only from a status that means a template is applied, and every other
+status is a finding.** Three of the twenty-three CloudFormation stack statuses mean the
+template took: ``CREATE_COMPLETE``, ``UPDATE_COMPLETE`` and ``IMPORT_COMPLETE``. This was an
+exclusion list of two until 2026-08-05, when a stack whose create had failed and rolled back
+read as a clean pass here while it was breaking a deploy workflow -- ``get-template`` returns
+the template a failed create attempted, so the comparison agreed with itself about resources
+the account did not hold. See :data:`STATUSES_WITH_A_TEMPLATE_APPLIED`.
+
 **The two non-zero exits mean different things and a caller must not merge them.** Exit 1
 says the account and ``main`` disagree and sends a reader to a stack. Exit 2 says this check
 did not manage to look and sends them to a credential or a grant. Reporting the second as the
@@ -74,6 +82,7 @@ __all__ = [
     "STACKS",
     "STACK_NAME_PREFIX",
     "STATUSES_WITHOUT_A_DEPLOYED_TEMPLATE",
+    "STATUSES_WITH_A_TEMPLATE_APPLIED",
     "DeployedStackFinding",
     "Difference",
     "Stack",
@@ -121,12 +130,44 @@ STACK_NAME_PREFIX: Final = "sbsandbox-intern-edullm-"
 #: deleted stack is returned by ``list-stacks`` forever, and a stack in ``REVIEW_IN_PROGRESS``
 #: has a change set that was never executed.
 #:
-#: An exclusion list rather than a list of the statuses that count, because AWS adds
-#: statuses. An allow-list would drop a stack into a status invented after this was written,
-#: silently, which is this check's own failure mode pointed at itself. Excluding a stack here
-#: hides nothing either: one the table claims then falls out as declared and not deployed.
+#: These two are dropped from the listing rather than reported, and that is safe for these
+#: two alone: a stack the table claims then falls out as declared and not deployed, which is
+#: a finding on the next line. Nothing else may be dropped, and
+#: :data:`STATUSES_WITH_A_TEMPLATE_APPLIED` is what enforces that.
 STATUSES_WITHOUT_A_DEPLOYED_TEMPLATE: Final = frozenset(
     {"DELETE_COMPLETE", "REVIEW_IN_PROGRESS"}
+)
+
+#: Every status under which CloudFormation holds a template applied in full and the resources
+#: it declares exist. These three and no others, enumerated from the ``StackStatus`` valid
+#: values on the ``Stack`` and ``StackSummary`` types in the CloudFormation API reference,
+#: which lists twenty-three.
+#:
+#: **This was an exclusion list and it hid a live outage.** On 2026-08-05 CI created
+#: ``sbsandbox-intern-edullm-notifications`` at 23:42 UTC, ``lambda:CreateFunction`` was
+#: refused for want of ``iam:PassRole``, and the stack rolled back six seconds later holding
+#: nothing. ``ROLLBACK_COMPLETE`` was outside the two-status exclusion above, so the stack was
+#: read as deployed, ``cloudformation:GetTemplate`` returned the template it had tried and
+#: rolled back, the comparison found no difference, and this check called it a pass. A stack
+#: that failed to exist was indistinguishable from one deployed cleanly, while every dispatch
+#: of ``deploy-phase3-batch.yml`` died on it.
+#:
+#: **An allow-list, and the argument that used to be against one is answered rather than
+#: overruled.** That argument was that AWS adds statuses and an allow-list would drop a stack
+#: into a new one silently. It would, if an unrecognised status were dropped. It is not:
+#: anything outside these three and the two above is its own finding, named with the status
+#: it is in. So a status invented after this was written is loud on the first run that meets
+#: it, which is the opposite of what the exclusion list did.
+#:
+#: The excluded middle is deliberate and each part of it earns a finding. Every
+#: ``_IN_PROGRESS`` status means a deploy is mid-flight and the account is not yet what any
+#: template says. Every ``_FAILED`` status means an operation stopped partway. Every rollback
+#: status means an operation was undone, and that includes ``UPDATE_ROLLBACK_COMPLETE`` and
+#: ``IMPORT_ROLLBACK_COMPLETE``, which are stable and are still not healthy: the stack holds
+#: whatever it held before the operation nobody managed to complete, which is by definition
+#: not the template that was just applied to it.
+STATUSES_WITH_A_TEMPLATE_APPLIED: Final = frozenset(
+    {"CREATE_COMPLETE", "UPDATE_COMPLETE", "IMPORT_COMPLETE"}
 )
 
 #: How the CLI opens every service error. The code inside the brackets is a fixed token and
@@ -630,6 +671,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         _report(finding)
         deployed = None
 
+    # BEFORE ANY COMPARISON, BECAUSE THE COMPARISON IS WHAT HID THE OUTAGE. A stack that is
+    # not in one of the three healthy statuses still answers `get-template` -- with whatever
+    # it last tried, which for a failed create is the template that never took. Holding that
+    # against main finds no difference and reads as a pass. So an unhealthy stack is reported
+    # here and excluded from the loop below rather than compared and believed.
+    unhealthy: set[str] = set()
+    for name, status in sorted((deployed or {}).items()):
+        if status in STATUSES_WITH_A_TEMPLATE_APPLIED:
+            continue
+        unhealthy.add(name)
+        unwell = DeployedStackFinding(
+            "deployed_stack_is_not_healthy",
+            f"{name} is in {status}, which is not one of the three statuses under which "
+            "CloudFormation holds a template applied in full: CREATE_COMPLETE, "
+            "UPDATE_COMPLETE, IMPORT_COMPLETE. What is deployed under this name has not been "
+            "compared against main, because a stack in this state answers get-template with "
+            "whatever it last tried and comparing that would report a pass for a stack that "
+            "may hold none of those resources.\n"
+            "  An _IN_PROGRESS status means a deploy is mid-flight and this run was simply "
+            "early; re-run it.\n"
+            "  ROLLBACK_COMPLETE means an initial create failed and the stack holds nothing. "
+            "It cannot be updated, so every subsequent deploy of it fails on the state rather "
+            "than on the template, and the repair is to delete the stack and deploy again "
+            "once whatever refused the create has been fixed.\n"
+            "  Any other status means an operation stopped partway or was undone, and the "
+            "stack events say which resource and why.",
+            code=EXIT_DISAGREES,
+        )
+        findings.append(unwell)
+        _report(unwell)
+
     unaccounted = sorted(set(deployed) - set(STACKS)) if deployed is not None else []
     for name in unaccounted:
         unclaimed = DeployedStackFinding(
@@ -658,6 +730,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             findings.append(undeployed)
             _report(undeployed)
+            continue
+        if name in unhealthy:
             continue
         try:
             check(stack, profile=options.profile, region=options.region)

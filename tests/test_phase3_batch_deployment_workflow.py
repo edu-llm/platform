@@ -567,13 +567,15 @@ def test_every_run_body_is_strict_about_failures_and_unset_variables() -> None:
     # reporting the deploy failure, which is indistinguishable from the diagnostic having
     # found nothing to say.
     #
-    # Eight deploys, plus: the dispatch gate, validate, the failure diagnostic, the two
-    # verifications, the tooling install, the queue enumeration, the queue view, and the
-    # per-run report. The second verification arrived with the GPU shapes stack and is its
-    # own step rather than thirteen more expectations bolted onto the first. The install and
-    # the enumeration arrived together, because the two reports stopped looping over a pair
-    # of queue names typed into this file.
-    assert len(scripts) == len(DEPLOYMENT_ORDER) + 9
+    # Eight deploys, plus: the dispatch gate, validate, the rolled-back-create guard, the
+    # failure diagnostic, the two verifications, the tooling install, the queue enumeration,
+    # the queue view, and the per-run report. The second verification arrived with the GPU
+    # shapes stack and is its own step rather than thirteen more expectations bolted onto the
+    # first. The install and the enumeration arrived together, because the two reports
+    # stopped looping over a pair of queue names typed into this file. The guard arrived on
+    # 2026-08-05, after a create that failed and rolled back left the notifier stack
+    # unupdatable and broke every dispatch of this workflow until it was deleted by hand.
+    assert len(scripts) == len(DEPLOYMENT_ORDER) + 10
     assert all(script.startswith("set -euo pipefail\n") for script in scripts)
 
 
@@ -636,6 +638,167 @@ def test_the_workflow_does_not_reach_for_the_retired_shared_deploy_role() -> Non
     assert "vars.AWS_DEPLOY_ROLE_ARN" not in text
     assert "InternGitHubActionsDeploy" not in text
     assert text.count("vars.AWS_INFRA_DEPLOYER_ROLE_ARN") == 1
+
+
+# --------------------------------------------------------------------------------------
+# The rolled-back-create guard, executed against stubbed answers
+# --------------------------------------------------------------------------------------
+
+ROLLBACK_GUARD_STEP = "Delete the notifier stack if a failed create left it unupdatable"
+NOTIFICATIONS_STACK = "sbsandbox-intern-edullm-notifications"
+
+#: Answers the three calls the guard can make and writes every one of them to a log the test
+#: reads afterwards. The log is the point: what has to be proved is not only what the guard
+#: printed but that it did not call delete-stack, and a stub that only answered could not
+#: tell a guard that refrained from one that was never asked.
+GUARD_STUB = """
+printf '%s\\n' "$*" >> "${CALL_LOG}"
+case "$1 $2" in
+  "cloudformation describe-stacks")
+    if [[ "${STACK_STATUS}" == "ABSENT" ]]; then
+      echo "An error occurred (ValidationError): Stack with id does not exist" >&2
+      exit 254
+    fi
+    printf '%s\\n' "${STACK_STATUS}" ;;
+  "cloudformation list-stack-resources") printf '%s' "${HELD_RESOURCES}" ;;
+  "cloudformation delete-stack") ;;
+  "cloudformation wait") ;;
+  *) echo "unexpected call: $*" >&2 ; exit 64 ;;
+esac
+"""
+
+
+def run_rollback_guard(
+    tmp_path: Path, *, status: str, held: str = ""
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "aws", GUARD_STUB)
+    call_log = tmp_path / "calls.txt"
+    call_log.write_text("", encoding="utf-8")
+
+    result = run_step_script(
+        step(only_job(workflow()), ROLLBACK_GUARD_STEP)["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "CALL_LOG": str(call_log),
+            "STACK_STATUS": status,
+            "HELD_RESOURCES": held,
+        },
+        stub_bin=stub_bin,
+    )
+    made = [line for line in call_log.read_text(encoding="utf-8").splitlines() if line]
+    return result, made
+
+
+def test_the_guard_deletes_a_stack_whose_first_create_failed_and_says_why(
+    tmp_path: Path,
+) -> None:
+    """The 2026-08-05 recovery, done by the workflow instead of by a person.
+
+    CI created this stack at 23:42 UTC, CreateFunction was refused for want of
+    iam:PassRole, and it rolled back six seconds later holding nothing. CloudFormation will
+    not update a stack in that state, so every later dispatch of this workflow died on it
+    until somebody with a laptop credential deleted it by hand.
+    """
+    result, made = run_rollback_guard(tmp_path, status="ROLLBACK_COMPLETE")
+
+    assert result.returncode == 0, result.stderr
+    assert any(command.startswith("cloudformation delete-stack") for command in made)
+    assert all(NOTIFICATIONS_STACK in command for command in made)
+    # It says what it deleted and why, rather than deleting quietly. A reader who finds a
+    # stack gone has to be able to learn from this log that the guard did it and on what
+    # grounds, and that the reason the create failed is still unaddressed.
+    printed = result.stdout + result.stderr
+    assert NOTIFICATIONS_STACK in printed
+    assert "ROLLBACK_COMPLETE" in printed
+    assert "holds nothing" in printed
+    assert "stack events" in printed
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "CREATE_COMPLETE",
+        "UPDATE_COMPLETE",
+        "IMPORT_COMPLETE",
+        "UPDATE_ROLLBACK_COMPLETE",
+        "IMPORT_ROLLBACK_COMPLETE",
+        "CREATE_IN_PROGRESS",
+        "UPDATE_IN_PROGRESS",
+        "ROLLBACK_IN_PROGRESS",
+        "DELETE_FAILED",
+        "UPDATE_ROLLBACK_FAILED",
+        "REVIEW_IN_PROGRESS",
+        "SOME_STATUS_INVENTED_IN_2027",
+    ],
+)
+def test_the_guard_deletes_nothing_from_any_other_status(tmp_path: Path, status: str) -> None:
+    """Mutation: delete whenever the status merely contains ROLLBACK, or is not COMPLETE.
+
+    This is the blast radius, and it is the reason the guard is worth more scrutiny than the
+    outage it answers. A guard that quietly deletes a healthy stack destroys the queues, the
+    function and the alarm that stack holds, and CREATE_COMPLETE is the overwhelmingly
+    common case it runs against.
+
+    UPDATE_ROLLBACK_COMPLETE is the near miss worth naming. It is a rollback, it is not
+    healthy, and it is emphatically not empty: the stack is live and holds the resources of
+    the template it carried before the update that failed. Deleting from it would be the
+    worst outcome available here.
+    """
+    result, made = run_rollback_guard(tmp_path, status=status)
+
+    assert result.returncode == 0, result.stderr
+    assert not [command for command in made if command.startswith("cloudformation delete-stack")]
+    assert status in result.stdout + result.stderr
+
+
+def test_the_guard_does_nothing_when_there_is_no_stack_at_all(tmp_path: Path) -> None:
+    """The ordinary first run, and the run after this guard has already deleted once.
+
+    describe-stacks refuses with a ValidationError rather than answering, and that must read
+    as nothing to do rather than as a failure, or the guard would break the very dispatch it
+    exists to unbreak.
+    """
+    result, made = run_rollback_guard(tmp_path, status="ABSENT")
+
+    assert result.returncode == 0, result.stderr
+    assert not [command for command in made if command.startswith("cloudformation delete-stack")]
+
+
+def test_the_guard_refuses_when_a_rolled_back_stack_still_holds_something(
+    tmp_path: Path,
+) -> None:
+    """Mutation: trust the status and skip the resource listing.
+
+    ROLLBACK_COMPLETE is reachable only from a first create that failed, and such a create
+    rolls back every resource it began, so the stack should hold none. That is a belief
+    about CloudFormation rather than something this workflow can know, and the cost of the
+    belief being wrong is deleting live resources. So the resources are listed and the
+    deletion happens only if every one of them reads DELETE_COMPLETE.
+
+    It fails rather than skipping. Skipping would hand the deploy below a stack it cannot
+    update, which is the failure this step exists to prevent and which reads as a broken
+    template.
+    """
+    result, made = run_rollback_guard(
+        tmp_path, status="ROLLBACK_COMPLETE", held="NotifierQueue\n"
+    )
+
+    assert result.returncode != 0
+    assert not [command for command in made if command.startswith("cloudformation delete-stack")]
+    assert "NotifierQueue" in result.stdout + result.stderr
+
+
+def test_the_guard_runs_before_the_deploy_it_protects(tmp_path: Path) -> None:
+    """Ordering, which nothing else here enforces.
+
+    A guard after the deploy is a guard that runs once the step it protects has already
+    failed the job.
+    """
+    names = [entry.get("name") for entry in only_job(workflow())["steps"]]
+
+    assert names.index(ROLLBACK_GUARD_STEP) < names.index("Deploy the notifier stack")
 
 
 # --------------------------------------------------------------------------------------
