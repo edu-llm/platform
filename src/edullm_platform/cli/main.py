@@ -1970,14 +1970,20 @@ def _submit(
     identifier = int(run["id"])
     print(str(run.get("html_url") or ""), file=out)
     # SAID BEFORE THE WAIT, FOR THE REASON ``_drive_the_run_report`` SAYS IT BEFORE ITS OWN.
-    # This is the only other place the binary makes anybody wait, and the compile job takes
-    # about two minutes -- long enough that a reader who was told nothing concludes it hung.
+    # This is the only other place the binary makes anybody wait, and it is a wait long enough
+    # that a reader who was told nothing concludes it hung.
+    #
+    # The typical duration is deliberately not here. It was, and
+    # ``test_no_bound_is_written_into_a_string_the_cli_prints`` refused it, which is the right
+    # refusal twice over: a runner's speed is not this repository's to promise, and a reader
+    # given a typical duration reads the ceiling as the anomaly rather than as the bound. The
+    # ceiling is the only number the code can stand behind, and it is derived.
     print(
         "\n".join(
             _wrapped(
-                "waiting for the compile job to mint the run id. About two minutes, and it "
-                f"gives up after {_submit_ceiling_said()}. A line every minute says it is "
-                "still waiting, and --no-wait skips this.",
+                "waiting for the compile job to mint the run id, and giving up after "
+                f"{_submit_ceiling_said()}. A line every minute says it is still waiting, "
+                "and --no-wait skips this.",
                 indent="",
             )
         ),
