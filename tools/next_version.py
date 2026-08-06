@@ -41,11 +41,14 @@ an argument the author of the change chooses, it lands as a reviewed line in the
 **AND THEN THE THREE SIZES BECAME A MENU, WHICH IS THE CORRECTION THIS FILE CARRIES NOW.**
 Offering ``patch``, ``minor`` and ``major`` as three peers, in that order, in every failure
 message and in the pull request template, taught everybody that the size is a description to
-be picked rather than a claim to be earned. On 2026-08-05 the version went from ``0.2.2`` to
-``3.1.0`` across twenty-five bumps: nine patches, thirteen minors and three majors, in one
-evening, against a repository nobody had yet been shown to have installed. Two of the three
-majors carry no Break section in their published note, which by the house standard's own
-definition means nothing broke and they were not majors.
+be picked rather than a claim to be earned. In the twenty hours to 2026-08-06T01:24Z the version
+went from ``0.2.2`` to ``3.2.0`` across twenty-six bumps: nine patches, fourteen minors and three
+majors, against a repository nobody had yet been shown to have installed. Two of the three majors
+carry no Break section in their published note, which by the house standard's own definition means
+nothing broke and they were not majors.
+
+The count moved twice while this was being written, which is the argument rather than a footnote
+about it. Do not update these numbers as they drift. They are what one evening looked like.
 
 So the sizes are no longer peers. **A patch is the default and it is what almost every change
 here is.** A bare ``--bump`` is a patch, ``--bump patch`` is a patch, and neither is asked for

@@ -106,8 +106,8 @@ jobs:
       #
       # AND SINCE 2026-08-05, WHERE A MINOR HAS TO BE ARGUED FOR RATHER THAN MERELY SAID.
       # Making all three sayable made all three equally easy to say, and what followed was
-      # twenty-five bumps in one evening -- nine patches, thirteen minors and three majors,
-      # from 0.2.2 to 3.1.0 -- on a repository nobody had yet been shown to have installed.
+      # twenty-six bumps in twenty hours -- nine patches, fourteen minors and three majors,
+      # from 0.2.2 to 3.2.0 -- on a repository nobody had yet been shown to have installed.
       # Two of those three majors published no Break section, which by the house standard's
       # own definition means nothing broke. Nobody was careless; the check offered three
       # aligned commands and agents picked the one that described their change.
@@ -162,8 +162,8 @@ jobs:
           # THE THREE SIZES, AND NO LONGER AS THREE PEERS. Written once because it is quoted
           # by the refusals below and by tools/next_version.py, and because the shape of the
           # list is the thing being corrected: an aligned menu of three commands reads as a
-          # choice between equals, and what came of that was twenty-five bumps in one evening
-          # of which thirteen were minors and three were majors. Patch is first, it is the
+          # choice between equals, and what came of that was twenty-six bumps in twenty hours
+          # of which fourteen were minors and three were majors. Patch is first, it is the
           # only one with no argument to fill in, and the other two are described by what
           # they cost somebody rather than by what they sound like.
           sizes_said() {
@@ -300,7 +300,7 @@ jobs:
           # integers in a text file and nothing makes anybody use the tool to move them. A
           # rule enforced only by the command people are asked to run is enforced on exactly
           # the people who were not going to get it wrong. On 2026-08-05 the size was picked
-          # twenty-five times and thirteen of those were minors, which is what a menu of
+          # twenty-six times and fourteen of those were minors, which is what a menu of
           # three peers produces; this is what stops the menu.
           #
           # BOTH DIRECTIONS, BECAUSE THE FILE HAS TO SAY ONE THING. A minor with no reason is

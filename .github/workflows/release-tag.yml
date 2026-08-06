@@ -396,7 +396,7 @@ jobs:
           # BY WHOEVER REMEMBERS AFTERWARDS.
           #
           # The house standard has said since it was written that a Summary is never omitted
-          # and that a major carries a Break above everything. Twenty-eight releases have been
+          # and that a major carries a Break above everything. Twenty-nine releases have been
           # cut and not one of them has either, because both were things a person had to go
           # back and edit onto a published note, and a release cut on every qualifying merge
           # is a note nobody goes back to. The sentence is now required at bump time to widen

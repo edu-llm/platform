@@ -292,9 +292,10 @@ def test_a_bump_wider_than_a_patch_without_a_reason_writes_nothing(
 ) -> None:
     """THE CASE THIS RULE EXISTS FOR. Mutation: let the bump through with no --why.
 
-    On 2026-08-05 the version went from ``0.2.2`` to ``3.1.0`` in one evening: twenty-five
-    bumps, thirteen of them minors and three of them majors, on a repository nobody had yet
-    been shown to have installed. Nobody was careless. Every failure message and the pull
+    In the twenty hours to 2026-08-06T01:24Z the version went from ``0.2.2`` to ``3.2.0``:
+    twenty-six bumps, fourteen of them minors and three of them majors, on a repository
+    nobody had yet been shown to have installed. Nobody was careless. Every failure message
+    and the pull
     request template offered three aligned commands, and an agent picked the one that
     described its change rather than the one its change had earned.
 
