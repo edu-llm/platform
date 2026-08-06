@@ -22,12 +22,14 @@ run-name: >-
 # submission: the failure arrives as an AssumeRole denial that reads like a broken role
 # ARN. Change infra/iam/admission-role.yaml in the same commit or do not change this.
 #
-# The form below is SubmissionInputs field for field. Fourteen properties against a
+# The form below is SubmissionInputs field for field, plus one input that is not a
+# submission field at all and says so where it is declared. Fifteen properties against a
 # workflow_dispatch ceiling of twenty-five, so the length is a usability question rather
-# than a platform constraint. Nine are required and five may be left empty. Three of the
-# five take a registered default when they are -- the two bounds from the workload profile
-# and the image digest from whatever the declared commit published -- and the other two are
-# the fan-out pair, which is absent altogether unless both are given.
+# than a platform constraint. Nine are required and six may be left empty. Three of the
+# six take a registered default when they are -- the two bounds from the workload profile
+# and the image digest from whatever the declared commit published -- two are the fan-out
+# pair, which is absent altogether unless both are given, and the last is the version of
+# the install that dispatched, which nothing defaults and nothing refuses.
 #
 # It read fifteen and six and a fan-out triple, which was true until fanout_parallelism was
 # removed for the reason recorded above that pair. Corrected by counting rather than by
@@ -296,6 +298,33 @@ on:
         default: ""
       fanout_index_parameter:
         description: "What the index varies, such as seed or shard."
+        required: false
+        type: string
+        default: ""
+      # THE ONE INPUT ON THIS FORM THAT IS NOT A SubmissionInputs FIELD, AND IT MAY NOT
+      # BECOME ONE. Every other field says something about the run and ends up in the
+      # manifest. This says which install typed the dispatch, which is a fact about the
+      # typist -- the same category as `github.actor`, which is also not on this form and
+      # is also read by the compile job from beside it. The compile step below passes it as
+      # its own argument and the form-assembly step above never sees it, so
+      # submission-form.json stays exactly the contract and a key it does not declare is
+      # still refused there. tests/test_phase2_submit_run_workflow.py holds both halves.
+      #
+      # A DECLARED INPUT RATHER THAN SOMETHING SMUGGLED, BECAUSE THERE IS NO OTHER WAY.
+      # GitHub answers 422 "Unexpected inputs provided" to a dispatch carrying an input a
+      # workflow does not declare, so this line is what lets `edullm submit` send it at all
+      # -- and its absence is what `edullm submit` is written to survive, since a merge that
+      # took the CLI half without this one would otherwise refuse every submission.
+      #
+      # WHAT IT IS FOR IS A REFUSAL AND NEVER A GATE. The defect of 2026-08-06 shipped in
+      # the CLI, travelled with each person's install, and produced a compile-time refusal
+      # whose advice was to quote a program the submitter had already quoted. Knowing the
+      # install is what lets that refusal say reinstall instead. Nothing refuses on this
+      # value, an unreadable one is read as none, and blank is the ordinary case: a person
+      # filling this form in has no install to name. See
+      # src/edullm_platform/client_version.py.
+      edullm_version:
+        description: "Leave blank. edullm fills this in when it dispatches."
         required: false
         type: string
         default: ""
@@ -671,6 +700,10 @@ jobs:
         id: compile
         env:
           SUBMITTER: ${{ github.actor }}
+          # Beside the submitter and not in the form above, for the reason the input's own
+          # comment gives: both are facts about who dispatched rather than fields of the
+          # submission, and neither belongs in the document SubmissionInputs validates.
+          EDULLM_VERSION: ${{ inputs.edullm_version }}
           SERVER_URL: ${{ github.server_url }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
           RESEARCH_REPOSITORY: ${{ inputs.repository }}
@@ -689,6 +722,7 @@ jobs:
             --config-dir config \
             --published-images "${RUNNER_TEMP}/published-image/published-image.json" \
             --submitter "${SUBMITTER}" \
+            --client-version "${EDULLM_VERSION}" \
             --repository-url "${SERVER_URL}/${REPOSITORY_OWNER}/${RESEARCH_REPOSITORY}" \
             --output "${RUNNER_TEMP}/compiled-submission.json" \
             --summary "${RUNNER_TEMP}/approver-context.md" \
