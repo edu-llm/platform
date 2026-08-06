@@ -667,6 +667,61 @@ jobs:
             exit 1
           fi
 
+      # THE GATE IS THE ONE CONTROL HERE THAT IS NOT A FILE, AND IT CAN BE DELETED WITHOUT A
+      # COMMIT. Required reviewers on an environment are offered for public repositories on
+      # every plan and for private ones only above Free. This organization is Free, so
+      # converting this repository to private does not weaken the gate, it removes it: the
+      # protection rule goes, the job below deploys straight through, and nothing turns red,
+      # because a job whose environment carries no protection rule is a job that runs. The
+      # daily audit reads the same thing at 05:00; this reads it at submission time, because
+      # between those two the window is a working day.
+      #
+      # IT REFUSES ONLY ON A POSITIVE READING AND NEVER ON A FAILURE TO LOOK. A gate check
+      # that turned a GitHub hiccup into a refused submission would cost more than the gate
+      # being unread for one dispatch, so an unreachable endpoint, a non-200 or a body this
+      # cannot parse all warn and carry on. What is refused is one thing: GitHub answering,
+      # in full, that the environment this run is routed to has no required-reviewer rule.
+      #
+      # Skipped off `main` and skipped for the automatic class, because both are reviewer-less
+      # by design -- a branch dispatch demotes to `run-approval-preview` and
+      # `run-approval-automatic` carries a branch policy and nobody. The condition reads the
+      # class this job computed rather than anything on the form.
+      #
+      # No credential and no permission beyond the `contents: read` this job already declares.
+      # Verified anonymously against this repository on 2026-08-06: the endpoint answers HTTP
+      # 200 with no session at all, precisely because the repository is public.
+      - name: Check the gate this run is routed to still asks somebody
+        if: github.ref == 'refs/heads/main' && steps.compile.outputs.approval_class != 'automatic'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_REPOSITORY: ${{ github.repository }}
+          GATE: ${{ steps.compile.outputs.environment }}
+        run: |
+          set -euo pipefail
+          gate_file="${RUNNER_TEMP}/gate.json"
+          if ! gh api "repos/${RUN_REPOSITORY}/environments/${GATE}" \
+            --header "Accept: application/vnd.github+json" > "${gate_file}" 2>/dev/null; then
+            echo "::warning::The ${GATE} gate could not be read, so whether it still asks a reviewer is unknown for this run. It is read again by the audit at 05:00."
+            exit 0
+          fi
+          # `protection_rules` MUST BE PRESENT AND AN ARRAY FOR THE ANSWER TO COUNT. An
+          # environment with nothing on it answers with the key and an empty list, which is
+          # the reading that refuses. A body without the key at all is not an environment
+          # response, and counting the rules in it would reach zero by the same arithmetic and
+          # refuse a submission over a shape this step does not understand.
+          reviewer_rules="$(jq -r 'if (.protection_rules | type) == "array" then ([.protection_rules[] | select(.type == "required_reviewers")] | length) else "" end' "${gate_file}" 2>/dev/null || true)"
+          if [[ ! "${reviewer_rules}" =~ ^[0-9]+$ ]]; then
+            echo "::warning::The ${GATE} gate answered something this step cannot read, so whether it still asks a reviewer is unknown for this run."
+            exit 0
+          fi
+          if [[ "${reviewer_rules}" -eq 0 ]]; then
+            echo "gate_asks_nobody" >&2
+            echo "GitHub reports no required-reviewer rule on ${GATE}, so this run would deploy with nobody asked and no approval record. Nothing about this submission is wrong and it has not been refused on the merits." >&2
+            echo "The usual cause is this repository having been converted to private: required reviewers on an environment need a plan above Free once a repository is not public, and the rule is removed rather than disabled. Check the visibility first, then MAINTAINING.md." >&2
+            exit 1
+          fi
+          echo "The ${GATE} gate still asks a reviewer."
+
       # GitHub's approval notification carries none of this, so the reviewer has to open
       # the run. That is a limitation of the mechanism; what this can do is make the
       # summary complete enough that opening the run is sufficient.
