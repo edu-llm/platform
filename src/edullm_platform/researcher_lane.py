@@ -18,14 +18,13 @@ from typing import Final, Literal, Self
 
 from pydantic import Field, model_validator
 
-from edullm_platform.config import load_yaml
 from edullm_platform.contracts.base import ContractModel
 from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.reviewed_configuration import ConfigFile, load_config_file
 
 __all__ = [
     "EXPIRES_AT_TAG_KEY",
     "GOVERNANCE_TAG_KEYS",
-    "LANE_SETTINGS_PATH",
     "PROJECT_TAG_KEY",
     "RESEARCHER_ROLE_NAME",
     "WARNING_TAG_KEY",
@@ -42,8 +41,6 @@ __all__ = [
 #: may touch it; and InternSandboxBoundary's DenyTamperingWithInternRoles matches role/Intern-*
 #: and therefore does not either.
 RESEARCHER_ROLE_NAME: Final = "edullm-researcher"
-
-LANE_SETTINGS_PATH: Final = "config/reports/researcher-lane.yaml"
 
 #: The two tags every launch through the lane must carry, spelled exactly as the IAM condition
 #: keys spell them. Capitalised because aws:RequestTag is case-sensitive and the helper, the
@@ -89,8 +86,16 @@ class LaneSettings(ContractModel):
         return self
 
 
-def load_lane_settings(path: Path | str = LANE_SETTINGS_PATH) -> LaneSettings:
-    return load_yaml(path, LaneSettings)
+def load_lane_settings(directory: Path | None = None) -> LaneSettings:
+    """The three clocks, out of a resolved directory rather than out of a written-down path.
+
+    This used to default to ``"config/reports/researcher-lane.yaml"``, a path resolved
+    against whatever directory the process was started in. Every caller but one is
+    ``edullm run`` and ``edullm shell``, which are used from a research repository and never
+    from a platform checkout, so the default resolved for the suite and for nobody else.
+    ``edullm_platform.reviewed_configuration`` carries the whole account of that.
+    """
+    return load_config_file(ConfigFile.RESEARCHER_LANE, LaneSettings, directory=directory)
 
 
 def instance_types_the_catalog_prices(catalog: WorkloadCatalog) -> tuple[str, ...]:

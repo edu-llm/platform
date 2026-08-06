@@ -39,7 +39,7 @@ def test_the_schedule_is_the_sweep_interval_the_settings_declare() -> None:
     makes "warns before it stops anything" hold. That refusal is about the number in the file;
     if the deployed schedule is a different number, the rule guarantees nothing.
     """
-    settings = load_lane_settings(PROJECT_ROOT / "config" / "reports" / "researcher-lane.yaml")
+    settings = load_lane_settings(PROJECT_ROOT / "config")
     schedule = of_type("AWS::Scheduler::Schedule")
 
     assert schedule["ScheduleExpression"] == f"rate({settings.sweep_minutes} minutes)"
@@ -66,7 +66,7 @@ def test_the_function_is_handed_every_number_the_settings_file_declares() -> Non
     together. Compared field by field against the loaded settings rather than against literals,
     so adding a fourth setting fails here until the template carries it.
     """
-    settings = load_lane_settings(PROJECT_ROOT / "config" / "reports" / "researcher-lane.yaml")
+    settings = load_lane_settings(PROJECT_ROOT / "config")
     variables = of_type("AWS::Lambda::Function")["Environment"]["Variables"]
 
     assert variables == {

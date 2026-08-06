@@ -9,14 +9,21 @@ is the only place they can be refused before somebody reads a report built on th
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from edullm_platform.config import load_yaml
 from edullm_platform.contracts.bindings import ExcludedRole, normalize_github_login
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.mismatch import LaunchEvent, compute_mismatches, render_line
+from edullm_platform.reviewed_configuration import ConfigFile, load_config_file
+
+#: This repository's own ``config/``, anchored on this file rather than on the working
+#: directory. It was ``load_yaml("config/organization.yaml", ...)``, which read the roster
+#: only because pytest happens to start in the repository root -- the same construction that
+#: shipped two lane verbs nobody outside a checkout could run.
+CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
 
 #: The role the preview submissions run under. Spelled here as a literal because the
 #: exclusion in `config/organization.yaml` is a literal and `infra/iam/run-preview-role.yaml`
@@ -125,7 +132,9 @@ def test_the_committed_roster_carries_a_table_the_contract_accepts() -> None:
     permanently zero with a denominator saying why. This is what stops the default becoming
     the committed state.
     """
-    inventory = load_yaml("config/organization.yaml", OrganizationInventory)
+    inventory = load_config_file(
+        ConfigFile.ORGANIZATION, OrganizationInventory, directory=CONFIG_DIR
+    )
     assert inventory.aws_identities.roles, "the roster carries no AWS role bindings"
     members = {member.normalized_github_login for member in inventory.members}
     for binding in inventory.aws_identities.roles:
@@ -166,7 +175,9 @@ def test_the_preview_role_is_excluded_by_its_literal_name() -> None:
     anywhere recording that it stopped being examined. `infra/iam/run-preview-role.yaml` is
     what declares the role; this is the only place its launches are set aside.
     """
-    inventory = load_yaml("config/organization.yaml", OrganizationInventory)
+    inventory = load_config_file(
+        ConfigFile.ORGANIZATION, OrganizationInventory, directory=CONFIG_DIR
+    )
     assert PREVIEW_ROLE in inventory.aws_identities.excluded_role_names()
     for excluded in inventory.aws_identities.excluded_roles:
         assert not excluded.role_name.endswith("*")
@@ -191,7 +202,9 @@ def test_the_excluded_role_is_the_one_the_template_declares() -> None:
         for properties in template["Resources"].values()
         if properties.get("Type") == "AWS::IAM::Role"
     }
-    inventory = load_yaml("config/organization.yaml", OrganizationInventory)
+    inventory = load_config_file(
+        ConfigFile.ORGANIZATION, OrganizationInventory, directory=CONFIG_DIR
+    )
 
     assert declared == {PREVIEW_ROLE}
     assert declared <= set(inventory.aws_identities.excluded_role_names())
