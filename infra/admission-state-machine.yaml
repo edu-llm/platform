@@ -87,10 +87,19 @@ Resources:
       # to a lead, approved, and would have run the OLMo-core image, because the image is
       # pinned in the job definition rather than chosen by the submission. Until this deploys,
       # that is still what the account does; the tree refuses it and the account does not.
+      #
+      # THIS ONE MOVES A DATASET REGISTRY, WHICH IS THE SAME SEAM AGAIN AND THE FIRST TIME
+      # IT DENIES SEALED BYTES. #266 registered five corpora that are sealed in
+      # s3://edullm-data/ and named nowhere, 1,029,436,494,332 bytes of them, and
+      # config/datasets.yaml is one of the seven files in ADMISSION_CONFIG. So between that
+      # merge and this line moving, `edullm check` on a laptop reads the merged registry and
+      # reports nothing wrong, while the deployed validator reads the previous zip and
+      # denies the same submission from inside AWS -- past the approval a lead has already
+      # spent attention on, naming the dataset rather than the release.
       Code:
         S3Bucket: sbsandbox-intern-edullm-artifacts
         S3Key: admission-validator/admission-validator.zip
-        S3ObjectVersion: 3ouphskBQYf0yWs3zvbJqd3c2UaE5rcz
+        S3ObjectVersion: x_FMf.Ppf.UhzL7kd_zjeIsKB0CO76Xu
       Timeout: 30
       MemorySize: 512
 

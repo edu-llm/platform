@@ -822,62 +822,29 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # named the window in which admission classified against v4 while config/policy.yaml on
     # main said v5, and the window is closed.
     #
-    # AND IT IS OPEN AGAIN THE SAME DAY, FOR THE FIVE DATASET REGISTRATIONS. That is the
-    # third validator record of 2026-08-06 and the shape is by now familiar rather than
-    # alarming: config/datasets.yaml is in ADMISSION_CONFIG, so a registration is a release,
-    # and a release cut before the registration merged cannot carry it. What is worth
-    # noticing is that the last three entries in a row have all been the kind a submitter
-    # can meet, where every entry before them was a digest moving with no behaviour behind
-    # it. The register is doing the job it was built for rather than absorbing noise.
+    # AND IT WAS OPEN AGAIN THE SAME DAY, FOR THE FIVE DATASET REGISTRATIONS, AND CLEARED BY
+    # THE RELEASE THAT CARRIES THIS DELETION. That was the third validator record of
+    # 2026-08-06 and the shape was by now familiar rather than alarming:
+    # config/datasets.yaml is in ADMISSION_CONFIG, so a registration is a release, and a
+    # release cut before the registration merged cannot carry it. What is worth noticing is
+    # that the last four entries in a row were all the kind a submitter can meet, where
+    # every entry before them was a digest moving with no behaviour behind it. The register
+    # is doing the job it was built for rather than absorbing noise.
     #
-    # A RECORDER ENTRY JOINS IT, WHICH THE REGISTER HAS NOT HELD ALONGSIDE A VALIDATOR
-    # ONE SINCE THE TWO ZIPS WERE SPLIT. They share contracts/results.py, which gained
-    # an optional payload field on CheckpointManifest, and that is a behaviour for the
-    # recorder and an import for the validator. Two records because they are two zips,
-    # cleared by two commands, and the paragraphs below say which is which.
+    # IT WAS ALSO EXTENDED ONCE MORE BEFORE IT CLEARED, AND THAT IS THE PART WORTH READING.
+    # The record first named 7a149fc4, a zip cut from 6bbb42e and uploaded; while it sat in
+    # review #271 added CheckpointPayload to contracts/results.py, which the validator
+    # imports without reading, so the tree started building b8db05da and the uploaded zip
+    # stopped being the one owed. The entry absorbed that correctly -- one function, one
+    # record, whatever the tree holds when it is built -- and the release was re-cut from
+    # 6f90582 rather than merged and repaired afterwards.
+    #
+    # THE HABIT THAT CAUGHT IT IS RE-DERIVING THE PAIR, AND THE TIMING OF THE RE-DERIVATION
+    # IS THE LESSON. Checking before dispatching is what says the release is the one owed;
+    # checking again before pasting is what says it still is. The first check passed, the
+    # second failed, and only the second was load-bearing, because the interval that moves
+    # is the one between the upload and the merge.
     releases: tuple[PendingRelease, ...] = (
-        PendingRelease(
-            function="validator",
-            reason=(
-                "config/datasets.yaml now registers five corpora that are sealed in "
-                "s3://edullm-data/ and were carried nowhere: pretrain/reservoir-dolma2 v1, "
-                "pretrain/refhq-instruct v3, pretrain/formal-proof-premises-500m v3, "
-                "pretrain/fineweb-edu-750m v2 and pretrain/fineweb2-equal-bytes v1. That is "
-                "1,029,436,494,332 bytes of corpus which admission denies outright today "
-                "under unregistered_dataset, and datasets.yaml is one of the seven files in "
-                "ADMISSION_CONFIG."
-                "\n\n"
-                "A SUBMITTER MEETS THIS ONE, AND MEETS IT AS A DISAGREEMENT BETWEEN TWO "
-                "PLACES RATHER THAN AS A REFUSAL. `edullm check` on a laptop reads the "
-                "merged file and reports nothing wrong; the deployed validator reads the "
-                "previous zip and denies the same submission from inside AWS, past the "
-                "approval gate, naming the dataset rather than the release. That is the "
-                "Phase 4 shape infra/admission-validator-release.yaml already records "
-                "paying for: correct for the bytes that produced it, wrong about the "
-                "account, and hard to read because it names the input."
-                "\n\n"
-                "It also retires pretrain/formal-proof-premises-500m at v2, and that half is "
-                "stale in the safe direction. v3's own sealed dataset.json declares "
-                "`{id: v3, of: v2, relation: supersedes}`, so the flag is read off the "
-                "corpus rather than chosen, and until the release the deployed validator "
-                "goes on admitting v2. A submitter therefore gets the superseded corpus "
-                "rather than a refusal, which is worth cutting the release for but is not "
-                "the same urgency as the paragraph above."
-                "\n\n"
-                "One packaged module moved beside all of that and carries nothing this "
-                "function reads. contracts/results.py gained CheckpointPayload, "
-                "PayloadObject and PayloadDigestOutcome, and CheckpointManifest gained an "
-                "optional payload field holding a digest derived from what S3 attests "
-                "about a checkpoint's objects. The validator constructs no "
-                "CheckpointManifest and no ResultManifest -- the recorder does -- so the "
-                "module is in this zip because the import tree reaches it and for no "
-                "other reason. It moves this digest and moves no admission decision."
-            ),
-            cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="b8db05da9915bacb12f13d7d6c5945f523e358186dd6afcb0e06d1066c53e7ec",
-            released="15c3f1014c6ecfdc107f39d48f740d0905dad43b7e90cfc506ee62702ddd0f54",
-            recorded_on=date(2026, 8, 6),
-        ),
         PendingRelease(
             function="recorder",
             reason=(

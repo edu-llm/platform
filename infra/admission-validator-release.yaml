@@ -158,14 +158,71 @@
 # too would have uploaded identical bytes under a new version id and put a Lambda nobody
 # changed through a CloudFormation update, so `--function validator` was passed rather than
 # taking the tool's default of both.
+#
+# THIS RELEASE CARRIES FIVE SEALED CORPORA THE DEPLOYED VALIDATOR DENIES OUTRIGHT, AND IT IS
+# THE FIRST TIME THIS RECORD HAS STOOD BETWEEN A SUBMITTER AND BYTES THAT ALREADY EXIST.
+# #266 registered pretrain/reservoir-dolma2 v1, pretrain/refhq-instruct v3,
+# pretrain/formal-proof-premises-500m v3, pretrain/fineweb-edu-750m v2 and
+# pretrain/fineweb2-equal-bytes v1 in config/datasets.yaml -- 1,029,436,494,332 bytes that
+# are sealed in s3://edullm-data/ and were carried nowhere. That file is in
+# ADMISSION_CONFIG, so until this deploys the previous zip refuses all five under
+# unregistered_dataset.
+#
+# The shape is worse than a plain refusal and is worth naming rather than leaving to
+# inference. `edullm check` reads the merged registry off the laptop and reports nothing
+# wrong, so the submission is dispatched, a lead spends attention approving it, and the
+# refusal arrives from inside AWS after the gate, naming the dataset. The researcher is told
+# their corpus is unregistered by a principal that disagrees with their own tooling, and the
+# approval is already spent. That is the Phase 4 shape above, arriving through the registry
+# rather than through the catalog.
+#
+# A RELEASE IS NOT A DEPLOY, AND CONFUSING THE TWO COST ANOTHER READER AN HOUR TONIGHT. The
+# workflow uploads the zip and prints the version id; nothing in the account moves until the
+# template edit above merges and deploy-phase2-admission.yml applies the stack on the push.
+# So the honest way to confirm a release landed is `aws lambda get-function-configuration
+# --query CodeSha256`, base64-decoded and compared against the digest below -- not the
+# workflow log, which is green the moment the object is in the bucket. Reading the function
+# straight after a successful release returns the previous digest, and that is the expected
+# answer rather than a failure.
+#
+# main had moved eight commits and released this validator twice while #266 was open, so
+# the pair was re-derived before the release rather than assumed: the account was running
+# 15c3f101, the tree at 6bbb42e built 7a149fc4, and those were exactly the two digests the
+# pending record named. That check is cheap and it is the one that says whether the release
+# you are about to cut is the release that is owed.
+#
+# AND IT WENT STALE ANYWAY, WHICH IS THE SECOND TIME THIS FILE HAS RECORDED THAT AND THE
+# FIRST TIME IT WAS RECORDED BY THE PERSON IT HAPPENED TO. The zip built from 6bbb42e was
+# uploaded as version xli6Px4xuLliM0o9_yl3UgREQhDEXTSF, and while it sat in review #271
+# added CheckpointPayload to contracts/results.py and #274 landed on top. That module is in
+# the import tree this zip carries, so the tree stopped building 7a149fc4 and started
+# building the digest below -- through no mistake by either change, exactly as the entry
+# about 985c2cb and #250 in edullm_platform.pending_amendments describes. Merging the first
+# paste would have put a record on main naming a zip that is in the bucket and is not what
+# main builds, which is the one thing this file exists to prevent.
+#
+# So it was re-cut from 6f90582 rather than merged and fixed afterwards, and both fields
+# below were read off what the workflow printed and checked against a local rebuild of that
+# tree. The uploaded-but-superseded object is left in the bucket: it is addressed by version
+# and nothing points at it, and deleting an artifact to tidy up is how a rollback target
+# disappears.
+#
+# The lesson for the next person is smaller than the paragraph. Re-derive the pair
+# immediately before pasting, not only before dispatching, because the interval that matters
+# is the one between the upload and the merge rather than the one before the upload.
+#
+# The workflow uploads both zips and only this record moves. The recorder's digest moved too
+# -- #271 is a behaviour change for it rather than an import -- but that difference is
+# recorded in its own pending entry with its own reason and window, and repointing its
+# template here would take a release somebody else is accountable for out of their hands.
 schema_version: 1
 
 #: The object the template's Code block names. Kept here as well so the two can be
 #: compared: a version id edited in one place and not the other is a template pointing at
 #: a zip nobody recorded, or a record describing a zip nobody deployed.
 s3_key: admission-validator/admission-validator.zip
-s3_object_version: 3ouphskBQYf0yWs3zvbJqd3c2UaE5rcz
+s3_object_version: x_FMf.Ppf.UhzL7kd_zjeIsKB0CO76Xu
 
 #: sha256 of the uploaded zip, as tools/build_admission_lambda.py reports it. This is the
 #: field that ties the release to a tree rather than to a moment.
-sha256: 15c3f1014c6ecfdc107f39d48f740d0905dad43b7e90cfc506ee62702ddd0f54
+sha256: b8db05da9915bacb12f13d7d6c5945f523e358186dd6afcb0e06d1066c53e7ec
