@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import shutil
 import sys
 import textwrap
@@ -2009,10 +2010,14 @@ def _submission_form(request: SubmissionRequest) -> dict[str, str]:
         "team": request.team,
         "experiment": request.experiment,
         "wandb_project": request.wandb_project,
-        # Rejoined the way the workflow will split it. ``shlex.join`` would quote every
-        # word, and a quoted ``"$EDULLM_CHECKPOINT_DIR"`` reaches OLMo-core as twenty-two
-        # literal characters and a directory it cheerfully creates.
-        "command": " ".join(request.command),
+        # Rejoined the way the workflow will split it, which is with the quoting on. The
+        # compile job POSIX-splits this field, so ``shlex.join`` round-trips: it reproduces
+        # the spec's own text and the split on the far side recovers the same words. A plain
+        # ``" ".join`` does not. It drops the quotes that group ``bash -lc``'s program into
+        # one word, so a three-word command arrives as five and the compile job refuses it
+        # after a clean local check. Every ``bash -lc`` command the guides document, and the
+        # one ``edullm check`` scaffolds for OLMo-core, was refused that way.
+        "command": shlex.join(request.command),
     }
     if request.maximum_runtime_hours is not None:
         fields["maximum_runtime_hours"] = format(request.maximum_runtime_hours, "f")
