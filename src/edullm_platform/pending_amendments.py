@@ -611,87 +611,25 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # the refusal on their own laptop from `edullm check`, ahead of the gate and ahead of
     # anybody else's attention. A change that has to sit in this window should be arranged
     # to sit in it this way round where it can be.
-    releases: tuple[PendingRelease, ...] = (
-        PendingRelease(
-            function="recorder",
-            reason=(
-                "THIS IS THE HALF THAT CARRIES A BEHAVIOUR. The same contracts/results.py "
-                "addition, plus lifecycle_projection.py deriving the reading -- from the "
-                "ETag ListObjectsV2 already returns, or from the CRC32C GetObjectAttributes "
-                "returns where the grant exists. lifecycle_handler.py is untouched: the "
-                "boto3 client it already passes as the checkpoint lister answers both calls, "
-                "so the projection takes it as the attributes reader too."
-                "\n\n"
-                "It is what puts a digest of the bytes into a lineage record for the first "
-                "time. CheckpointManifest.checksum is a SHA-256 over the listing, so two "
-                "runs holding different weights recorded one identical value in the only "
-                "field named for a digest, and a comparison of them printed no row at all. "
-                "The new field is derived from what S3 attests about the payload, so the "
-                "difference is visible without anything downloading 762 MB."
-                "\n\n"
-                "Additive in every direction, and its ordering against the lifecycle-lambda "
-                "amendment recorded above is a non-problem both ways round. Release this zip "
-                "first and the attributes call is refused, _attested_digests falls back to "
-                "the entity tags, and the record says listing_etag. Amend the role first and "
-                "nothing calls the grant until the zip lands. Records already in the store "
-                "are unaffected either way: the field is optional and defaults to None, "
-                "which tests/test_results.py holds directly."
-                "\n\n"
-                "Until this is released the recorder goes on writing checkpoints with no "
-                "payload reading at all, which is the same silence the change exists to end "
-                "and is not a regression on anything. A stale recorder is the quiet kind of "
-                "stale -- it writes lineage that looks exactly like correct lineage into "
-                "immutable records -- so it is recorded here rather than noticed later."
-                "\n\n"
-                "A SECOND CHANGE IS NOW IN THE SAME ZIP AND MOVED THIS DIGEST AGAIN. "
-                "ResultManifest gained status_reason and container_reason, and "
-                "lifecycle_projection.py fills both from the Batch event it is already "
-                "handed. The projection has always parsed those two strings, to ask whether "
-                "either begins with this platform's cancellation marker, and then discarded "
-                "them; four of the 73 failed runs read on 2026-08-06 produced no log stream "
-                "at all and are unattributable for exactly that reason, with Batch's own "
-                "CannotPullContainerError sitting in the event the whole time."
-                "\n\n"
-                "Additive in the same way and orderable against nothing. The two fields are "
-                "optional and default to None, so records already in the store parse "
-                "unchanged, which tests/test_results.py and the lifecycle projection tests "
-                "both hold directly. Until this zip is released the recorder goes on writing "
-                "results with neither field, which is today's behaviour rather than a "
-                "regression, and the runs it records in the meantime stay as unreadable as "
-                "the ones it has already recorded."
-            ),
-            cleared_by="uv run python tools/release_lambda.py --function recorder",
-            builds_to="b577164f077a7541b0e3efefbae9c11878af725908649b8edfd9ee1dfe1aa7ce",
-            released="756bb23ea9e52b9e9624386f7946b66111286813c981c88983658f4d244c496f",
-            recorded_on=date(2026, 8, 6),
-        ),
-        PendingRelease(
-            function="validator",
-            reason=(
-                "CARRIES NO BEHAVIOUR, AND IS RECORDED ANYWAY BECAUSE THE REGISTER CANNOT "
-                "TELL THE DIFFERENCE AND SHOULD NOT TRY. The validator imports "
-                "contracts/results.py, ResultManifest gained two optional fields there, and "
-                "the packaged bytes moved with it. Nothing the validator does reads either "
-                "field: admission decides whether a submission may run and writes no result "
-                "record, so this zip behaves identically to the released one on every input."
-                "\n\n"
-                "The alternative was to exempt a change somebody has judged inert, and the "
-                "reason not to is that the judgement is the part that fails. A digest is "
-                "either the deployed one or it is not, and a register that accepts 'this one "
-                "does not matter' is a register that accepts the next one too, on the same "
-                "sentence, from somebody who was wrong."
-                "\n\n"
-                "Releasing it is still worth doing rather than waiting for a change that "
-                "carries something. A validator whose bytes differ from the tree's makes the "
-                "next real drift unreadable, because the difference is already there and "
-                "somebody has to work out which part of it is new."
-            ),
-            cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="e4a45e5666ccd3648b29687c77e513460d91ef14af1c353325c921b0f25ed804",
-            released="f8cdd56259ff2b3f9ff5c26f0bb67ec1e22f8532f841fcc4c811a7e9a73cf354",
-            recorded_on=date(2026, 8, 6),
-        ),
-    )
+    #
+    # A SIXTH AND SEVENTH ENTRY, BOTH CLEARED BY THE RELEASE THAT CARRIES THIS DELETION, AND
+    # A THIRD ZIP THAT SHOULD HAVE HAD AN ENTRY AND DID NOT. The recorder and the validator
+    # both moved on ResultManifest gaining status_reason and container_reason, and both were
+    # recorded here before the merge. The notifier moved on the same contract, through
+    # notifications/facts.py importing CheckpointListingOutcome from it, and was recorded
+    # nowhere.
+    #
+    # NOTHING CAUGHT THE THIRD, AND THE REASON IS THE INTERESTING PART. The recorder and the
+    # validator each have a test that builds the zip and compares it with the release record,
+    # so each went red the moment the contract moved and each got an entry because a red test
+    # asked for one. The notifier has no such test, so its zip drifted in silence -- and it
+    # was already drifting before this change arrived, from 35a2634ce885 against a recorded
+    # b55a71d58701. The register is only as complete as the tripwires that feed it, and one
+    # of the four functions has none.
+    #
+    # All three are released now, so this deletion is bookkeeping rather than a decision. The
+    # notifier's missing tripwire is not, and it outlives these entries.
+    releases: tuple[PendingRelease, ...] = ()
     return one_record_per_function(releases)
 
 

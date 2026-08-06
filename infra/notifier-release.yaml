@@ -20,5 +20,5 @@
 # both fields below in the same commit as the change that caused them to move.
 schema_version: 1
 s3_key: notifier/notifier.zip
-s3_object_version: 8CF4LAeKxyKxjqg9RCwD8f6es4zP00_9
-sha256: b55a71d58701d8538de999775ad5424b67d76f327a6e9953f37ea5dcd7f9b92c
+s3_object_version: To1UIH0r1N8yfu0tZ.XfmbIox7es.JW0
+sha256: 5bb5c9d1b63696fc9ef23573456a8b54263a3015f1dc61dcd5bb81846a0953ec
