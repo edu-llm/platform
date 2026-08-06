@@ -257,10 +257,15 @@ what it has taken
 approval
   automatic. One cell, under $500, so nobody releases this.
 
-not checked here, because both need the container registry
+not checked here, because each of these needs the container registry
   no_published_image
     Whether this commit published an image. A push to edullm/** builds one,
     and the submission workflow holds the credential that asks the registry.
+  image_is_ambiguous
+    Which image, where that commit published more than one at the same
+    instant. The registry holds the push times and this cannot ask for them,
+    so the compile step is where a tie is seen and refused rather than guessed
+    at.
   image_scan_findings_unreviewed
     Whether the registry's scan findings for that image have been read.
     Decided where the findings are, and admission re-derives it after
