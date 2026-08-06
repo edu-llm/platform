@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from edullm_platform.contracts.workload import compute_maximum_compute_cost_usd
 from edullm_platform.notifications.facts import Catalogs, RunEndedFacts, read_run_ended
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -344,6 +345,81 @@ def test_an_array_parent_prices_the_ceiling_across_every_cell(catalogs: Catalogs
 
     assert facts is not None
     assert facts.authorised_usd == Decimal("55.83")
+
+
+def on_nodes(catalogs: Catalogs, profile: str, nodes: int) -> Catalogs:
+    """The same catalogs with one profile widened to several machines.
+
+    Built rather than committed, because ``config/workload-catalog.yaml`` is a reviewed file
+    describing what this account actually offers and every one of its seventeen profiles is a
+    single machine today. Editing it to make a test pass would be claiming a shape nobody
+    provisioned. The field is there because multi-node is the shape this platform grows into,
+    and the arithmetic has to be right before the first profile carries it rather than after.
+    """
+    catalog = catalogs.catalog
+    widened = tuple(
+        entry.model_copy(update={"nodes": nodes}) if entry.name == profile else entry
+        for entry in catalog.compute_profiles
+    )
+    return Catalogs(
+        inventory=catalogs.inventory,
+        catalog=catalog.model_copy(update={"compute_profiles": widened}),
+        targets=catalogs.targets,
+    )
+
+
+def test_the_money_counts_every_machine_the_profile_asks_for(catalogs: Catalogs) -> None:
+    """MUTATION: DROP ``nodes`` FROM EITHER PRODUCT. Nothing in the catalog would go red.
+
+    ``compute_maximum_compute_cost_usd`` is this platform's definition of what a run was
+    approved to spend and it is ``rate x nodes x hours x attempts x cells``.
+    ``run_costs.py`` prices a real window the same way, ``rate x nodes x duration``. This
+    reader had neither factor, so it agreed with both only because all seventeen profiles in
+    ``config/workload-catalog.yaml`` are one machine and anything times one is itself.
+
+    That is a check that cannot fail, and the day somebody adds the two-node profile the
+    field exists for it becomes a message understating a sweep by the node count, in the one
+    place a lead reads a number at 2am to decide whether to approve a spend. Four nodes here
+    rather than two, so a transposed factor cannot pass by coincidence.
+    """
+    widened = on_nodes(catalogs, "gpu-1xa10g", 4)
+    one = read_run_ended(envelope("batch-succeeded"), catalogs=catalogs)
+    four = read_run_ended(envelope("batch-succeeded"), catalogs=widened)
+
+    assert one is not None and four is not None
+    assert one.spent_usd == Decimal("0.02")
+    assert one.authorised_usd == Decimal("2.01")
+    assert four.spent_usd == Decimal("0.07")
+    assert four.authorised_usd == Decimal("8.05")
+    assert four.hourly_rate_usd == one.hourly_rate_usd, (
+        "the rate is the per-machine figure the catalog records and stays it. The node count "
+        "belongs in the product, not folded into the rate the message may one day print."
+    )
+
+
+def test_the_ceiling_is_the_platforms_own_arithmetic_rather_than_a_second_copy(
+    catalogs: Catalogs,
+) -> None:
+    """MUTATION: reimplement the product here. Two definitions, one of them silently stale.
+
+    The ceiling a message reports and the ceiling admission approved have to be the same
+    number computed the same way, or a lead reconciling a message against a decision record
+    finds a discrepancy that is nobody's run. So this holds the reader's answer against
+    ``compute_maximum_compute_cost_usd``, the function the contract itself validates against,
+    for a fan-out on several machines where every one of the five factors is more than one.
+    """
+    widened = on_nodes(catalogs, "gpu-1xl40s", 4)
+    facts = read_run_ended(envelope("batch-array-parent-failed"), catalogs=widened)
+
+    assert facts is not None
+    assert facts.authorised_usd == compute_maximum_compute_cost_usd(
+        Decimal("1.8610"),
+        4,
+        Decimal("1.5"),
+        1,
+        20,
+    )
+    assert facts.authorised_usd == Decimal("223.32")
 
 
 def test_an_unread_fan_out_has_no_spend_rather_than_a_spend_of_zero(
