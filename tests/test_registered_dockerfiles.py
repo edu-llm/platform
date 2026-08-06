@@ -207,9 +207,14 @@ def test_an_absent_dockerfile_is_reported_against_the_registration_that_names_it
 ) -> None:
     """THE DEFECT THIS TOOL WAS WRITTEN FOR, as the tool sees it.
 
-    ``open-instruct-scored-rewards`` is registered with ``.edullm/Dockerfile`` and has no
+    ``open-instruct-scored-rewards`` was registered with ``.edullm/Dockerfile`` and no
     ``.edullm`` directory on ``main``. The registration validated, merged, created its ECR
     repository and reached the submission form, and nothing anywhere went red.
+
+    That repository has had both since 2026-08-05, so the name below is the case this was
+    written from rather than a live finding. It stays because the responder supplies the
+    404 itself: what is under test is what the tool does with one, not what any repository
+    currently holds.
     """
     inner = everything_is_there()
 
@@ -224,8 +229,10 @@ def test_an_absent_dockerfile_is_reported_against_the_registration_that_names_it
     captured = capsys.readouterr()
     assert "registered_dockerfile_is_absent" in captured.err
     assert "open-instruct-scored-rewards" in captured.err
-    # The four that resolve are still reported as resolving, so one broken registration
-    # does not read as a registry nobody can build any of.
+    # The registrations that resolve are still reported as resolving, so one broken
+    # registration does not read as a registry nobody can build any of. Counted nowhere
+    # here, for the reason the module docstring gives: a number would go stale on the next
+    # registration exactly as the sentence above it did.
     assert "OLMo-core has .edullm/Dockerfile on main." in captured.out
 
 
