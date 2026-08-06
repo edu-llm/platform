@@ -59,6 +59,166 @@ schema_version: 1
 #: carries this date. Move it only after actually re-reading them.
 checked: "2026-08-05"
 
+# EVERY PLACE ONE ROW'S CELL CANNOT BE RED WHILE ANOTHER ROW'S IS GREEN, WRITTEN DOWN BECAUSE A
+# TEST WILL NOT LET IT GO UNDECLARED.
+#
+# WHAT WENT WRONG THAT THIS PREVENTS. `morning-message` read `yes` on `built` and on `proven` for
+# a surface that has never been written. Its two cells named
+# `src/edullm_platform/notifications/messages.py` and `tests/test_notification_messages.py`, and
+# both of those belong to the run-ended feed post -- a different surface, with its own row, under
+# "Owned by no slice". One built thing was counted twice and an unbuilt one was reported as built
+# and proven, for as long as anybody had been reading this board. `tests/test_stages.py` already
+# refused a manifest naming a path that does not exist, and that guard cannot catch this, because
+# every path named was real. It was the wrong row's paths, and nothing looked at that. A person
+# reading the file found it.
+#
+# THE INVARIANT: NO CELL MAY BE IMPLIED BY ANOTHER ROW'S CELL AT THE SAME STAGE. If row A's
+# reading is guaranteed true whenever row B's is, then A can never be red while B is green, and A
+# is resting on B's artifact rather than on its own. That is exactly what `morning-message` was
+# doing in both directions -- `exists: messages.py` is implied by the run-ended post's
+# `grep: [messages.py, "def render_run_ended"]`, and `tests: [test_notification_messages.py]` is
+# implied by that row's larger test set.
+#
+# THE FIRST VERSION OF THE TEST ASKED FOR EQUALITY AND THE MUTATION KILLED IT. Restoring
+# `morning-message` to what it read before the fix left the test green, because neither of its
+# cells was character-for-character identical to the run-ended post's -- one was weaker by a
+# pattern and the other by a set. Implication is the relation that matters and equality is only
+# its special case. Worth knowing before somebody simplifies this back.
+#
+# WHY IMPLICATION AND NOT SHARING. Nineteen paths in this file are named by more than one row and
+# almost all of that is honest, so the line cannot be at the path. `capacity-yaml` asserting that
+# `capacity.yaml` exists is implied by `control-plane` asserting that all eight config files do,
+# and that is fine: `capacity-yaml` is checking its own file and earns its green whether or not
+# the roll-up above it passes. Nothing is wrong with being implied; what the test does is force
+# somebody to say which kind of implication this is. Every entry below is a case where the answer
+# is "the same fact, honestly, and here is why". `morning-message` was the case where the answer
+# would have had to be "because I pointed at another surface's files", which nobody would write.
+#
+# WHY A DECLARATION RATHER THAN A LENIENT TEST. Five of these are one test file proving two
+# surfaces, which is normal and which a plan task explicitly asked for in one case. A test that
+# quietly exempted every `tests:` overlap would be simpler and would hide a real limit on what
+# this board knows. Written down it is a limit somebody can read and argue with; exempted in code
+# it is a leniency nobody sees. The block ratchets both ways -- an undeclared implication is red,
+# and so is an entry whose implication has stopped existing -- so a fix has to delete its entry.
+#
+# WHAT IS OUT OF SCOPE, AND SAID HERE RATHER THAN LEFT TO BE INFERRED FROM THE TEST. Only
+# `built`, `deployed` and `proven` are checked. `designed` is a person's answer in every row by
+# construction and `planned` is a claim about a plan, where two surfaces built by one task is the
+# ordinary case. `release: true` is not checked either: it names nothing, is one global fact about
+# the repository, and is shared by six rows because CLI features go live by being released. That
+# is the deployment model, not a collision, and an entry listing those six would churn without
+# telling anybody anything.
+shared_readings:
+  - stage: built
+    rows:
+      - control-plane
+      - approval-tiers
+      - capacity-yaml
+      - datasets-yaml
+      - image-exceptions
+      - nine-approvers
+      - priced-profiles
+      - repository-pipeline
+    why: >
+      `control-plane` is a roll-up: its `built` is the conjunction of the eight configuration
+      files, seven of which have a row of their own. Each of those seven checks its own file and
+      is red the moment that file goes, so none of them is resting on the roll-up. What is true is
+      the reverse -- the roll-up can never be green while any of them is red -- and that is the
+      arithmetic of a conjunction rather than a borrowed reading.
+  - stage: built
+    rows: [identity-table, preview-role-excluded]
+    why: >
+      The exclusion is a field inside the identity table, so `bindings.py` existing is the weaker
+      claim and it belongs to the table's own row. The two are told apart by the grep for
+      `Excluded`, which goes red if the exclusion is removed while the file stays.
+  - stage: built
+    rows: [submission-manifest, input-roles]
+    why: >
+      Same shape: the input roles are a field of the submission manifest, and `manifest.py`
+      existing is the manifest's own claim rather than the field's. The field's row greps for what
+      it adds.
+  - stage: built
+    rows: [submission-workflow, approver-name]
+    why: >
+      The approver's name is a feature inside the submission workflow, so the workflow file
+      existing is the workflow's claim. `approver-name` greps it for `approv`, which is what tells
+      the two apart in the tree.
+  - stage: built
+    rows: [repository-pipeline, register-open-instruct]
+    why: >
+      `config/repositories.yaml` existing is the pipeline's claim; registering one particular
+      codebase in it is a grep for that codebase's id, which goes red if the entry is removed.
+  - stage: deployed
+    rows: [approver-name, submission-workflow]
+    why: >
+      Mutual and not reducible with the rules this file has. Both cells are `on_main` over
+      `submit-run.yml`, and for a workflow that genuinely is what deployed means. The cost is
+      real and worth naming: revert the approver lines, push, and this cell still reads yes. What
+      catches that is `approver-name`'s own `built`, which greps the pattern, so the row cannot go
+      quietly green in both places. Closing it properly needs `on_main` to take a pattern the way
+      `grep` does, which is a change to the reader in `stages.py`.
+  - stage: deployed
+    rows: [deployed-iam-matches, visibility-board]
+    why: >
+      Both are jobs inside the audit workflow, and deployed for a workflow means the file is on
+      the default branch. Three neighbours -- `collector`, `days-activity` and
+      `per-run-substrate` -- grep this file for the job that runs each of them, which can
+      disagree and is the better shape, but is weaker in another direction, because `grep` reads
+      the working tree while `on_main` reads what was pushed. Neither form is right and the fix
+      for both is a patterned `on_main`.
+  - stage: deployed
+    rows: [delivery, run-ended-post]
+    why: >
+      One template deploys both: the topic and subscription that address an event, and the Lambda
+      that renders the line an ended run posts. They deploy together or not at all, so one stack
+      reading is the truth about both. Their `built` cells are a module and a grep for
+      `def render_run_ended`, which do tell them apart.
+  - stage: deployed
+    rows: [eval-metrics, lifecycle-path]
+    why: >
+      Same shape. The EventBridge rule, the queue and the recorder are one template, and the
+      recorder is what writes eval metrics into a result manifest, so there is no state in which
+      one of these is deployed and the other is not.
+  - stage: deployed
+    rows: [instance-allow-list, researcher-role]
+    why: >
+      The allow-list is a condition inside the researcher role's policy, so it deploys when the
+      role does and cannot deploy separately. Worth a second look if the allow-list ever moves
+      out of the role, because the shared reading would stop being true and this entry would go.
+  - stage: deployed
+    rows: [nine-approvers, roster-agreement]
+    why: >
+      Both rows are about one GitHub environment from two sides -- who the approvers are, and
+      whether the roster and the team agree about them -- so the environment existing is the same
+      fact for each. What each row adds is in its `built` and `proven`, which differ in both.
+  - stage: proven
+    rows: [identity-table, preview-role-excluded]
+    why: >
+      One test file covering both, by instruction rather than by accident: the plan task that
+      built the preview-role exclusion said to append to the identity table's existing test file.
+      Splitting a test file so a board can tell two rows apart would be the measurement deforming
+      the thing measured, which is worse than the limit it removes.
+  - stage: proven
+    rows: [estimate-and-bound, priced-profiles]
+    why: >
+      The priced catalogue and the arithmetic performed over it are tested together because
+      neither is meaningful alone -- a bound is computed from a profile's price, and a profile with
+      no bound is not submittable. `estimate-and-bound` reads `no` on `built` regardless, so this
+      shared cell is not currently holding a row green on its own.
+  - stage: proven
+    rows: [registration-skill, skills-three-hosts]
+    why: >
+      The agent layer is two skills and the three host files that carry them, and the test that
+      proves either proves it by reading the same set of files. Two test files here would
+      duplicate the fixtures rather than assert anything new.
+  - stage: proven
+    rows: [datasets-yaml, model-family]
+    why: >
+      `tests/test_published_dataset_reference.py` asserts the reference every published dataset
+      carries, and a model family is identified by the dataset it was trained on, so the same
+      assertions cover both. `datasets-yaml` names a second file beside it, which is what keeps
+      the implication one-way.
+
 slices:
   - name: The spine
     surfaces:
@@ -956,13 +1116,29 @@ slices:
         deployed: {not_applicable: deferred}
         proven: {not_reached: deferred}
 
+      # THE SECOND FALSE POSITIVE THE COLLISION TEST FOUND, AND IT HAD BEEN HERE SINCE #274 WROTE
+      # THIS FILE. `built` was `exists: src/edullm_platform/cli/main.py`, which is character for
+      # character what `cli-binary` reads, so the two cells could never disagree and this one was
+      # answering "the CLI exists" to the question "does anything reconcile the verbs". The row
+      # contradicted itself in plain sight: `planned` says `settled and not built` one line above
+      # a `built` that read yes. Nothing in `src/`, `tools/` or `tests/` reconciles a verb list --
+      # `LANE_VERBS` is a two-element tuple `main.py` branches on, not a reconciliation -- and
+      # `cli-binary` already holds the claim that the nine verbs are there.
+      #
+      # `proven` WENT THE SAME WAY, AND THE TEST IS WHY I STOPPED HEDGING ABOUT IT. It read
+      # `tests: [tests/test_cli_run_verbs.py]`, which `cli-binary` and `exploration-route` each
+      # name inside a larger set, so either of them being green forced this green too. That file
+      # proves the verbs behave; the closest it comes to this row is
+      # `test_the_id_the_listing_prints_is_an_id_the_verbs_take`. A row with nothing built cannot
+      # have something proven, and the whole point of `proven` never being inferred from `built`
+      # cuts this way as well.
       - id: verb-reconciliation
         name: The verb reconciliation
         designed: {reached: overview draws it}
         planned: {not_reached: settled and not built}
-        built: {exists: src/edullm_platform/cli/main.py}
+        built: {not_reached: "nothing reconciles the verb list; cli-binary holds that the verbs exist"}
         deployed: {release: true}
-        proven: {tests: [tests/test_cli_run_verbs.py]}
+        proven: {not_reached: "no test asserts the verb list against anything; test_cli_run_verbs proves the verbs behave"}
 
       - id: size-to-node
         name: The size-to-node arithmetic, and the model-fit refusal
