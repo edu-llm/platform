@@ -66,6 +66,22 @@ VERB_MENTION = re.compile(r"(?<![.\w-])edullm\s+([a-z][a-z-]*)")
 #: A long flag wherever one of these documents writes it.
 FLAG_MENTION = re.compile(r"(?<![\w-])--[a-z][a-z0-9-]*")
 
+#: A sentence claiming something is not built. Every wording the tree has actually used is in
+#: here, which is the only reason to trust it: a pattern written from imagination matches the
+#: sentences somebody would write on purpose rather than the ones they wrote by accident.
+#: ``AGENTS.md`` said "are settled and not built" and
+#: ``docs-frank/working/what-you-can-test-tonight.md`` said 'print "not built yet"'.
+UNBUILT_CLAIM = re.compile(
+    r"\b(?:not\s+built|unbuilt|not\s+yet\s+built|does\s+not\s+exist\s+yet)\b", re.IGNORECASE
+)
+
+#: A verb named anywhere in a sentence, whether or not the binary's name is in front of it.
+#: Wider than :data:`VERB_MENTION` on purpose: the false sentence in
+#: ``what-you-can-test-tonight.md`` named its four as bare backticked words -- "`run`, `shell`,
+#: `add`, `ask`" -- with the one ``edullm`` two lines earlier, so a pattern requiring the
+#: binary's name would have read straight past the thing it exists to catch.
+NAMED_VERB = re.compile(r"`(?:edullm\s+)?([a-z][a-z-]*)`|(?<![.\w-])edullm\s+([a-z][a-z-]*)")
+
 #: The header of a skill's table of refusal codes, and one row of it. Scoped to that table
 #: rather than to every backticked word, because the documents also name ``needs_a_dispatch``,
 #: ``format_version`` and the rest of the envelope, which are keys and not codes. A rule that
@@ -127,6 +143,130 @@ def test_every_flag_the_document_names_is_a_flag_some_verb_takes(document: Path)
     unknown = sorted(named - taken)
 
     assert not unknown, f"{document.name} names flags no verb takes: {', '.join(unknown)}"
+
+
+def sentences(text: str) -> list[str]:
+    """The document as sentences, with the line wrapping taken out.
+
+    Sentences rather than lines, because prose in these files is wrapped at ninety-odd
+    characters and the subject of a claim is routinely on the line above the claim. Reading
+    line by line would have missed the exact sentence this exists for: "`edullm run` and
+    `edullm shell` are settled and not built" fits on one line, and the four-verb version in
+    the local document does not.
+    """
+    return re.split(r"(?<=[.!?])\s+", " ".join(text.split()))
+
+
+def verbs_named_in(sentence: str) -> set[str]:
+    return {
+        found
+        for pair in NAMED_VERB.findall(sentence)
+        for found in pair
+        if found
+    }
+
+
+def claims_about_what_is_built(text: str) -> list[tuple[str, set[str]]]:
+    """Every sentence saying something is not built, and the verbs it says it about."""
+    return [
+        (sentence, verbs_named_in(sentence))
+        for sentence in sentences(text)
+        if UNBUILT_CLAIM.search(sentence)
+    ]
+
+
+@pytest.mark.parametrize("document", AGENT_DOCUMENTS, ids=lambda path: path.name)
+def test_no_document_says_a_built_verb_is_not_built(document: Path) -> None:
+    """**Mutation: write "`edullm run` and `edullm shell` are settled and not built".**
+
+    THAT SENTENCE WAS IN AGENTS.md AND IT WAS FALSE FOR AS LONG AS THE TWO VERBS HAVE
+    EXISTED. ``NOT_BUILT_YET`` is an empty dictionary and both are in ``BUILT_TODAY``, so the
+    binary they describe had nine working verbs while the always-on rule described seven and a
+    plan. This file is loaded into every agent session in the organization, so it was not one
+    stale sentence: it was every assistant in the org being told, with no reason to doubt it,
+    that the two newest verbs did not work. An agent told a verb is unbuilt does not run it to
+    find out.
+
+    THE THREE CASES ABOVE COULD NOT HAVE CAUGHT IT, WHICH IS WHY THIS IS A FOURTH RATHER THAN
+    A WIDENING. Each of them asks whether a name the document uses is a name the binary knows,
+    and `run` and `shell` are names the binary knows. Nothing compared what a document
+    *asserts about* a verb with what the tables say. That is the general shape: a document is
+    held to the vocabulary and not to the claims, and a false claim in the right vocabulary
+    passes every check in the file.
+
+    Driven off both tables rather than off a list of the two verbs that were wrong tonight, so
+    it keeps working in the other direction too: when something is genuinely unbuilt again,
+    ``NOT_BUILT_YET`` is where it is declared and a document may say so freely. The case below
+    proves that half, since the table is empty today and this one would otherwise be asserting
+    against nothing.
+    """
+    wrong = [
+        (sentence, sorted(named & set(BUILT_TODAY)))
+        for sentence, named in claims_about_what_is_built(document.read_text(encoding="utf-8"))
+        if named & set(BUILT_TODAY)
+    ]
+
+    assert not wrong, (
+        f"{document.name} says a built verb is not built:\n  "
+        + "\n  ".join(f"{', '.join(verbs)}: {sentence}" for sentence, verbs in wrong)
+        + f"\nNOT_BUILT_YET holds {sorted(NOT_BUILT_YET) or 'nothing'}, and everything else "
+        f"is built: {', '.join(BUILT_TODAY)}."
+    )
+
+
+def test_a_verb_the_tables_do_call_unbuilt_may_be_described_as_unbuilt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Guards the case above against being a rule that simply bans a phrase.
+
+    **THE UNBUILT NAME IS SUPPLIED RATHER THAN PICKED OFF THE TABLE, BECAUSE THE TABLE IS
+    EMPTY**, which is the same move ``tests/test_cli_check.py`` makes and for the same reason:
+    a version of this that drove whichever verb happened to be unbuilt would assert nothing at
+    all today and would go on asserting nothing, silently, after somebody built the last one.
+
+    What it holds is that the rule is about the tables and not about the words "not built". A
+    document has to be able to say a settled-and-unbuilt verb is unbuilt -- that is what the
+    row in ``NOT_BUILT_YET`` is for, and it is the sentence a reader most needs.
+    """
+    monkeypatch.setitem(NOT_BUILT_YET, "teleport", "put you on the machine without asking")
+    document = tmp_path / "SOME.md"
+    document.write_text("`edullm teleport` is not built yet.\n", encoding="utf-8")
+
+    text = document.read_text(encoding="utf-8")
+    claims = claims_about_what_is_built(text)
+
+    assert claims, "the claim detector no longer recognises the plainest wording there is"
+    assert not any(named & set(BUILT_TODAY) for _sentence, named in claims)
+
+
+def test_the_wording_this_looks_for_is_the_wording_the_tree_actually_used() -> None:
+    """Guards the detector itself, which is the half that can rot without going red.
+
+    Mutation: tighten ``UNBUILT_CLAIM`` to a phrase nobody writes. Every document would carry
+    no claims, every claim list would be empty, and the case above would pass over a file
+    saying anything at all. That is the shape this repository has now found more than a dozen
+    times, and a detector is the easiest place in a test file for it to hide.
+
+    Both sentences below are verbatim: the first is what ``AGENTS.md`` said until 2026-08-05
+    and the second is what ``docs-frank/working/what-you-can-test-tonight.md`` said. The second
+    is the one that argues for :data:`NAMED_VERB` being wider than :data:`VERB_MENTION`, since
+    it names its verbs with no ``edullm`` in front of any of them.
+    """
+    was_in_the_rule = "`edullm run` and `edullm shell` are settled and not built."
+    was_in_the_local_note = (
+        'Four more -- `run`, `shell`, `add`, `ask` -- print "not built yet" and a sentence '
+        "about the plan."
+    )
+
+    for text, expected in (
+        (was_in_the_rule, {"run", "shell"}),
+        (was_in_the_local_note, {"run", "shell", "add", "ask"}),
+    ):
+        claims = claims_about_what_is_built(text)
+        assert claims, f"the detector does not recognise: {text}"
+        named = {verb for _sentence, verbs in claims for verb in verbs}
+        assert expected <= named, f"{sorted(expected - named)} not read out of: {text}"
+        assert expected <= set(BUILT_TODAY), "these are the verbs that were wrongly declared"
 
 
 @pytest.mark.parametrize("document", AGENT_DOCUMENTS, ids=lambda path: path.name)

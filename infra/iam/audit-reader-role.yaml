@@ -431,6 +431,46 @@ Resources:
                   StringEquals:
                     aws:RequestedRegion:
                       Fn::Sub: ${AWS::Region}
+              # WHO EXISTS IN THE ACCOUNT, AGAINST WHO EXISTS ON THE ROSTER. Admission reads
+              # config/organization.yaml and nothing tells that file when somebody appears in
+              # AWS. Anybody in the organization can self-serve an
+              # Intern-<first>.<last>-sbsandbox role in about five minutes, so the ordinary
+              # order of events is that a person holds cloud credentials for a week and is
+              # refused by `edullm submit` the first time they use them -- and until this grant
+              # there was nothing in the account or the repository that could say so. Measured
+              # on 2026-08-05 the account held 43 of these roles against a 35-person roster.
+              #
+              # THE FIFTH WILDCARD RESOURCE, AND FORCED FOR THE REASON THE OTHER FOUR ARE.
+              # iam:ListRoles names no role in the request -- listing is what it is for -- so
+              # there is nothing for a resource ARN to match and a policy naming one denies the
+              # call outright. Confining it to the Intern- prefix is not a narrowing somebody
+              # declined to write, it is not expressible: IAM offers no condition key for the
+              # name of a role being listed.
+              #
+              # AND IT IS THE ONE WILDCARD HERE THAT CANNOT CARRY THE REGION CONDITION. IAM is
+              # a global service, its endpoint is a single one, and aws:RequestedRegion on a
+              # global call is a bound that describes nothing. Writing it anyway would read as
+              # a narrowing to whoever reviewed this next, which is worse than its absence with
+              # this sentence beside it.
+              #
+              # What it discloses is the name, path, creation date and trust policy of every
+              # role in a shared sandbox account -- wider than most of this policy, and the
+              # same price already paid for cloudformation:ListStacks and tag:GetResources.
+              # iam:GetRole is deliberately not beside it: it is what would answer when a role
+              # was last assumed, one call per role, and tools/report_roster_against_the_account.py
+              # argues at its AccountRole class why a creation date is the column that dates
+              # the drift and a last-used date is a triage question for whoever reads a row.
+              #
+              # EVERY WRITE IN THIS PREFIX STAYS ABSENT AND THIS IS THE SHARPEST CASE OF THE
+              # RULE IN THE FILE. iam:CreateRole, AttachRolePolicy and PutRolePolicy are the
+              # adjacent actions, and a scheduled job holding any of them could answer its own
+              # finding by making the account match the roster -- creating the person it just
+              # reported as missing. The whole value of this check is that it reports and a
+              # human decides who may submit runs.
+              - Sid: ListTheInternRolesTheRosterIsComparedAgainst
+                Effect: Allow
+                Action: iam:ListRoles
+                Resource: "*"
               # DELIBERATELY ABSENT, and each for its own reason rather than as a list.
               #
               # Every write. This role exists to describe the account and a check that can

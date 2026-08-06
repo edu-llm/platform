@@ -80,6 +80,7 @@ PLACEMENT_JOB = "placement-verdicts"
 CAPTURE_JOB = "substrate-capture"
 HISTORY_JOB = "substrate-history"
 ASKS_JOB = "open-asks"
+ROSTER_JOB = "roster-against-the-account"
 #: The first job in the file and the one the informational check had never covered. Found by
 #: the sweep below on the morning a tenth job was added, which is what the sweep is for.
 DOCKERFILES_JOB = "registered-dockerfiles"
@@ -124,6 +125,7 @@ CREDENTIALED_JOBS = (
     BOARD_JOB,
     PLACEMENT_JOB,
     CAPTURE_JOB,
+    ROSTER_JOB,
 )
 
 #: The functions the release check reads, and the templates that name them to
@@ -1384,6 +1386,7 @@ def test_every_job_in_this_file_is_either_checked_above_or_excused_by_name(
         CAPTURE_JOB,
         ASKS_JOB,
         DOCKERFILES_JOB,
+        ROSTER_JOB,
     }
     unaccounted = set(workflow["jobs"]) - checked - set(NEEDS_ITS_PREDECESSOR)
 
@@ -1499,6 +1502,7 @@ def test_the_role_can_read_and_cannot_write(role: dict[str, Any]) -> None:
         "cloudtrail:LookupEvents",
         "batch:ListJobs",
         "batch:DescribeJobs",
+        "iam:ListRoles",
     }
     for action in granted:
         assert not any(fragment in action for fragment in MUTATING_ACTION_FRAGMENTS), action
@@ -1511,9 +1515,23 @@ def test_the_role_can_read_and_cannot_write(role: dict[str, Any]) -> None:
                 "tag:",
                 "cloudtrail:",
                 "batch:",
+                "iam:",
             )
         ), action
         assert "*" not in action, action
+
+    # THE SHARPEST INSTANCE OF THIS RULE IN THE WHOLE POLICY, AND THE ONLY ONE WHERE THE
+    # ADJACENT WRITE WOULD LET A CHECK MANUFACTURE THE THING IT REPORTS AS MISSING. The
+    # roster comparison names people who hold a role and are not on the roster; a job holding
+    # any of these three could close its own finding by creating the identity instead of
+    # reporting it, and who may submit a run would then be decided by a cron line.
+    for forbidden in ("iam:CreateRole", "iam:AttachRolePolicy", "iam:PutRolePolicy"):
+        assert forbidden not in granted
+    # GetRole is the adjacent read rather than an adjacent write, and it is absent for a
+    # different reason: it is what would answer when a role was last assumed, one call per
+    # role, and tools/report_roster_against_the_account.py argues at AccountRole why the
+    # creation date is the column that dates the drift.
+    assert "iam:GetRole" not in granted
 
     # The adjacent actions on the tagging grant, and the reason it is a read rather than a
     # way for the board to decide what appears on its own report. `tag:` is a service prefix
@@ -1601,12 +1619,21 @@ def test_no_grant_reaches_a_whole_bucket_or_every_secret(role: dict[str, Any]) -
     `config/execution-targets.yaml` is not a narrowing somebody declined to write. What it
     discloses is the job records of this region, which is the price already paid for the
     tagging read above.
+
+    `iam:ListRoles` is the fifth and is the same shape once more: listing is what the action
+    is for, so the request names no role and IAM offers no condition key for the name of one
+    being listed. What it discloses is the name, path, creation date and trust policy of
+    every role in a shared sandbox account. It is what makes
+    `tools/report_roster_against_the_account.py` able to say who holds AWS access that
+    `config/organization.yaml` has never heard of, which nothing else in the account or the
+    repository can answer.
     """
     unscopable = {
         "FindStacksNothingInTheRepositoryAccountsFor",
         "FindEveryResourceThisPlatformTagged",
         "LookUpLaunchEvents",
         "ReadTheQueuesThePlacementVerdictNeeds",
+        "ListTheInternRolesTheRosterIsComparedAgainst",
     }
     assert {
         statement["Sid"]
@@ -1637,6 +1664,19 @@ def test_no_grant_reaches_a_whole_bucket_or_every_secret(role: dict[str, Any]) -
     )
 
 
+#: The unscopable grants whose service is global, so ``aws:RequestedRegion`` is not a bound
+#: they can carry. Named as a set rather than left out of the parametrisation below, because
+#: an exemption that is only an absence is one nobody has to argue for.
+#:
+#: IAM is the whole of it and is likely to stay so. Its endpoint is a single global one, so
+#: every call this role makes to it reports the same region whatever the runner asked for,
+#: and a condition on that value narrows nothing at all. Writing it anyway would read to the
+#: next reviewer as a narrowing that exists, which is worse than its absence with a sentence
+#: beside it -- and it would be a condition that silently starts denying the call if AWS ever
+#: changes which region a global endpoint reports.
+GLOBAL_SERVICE_GRANTS = {"ListTheInternRolesTheRosterIsComparedAgainst"}
+
+
 @pytest.mark.parametrize(
     "sid",
     [
@@ -1657,13 +1697,13 @@ def test_each_unscopable_grant_is_confined_to_the_region_this_platform_deploys_i
     read of the second is one nothing here asks for.
 
     EVERY UNSCOPABLE GRANT RATHER THAN THE TWO THIS STARTED WITH, and parametrised by Sid
-    rather than by action because the newest of them holds two actions in one statement and
-    an equality test against a single action string silently matches nothing. The rule this
+    rather than by action because one of them holds two actions in one statement and an
+    equality test against a single action string silently matches nothing. The rule this
     encodes was already written here -- a condition that covers the older statement and not
     the newer is the ordinary way a rule like this stops applying -- and it had already
-    stopped applying to `cloudtrail:LookupEvents`, which is the widest of the four and was
-    never on the list. Naming the same four Sids the exemption test names is what keeps the
-    two from drifting: a statement cannot be exempted from scoping without landing here.
+    stopped applying to `cloudtrail:LookupEvents`, which is the widest of these and was never
+    on the list. The case below holds this list and the exemption test's list together, so a
+    statement cannot be exempted from scoping without landing in one of the two.
     """
     found = [statement for statement in statements(role) if statement["Sid"] == sid]
 
@@ -1671,6 +1711,43 @@ def test_each_unscopable_grant_is_confined_to_the_region_this_platform_deploys_i
     assert found[0]["Condition"] == {
         "StringEquals": {"aws:RequestedRegion": {"Fn::Sub": "${AWS::Region}"}}
     }
+
+
+def test_the_only_unscopable_grant_with_no_region_bound_is_the_global_one(
+    role: dict[str, Any],
+) -> None:
+    """Mutation: add a sixth wildcard grant and quietly leave its region condition off.
+
+    THIS IS THE CASE THAT STOPS THE ONE ABOVE FROM BEING A LIST SOMEBODY CAN DECLINE TO JOIN.
+    That test is parametrised over four Sids written out by hand, so a fifth wildcard grant
+    that carried no condition would not fail it -- it would simply not be in it, which is the
+    exact shape the exemption test's own docstring warns about one paragraph earlier and the
+    shape this repository has now found more than a dozen times.
+
+    So the two lists are held against the whole policy from the other direction: every
+    statement whose resource is `*` either carries the region condition or is named in
+    :data:`GLOBAL_SERVICE_GRANTS`, and nothing is in both. Adding a wildcard grant now means
+    either writing the condition or arguing here why the service cannot take one.
+    """
+    wildcards = {
+        statement["Sid"]
+        for statement in statements(role)
+        if "*" in statement_resources(statement)
+    }
+    conditioned = {
+        statement["Sid"]
+        for statement in statements(role)
+        if statement["Sid"] in wildcards and "Condition" in statement
+    }
+
+    assert wildcards, "the policy holds no wildcard grant, so this is asserting nothing"
+    assert conditioned & GLOBAL_SERVICE_GRANTS == set(), (
+        "a grant argued to be global carries a region condition, so one of the two is wrong"
+    )
+    assert wildcards - conditioned == GLOBAL_SERVICE_GRANTS, (
+        "a wildcard grant carries no region condition and is not argued to be global: "
+        f"{sorted(wildcards - conditioned - GLOBAL_SERVICE_GRANTS)}"
+    )
 
 
 def test_the_template_grant_names_the_stacks_the_drift_check_compares() -> None:
