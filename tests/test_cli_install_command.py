@@ -1,11 +1,20 @@
 """The one command a newcomer types, held to one spelling by something that can fail.
 
 THIS FILE EXISTS BECAUSE THE COMMAND WAS WRONG FOR AS LONG AS IT EXISTED AND NOBODY RAN IT.
-``pyproject.toml`` said ``uv tool install edullm --from git+…``; uv answers "Package name
-(``edullm-platform``) provided with ``--from`` does not match install request (``edullm``)"
-and installs nothing. It was a comment, so no test read it, no lint saw it, and by the time
-anybody typed it the line had been copied into two terminal transcripts as the first thing
-each of them showed a researcher doing.
+``pyproject.toml`` said ``uv tool install edullm --from git+…``; the distribution was called
+``edullm-platform`` at the time, so uv answered "Package name (``edullm-platform``) provided
+with ``--from`` does not match install request (``edullm``)" and installed nothing. It was a
+comment, so no test read it, no lint saw it, and by the time anybody typed it the line had
+been copied into two terminal transcripts as the first thing each of them showed a
+researcher doing.
+
+**THE MISMATCH THAT PRODUCED IT IS GONE AND THE RULES ARE NOT.** The distribution is
+``edullm`` now, which is what ``[project.scripts]`` installs, so ``install``, ``list`` and
+``uninstall`` take one word.
+:func:`test_the_distribution_is_the_console_script` is what holds them together. The install
+line is still the bare git URL, because neither name is on any index; the ``--from`` form
+would now fail for a different reason and the bare ``uv tool install edullm`` fails for the
+same one it always did.
 
 A comment cannot be trusted with the only install instruction a project has, so the
 instruction now lives in :mod:`edullm_platform.cli.release` and every other copy is checked
@@ -70,7 +79,13 @@ from pathlib import Path
 import pytest
 
 from edullm_platform.cli.actions import PLATFORM_REPOSITORY
-from edullm_platform.cli.release import DISTRIBUTION, TAG_PATTERN, install_command
+from edullm_platform.cli.release import (
+    DISTRIBUTION,
+    FORMER_DISTRIBUTION,
+    TAG_PATTERN,
+    former_install_removal_command,
+    install_command,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = PROJECT_ROOT / "pyproject.toml"
@@ -125,10 +140,16 @@ UPGRADE_CONDITIONS = (
 #: thirteen stale copies.
 CONDITION_RADIUS = 1
 
-#: The console script written where a distribution belongs. Both wrong install lines this
-#: project has evidence of start here: ``uv tool install edullm --from git+...``, which sat
-#: in ``pyproject.toml``'s comment unrun, and a bare ``uv tool install edullm``, which the
-#: owner was handed by an assistant and which answers "not found in the package registry".
+#: An install request uv cannot serve, and it stayed one after the rename for a different
+#: reason. Both wrong install lines this project has evidence of start here: ``uv tool
+#: install edullm --from git+...``, which sat in ``pyproject.toml``'s comment unrun, and a
+#: bare ``uv tool install edullm``, which the owner was handed by an assistant.
+#:
+#: The ``--from`` form fails on a mismatch that no longer exists, since the distribution and
+#: the console script are one word now. The bare form fails on something the rename cannot
+#: fix: nothing here is published to an index, so ``edullm`` resolves to nothing whatever it
+#: is called, and uv answers "not found in the package registry". The rule below is
+#: therefore still worth having, and the reason under it has changed.
 BROKEN_INSTALL = "uv tool install edullm"
 
 #: uv's answers to the two wrong lines, either of which is enough. Same bargain as
@@ -341,13 +362,72 @@ def test_the_version_has_moved_off_the_one_that_never_moved() -> None:
     assert declared_version() != "0.1.0"
 
 
-def test_the_distribution_is_not_the_console_script() -> None:
-    """The confusion the broken command was made of, read out of the metadata itself."""
+def test_the_distribution_is_the_console_script() -> None:
+    """**THE ONE WORD, PINNED, BECAUSE IT WAS TWO WORDS FOR FOUR MAJORS.**
+
+    Mutation: rename ``project.name`` back to ``edullm-platform``, or add a second console
+    script, or let :data:`DISTRIBUTION` drift off ``project.name``.
+
+    The two names disagreeing is not a packaging detail a researcher can be asked to hold.
+    It made ``uv tool list`` print a word nobody had typed and made ``uv tool uninstall
+    edullm`` answer "``edullm`` is not installed" to somebody looking straight at the
+    binary, which reads as a wrong answer. The third assertion is the one with teeth: the
+    command name is the only name any researcher ever sees, so it is what all three uv verbs
+    have to agree on.
+
+    :data:`DISTRIBUTION` is checked against the file rather than trusted, because it is what
+    :func:`installed_version` hands ``importlib.metadata``. A value here that is not
+    ``project.name`` makes ``edullm --version`` answer "not installed, running from a source
+    tree" from inside a perfectly good install, and nothing else in the suite would notice.
+    """
     document = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+    scripts = list(document["project"]["scripts"])
 
     assert document["project"]["name"] == DISTRIBUTION
-    assert list(document["project"]["scripts"]) == ["edullm"]
-    assert DISTRIBUTION != "edullm"
+    assert scripts == ["edullm"]
+    assert DISTRIBUTION == scripts[0], (
+        f"the distribution is {DISTRIBUTION!r} and the command is {scripts[0]!r}. Those "
+        "have to be one word: `uv tool install`, `uv tool list` and `uv tool uninstall` all "
+        "take the distribution, and the command is the only name a researcher ever sees, so "
+        "a mismatch answers `not installed` to somebody holding the binary"
+    )
+
+
+def test_the_version_is_read_from_the_name_the_metadata_is_filed_under() -> None:
+    """Mutation: point :data:`DISTRIBUTION` at any other string.
+
+    ``edullm --version`` is a metadata lookup, not a literal, and it fails *quietly*: a
+    ``PackageNotFoundError`` is caught and reported as "not installed, running from a source
+    tree", which is a sentence the maintainers see every day from their editable checkouts
+    and would not look twice at. So a rename that moved ``project.name`` and forgot this
+    constant would ship a CLI that cannot name its own version, and no other test here runs
+    against an installed wheel to catch it.
+
+    The suite itself runs from an editable install of this project, so the lookup is asked
+    for real and answers the declared version.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        found = version(DISTRIBUTION)
+    except PackageNotFoundError:  # pragma: no cover - only where the suite is not installed
+        pytest.skip(f"{DISTRIBUTION} is not installed in this environment")
+
+    assert found == declared_version()
+
+
+def test_the_lock_files_the_root_package_under_the_name_pyproject_declares() -> None:
+    """Mutation: rename ``project.name`` and leave ``uv.lock`` alone.
+
+    ``uv sync --locked`` is the first line of every CI job here and it fails on the
+    disagreement, so this is not the only thing that would catch it. It is the one that says
+    *why* in a sentence, rather than as a resolver error in a job that has not started yet,
+    and ``tools/next_version.py`` finds the root entry by exactly this pairing, so a bump
+    made against a stale lock name refuses rather than bumping.
+    """
+    lock = (PROJECT_ROOT / "uv.lock").read_text(encoding="utf-8")
+
+    assert f'name = "{DISTRIBUTION}"\nversion = "{declared_version()}"' in lock
 
 
 def test_what_a_researcher_is_told_to_type_is_what_the_code_spells() -> None:
@@ -400,16 +480,25 @@ def test_the_guide_says_what_check_costs_and_that_it_reaches_nothing() -> None:
 # ---------------------------------------------------------------------------------------
 
 
-def throwaway_package(root: Path, version: str) -> None:
+def throwaway_package(root: Path, version: str, *, name: str = "uvt-probe") -> None:
     """A one-module distribution, rewritten in place so its repository can move forward.
 
     ``hatchling`` because it is what this project builds with, so the backend this needs is
     the one ``uv sync`` has already put in uv's cache on any machine that can run the suite.
+
+    ``name`` is the *distribution*, and the console script is always ``uvt-probe``. Those are
+    one word here for the same reason they are one word in ``pyproject.toml``, and the
+    parameter exists so that
+    :func:`test_installing_the_new_name_over_the_old_one_leaves_both` can pull them apart and
+    reproduce the state every install made before the rename is in.
+
+    ``packages`` is stated rather than inferred, because hatchling infers the module from the
+    distribution name and cannot find ``uvt_probe`` under any other one.
     """
     (root / "src" / "uvt_probe").mkdir(parents=True, exist_ok=True)
     (root / "pyproject.toml").write_text(
         "[project]\n"
-        'name = "uvt-probe"\n'
+        f'name = "{name}"\n'
         f'version = "{version}"\n'
         'requires-python = ">=3.10"\n'
         "dependencies = []\n\n"
@@ -417,7 +506,9 @@ def throwaway_package(root: Path, version: str) -> None:
         'uvt-probe = "uvt_probe:main"\n\n'
         "[build-system]\n"
         'requires = ["hatchling"]\n'
-        'build-backend = "hatchling.build"\n',
+        'build-backend = "hatchling.build"\n\n'
+        "[tool.hatch.build.targets.wheel]\n"
+        'packages = ["src/uvt_probe"]\n',
         encoding="utf-8",
     )
     (root / "src" / "uvt_probe" / "__init__.py").write_text(
@@ -527,6 +618,69 @@ def test_uv_upgrades_an_unpinned_git_install_and_leaves_a_pinned_one_alone(
     )
 
 
+@pytest.mark.slow
+def test_installing_the_new_name_over_the_old_one_leaves_both(tmp_path: Path) -> None:
+    """**WHAT THE RENAME COSTS SOMEBODY WHO ALREADY HAD THIS, ASKED OF UV.**
+
+    Mutation: write into a guide that the install line alone is enough for an install made
+    before the rename, or that the old name can be cleared afterwards.
+
+    Two properties, and the second is the one nobody would guess. An install of the new
+    distribution does not replace an install of the old one even with ``--force``, because
+    uv keys a tool by its distribution and these are two distributions that happen to ship
+    the same executable. And clearing the old entry *removes that executable*: uv deletes the
+    file it recorded against the entry without checking that a surviving install still points
+    at it. Done in the wrong order that leaves ``uv tool list`` reporting a healthy install
+    with nothing on the path, which is the worst available failure because the tool reports
+    itself fine.
+
+    So the documented order is uninstall then install, and this is what holds the documents
+    to it. Skipped on the same preconditions as the upgrade probe above and for the same
+    reason: not being able to ask is not an answer.
+    """
+    if shutil.which("uv") is None:
+        pytest.skip("uv is not on PATH, so there is nothing to ask")
+
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    throwaway_package(repository, "0.1.0", name="uvt-probe-platform")
+    git(repository, "init", "-b", "main")
+    git(repository, "add", "-A")
+    git(repository, "commit", "-m", "before the rename")
+    git(repository, "tag", "v0.1.0")
+    throwaway_package(repository, "0.2.0", name="uvt-probe")
+    git(repository, "add", "-A")
+    git(repository, "commit", "-m", "after the rename")
+    git(repository, "tag", "v0.2.0")
+
+    source = f"git+{repository.as_uri()}"
+    env = isolated_tool_home(tmp_path / "home")
+    binary = tmp_path / "home" / "bin" / "uvt-probe"
+    old = uv(("tool", "install", "--force", f"{source}@v0.1.0"), env=env)
+    if old.returncode != 0:
+        pytest.skip(f"uv could not install the probe package: {old.stderr.strip()}")
+
+    uv(("tool", "install", "--force", f"{source}@v0.2.0"), env=env)
+    both = uv(("tool", "list"), env=env).stdout
+    removed = uv(("tool", "uninstall", "uvt-probe-platform"), env=env)
+    after = uv(("tool", "list"), env=env).stdout
+    orphaned = binary.exists()
+
+    assert "uvt-probe-platform v0.1.0" in both and "uvt-probe v0.2.0" in both, (
+        "uv replaced the old install with the new one, so the rename costs nobody anything "
+        f"and the one-time `{former_install_removal_command()}` line every guide carries is "
+        f"noise. uv tool list said:\n{both}"
+    )
+
+    assert removed.returncode == 0, removed.stderr
+    assert "uvt-probe v0.2.0" in after, "uninstalling the old name took the new install too"
+    assert not orphaned, (
+        "uv left the executable behind when it removed the old entry, which would make the "
+        "order of the two commands stop mattering. Every guide here says to uninstall "
+        "before installing because of this, so rewrite them before relaxing this"
+    )
+
+
 # ---------------------------------------------------------------------------------------
 # what the tracked documents say about it
 # ---------------------------------------------------------------------------------------
@@ -584,8 +738,8 @@ def test_nothing_tells_anybody_to_install_the_console_script() -> None:
     ]
 
     assert not offenders, (
-        f"these name `{BROKEN_INSTALL}` without saying that uv refuses it -- `edullm` is "
-        f"the console script and {DISTRIBUTION} is the distribution:\n  "
+        f"these name `{BROKEN_INSTALL}` without saying that uv refuses it -- {DISTRIBUTION} "
+        "is published to no index, so there is nothing at that name to resolve:\n  "
         + "\n  ".join(offenders)
         + f"\nWrite {install_command(repository=PLATFORM_REPOSITORY)} instead, or quote "
         f"one of uv's answers ({' / '.join(BROKEN_REFUTATIONS)}) beside it."
@@ -746,6 +900,40 @@ def test_the_prose_of_a_test_file_excludes_what_it_merely_asserts() -> None:
     )
     assert UPGRADE_REFUTATION not in prose_of(workflow_test)
     assert unconditional_statements(workflow_test) == []
+
+
+def test_every_file_that_says_how_to_install_says_how_to_clear_the_old_name() -> None:
+    """Mutation: add a guide with the install line and no word about the rename.
+
+    **A PROSE CHECK LIKE THE THREE ABOVE IT, AND IT PROVES NOTHING ABOUT UV.** What uv does
+    to somebody holding both installs was reproduced rather than reasoned, and the answer is
+    written in :mod:`edullm_platform.cli.release`'s docstring. This keeps the copies of the
+    remedy from drifting apart, and keeps a new document from carrying the install line
+    without it.
+
+    The population is small and finite: everybody installed before the rename is filed under
+    ``edullm-platform``, and an install of ``edullm`` does not replace them. They are not
+    broken by that -- the newer executable wins -- so nothing they run will tell them, which
+    is exactly the kind of quiet state that is still there in six months. The remedy is one
+    command and every one of them will read one of these files.
+    """
+    unpinned = install_command(repository=PLATFORM_REPOSITORY)
+    removal = former_install_removal_command()
+    offenders = [
+        str(path.relative_to(PROJECT_ROOT))
+        for path in readable_files()
+        if unpinned in (text := flattened(path)) and removal not in text
+    ]
+
+    assert not offenders, (
+        "these carry the install line without the one-time command that clears an install "
+        f"made before the rename, so a reader holding {FORMER_DISTRIBUTION!r} ends up with "
+        "two entries and no reason to suspect it:\n  "
+        + "\n  ".join(offenders)
+        + f"\nSay beside the install line that `{removal}` clears it, and that it goes "
+        "before the install rather than after, because uv removes the shared `edullm` "
+        "executable along with the old entry."
+    )
 
 
 def test_the_rules_above_read_the_repository_and_not_somebody_s_working_directory() -> None:

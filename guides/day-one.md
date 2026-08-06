@@ -11,6 +11,15 @@ uv tool install --force git+https://github.com/edu-llm/platform
 edullm --version
 ```
 
+**Installed this before v4.2.2? One command first, and the order matters.** The package used to be called `edullm-platform` while the command was `edullm`, so `uv tool list` printed a name nobody types and `uv tool uninstall edullm` answered `not installed` to somebody looking straight at the binary. Both are called `edullm` now.
+
+```
+uv tool uninstall edullm-platform
+uv tool install --force git+https://github.com/edu-llm/platform
+```
+
+Run those in that order. Installing first and clearing the old name afterwards is the trap: the two installs own the same `edullm` executable, uv deletes the file when it removes the old entry and does not notice the new install still points at it, so you are left with `uv tool list` reporting a healthy `edullm` and `command not found` in the shell. Re-running the install line repairs that if you have already hit it. On a machine that never carried the old name the uninstall prints ``error: `edullm-platform` is not installed`` and exits 2, which is the expected answer and nothing to act on.
+
 **That has to read 3.4.8 or higher.** Look at it. An install at 3.4.7 or below sends a command the platform cannot run, and you find out two minutes later.
 
 Up to and including 3.4.7, `submit` rejoined your command with a plain space and lost the quoting on the way out. The day-one command below leaves as `bash -lc python .edullm/time_attention.py "$EDULLM_RUN_ID"`, the compile job splits it on the spaces, counts three words where `-lc` takes one, and refuses:
@@ -26,7 +35,7 @@ The count moves with your command. The advice on the last line is the trap: you 
 
 **The fix ships in the tool rather than on the platform**, so 3.4.8 landing on `main` repaired no install but the ones made after it.
 
-**Re-run that same line to upgrade.** `--force` makes it idempotent, so the one line installs, upgrades and repairs. Reach for it rather than `uv tool upgrade`, whose answer depends on how the tool was installed: from the bare URL above it re-resolves the default branch and does upgrade, but from a release note's line, which pins that release's tag, it answers `Nothing to upgrade` and exits 0 however far behind you are. Both installs are in the field and you are unlikely to remember which is yours. Naming the command rather than the package is no better: `uv tool upgrade edullm` errors and then suggests installing `edullm`, which fails too, because `edullm` is the command and `edullm-platform` is the package.
+**Re-run that same line to upgrade.** `--force` makes it idempotent, so the one line installs, upgrades and repairs. Reach for it rather than `uv tool upgrade`, whose answer depends on how the tool was installed: from the bare URL above it re-resolves the default branch and does upgrade, but from a release note's line, which pins that release's tag, it answers `Nothing to upgrade` and exits 0 however far behind you are. Both installs are in the field and you are unlikely to remember which is yours. `uv tool upgrade edullm` is now at least a command uv understands, since the package and the command are the same word, but it gives you the same two answers for the same two installs, so it is no more use than before.
 
 `--version` prints the commit next to the number. If that commit is not one on `main`, you are carrying a working copy somebody built rather than the released tool, and the `--force` line replaces it. Worth reading rather than assuming: the machine that proved the quoting fix was carrying a 3.5.0 built out of a local worktree, and it had to be replaced before it could test what a researcher would actually get.
 

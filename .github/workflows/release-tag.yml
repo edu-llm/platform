@@ -436,6 +436,8 @@ jobs:
           uv tool install --force git+https://github.com/${GITHUB_REPOSITORY}@${TAG}
           \`\`\`
 
+          **Installed before v4.2.2?** The package was called \`edullm-platform\` then and is called \`edullm\` now, so an install of the new name does not replace the old one. Run \`uv tool uninstall edullm-platform\` **before** the line above and not after: both own the same \`edullm\` executable, uv deletes it with the old entry, and the wrong order leaves \`uv tool list\` reporting a healthy \`edullm\` with nothing on your path. Re-run the install line if that has already happened. Where the old name was never installed it exits 2 saying so, which is fine.
+
           \`uv tool upgrade\` will not move an install made from that line. The line pins this tag, and \`uv tool upgrade\` follows the ref an install named. It answers \`Nothing to upgrade\` and exits 0 however far behind that install falls, with \`--reinstall\` too. It does upgrade an install made from the same URL with no tag on the end, which is the line the README carries. Re-running the line above is the upgrade for either.
           EOF
           if [ "${SIZE}" = "minor" ] && [ -n "${REASON}" ]; then
