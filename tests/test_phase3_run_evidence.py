@@ -780,10 +780,6 @@ def test_an_undeployed_amendment_is_the_only_thing_the_skip_stands_down_for(
     amendment = PendingAmendment(
         role_name=AMENDED_ROLE,
         reason="the template gained an inline policy the account has not been given yet.",
-        cleared_by=(
-            "deploying sbsandbox-intern-edullm-phase3-lifecycle-iam from a laptop and "
-            "re-running tools/capture_phase3_evidence.py --target roles."
-        ),
         findings=edited.report.findings,
     )
     # Falling through to the real register for every other role rather than returning None,
@@ -810,6 +806,11 @@ def test_an_undeployed_amendment_is_the_only_thing_the_skip_stands_down_for(
         next(capture for capture in waiting if capture.role_name == AMENDED_ROLE)
     )
     assert amendment.reason in message
+    # The stack is derived from the role rather than typed into the record, so this asserts
+    # the derived name reaches the skip. It is sbsandbox-intern-edullm-phase3-lifecycle-iam,
+    # and the record that named sbsandbox-intern-edullm-phase3-batch-iam for this same role
+    # on 2026-08-05 is why the field went away.
+    assert amendment.cleared_by == "sbsandbox-intern-edullm-phase3-lifecycle-iam"
     assert amendment.cleared_by in message
 
 
@@ -846,7 +847,6 @@ def test_a_second_problem_beside_a_recorded_amendment_still_fails_loudly(
             PendingAmendment(
                 role_name=AMENDED_ROLE,
                 reason="recorded, and outstanding.",
-                cleared_by="deploying the stack from a laptop.",
                 findings=edited.report.findings if edited.report else (),
             )
             if name == AMENDED_ROLE

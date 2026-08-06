@@ -87,10 +87,9 @@ from typing import Any, Final
 import yaml
 
 from edullm_platform.evidence import ACCOUNT_ID_IN_FREE_TEXT, AWS_ACCOUNT_ID_PLACEHOLDER
+from edullm_platform.stack_templates import STACK_TEMPLATES
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-INFRA_ROOT = PROJECT_ROOT / "infra"
-IAM_ROOT = INFRA_ROOT / "iam"
 
 __all__ = [
     "DEFAULT_REGION",
@@ -227,58 +226,23 @@ class Stack:
     template: Path
 
 
-def _stacks(*entries: tuple[str, Path]) -> dict[str, Stack]:
-    return {name: Stack(name=name, template=template) for name, template in entries}
-
-
-#: Every stack this repository deploys, in the order the phases created them.
+#: Every stack this repository deploys, in the order the phases created them, resolved
+#: against this checkout.
 #:
 #: A template appears once even where two phases amended it, because a stack is deployed from
-#: one file whatever the history of that file is. Adding a stack means adding a row here and
-#: adding its ARN to the audit reader's ``cloudformation:GetTemplate`` grant in
-#: ``infra/iam/audit-reader-role.yaml``; a row without the grant is a denial rather than a
-#: silence, and a grant without a row is caught by the listing.
-STACKS: Final = _stacks(
-    ("sbsandbox-intern-edullm-phase1-ecr", INFRA_ROOT / "ecr-repositories.yaml"),
-    ("sbsandbox-intern-edullm-ecr-publisher-iam", IAM_ROOT / "ecr-publisher-role.yaml"),
-    ("sbsandbox-intern-edullm-infra-deployer-iam", IAM_ROOT / "infra-deployer-role.yaml"),
-    (
-        "sbsandbox-intern-edullm-phase2-admission-service-roles",
-        IAM_ROOT / "admission-service-roles.yaml",
-    ),
-    ("sbsandbox-intern-edullm-phase2-admission-iam", IAM_ROOT / "admission-role.yaml"),
-    ("sbsandbox-intern-edullm-phase2-lineage", INFRA_ROOT / "lineage-bucket.yaml"),
-    ("sbsandbox-intern-edullm-phase2-artifacts", INFRA_ROOT / "artifacts-bucket.yaml"),
-    ("sbsandbox-intern-edullm-phase2-admission", INFRA_ROOT / "admission-state-machine.yaml"),
-    ("sbsandbox-intern-edullm-phase3-batch-iam", IAM_ROOT / "batch-roles.yaml"),
-    ("sbsandbox-intern-edullm-phase3-lifecycle-iam", IAM_ROOT / "lifecycle-lambda-role.yaml"),
-    ("sbsandbox-intern-edullm-phase3-outputs", INFRA_ROOT / "outputs-bucket.yaml"),
-    ("sbsandbox-intern-edullm-phase3-network", INFRA_ROOT / "batch-network.yaml"),
-    ("sbsandbox-intern-edullm-phase3-batch", INFRA_ROOT / "batch-compute.yaml"),
-    ("sbsandbox-intern-edullm-phase3-events", INFRA_ROOT / "batch-events.yaml"),
-    ("sbsandbox-intern-edullm-phase4-gpu-iam", IAM_ROOT / "batch-gpu-roles.yaml"),
-    ("sbsandbox-intern-edullm-phase4-gpu", INFRA_ROOT / "batch-compute-gpu.yaml"),
-    ("sbsandbox-intern-edullm-phase4-gpu-shapes", INFRA_ROOT / "batch-compute-gpu-shapes.yaml"),
-    ("sbsandbox-intern-edullm-dataset-validator-iam", IAM_ROOT / "dataset-validator-role.yaml"),
-    (
-        "sbsandbox-intern-edullm-researcher-iam",
-        IAM_ROOT / "researcher-role.yaml",
-    ),
-    ("sbsandbox-intern-edullm-janitor-iam", IAM_ROOT / "janitor-lambda-role.yaml"),
-    ("sbsandbox-intern-edullm-janitor", INFRA_ROOT / "expiry-janitor.yaml"),
-    ("sbsandbox-intern-edullm-run-canceller-iam", IAM_ROOT / "run-canceller-role.yaml"),
-    ("sbsandbox-intern-edullm-audit-reader-iam", IAM_ROOT / "audit-reader-role.yaml"),
-    ("sbsandbox-intern-edullm-phase5-image-resolver-iam", IAM_ROOT / "image-resolver-role.yaml"),
-    ("sbsandbox-intern-edullm-run-preview-iam", IAM_ROOT / "run-preview-role.yaml"),
-    ("sbsandbox-intern-edullm-notifier-iam", IAM_ROOT / "notifier-lambda-role.yaml"),
-    # Before the three stacks whose alarms import its topic ARN, which is also the order
-    # .github/workflows/deploy-phase3-batch.yml deploys them in. An export cannot be imported
-    # before it exists, so a first deploy in any other order fails on the importing stack.
-    ("sbsandbox-intern-edullm-alarms", INFRA_ROOT / "alarm-destination.yaml"),
-    ("sbsandbox-intern-edullm-notifications", INFRA_ROOT / "notifications.yaml"),
-    ("sbsandbox-intern-edullm-scratch", INFRA_ROOT / "scratch-bucket.yaml"),
-    ("sbsandbox-intern-edullm-lane-instance-iam", IAM_ROOT / "lane-instance-role.yaml"),
-)
+#: one file whatever the history of that file is.
+#:
+#: **The table itself is** :data:`edullm_platform.stack_templates.STACK_TEMPLATES` **and not
+#: here.** It moved on 2026-08-06 because a second reader needed it:
+#: :mod:`edullm_platform.pending_amendments` derives which apply clears a recorded amendment,
+#: and until then that stack name was typed into the record by hand and compared against
+#: nothing. Restating the table beside the register would have been two of the same fact,
+#: which is the shape of the defect rather than a repair for it. What stays here is the
+#: resolution to a path, because a library module has no business knowing where a checkout is.
+STACKS: Final = {
+    name: Stack(name=name, template=PROJECT_ROOT / template)
+    for name, template in STACK_TEMPLATES
+}
 
 
 class DeployedStackFinding(Exception):

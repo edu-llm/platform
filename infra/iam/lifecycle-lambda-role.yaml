@@ -96,10 +96,27 @@ Resources:
               # cover: an eval run's scores are the contents of metrics.json and no listing
               # can reach them, so the choice is this read or an empty field forever.
               #
-              # The resource ends in the exact object name rather than a wildcard, so the
-              # recorder can read the one document it is being asked to project and nothing
-              # else any team wrote. A trailing * here would be the wide grant the paragraph
-              # above declines, arriving under a narrower-looking rule.
+              # The resource ends in the exact object name rather than a wildcard. A
+              # trailing * here would be the wide grant the paragraph above declines,
+              # arriving under a narrower-looking rule.
+              #
+              # WHAT THIS DOES NOT DO, RECORDED BECAUSE IT READS AS THOUGH IT DOES. An IAM
+              # wildcard matches a slash like any other character, so the two stars here do
+              # not pin the key to four segments. teams/a/runs/b/metrics.json is allowed and
+              # so is teams/a/runs/b/nested/deeper/metrics.json, and so is
+              # teams/a/b/c/runs/d/metrics.json. The constraint this actually imposes is
+              # that the key starts with teams/, contains /runs/ somewhere after that, and
+              # ends in /metrics.json. That is wider than the shape it is written in.
+              #
+              # Left as it is rather than tightened, and the reason is that the filename is
+              # doing the work. Nothing but an eval run writes a metrics.json anywhere under
+              # this bucket, so the extra reach is over objects that do not exist. Narrowing
+              # it would mean naming the team and the run in the ARN, which the recorder
+              # cannot do: one role serves every run and the statement is written once. The
+              # same wildcard behaviour is why the ListBucket prefix above admits every
+              # deeper path under a run's checkpoints, which that comment says in passing;
+              # this one says it outright because the exact filename on the end is what
+              # makes a reader stop reading. infra/README.md carries the general form.
               - Effect: Allow
                 Action: s3:GetObject
                 Resource:
