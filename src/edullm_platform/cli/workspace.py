@@ -51,7 +51,8 @@ import platform
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Protocol
@@ -116,6 +117,7 @@ class CommandRunner(Protocol):
         cwd: Path | None = None,
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
+        stdin_stays_open: bool = False,
     ) -> CommandResult: ...
 
 
@@ -136,6 +138,9 @@ class SubprocessRunner:
     ``env`` is what the lane verbs pass the credential they assumed in, rather than writing an
     AWS profile into a file the researcher then has to know the name of. It is unset for every
     ``git`` and ``gh`` call, which is every call this binary made before the lane existed.
+
+    ``stdin_stays_open`` is for the one call that is killed by an inherited standard input, and
+    :meth:`_a_stdin_nobody_closes` carries what that is and why it is opt-in.
     """
 
     def __call__(
@@ -145,6 +150,7 @@ class SubprocessRunner:
         cwd: Path | None = None,
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
+        stdin_stays_open: bool = False,
     ) -> CommandResult:
         if shutil.which(argv[0]) is None:
             raise ToolMissingError(
@@ -153,35 +159,37 @@ class SubprocessRunner:
                 "logged in: gh auth login."
             )
         try:
-            completed = subprocess.run(
-                list(argv),
-                capture_output=True,
-                text=True,
-                # THE ENCODING IS NAMED BECAUSE `text=True` ALONE MEANS FOUR DIFFERENT
-                # CODECS. With no encoding it is the locale's, which is UTF-8 on macOS and
-                # Linux and the ANSI code page on Windows -- usually cp1252, against a `gh`
-                # that emits UTF-8. Most of what `gh` prints is ASCII and survives; a log
-                # line, a branch name or a pull request title with an accented character
-                # does not, and cp1252 has undefined bytes, so a UTF-8 sequence can raise
-                # UnicodeDecodeError out of this call rather than merely mangle -- which
-                # takes `edullm logs` down entirely. It changes again under Python 3.15,
-                # where PEP 686 turns UTF-8 mode on by default, so an unpinned
-                # `uv tool install` would have two researchers on one install line decoding
-                # `gh` differently from each other.
-                #
-                # `replace` rather than strict, for the same reason: a mangled character in
-                # a log line is a worse-looking log line, and a raised exception is a dead
-                # verb.
-                encoding="utf-8",
-                errors="replace",
-                cwd=None if cwd is None else str(cwd),
-                check=False,
-                timeout=timeout,
-                # OVERLAID ON THE AMBIENT ENVIRONMENT RATHER THAN REPLACING IT. A replaced
-                # environment loses PATH, HOME and the AWS region, and the failure is an aws
-                # binary that cannot be found by a call that was about credentials.
-                env=None if env is None else {**os.environ, **env},
-            )
+            with self._a_stdin_nobody_closes(stdin_stays_open) as stdin:
+                completed = subprocess.run(
+                    list(argv),
+                    capture_output=True,
+                    text=True,
+                    # THE ENCODING IS NAMED BECAUSE `text=True` ALONE MEANS FOUR DIFFERENT
+                    # CODECS. With no encoding it is the locale's, which is UTF-8 on macOS and
+                    # Linux and the ANSI code page on Windows -- usually cp1252, against a `gh`
+                    # that emits UTF-8. Most of what `gh` prints is ASCII and survives; a log
+                    # line, a branch name or a pull request title with an accented character
+                    # does not, and cp1252 has undefined bytes, so a UTF-8 sequence can raise
+                    # UnicodeDecodeError out of this call rather than merely mangle -- which
+                    # takes `edullm logs` down entirely. It changes again under Python 3.15,
+                    # where PEP 686 turns UTF-8 mode on by default, so an unpinned
+                    # `uv tool install` would have two researchers on one install line decoding
+                    # `gh` differently from each other.
+                    #
+                    # `replace` rather than strict, for the same reason: a mangled character in
+                    # a log line is a worse-looking log line, and a raised exception is a dead
+                    # verb.
+                    encoding="utf-8",
+                    errors="replace",
+                    cwd=None if cwd is None else str(cwd),
+                    check=False,
+                    timeout=timeout,
+                    stdin=stdin,
+                    # OVERLAID ON THE AMBIENT ENVIRONMENT RATHER THAN REPLACING IT. A replaced
+                    # environment loses PATH, HOME and the AWS region, and the failure is an aws
+                    # binary that cannot be found by a call that was about credentials.
+                    env=None if env is None else {**os.environ, **env},
+                )
         except subprocess.TimeoutExpired as expired:
             return CommandResult(
                 returncode=TIMED_OUT,
@@ -193,6 +201,43 @@ class SubprocessRunner:
             stdout=completed.stdout,
             stderr=completed.stderr,
         )
+
+    @staticmethod
+    @contextmanager
+    def _a_stdin_nobody_closes(wanted: bool) -> Iterator[int | None]:
+        """A standard input for the child that reaches end of file only when the child is gone.
+
+        **THIS IS WHAT ``edullm run`` WAS MISSING, AND IT FAILED FOR EVERY CALLER WITHOUT A
+        KEYBOARD.** ``session-manager-plugin`` relays standard input into the session and reads
+        end of file on it as the person hanging up: it prints ``Cannot perform start session:
+        EOF`` and exits 0, before a byte of the remote command's output has come back. Inheriting
+        descriptor 0 is right in a terminal and wrong everywhere else -- under ``nohup``, in CI,
+        from an editor's task runner, behind ``< /dev/null``, or under an agent driving the
+        binary -- because there descriptor 0 is already at end of file and the session dies the
+        instant it opens. ``edullm run`` then says the session ended without reporting what the
+        command did, which is true and names neither the descriptor nor the cause. Measured
+        against this account on 2026-08-06: one instance, one command, one laptop, a minute
+        apart, ``NVIDIA L4`` with an open descriptor and the EOF line with ``/dev/null``.
+
+        A pipe rather than a pseudo-terminal, which would be a per-platform dependency taken on
+        behalf of a session that reads no keystrokes. The parent holds the write end for exactly
+        as long as :func:`subprocess.run` is inside the child, so nothing can be read from it and
+        nothing signals end of file; the child's own exit is what ends the call.
+
+        **OPT-IN, AND ``edullm shell`` DELIBERATELY DOES NOT TAKE IT.** That verb is a person at
+        a keyboard and a pipe there would swallow every keystroke. The line is whether the
+        session asks the researcher for anything: one that does keeps their descriptor, and one
+        that does not must not die for want of it.
+        """
+        if not wanted:
+            yield None
+            return
+        readable, writable = os.pipe()
+        try:
+            yield readable
+        finally:
+            os.close(writable)
+            os.close(readable)
 
 
 def github_interop_diagnostic(

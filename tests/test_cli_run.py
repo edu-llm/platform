@@ -233,6 +233,34 @@ def test_a_reused_machine_is_told_the_expiry_its_tag_carries_and_not_a_fresh_one
     assert printed == {LANE_EXISTING_EXPIRY}, out
 
 
+def test_the_session_is_given_a_stdin_the_caller_s_own_cannot_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**THE VERB SIDE OF THE DEFECT THAT KILLED EVERY RUN WITHOUT A KEYBOARD.**
+    Mutation: drop the flag, or set it on the sync instead.
+
+    ``session-manager-plugin`` treats end of file on its standard input as the person hanging up
+    and exits before the command's output comes back, so a ``run`` that inherited descriptor 0
+    worked in a terminal and failed under ``nohup``, in CI, behind ``< /dev/null`` and under
+    every agent -- reporting only that the session ended without saying what the command did.
+    Measured against this account on 2026-08-06.
+
+    The sync is checked too, and it is checked for the opposite: it is an ``aws s3`` call that
+    reads nothing, and a pipe there would be a descriptor opened for no reason on every run.
+    """
+    runner = a_laptop(tmp_path)
+
+    invoke(
+        ["run", "--project", "mixlaw", "--compute", "gpu-1xt4", "--", "python", "-V"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert runner.held_stdin_open_for("aws", "ssm", "start-session") == [True]
+    assert not any(runner.held_stdin_open_for("aws", "s3", "sync"))
+
+
 def test_a_remote_command_that_failed_is_reported_as_refused_with_its_status(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

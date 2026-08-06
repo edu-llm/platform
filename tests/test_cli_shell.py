@@ -61,6 +61,31 @@ def test_a_shell_hands_over_a_terminal_on_a_machine(
     assert "--document-name" not in started[0]
 
 
+def test_a_shell_keeps_the_researcher_s_own_stdin_and_is_not_handed_a_pipe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**THE BOUNDARY ON THE FIX THAT REPAIRED ``edullm run``.**
+    Mutation: set ``stdin_stays_open`` here too, on the theory that what helped one verb helps
+    both.
+
+    ``run`` is given a standard input its caller cannot close, because that session reads no
+    keystrokes and the plugin would otherwise hang up the instant descriptor 0 is at end of
+    file. This verb is the opposite case: it is a person at a keyboard, and a pipe in place of
+    their terminal would swallow every character they type into a shell that then does nothing.
+    The line is whether the session asks the researcher for anything.
+    """
+    runner = a_laptop(tmp_path)
+
+    invoke(
+        ["shell", "--project", "mixlaw", "--compute", "gpu-1xt4"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert runner.held_stdin_open_for("aws", "ssm", "start-session") == [False]
+
+
 def test_the_notebook_flag_forwards_a_port_and_prints_the_address(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
