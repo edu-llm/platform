@@ -454,55 +454,6 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
                 ),
             ),
         ),
-        # A SECOND RECORD BECAUSE IT IS A SECOND ROLE, WHICH IS THE ONE SPLIT THIS REGISTRY
-        # WANTS. The note above refuses two records for one role, because a capture reports
-        # the sum of the drift on it and two records would each describe an account state
-        # that never exists. That reasoning is about one role, and the deploys here are
-        # separate acts on separate stacks: this one is the lifecycle recorder learning to
-        # read the metrics.json an eval run writes, which is what puts eval_metrics on a
-        # ResultManifest instead of leaving the scores only in W&B.
-        PendingAmendment(
-            role_name="sbsandbox-intern-edullm-lifecycle-lambda",
-            reason=(
-                "infra/iam/lifecycle-lambda-role.yaml gained one s3:GetObject statement in "
-                "the record-what-batch-reported inline policy, scoped to "
-                "sbsandbox-intern-edullm-outputs/teams/*/runs/*/metrics.json. The recorder "
-                "needs it to read the metrics document an eval run writes and put the scores "
-                "on the ResultManifest it was already writing."
-                "\n\n"
-                "Narrower is the only direction this can be in, and the read is the narrowest "
-                "form of the grant that works: one action, on one key name, under a prefix "
-                "the role could already ListBucket. It cannot reach a checkpoint, a log or "
-                "any other object a run wrote."
-                "\n\n"
-                "WHAT THE OUTSTANDING DEPLOY COSTS, WHICH IS LESS THAN IT LOOKS. "
-                "lifecycle_handler._MetricsReader answers None on both NoSuchKey and "
-                "AccessDenied, and lifecycle_projection then records a result with no scores "
-                "rather than failing the delivery. So while this stands, an eval run's result "
-                "manifest is written and is silent about metrics; it does not lose the run. "
-                "tests/test_eval_metrics.py holds that behaviour to it in both directions, "
-                "which is why the grant is safe to commit before it is applied."
-            ),
-            cleared_by=(
-                "Deploying the sbsandbox-intern-edullm-phase3-batch-iam stack from a laptop "
-                "with credentials, per infra/README.md, then re-capturing the Phase 3 roles. "
-                "The re-capture is what ends this record: the findings are compared for "
-                "equality, so it fails the moment the account stops differing in exactly "
-                "this way."
-            ),
-            findings=(
-                RoleDriftFinding(
-                    direction=DriftDirection.NARROWER,
-                    element="inline policy 'record-what-batch-reported'",
-                    detail=(
-                        "the template declares a statement the deployed role does not: Allow "
-                        "Action [s3:GetObject] Resource "
-                        "[arn:<partition>:s3:::sbsandbox-intern-edullm-outputs/teams/*/runs/"
-                        "*/metrics.json]"
-                    ),
-                ),
-            ),
-        ),
     )
     declared = declared_role_templates()
     for amendment in amendments:
@@ -775,190 +726,33 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # guessable: they have to be read off a build and off the release record, and a reader
     # can rebuild the zip and check both.
     #
-    # ONE HAS BEEN REMOVED SO FAR AND IT IS THE WHOLE LIFECYCLE IN ONE ENTRY. The validator
-    # record written on 2026-08-05 named the two refusals #221 removed from the packaged
-    # half of the platform, and it was deleted the same day in the commit that cut the
-    # release. The deploy is what actually ends it: uploading the zip and editing the
+    # THREE HAVE BEEN REMOVED SO FAR AND THE FIRST IS THE WHOLE LIFECYCLE IN ONE ENTRY. The
+    # validator record written on 2026-08-05 named the two refusals #221 removed from the
+    # packaged half of the platform, and it was deleted the same day in the commit that cut
+    # the release. The deploy is what actually ends it: uploading the zip and editing the
     # template makes `released` match `builds_to`, at which point `compare_release` reports
     # the record as SKEWED rather than letting it stand. So the deletion is not tidiness. A
     # record left here would go on absorbing the next unexplained difference that happened
     # to arrive on the same pair of digests.
     #
-    # This entry is the next cycle: org.yaml header rewrite plus frontload-cl corpora on
-    # top of the released zip, and it has been extended rather than joined by a second
-    # record. `one_record_per_function` refuses two entries for one zip, and it is right to:
-    # a zip carries whatever the tree holds when it is built, so there is one difference
-    # between the account and this tree however many changes went into it, and a second
-    # record would be describing nothing. Extending means `builds_to` moves and the reason
-    # gains a paragraph, which is what a reviewer needs to see.
-    releases: tuple[PendingRelease, ...] = (
-        PendingRelease(
-            function="validator",
-            reason=(
-                "The header of config/organization.yaml was rewritten on 2026-08-05, and "
-                "config/organization.yaml is one of the seven files in ADMISSION_CONFIG, so "
-                "comment bytes are packaged bytes. The header claimed team_leads was the "
-                "whole of who may release a routine run, and that a hand-check had found it "
-                "equal to the GitHub team-leads team. holds_routine_approver_role is "
-                "is_admin or is_team_lead, so the approvers are admins and team_leads "
-                "together, and the GitHub team holds exactly those nine. Neither list moved."
-                "\n\n"
-                "Nothing the validator reads changed and no admission decision moves with "
-                "this. admins, team_leads, every team binding and every member entry are "
-                "byte-identical; what changed is the prose above them and nothing parses "
-                "that. So the deployed validator is not stale in any sense a submitter could "
-                "meet, and the release exists to keep the digest honest rather than to carry "
-                "a behaviour."
-                "\n\n"
-                "The same zip also packages config/datasets.yaml, which now registers "
-                "pretrain/frontload-cl-10b/v1 and sft/frontload-cl-chat-sft/v1."
-                "\n\n"
-                "And it packages the two comment lines the rename of the scheduled workflow "
-                "reworded, one in config/organization.yaml and one in "
-                "contracts/authorization.py. The nightly is the audit; nothing parses either "
-                "line. All three edits are one release rather than three, because a zip "
-                "carries whatever the tree holds when it is built, and three records "
-                "describing one difference would mean two of them describing nothing."
-                "\n\n"
-                "A fourth edit joined them before this was cut, and it is the one worth "
-                "reading carefully because it looks like a behaviour change and is not. "
-                "`retired` in config/datasets.yaml is enforced now rather than only removing "
-                "a menu item: DatasetRegistry grew is_retired, names_a_run_may_still_use and "
-                "current_versions_of, and contracts/dataset_registry.py is a module this zip "
-                "carries. What reads them is the submission path -- `edullm check` and "
-                "tools/compile_submission.py, both before the approval gate -- and neither "
-                "is in this package. The refusal is deliberately not a condition "
-                "config/policy.yaml denies outright, so build_request_facts derives no new "
-                "fact, denied_outright_conditions gains no new condition, and the validator "
-                "this release deploys admits and refuses exactly what the one before it did. "
-                "The header of config/datasets.yaml was recounted in the same change -- "
-                "twenty-four published entries rather than sixteen, eleven not offered rather "
-                "than eight, four tokenizers rather than two -- which is comment bytes in a "
-                "packaged config file again."
-                "\n\n"
-                "A fifth edit joins them and it is a new field on a packaged contract, which "
-                "is the kind that deserves the most reading. OrganizationInventory gained "
-                "aws_identities, and contracts/bindings.py gained AwsRoleBinding, "
-                "ExcludedRole and AwsIdentityTable beside it; config/organization.yaml now "
-                "carries twenty role bindings and one exclusion. Both files are in this "
-                "zip. Nothing the validator decides reads any of it: the table is joined "
-                "against CloudTrail launch events by the morning message, which runs in the "
-                "audit and is not packaged anywhere. The field defaults to an empty table, so "
-                "every record and fixture written before it still parses, and admission "
-                "admits and refuses exactly what it did before."
-                "\n\n"
-                "TWENTY RATHER THAN NINETEEN, AND THE ONE THAT MOVED IS WORTH NAMING BECAUSE "
-                "IT IS A NUMBER TWO DOCUMENTS DISAGREED ABOUT. Intern-linjian.ni-sbsandbox "
-                "was held out of the table on the grounds that no roster name matches it, "
-                "which treated an answered question as open: the roster comment above ninLi0 "
-                "records the owner confirming on 2026-08-04 that the role is that person, and "
-                "that comment has been on main since the W&B accounts commit. Binding it "
-                "moves the count of roster members with no bound role from sixteen to "
-                "fifteen, which is the difference the build index and this table had between "
-                "them. Still nothing the validator reads."
-                "\n\n"
-                "A SIXTH EDIT IS THE LARGEST OF THEM BY LINE COUNT AND THE SMALLEST BY "
-                "DEPLOYED BEHAVIOUR. Schema version two of the run manifest landed in "
-                "contracts/manifest.py as RunManifestV2 and RunInput, beside a "
-                "read_run_manifest that dispatches on the declared version; "
-                "contracts/vocabulary.py gained InputRole; contracts/dataset_registry.py "
-                "gained WEIGHTS_FAMILIES and may_fill; contracts/results.py gained "
-                "EvalMetric, EvalMetrics and an optional ResultManifest.eval_metrics. All "
-                "four modules are packaged, so the digest moved again."
-                "\n\n"
-                "NOTHING THE VALIDATOR DOES MOVES WITH ANY OF IT, AND THE REASON IS THAT "
-                "VERSION ONE WAS NOT EDITED. RunManifest is byte-identical: version two is a "
-                "second class standing beside it rather than a rewrite of it, which is what "
-                "keeps the manifest_sha256 on every intent and decision record in the "
-                "lineage store computing to the value that record carries. The validator "
-                "parses a submitted manifest through RunManifest exactly as before and "
-                "recomputes exactly the same digest for it. Nothing constructs a "
-                "RunManifestV2 yet, and no code path in the packaged half calls "
-                "read_run_manifest."
-                "\n\n"
-                "ResultManifest.eval_metrics is the one addition that changes a canonical "
-                "form, and it is worth saying why that is safe rather than asserting it. It "
-                "is optional and defaulted, so a document written before it existed still "
-                "parses; what it does change is the digest of any ResultManifest hashed "
-                "today, because the canonical form now carries an explicit null. That costs "
-                "nothing only because no stored record carries a ResultManifest digest -- "
-                "every manifest_sha256 in the store is over a run manifest, which is the one "
-                "this change deliberately did not touch. The validator does not construct a "
-                "ResultManifest at all; the recorder does."
-                "\n\n"
-                "A SEVENTH EDIT MOVED IT AGAIN AND THIS ONE DOES CARRY A BEHAVIOUR, unlike the "
-                "sixth above it. "
-                "Registering edullm-p1 writes config/repositories.yaml and "
-                "config/workload-catalog.yaml, and the validator packages both. Until the "
-                "release is cut the deployed validator has never heard of the repository or "
-                "of edullm-p1-check, so a submission naming either is refused by a principal "
-                "reading the previous catalog while the form offers both. That is the same "
-                "shape as the Phase 4 refusal this record's own file describes: correct for "
-                "the bytes that produced it, wrong about the account, and naming the workload "
-                "rather than the release. It is one record rather than two because a zip "
-                "carries whatever the tree holds when it is built."
-            ),
-            cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="a2f7c751245b8d25b691bb56b280e50c19c569e4f1063e5152f420faf7546ab5",
-            released="d2c42173589e7c91ff20faeaa7b5b9f705f02e28214ad15fcf782964bf7bf3af",
-            recorded_on=date(2026, 8, 5),
-        ),
-        # THE RECORDER, WHICH THE ROSTER EDITS OF 2026-08-05 DID NOT MOVE AND THIS ONE DOES.
-        # The two zips were separated deliberately so that a config edit stopped touching
-        # this one: measured two ways, the validator reads seven config files and the
-        # recorder reads none, and the builders package exactly that. What moved here is not
-        # config at all. It is contracts/bindings.py and contracts/inventory.py, which this
-        # package imports through the manifest it validates on the way into a lineage record.
-        PendingRelease(
-            function="recorder",
-            reason=(
-                "contracts/bindings.py gained AwsRoleBinding, ExcludedRole and "
-                "AwsIdentityTable, and contracts/inventory.py gained an aws_identities field "
-                "on OrganizationInventory that defaults to an empty table. Both modules are "
-                "in this package because the recorder validates the manifest it writes."
-                "\n\n"
-                "Nothing the recorder reads or writes changes. It never loads "
-                "config/organization.yaml -- the split between the two builders exists "
-                "precisely so a roster edit stops touching this zip -- and the new field is "
-                "on a model this package imports rather than instantiates. Every lineage "
-                "record it writes is byte-identical to one the deployed bytes would have "
-                "written."
-                "\n\n"
-                "Recorded rather than left to be discovered because a stale recorder is the "
-                "quiet one: a stale validator refuses a submission and somebody reads the "
-                "refusal, and a stale recorder writes lineage that looks exactly like correct "
-                "lineage into immutable records."
-                "\n\n"
-                "A SECOND CHANGE JOINED IT AND THIS ONE DOES CARRY A BEHAVIOUR, WHICH IS THE "
-                "DIFFERENCE WORTH READING. The recorder learned to read the metrics document "
-                "an eval run writes and to put the scores on the ResultManifest it was "
-                "already writing. lifecycle_projection.py gained a MetricsReader protocol and "
-                "an optional metrics_reader parameter on project_batch_state_change and "
-                "project_batch_event; lifecycle_handler.py gained the _MetricsReader that "
-                "adapts the boto3 client it already holds; eval_metrics.py is new and is "
-                "packaged because the handler imports it; contracts/results.py gained the "
-                "EvalMetrics the projection constructs."
-                "\n\n"
-                "The behaviour is additive in every direction. A delivery for a run that "
-                "wrote no metrics.json records exactly what it recorded before. A delivery "
-                "for a run that wrote one gains an eval_metrics block. A delivery whose read "
-                "is refused -- which is every delivery until the lifecycle-lambda amendment "
-                "recorded above is applied -- records no scores rather than failing, because "
-                "_MetricsReader answers None on AccessDenied as well as on NoSuchKey."
-                "\n\n"
-                "That is why a record is open here and another against the role at the same "
-                "time, and why neither ordering is a problem. Release this zip before the "
-                "role is amended and the recorder tries the read, is refused, and writes the "
-                "record it always wrote. Amend the role first and nothing reads the grant "
-                "until the zip lands. Neither ordering loses a delivery, which is the "
-                "property tests/test_eval_metrics.py holds it to in both directions."
-            ),
-            cleared_by="uv run python tools/release_lambda.py --function recorder",
-            builds_to="46b44ae3bb921fd3a3bf48225e49eda5d1a8e1dda1bff4b61cee84708f7523e7",
-            released="82d291969f3b7c3922ea4096387abb0cd121e78b036858a36bcfc54b775027e2",
-            recorded_on=date(2026, 8, 5),
-        ),
-    )
+    # THE OTHER TWO WERE CLEARED TOGETHER ON 2026-08-06 AND THEY DEMONSTRATE THE ONE THING
+    # THE FIRST DID NOT. The validator record had by then been extended seven times -- the
+    # org.yaml header rewrite, the frontload-cl corpora, the workflow rename, the retired
+    # enforcement, the identity table, schema version two, and registering edullm-p1 --
+    # because `one_record_per_function` refuses two entries for one zip and is right to: a
+    # zip carries whatever the tree holds when it is built, so there is one difference
+    # between the account and this tree however many changes went into it. The recorder
+    # record was extended once, by the eval-metrics read.
+    #
+    # AND THE VALIDATOR WAS RELEASED TWICE IN THE SPACE OF AN HOUR, WHICH IS THE PART WORTH
+    # KEEPING. The first release was cut from main at 985c2cb; #250 then registered
+    # edullm-p1, which writes config/repositories.yaml and config/workload-catalog.yaml, and
+    # both are in ADMISSION_CONFIG. So a zip that was current when it was uploaded was stale
+    # before it was merged, through no mistake by either change. The second release was cut
+    # from the rebased tree and is the one the template points at. A release is a snapshot of
+    # a tree and not a claim about main, which is why the digest is worth reading off the
+    # account rather than inferred from the fact that a release happened.
+    releases: tuple[PendingRelease, ...] = ()
     return one_record_per_function(releases)
 
 
