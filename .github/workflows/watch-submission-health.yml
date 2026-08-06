@@ -11,17 +11,32 @@
 # compile job, on a GitHub runner, before admission was ever called, so AWS emitted nothing
 # about any of them. That is why this reads the Actions API and holds no credential.
 #
-# It goes red on two things and deliberately not on a third. It goes red on a failure that
-# is never a judgement, and on one reason refusing several unrelated submissions. It stays
-# green on a submission refused for a good reason, because an unregistered dataset or a
-# commit nobody built is the platform working and going red on those is how a signal gets
-# ignored. tools/watch_submission_health.py argues the distinction and the tests hold it.
+# It goes red on three things and deliberately not on two. It goes red on a failure that is
+# never a judgement, on one reason refusing several unrelated submissions, and on a run that
+# reached the approval gate and ended with nobody having answered it. It stays green on a
+# submission refused for a good reason, because an unregistered dataset or a commit nobody
+# built is the platform working; and green on a run a lead declined, because a lead refusing
+# an expensive run is the gate working and its first look reported two of those as outages.
+# tools/watch_submission_health.py argues the distinctions and the tests hold them.
 name: Is submission healthy
 
 on:
+  # THE EVENT FIRST, BECAUSE THE CLOCK IS NOT A DELIVERY GUARANTEE. This shipped on */30 and
+  # its entire history was one run, at 09:34; the 10:00, 10:30 and 11:00 ticks never fired,
+  # across a window in which five submissions ended badly. GitHub documents that scheduled
+  # workflows may be delayed or dropped when the runner fleet is loaded, and a watcher whose
+  # only trigger can be silently dropped is a watcher nobody has. This fires when a
+  # submission finishes, which is both the only moment the answer can have changed and a
+  # delivery GitHub does make.
+  workflow_run:
+    workflows: ["Submit a run"]
+    types: [completed]
   schedule:
-    # Every half hour. The window it was written for was seventy-seven minutes long, so this
-    # sees a repeat of it while it is still happening rather than the next morning.
+    # Kept as a floor rather than replaced by the event. workflow_run only fires when a
+    # submission completes, so it cannot see an hour in which nobody managed to dispatch one
+    # at all -- which is what a broken dispatch path looks like from here, and is exactly the
+    # outage worth catching. Every half hour: the window this was written for was seventy-
+    # seven minutes long, so the floor alone still sees a repeat of it while it is happening.
     - cron: "*/30 * * * *"
   workflow_dispatch:
     inputs:
@@ -33,11 +48,16 @@ on:
         required: false
 
 # No AWS role is assumed anywhere in this file and no id-token is requested, because there
-# is nothing in AWS to ask. actions:read is the whole grant the check needs; issues:write is
-# how it reaches a person.
+# is nothing in AWS to ask. actions:read reads the runs, their jobs and the approvals that
+# separate a decline from a failure; checks:read reads the annotations on a failed gate job,
+# which is the Checks API and not the Actions one and is therefore its own grant, and is what
+# names a branch policy so it is not mistaken for a run nobody reviewed; issues:write is how
+# it reaches a person. Listing any permission sets every unlisted one to none, so a grant
+# left off here is a 403 rather than a default.
 permissions:
   contents: read
   actions: read
+  checks: read
   issues: write
 
 concurrency:
