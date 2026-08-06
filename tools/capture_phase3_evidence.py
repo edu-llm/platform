@@ -1559,11 +1559,17 @@ def capture_researcher_role_target(arguments: argparse.Namespace) -> int:
     WHAT THIS EXISTS TO CATCH IS DIFFERENT FROM THE OTHER TARGETS, and worth saying because the
     difference is the reason the role is worth having at all. Every other captured role is
     assumed by a service or by a workflow, so a console edit widening one is a change to what a
-    pipeline may do. This one is assumed by a person, and for the roster members who hold no
-    ``Intern-*`` role it is the whole of their AWS access -- ``system-overview.md``, "The
-    umbrella". A statement quietly removed from it does not break anything; it silently
-    converts a bounded population into an unbounded one, and nothing else in this repository
-    would report that.
+    pipeline may do. This one is assumed by a person, and it is the whole of what the twenty
+    roster members holding an ``Intern-*`` role may do inside a lane. The other fifteen cannot
+    assume it at all, its trust admitting only ``role/Intern-*`` -- ``system-overview.md``, "The
+    umbrella", draws the lane as shut to them and ``submit`` as not. A statement quietly removed
+    from it does not break anything; it silently converts a bounded population into an unbounded
+    one, and nothing else in this repository would report that.
+
+    Until 2026-08-06 this said the role was the whole AWS access of the members who hold no
+    ``Intern-*`` role, which is the group that cannot reach it. The counts are in
+    ``config/organization.yaml`` rather than in anybody's memory: thirty-five members, and
+    twenty-one roles under ``aws_identities`` against twenty distinct ``github_login`` values.
 
     Exit 0 when the role matches its template, 1 when it does not.
     """

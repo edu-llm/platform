@@ -594,7 +594,7 @@ def test_no_cell_may_be_implied_by_another_rows_cell_unless_the_manifest_says_wh
 
     WHY IMPLICATION IS NOT ITSELF A DEFECT, WHICH IS WHY THE ANSWER IS A DECLARATION. Nineteen
     paths here are named by more than one row and almost all of it is honest. `capacity-yaml`
-    asserting that `capacity.yaml` exists is implied by `control-plane` asserting that all eight
+    asserting that `capacity.yaml` exists is implied by `control-plane` asserting that all nine
     config files do, and that is fine, because `capacity-yaml` checks its own file and earns its
     green whether or not the roll-up passes. The test cannot tell that apart from
     `morning-message` by looking at the manifest, and it does not try. It forces somebody to say

@@ -1,18 +1,24 @@
 """The spend section of the daily activity, as a section rather than as a report.
 
-**THE ACTIVITY DOES NOT EXIST YET, WHICH IS WHY THIS IS SHAPED THE WAY IT IS.**
-``docs-frank/reference/system-overview.md`` describes a morning message and an
-``activity/YYYY-MM-DD.md`` in this repository carrying what ran, by whom and at what cost.
-Nothing in ``tools/`` or ``.github/workflows/`` produces either one today: the closest thing
-running is ``tools/visibility_board.py``, which the audit writes to a step summary and
-which answers a different question. So rather than inventing a second activity generator
-that would have to be merged with the real one later, this computes the spend section and
-hands it back as markdown. When the activity generator exists it calls
-:func:`spend_section` and pastes the result in.
+**THE ACTIVITY EXISTS NOW AND THIS IS THE SECTION IT CALLS.** ``tools/report_activity.py``
+imports :func:`spend_section` and prints the day's figure onto the page, and the audit's
+``activity-history`` job runs that tool and keeps the page on the ``machine/activity`` branch.
+Until 2026-08-06 this header opened by saying the activity did not exist and that nothing in
+``tools/`` or ``.github/workflows/`` produced it, which was true when it was written and was
+never made false again. The shape it argued for -- a section handed back as markdown rather
+than a second activity generator to be merged with the real one later -- is the shape the
+caller wanted, so nothing here had to change when the caller landed and nothing said so.
 
-Two ways to run it in the meantime. With no arguments it prints the section, which is what
-the generator will eventually do with it. With ``--json`` it prints the same figures as data,
-for anything that wants to render them itself.
+**THE MORNING MESSAGE IS THE HALF THAT IS STILL UNBUILT, AND IT IS A DIFFERENT SURFACE.**
+``docs-frank/reference/system-overview.md`` describes both: a message somebody is sent, and an
+``activity/YYYY-MM-DD.md`` in this repository carrying what ran, by whom and at what cost.
+``config/reports/surfaces.yaml`` carries a row for each, and ``days-activity`` reads yes on
+built and deployed while ``morning-message`` reads no on every stage. So this section reaches a
+page and does not yet reach anybody's inbox.
+
+Two ways to run it directly. With no arguments it prints the section, which is what the caller
+does with it. With ``--json`` it prints the same figures as data, for anything that wants to
+render them itself.
 
 **The account total and the per-team split are two different measurements and this does not
 pretend otherwise.** The total is real money from Cost Explorer for the whole account, which
