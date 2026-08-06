@@ -264,13 +264,29 @@ slices:
         deployed: {not_applicable: a config file}
         proven: {tests: [tests/test_capacity.py, tests/test_placement_verdicts.py]}
 
+      # BOTH STAGES READ `?` UNTIL 2026-08-06 AND THE ANSWER WAS ONE READABLE CALL AWAY. The
+      # question was sent to `aws organizations list-policies-for-target`, which this account
+      # cannot make, and nobody tried the boundary. `InternSandboxBoundary` v5 carries a
+      # statement `RegionLockExceptGlobalServices`: a Deny over `NotAction` of sixteen global
+      # services, conditioned on `aws:RequestedRegion` not being one of us-east-1 or us-east-2.
+      # Every principal in this account carries that boundary, so that is the lock as far as
+      # anything here is bound by it.
+      #
+      # READ THE SECOND REGION IN THAT LIST BEFORE TRUSTING AN EMPTY LISTING. us-east-2 is
+      # permitted, so a call sent there is answered rather than refused, and it answers with
+      # nothing because every stack is in us-east-1. That is the whole of the 30 of 55 reading
+      # on the morning of 2026-08-06. A denied region would have been caught in a second.
+      #
+      # WHAT IS STILL UNSEEN is whether a service control policy above this says the same
+      # thing. It would not change what any principal here may do, and `proven` stays no until
+      # somebody in the payer account can look.
       - id: region-lock
         name: The region lock
         designed: {reached: overview draws it}
         planned: {not_reached: no plan reaches it}
-        built: {unknown: "aws organizations list-policies-for-target, run from the payer"}
-        deployed: {unknown: the same call}
-        proven: {not_reached: no evidence of the mechanism exists here}
+        built: {not_applicable: another owner's policy}
+        deployed: {reached: "a statement in the boundary, read 2026-08-06"}
+        proven: {not_reached: no committed capture of the boundary}
 
       - id: attribution
         name: Attribution, the W&B join on the result record
@@ -553,21 +569,33 @@ slices:
         deployed: {not_reached: the pull request is not merged}
         proven: {not_reached: no image has been built from it}
 
+      # THE EXEMPTION CANNOT BE WRITTEN WHERE PEOPLE KEEP LOOKING FOR IT. `NotPrincipal` is
+      # only valid in a resource policy or a service control policy, and a permission boundary
+      # is neither, so its absence here is not an oversight somebody can correct in place. An
+      # exemption would have to be a condition on `aws:PrincipalArn`, and read on 2026-08-06
+      # the statement `DenyCostCommitmentPurchases` carries no condition at all over ten
+      # purchase actions on `Resource: "*"`. The owner's own role carries this boundary, so as
+      # deployed the deny binds him too and the name of this row overstates what is there.
       - id: commitment-deny
         name: Commitment purchases denied, with one exemption
         designed: {reached: overview draws it}
         planned: {not_applicable: another owner's policy}
         built: {not_applicable: another owner's policy}
         deployed: {reached: the deny is in the boundary}
-        proven: {not_reached: the exemption does not exist}
+        proven: {not_reached: "the deny is unconditional, so nobody is exempt"}
 
+      # THIS ONE IS STILL UNKNOWN AND THE REASON IS SHARPER THAN A MISSING GRANT. Every
+      # `organizations` call from here returns AccessDenied, and adding a grant would not
+      # change that: `DenyLeaveOrgAndAccountTakeover` in the boundary denies `organizations:*`
+      # outright, so no policy any principal here can hold reaches past it. Somebody in the
+      # payer account has to look. Re-probed 2026-08-06 and it has not moved.
       - id: management-account
         name: What the management account holds
         designed: {reached: overview draws it}
         planned: {not_reached: no plan reaches it}
         built: {unknown: running the calls from the payer account}
         deployed: {unknown: the same calls}
-        proven: {not_reached: nothing here can see it}
+        proven: {not_reached: the boundary denies organizations to every principal here}
 
       - id: deployed-iam-matches
         name: Deployed IAM matching the tree
@@ -714,18 +742,24 @@ slices:
 
   - name: Owned by no slice
     surfaces:
+      # THIS ROW READ `deferred` ON EVERY STAGE UNTIL 2026-08-06 AND BOTH VERBS WERE ALREADY
+      # SHIPPING. `edullm run` and `edullm shell` are in `edullm --help`, LANE_VERBS names them
+      # both, and two test files hold them. The word `deferred` was true when somebody typed it
+      # and nothing made it false again when the verbs landed, which is the failure this whole
+      # file is against: a row saying a built thing is absent sends the next person to build it
+      # a second time. All three stages are lookups now, so the tree answers rather than a memory.
       - id: exploration-route
         name: The exploration route entire
         designed: {reached: overview draws it}
-        planned: {not_reached: deferred until the platform tier works}
-        built: {not_reached: deferred}
-        deployed: {not_applicable: deferred}
-        proven: {not_reached: deferred}
+        planned: {not_reached: built with no plan naming it}
+        built: {exists: [src/edullm_platform/cli/lane.py, src/edullm_platform/cli/machine.py]}
+        deployed: {release: true}
+        proven: {tests: [tests/test_cli_shell.py, tests/test_cli_run_verbs.py]}
 
       - id: scratch-bucket
         name: The scratch bucket
         designed: {reached: overview draws it}
-        planned: {not_reached: deferred with the exploration route}
+        planned: {not_reached: no plan names it}
         built: {exists: infra/scratch-bucket.yaml}
         deployed: {stack: sbsandbox-intern-edullm-scratch, or: {not_reached: never applied}}
         proven: {tests: [tests/test_scratch_bucket_template.py]}
@@ -754,13 +788,18 @@ slices:
         deployed: {not_applicable: deferred}
         proven: {not_reached: deferred}
 
+      # ALSO READ `deferred` WHILE BUILT. `render_run_ended` writes one line per ended run into
+      # the runs channel and the notifier posts it, which is this row. The grep names the
+      # function rather than the file because the morning message lives in the same file and
+      # already claims it, and two rows pointing at one path cannot tell you which one moved.
       - id: run-ended-post
         name: The run-ended feed post
         designed: {unknown: the overview records it as neither accepted nor refused}
-        planned: {not_reached: deferred}
-        built: {not_reached: deferred}
-        deployed: {not_applicable: deferred}
-        proven: {not_reached: deferred}
+        planned: {not_reached: built with no plan naming it}
+        built: {grep: [src/edullm_platform/notifications/messages.py, "def render_run_ended"]}
+        deployed:
+          {stack: sbsandbox-intern-edullm-notifications, or: {not_reached: the deployer lacks the grants}}
+        proven: {tests: [tests/test_notification_messages.py, tests/test_notifier_handler.py]}
 
       - id: promotion-to-landing
         name: Promotion of run outputs back to landing
@@ -794,13 +833,18 @@ slices:
         deployed: {not_applicable: a mechanism that does not exist}
         proven: {not_reached: the mechanism does not exist}
 
+      # THE THIRD ROW THAT READ ABSENT WHILE PRESENT. `run_history.summarise` keys a cohort on
+      # repository, workload profile, compute profile and dataset, drops a rung at a time until
+      # one has enough successful runs, and takes the median of those. `config/run-history.json`
+      # is that digest, and both renderers read it. Deployed is the digest being on the default
+      # branch, because the figure travels to a laptop in the file rather than over a wire.
       - id: median-runtime
         name: The observed median runtime per repository per shape
         designed: {reached: overview draws it}
-        planned: {not_reached: no plan reaches it}
-        built: {not_reached: nothing computes it}
-        deployed: {not_applicable: a figure that is not computed}
-        proven: {not_reached: nothing computes it}
+        planned: {not_reached: built with no plan naming it}
+        built: {exists: src/edullm_platform/run_history.py}
+        deployed: {on_main: config/run-history.json}
+        proven: {tests: [tests/test_run_history.py, tests/test_build_run_history.py]}
 
       - id: queue-readout
         name: The queue-state readout for approvers
@@ -810,13 +854,13 @@ slices:
         deployed: {not_applicable: a readout that does not exist}
         proven: {not_reached: the readout does not exist}
 
-      - id: capacity-substitution
-        name: A consumer for the substitution capacity.yaml offers
-        designed: {not_applicable: withdrawn}
-        planned: {not_applicable: withdrawn}
-        built: {not_applicable: withdrawn}
-        deployed: {not_applicable: withdrawn}
-        proven: {not_applicable: withdrawn}
+      # A ROW FOR A CONSUMER OF A THING capacity.yaml DOES NOT OFFER was deleted here on
+      # 2026-08-06. It was `not_applicable: withdrawn` on all five stages, so it entered no
+      # denominator and no reading could ever move it, and `capacity.yaml` carries no
+      # substitution field to consume: a profile there is a name, whether it places, what
+      # measured that, and a sentence about the wait. This file keeps a row that reads `no`,
+      # because a `no` standing for a fortnight is the point. It should not keep a row that
+      # reads nothing five times, because that is a withdrawn idea filed in the wrong place.
 
       - id: grouping-consistency
         name: Grouping consistency inside a team
