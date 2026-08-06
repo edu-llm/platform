@@ -707,6 +707,10 @@ jobs:
           BUILD_CONTEXT: ${{ steps.build_inputs.outputs.build_context }}
           COMMIT_SHA: ${{ needs.verify.outputs.commit_sha }}
           CACHE_FROM: ${{ steps.cache_source.outputs.cache_from }}
+          # The tooling checkout, named here rather than reached for inside the script,
+          # because this step runs in the caller's tree and every other value it reads is
+          # declared in this block. It is the same path the tooling steps above use.
+          PLATFORM_TOOLING: ${{ github.workspace }}/platform
           SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
         run: |
@@ -761,6 +765,40 @@ jobs:
             echo "image_created_unreadable" >&2
             exit 1
           fi
+          # AN IMAGE CARRYING A CPU-ONLY TORCH NEVER REACHES THE REGISTRY, WHICH IS THE
+          # ONLY PLACE THIS CHECK IS FREE. A CPU build and a CUDA build of torch share a
+          # version number, an API and a log format; a job handed the first trains to
+          # completion on the CPU of the GPU instance it was billed for and says nothing.
+          # Three of the registered Dockerfiles already assert this for themselves, and
+          # that is worth having, but it is per-file: a fork that rewrites the install
+          # block loses it, a repository registered tomorrow never had it, and a BuildKit
+          # cache hit reuses the layer it lives in without re-running it -- measured, on
+          # open-instruct-scored-rewards run 31063185048, where six layers were CACHED and
+          # the torch check inside that image did not execute. This runs on the assembled
+          # image, so none of the three reach it.
+          #
+          # INSIDE THIS STEP RATHER THAN AFTER IT, because the push is the last line of
+          # this step and a separate step could only run after the tag was already taken.
+          # The tag is immutable, so an image refused after its push is a commit that can
+          # never be published correctly.
+          #
+          # It costs no GPU and cannot ask for one. `torch.version.cuda` is a string baked
+          # into the wheel at build time, readable with no device present, which is what
+          # makes the whole check affordable on an ubuntu-latest runner.
+          #
+          # No new trust boundary: `docker build` above already ran every RUN instruction
+          # in this Dockerfile on this runner, so running one stdlib import in the result
+          # adds nothing the build did not already do -- and the probe holds no credential
+          # and is given no network.
+          #
+          # A subshell because this step works in the caller tree and the tooling is a
+          # second checkout; the invocation inside it is the same locked one every other
+          # step uses.
+          (
+            cd "${PLATFORM_TOOLING}"
+            uv run --frozen python tools/verify_image_accelerator.py \
+              --image-reference "${image_reference}"
+          )
           docker push "${image_reference}"
 
       # The digest that leaves this workflow is the one the registry stored, not the one
