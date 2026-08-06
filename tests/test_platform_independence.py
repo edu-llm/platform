@@ -218,6 +218,24 @@ def test_the_scaffold_writes_lf_whatever_it_is_running_on(
 BEYOND_THE_CODE_PAGE: Final = "step 200 \u2192 400  train \u2588\u2588\u2588\u2591\u2591 62%  ren\u00e9e"
 
 
+def console_script() -> Any:
+    """``main`` as the console script reaches it, which is not what the attribute holds here.
+
+    **IMPORTING ``cli.main`` BINDS THE SUBMODULE OVER THE FUNCTION OF THE SAME NAME.**
+    ``pyproject.toml`` names ``edullm_platform.cli:main`` and in a fresh process that is the
+    function, because the entry point runs before anything has imported the submodule -- the
+    package imports it lazily, inside the call. In this suite something always has imported
+    it first, ``cli_support`` among them, and then ``edullm_platform.cli.main`` is the module
+    and calling it is a ``TypeError``. Measured: these cases passed under ``pytest`` on the
+    whole suite and failed when the file was run alone, which is the worst way to find it.
+
+    Reloading the package re-runs the ``def`` and puts the function back. Cheap, and it
+    leaves ``sys.modules['edullm_platform.cli.main']`` alone, so every other case that
+    imported from the submodule is holding the same object it was.
+    """
+    return importlib.reload(edullm_platform.cli).main
+
+
 def a_windows_pipe() -> io.TextIOWrapper:
     """The stream Python hands a program on Windows when stdout is redirected, not a console.
 
@@ -291,7 +309,7 @@ def test_the_console_entry_point_makes_the_streams_carry_utf_8(
     monkeypatch.setattr(sys, "stdout", a_windows_pipe())
     monkeypatch.setattr(sys, "stderr", a_windows_pipe())
 
-    edullm_platform.cli.main([])
+    console_script()([])
 
     assert sys.stdout.encoding == "utf-8"
     assert sys.stderr.encoding == "utf-8"
@@ -312,7 +330,7 @@ def test_the_streams_are_reconfigured_and_not_replaced(monkeypatch: pytest.Monke
     monkeypatch.setattr(sys, "stdout", stdout)
     monkeypatch.setattr(sys, "stderr", stderr)
 
-    edullm_platform.cli.main([])
+    console_script()([])
 
     assert sys.stdout is stdout
     assert sys.stderr is stderr
@@ -336,7 +354,7 @@ def test_an_encoding_the_researcher_asked_for_is_not_overruled(
     monkeypatch.setattr(sys, "stdout", a_windows_pipe())
     monkeypatch.setattr(sys, "stderr", a_windows_pipe())
 
-    edullm_platform.cli.main([])
+    console_script()([])
 
     assert sys.stdout.encoding == "cp1252"
 
