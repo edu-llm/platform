@@ -17,8 +17,12 @@ name: Cut a release when the CLI or the configuration changes
 # have moved `releases/latest` and told thirty-five machines they were behind, which is how
 # a staleness warning stops being read.
 #
-# So the list is the CLI's own package, every module it transitively imports, the six
-# configuration files it opens, and the file its version lives in. It is written out rather
+# So the list is the CLI's own package, every module it transitively imports, the seven
+# configuration files it opens, and the file its version lives in. The seventh is
+# config/run-history.json, which is a measurement rather than a rule and is the only one the
+# CLI tolerates the absence of -- but a release that moves it is still a release after which
+# an install quotes different durations, so it belongs here exactly as the six rules do. It
+# is written out rather
 # than globbed because the two directories it reaches into hold modules it does not import,
 # and tests/test_release_tag_workflow.py derives the same set from the import graph and from
 # watching the loader open files. A new import either lands here or fails the suite, and the
@@ -124,6 +128,7 @@ on:
       - "config/organization.yaml"
       - "config/policy.yaml"
       - "config/repositories.yaml"
+      - "config/run-history.json"
       - "config/workload-catalog.yaml"
       - "pyproject.toml"
   # The handle this workflow did not have on the morning it was needed. Seven releases were
@@ -308,7 +313,7 @@ jobs:
       # configuration is a release after which their `edullm check` and the platform answer
       # the same question differently.
       #
-      # THE SIX FILES THE CLI OPENS AND NOT `config/`. That directory holds capacity tables,
+      # THE SEVEN FILES THE CLI OPENS AND NOT `config/`. That directory holds capacity tables,
       # execution targets and generated reports the CLI never reads, and v0.2.1 said the
       # reviewed configuration had moved when the only file that changed was
       # config/capacity.yaml. Everybody who re-installed on that sentence did it for nothing,
@@ -339,12 +344,14 @@ jobs:
             config/organization.yaml
             config/policy.yaml
             config/repositories.yaml
+            config/run-history.json
             config/workload-catalog.yaml
         run: |
           set -euo pipefail
-          # Split deliberately: CONFIGURATION_FILES is a list of six, none of which contains
-          # a space or a glob character. Quoted, it would ask git for one path with five
-          # spaces in its name, which matches nothing and reports every release as code-only.
+          # Split deliberately: CONFIGURATION_FILES is a list of seven, none of which
+          # contains a space or a glob character. Quoted, it would ask git for one path with
+          # six spaces in its name, which matches nothing and reports every release as
+          # code-only.
           set -- ${CONFIGURATION_FILES}
           if [ -z "${PREVIOUS}" ] || ! git diff --quiet "${PREVIOUS}" HEAD -- "$@"; then
             headline="**This release moves the reviewed configuration**, so \`edullm check\` answers differently after you re-install."

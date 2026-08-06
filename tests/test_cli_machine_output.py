@@ -15,6 +15,7 @@ never make check reach a network, because that is the property the whole verb is
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,10 @@ import pytest
 from edullm_platform.cli.machine import FORMAT_VERSION
 from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED
 from edullm_platform.cli.preflight import UNRESOLVED_IMAGE_DIGEST
+from edullm_platform.run_history import RUNS_FOR_A_FIGURE, load_run_history
 from tests.cli_support import FakeRunner, git_answers, invoke, ok, write_spec
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def checkout(tmp_path: Path, **spec: object) -> tuple[Path, FakeRunner]:
@@ -169,6 +173,45 @@ def test_the_document_carries_the_two_checks_a_laptop_could_not_make(
         "no_published_image",
         "image_scan_findings_unreviewed",
     ]
+
+
+def test_the_history_block_says_when_it_was_measured_and_over_how_many_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: drop `measured_at`, or publish the sentence without the counts.
+
+    The digest is a committed file. An install from an old tag reads the reading that tag
+    carried and has no way to know it is old, so a caller deciding whether to believe a
+    median needs the date as a timestamp rather than scraped back out of prose -- which is
+    the same split this document already makes for money and for refusal codes.
+
+    The counts are asserted beside it because a median with no denominator is the thing
+    run_history.py exists to refuse. Read against the committed digest rather than a
+    fixture, so a digest rebuilt with a different shape fails here rather than shipping.
+    """
+    root, runner = checkout(tmp_path, compute="gpu-1xa10g")
+
+    code, out, err = invoke(
+        ["check", "--json", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    history = only_document(out)["history"]
+    packaged = load_run_history(PROJECT_ROOT / "config")
+    assert packaged is not None, "this repository carries a digest and this case reads it"
+
+    assert history["measured_at"] == packaged.built_at.isoformat()
+    assert datetime.fromisoformat(history["measured_at"]).tzinfo is not None
+    # The same date the sentence carries, so a caller printing `said` and a caller
+    # branching on the timestamp cannot tell a reader two different things.
+    assert packaged.built_at.date().isoformat() in history["said"]
+    assert isinstance(history["succeeded"], int)
+    assert isinstance(history["failed"], int)
+    assert history["succeeded"] >= RUNS_FOR_A_FIGURE
+    assert str(history["succeeded"]) in history["said"]
 
 
 def test_money_is_a_string_and_not_a_float(
