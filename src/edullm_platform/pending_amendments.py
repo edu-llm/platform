@@ -229,6 +229,16 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
     # them and reports the actions left behind as WIDER, and __post_init__ refuses a
     # finding that is not NARROWER. A record cannot describe that window at all, which is
     # the registry saying that the account should never be behind a template in that shape.
+    #
+    # AND THOSE THREE JOINED PLANS CAME APART AGAIN ON 2026-08-06, WHICH IS THE COST OF
+    # JOINING AND IS STILL CHEAPER THAN THE ALTERNATIVE. The deployer stack was applied
+    # while the record stood, and it closed three of the four findings and not the fourth,
+    # so the record stopped fitting and had to be trimmed by re-reading the account. That is
+    # the maintenance a joined record buys: a partial apply moves it rather than clearing
+    # it. The alternative was never four records -- `explains` compares per role, so four
+    # records for one role would each describe an account state that never exists, and after
+    # the same apply three of them would be failing and unclearable rather than one of them
+    # being shorter.
     amendments: tuple[PendingAmendment, ...] = (
         PendingAmendment(
             role_name="sbsandbox-intern-edullm-ecr-publisher",
@@ -374,28 +384,44 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
         PendingAmendment(
             role_name=DEPLOYER_ROLE_NAME,
             reason=(
-                "Two stacks deployed by deploy-phase3-batch.yml need grants this role does "
-                "not hold yet. The expiry janitor needs iam:PassRole on its two roles and the "
-                "EventBridge Scheduler verbs, because the schedule is a schedule rather than "
-                "a rule: a rule targeting a Lambda needs an AWS::Lambda::Permission and "
-                "therefore lambda:AddPermission, which this role withholds deliberately -- "
-                "infra/batch-events.yaml met the same fork and recorded the rule, a "
-                "capability added rather than a restriction removed. The notifier needs "
-                "iam:PassRole on sbsandbox-intern-edullm-notifier-lambda for the same "
-                "CreateFunction reason. All of it is committed and the account has not caught "
-                "up, because this stack is applied from a laptop."
-                "\n\n"
-                "A third stack joined them. infra/scratch-bucket.yaml creates edullm-scratch, and "
-                "every S3 grant this role held was scoped to arn:aws:s3:::sbsandbox-intern-"
-                "edullm-*, which that name does not match, so the working tier was a stack "
-                "only a laptop could apply. It is granted by its exact name now rather than "
-                "by widening that scope to edullm-*, because a wildcard there would bring "
-                "edullm-data and edullm-landing inside a pipeline's reach and this role holds "
+                "infra/scratch-bucket.yaml creates edullm-scratch, and every S3 grant this "
+                "role held was scoped to arn:aws:s3:::sbsandbox-intern-edullm-*, which that "
+                "name does not match, so the working tier is a stack only a laptop can "
+                "apply. It is granted by its exact name rather than by widening that scope "
+                "to edullm-*, because a wildcard there would bring edullm-data and "
+                "edullm-landing inside a pipeline's reach and this role holds "
                 "s3:PutBucketPolicy. The actions are read off what that template actually "
                 "sets: CreateBucket, PutLifecycleConfiguration, PutBucketPublicAccessBlock "
                 "and PutEncryptionConfiguration, with the configuration reads the "
                 "AWS::S3::Bucket handler makes on every Read, and no s3:DeleteBucket because "
-                "the template retains the bucket on delete and on replace."
+                "the template retains the bucket on delete and on replace. Until the stack "
+                "is applied the CI deploy of sbsandbox-intern-edullm-scratch is refused on "
+                "CreateBucket, and the refusal reads like a broken template rather than a "
+                "missing grant."
+                "\n\n"
+                "THIS RECORD CARRIED FOUR FINDINGS AND THE ACCOUNT HAS CAUGHT UP WITH THREE "
+                "OF THEM. The expiry janitor's two iam:PassRole resources, the notifier's "
+                "one, and the EventBridge Scheduler statement all landed when "
+                "sbsandbox-intern-edullm-infra-deployer-iam was applied at 00:24 UTC on "
+                "2026-08-06, eight hours after the capture this is compared against was "
+                "taken. The account was read again and reports the S3 statement below and "
+                "nothing else, and fixtures/evidence/phase-1/roles/ carries a capture taken "
+                "after the apply, because the equality is against the committed capture and "
+                "trimming the record without re-taking it would only move which of the two "
+                "the record disagrees with. Read from the account rather than inferred from "
+                "the fact that an apply happened: which of four differences a partial apply "
+                "closed is not something a deploy log answers, and guessing wrong leaves a "
+                "record that describes a state nothing is in."
+                "\n\n"
+                "THAT THE RECORD STOPPED FITTING IS THE EQUALITY CHECK WORKING AND NOT A "
+                "DEFECT, WHICH IS WORTH SAYING BECAUSE THE TEMPTING REPAIR IS THE WRONG ONE. "
+                "`explains` compares the findings in both directions, so three of four going "
+                "away makes the record fail rather than go on quietly covering the fourth -- "
+                "which is the entire reason it is an equality and not a containment. The "
+                "repair is to trim it to what the account still shows. Relaxing the "
+                "comparison so that a record keeps explaining a subset of itself would buy "
+                "one green run and give every later record the ability to absorb a "
+                "difference nobody wrote down."
             ),
             cleared_by=(
                 "Applying sbsandbox-intern-edullm-notifier-iam and then "
@@ -414,15 +440,6 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
             findings=(
                 RoleDriftFinding(
                     direction=DriftDirection.NARROWER,
-                    element="inline policy 'deploy-phase2-admission-stacks' statement 8 resources",
-                    detail=(
-                        "the template declares resources the deployed role does not: "
-                        "arn:<partition>:iam::<account>:role/sbsandbox-intern-edullm-janitor-lambda, "
-                        "arn:<partition>:iam::<account>:role/sbsandbox-intern-edullm-janitor-schedule"
-                    ),
-                ),
-                RoleDriftFinding(
-                    direction=DriftDirection.NARROWER,
                     element="inline policy 'deploy-phase2-admission-stacks'",
                     detail=(
                         "the template declares a statement the deployed role does not: Allow "
@@ -430,26 +447,6 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
                         "s3:PutBucketPublicAccessBlock, s3:PutEncryptionConfiguration, "
                         "s3:PutLifecycleConfiguration] Resource "
                         "[arn:<partition>:s3:::edullm-scratch]"
-                    ),
-                ),
-                RoleDriftFinding(
-                    direction=DriftDirection.NARROWER,
-                    element="inline policy 'deploy-phase3-batch-stacks' statement 16 resources",
-                    detail=(
-                        "the template declares resources the deployed role does not: "
-                        "arn:<partition>:iam::<account>:role/sbsandbox-intern-edullm-notifier-lambda"
-                    ),
-                ),
-                RoleDriftFinding(
-                    direction=DriftDirection.NARROWER,
-                    element="inline policy 'deploy-phase3-batch-stacks'",
-                    detail=(
-                        "the template declares a statement the deployed role does not: Allow "
-                        "Action [scheduler:CreateSchedule, scheduler:DeleteSchedule, "
-                        "scheduler:GetSchedule, scheduler:ListTagsForResource, "
-                        "scheduler:TagResource, scheduler:UntagResource, "
-                        "scheduler:UpdateSchedule] Resource "
-                        "[arn:<partition>:scheduler:<region>:<account>:schedule/default/sbsandbox-intern-edullm-*]"
                     ),
                 ),
             ),
