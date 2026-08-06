@@ -73,7 +73,14 @@ __all__ = [
 #: request had crossed and there are no routine ceilings, so it could only ever be an empty
 #: list, and a key that is always empty is one every caller keeps checking for nothing.
 #: ``history`` arrived in the same document and would not have moved this on its own.
-FORMAT_VERSION: Final = 2
+#:
+#: 3 because ``submission.state`` stopped emitting ``SUBMITTED`` and started emitting
+#: ``ADMITTED`` for the same fact. **A VALUE RENAMED INSIDE A CLOSED SET IS A FIELD CHANGING
+#: MEANING, AND IT IS THE ONE SHAPE OF CHANGE A CALLER CANNOT SEE.** A key that goes away
+#: raises; a value that goes away just stops matching, so a script branching on
+#: ``state == "SUBMITTED"`` keeps parsing, keeps exiting zero, and silently stops finding
+#: any admitted run. This number is the only warning such a caller gets.
+FORMAT_VERSION: Final = 3
 
 
 def envelope(verb: str) -> dict[str, Any]:

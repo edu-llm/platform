@@ -449,9 +449,20 @@ DECLINED_RUNS = """{"workflow_runs": [
    "html_url": "https://github.com/edu-llm/platform/actions/runs/41"}
 ]}"""
 
-SKIPPED_JOBS = """{"jobs": [
-  {"name": "Submit the approved manifest to admission", "conclusion": "skipped"}
-]}"""
+#: What GitHub records against the gated admission job once a review is rejected. **BOTH ARE
+#: DRIVEN BECAUSE THE SUITE ASSUMED ONE AND THE ACCOUNT PRODUCES THE OTHER.** This file
+#: answered every declined run with ``skipped``, and workflow run 31094100261 -- a real
+#: decline by ``philote-dev`` on 2026-08-06 -- carried ``failure`` with an empty ``steps``
+#: list, because the gate stopped the job before it ran a line. So the one shape a researcher
+#: could actually meet was the one no test could produce, and ``edullm status`` on that run
+#: read ``REFUSED`` while the listing beside it read ``DECLINED``.
+GATED_JOB_CONCLUSIONS = ("skipped", "failure")
+
+
+def jobs_with(conclusion: str) -> str:
+    return json.dumps(
+        {"jobs": [{"name": "Submit the approved manifest to admission", "conclusion": conclusion}]}
+    )
 
 REJECTED = """[
   {"state": "rejected", "user": {"login": "alsy7009"},
@@ -460,13 +471,17 @@ REJECTED = """[
 ]"""
 
 
-def declined_runner(tmp_path: Path, approvals: str) -> FakeRunner:
+def declined_runner(tmp_path: Path, approvals: str, gated: str = "skipped") -> FakeRunner:
     """A submission whose admission job never ran, with the approvals endpoint deciding why.
 
     THE TWO CASES DIFFER IN ONE ENDPOINT AND IN NOTHING ELSE, WHICH IS THE FINDING. GitHub
-    gives a rejected deployment review the same run conclusion it gives a compile refusal and
-    the same skipped admission job, so the runs list and the jobs list are byte-identical
-    here between a decline and a crash. Only ``/approvals`` can tell them apart.
+    gives a rejected deployment review the same run conclusion it gives a compile refusal,
+    so the runs list is byte-identical here between a decline and a crash. Only
+    ``/approvals`` can tell them apart.
+
+    ``gated`` is what GitHub records against the admission job, and it is a parameter rather
+    than a constant because it varies and the variation is what hid the defect. See
+    :data:`GATED_JOB_CONCLUSIONS`.
     """
 
     def api(argv: tuple[str, ...]) -> Any:
@@ -474,7 +489,7 @@ def declined_runner(tmp_path: Path, approvals: str) -> FakeRunner:
         if "/workflows/submit-run.yml/runs" in path:
             return ok(DECLINED_RUNS)
         if path.endswith("/41/jobs"):
-            return ok(SKIPPED_JOBS)
+            return ok(jobs_with(gated))
         if path.endswith("/41/approvals"):
             return ok(approvals)
         return ok("{}")
@@ -490,8 +505,9 @@ def declined_runner(tmp_path: Path, approvals: str) -> FakeRunner:
     )  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("gated", GATED_JOB_CONCLUSIONS)
 def test_status_json_tells_a_declined_run_from_a_failed_one(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    gated: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Mutation: leave both reading REFUSED.
 
@@ -499,10 +515,15 @@ def test_status_json_tells_a_declined_run_from_a_failed_one(
     the same document, and a researcher reading it went looking for a bug in a submission a
     person had simply declined. Those send somebody to different places, and the second one
     has a name attached to it.
+
+    **AND BOTH MARKINGS OF THE GATED JOB ARE DRIVEN, WHICH IS THE SECOND MUTATION THIS CASE
+    NOW HOLDS.** Look for the decline only where that job is absent or ``skipped`` and the
+    ``failure`` parameter goes red -- which is the shape this account produces and the one
+    that shipped, so the document said ``REFUSED`` about a run a person had declined by name.
     """
     code, out, err = invoke(
         ["status", "--json", "run_019fcf3c-9878-7c1a-8f00-1c2d3e4f5a6b"],
-        runner=declined_runner(tmp_path, REJECTED),
+        runner=declined_runner(tmp_path, REJECTED, gated=gated),
         cwd=tmp_path,
         monkeypatch=monkeypatch,
     )

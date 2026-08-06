@@ -289,9 +289,22 @@ The flags are the fields the form asks for, and `check` and `submit` take the sa
 
 **`edullm submit` returns before your run has an id.** Its own `--help` says it waits for the one the compile job mints unless `--no-wait` says otherwise. Measured on 2026-08-06 it came back in 7.7 seconds with a workflow link and a line saying the id is still compiling. The compile job takes about two minutes and `edullm status` carries the id after that.
 
-**`edullm status` with a run id reaches AWS, and without one it does not.** The bare form reads GitHub, takes about ten seconds and costs nothing, so you may call it in a loop. Naming a run, or `logs`, or `cancel`, dispatches `cancel-run.yml`, which holds the only identity allowed to read a Batch job, and then waits for a runner. Give those one to three minutes.
+**`edullm status` with a run id may reach AWS. Without one it never does.** The bare form reads GitHub, took 13.6 seconds when it was measured on 2026-08-06 and dispatches nothing, so you may call it in a loop. Naming a run reaches AWS only where there is a Batch job to describe: one waiting for a lead, or one a lead declined, is answered from GitHub in about half a minute. Where it does dispatch — and `logs` and `cancel` always do — it starts `cancel-run.yml`, which holds the only identity allowed to read a Batch job, and then waits for a runner. Give those one to three minutes; two on 2026-08-06 took 1m24s and 2m07s.
 
-**The bare form never says a run finished.** It reports `DISPATCHED` while the submission workflow is running and `SUBMITTED` once that workflow succeeded, and neither moves again however the job ends. A run that succeeded an hour ago still reads `SUBMITTED`. To learn what a job did you have to name it, which is the form that spends a runner.
+**The bare form stops at admission, and every word it prints is about your submission rather than about your job.** There are eight of them.
+
+| State | What it means |
+| --- | --- |
+| `DISPATCHED` | GitHub has the submission and has not started a runner for it yet |
+| `COMPILING` | the submission workflow is resolving your commit and pricing the run |
+| `PENDING_APPROVAL` | it is parked at a gate and a lead has not tapped |
+| `DECLINED` | a lead said no. `edullm status <run-id>` names who and quotes their reason |
+| `REFUSED` | something else stopped it before admission. The run page says what |
+| `CANCELLED` | somebody cancelled the submission workflow itself |
+| `ADMITTED` | the job reached AWS |
+| `UNKNOWN` | GitHub reports the workflow finished and gives no conclusion. Rare, and not a state of your run |
+
+`ADMITTED` does not move again, because nothing on GitHub watches a Batch job. A run that succeeded an hour ago, one still queued for a machine and one Batch never placed all read `ADMITTED`, and the listing prints a line under itself saying so. To learn what a job did you have to name it, which is the form that spends a runner.
 
 ### Setting a team once
 

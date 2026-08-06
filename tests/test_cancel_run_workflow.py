@@ -37,6 +37,7 @@ import pytest
 import yaml
 from workflow_support import run_step_script, write_stub
 
+from edullm_platform.cli.actions import read_report_sections
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.execution import ExecutionTargetCatalog
 
@@ -870,6 +871,61 @@ def search_for_the_named_run(
     return result, asked.read_text(encoding="utf-8").split(), summary.read_text(
         encoding="utf-8"
     ), written
+
+
+def as_a_job_log(printed: str, *, step: str) -> str:
+    """One step's output, wrapped the way ``gh run view --log`` hands it to the CLI.
+
+    The job name, the step name, an instant, and then the line. ``read_report_sections``
+    strips those three columns, and the step name is what bounds a section, so a fixture
+    that dropped them would be testing a reader nothing uses.
+    """
+    return "\n".join(
+        f"cancel\t{step}\t2026-08-06T10:58:1{index % 10}.0000000Z {line}"
+        for index, line in enumerate(printed.splitlines())
+    )
+
+
+@pytest.mark.parametrize("refused_queue", ["", "queue-two"])
+def test_a_run_batch_cannot_find_reaches_the_terminal_and_not_only_the_page(
+    refused_queue: str, workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: print these two sentences with no heading over them, as they were.
+
+    **THE ANSWER WAS WRITTEN AND NOBODY AT A TERMINAL COULD SEE IT.** ``edullm status``
+    reads sections out of this job's log by heading, and these were the only two things this
+    workflow prints that carried none -- so an admitted run whose job Batch cannot find
+    dispatched a runner, waited, and handed back "the workflow finished success and its
+    report named no section this verb reads" with a link. Measured on 2026-08-06 against
+    ``run_019fd6b2-6aad``: 73 seconds for no answer at all, on one of the states a
+    researcher most needs a sentence for, because a run that was admitted and has no job is
+    the one that looks like the platform losing their work.
+
+    Both branches are driven, because a complete search that found nothing and one that was
+    partly refused are different facts and the whole point of counting the refusals is that
+    the second must not be spoken as the first.
+
+    Read back through ``read_report_sections`` rather than by looking for the heading in the
+    summary, because the summary is the half that already worked. The seam this closes is
+    between what the workflow writes into its job log and what the CLI can pull back out of
+    it, and only driving both halves shows that.
+    """
+    result, _, summary, outputs = search_for_the_named_run(
+        workflow, tmp_path, refused_queue=refused_queue
+    )
+    read_back = read_report_sections(
+        as_a_job_log(result.stdout, step="Find the job, and read whose it is"),
+        (RUN_ID, "Runs submitted by", "No runs found"),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert outputs["not_running"] == "true"
+    assert f"## {RUN_ID}" in summary
+    assert read_back, (
+        "edullm status can read no section out of this, so a researcher who spent a runner "
+        "on it gets a link and no sentence"
+    )
+    assert "Batch stops listing a job" in read_back or "nobody managed to look" in read_back
 
 
 def test_a_queue_the_account_does_not_have_costs_one_call_and_ends_nothing(

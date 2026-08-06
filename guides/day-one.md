@@ -108,7 +108,7 @@ Aryan Verma · plan-b-phase0-100m-superbpe-eval · $0.70 spent, nothing produced
 
 **These are sent.** This section said nothing sent them and that the webhook had never been supplied, which was true for about four hours after it was written. The webhook was created by hand on 2026-08-05, points at `#edullm-runs`, and `infra/README.md` records it under "It already exists". Messages have been posted through the deployed function since. Join the channel.
 
-**Do not poll `edullm status` for it, because the bare form never changes.** It reads GitHub, and what GitHub knows is whether your submission workflow succeeded rather than what your job then did. A run that finished an hour ago still reads `SUBMITTED`. What tells you is the channel, or `edullm status <run-id>`, which names the run to AWS and takes one to three minutes because it spends a runner to do it.
+**`edullm status` with no argument cannot tell you a run finished, and it says so rather than leaving you to work it out.** It reads GitHub, and GitHub's knowledge of a run stops at admission: a run that succeeded an hour ago and one still queued for a machine both read `ADMITTED`, and the listing prints a line under itself saying exactly that. What tells you the outcome is the channel, or `edullm status <run-id>`, which names the run to AWS and takes one to three minutes because it spends a runner to do it.
 
 ## Running your own code
 
@@ -130,7 +130,6 @@ Two checks are deferred to submit time and `check` names both, because they need
 | Wall | The way round |
 | --- | --- |
 | No Windows machine has ever finished this. The install used to fail with `Filename too long` for any username over eight characters, and [#291](https://github.com/edu-llm/platform/pull/291) fixed that on 2026-08-06 along with the `gh` lookup, the spec's line endings and redirected output. All of it is untested on real Windows | Follow it anyway and say where it stopped. If the install still fails on a path, point `UV_CACHE_DIR` at something short such as `C:\uv` and try again |
-| `edullm status` with no argument reads `SUBMITTED` for every run, whatever the job did. The state it shows is your submission workflow's rather than your job's, and it never moves again | Watch `#edullm-runs`, or name the run. `edullm status <run-id>` asks AWS and takes one to three minutes |
 | The eval image carries no torch and no vLLM, so only the `mock` provider runs | Nothing yet. GPU evaluation through the platform is not available. eval-inference owns the choice |
 | `gh` in a clone that has an `upstream` remote answers about the wrong repository, with no warning. In OLMo-core it reported no image build for a branch whose build had succeeded | Use `edullm`, which reads `origin`. Where you must use `gh`, pass `--repo edu-llm/<name>` |
 | Roughly half of all runs fail, and about half of those failures print no cause | Nothing yet. Your first failure is probably not your fault. Bring the run id to an issue |
