@@ -291,8 +291,13 @@ _PARSER_STYLE: Final[Mapping[str, Any]] = {
     **_NO_ARGPARSE_COLOUR,
 }
 
-#: The five verbs that work, and the line each shows in ``--help`` and in the orientation a
+#: Every verb that works, and the line each shows in ``--help`` and in the orientation a
 #: bare ``edullm`` prints. One table rather than two so those two can never drift.
+#:
+#: This said five until 2026-08-06 and had since the exploration route landed four more. The
+#: table below is the only thing that knows how many there are, so a comment above it saying
+#: so is a copy of it that nothing compares, which is the argument
+#: ``tests/test_cli_no_hardcoded_bounds.py`` now makes structurally.
 BUILT_TODAY: Final = {
     "check": "price a submission here, and write a first spec if there is none",
     "submit": "dispatch the submission workflow",
@@ -307,12 +312,12 @@ BUILT_TODAY: Final = {
 
 #: What each built verb does, in the sentence its own ``--help`` opens with.
 #:
-#: A SECOND TABLE BESIDE ``BUILT_TODAY`` BECAUSE THEY ANSWER TWO QUESTIONS. That one is the
-#: line in a list of five, read by somebody choosing a verb, and it has to fit beside four
-#: others. This is the paragraph above the flags, read by somebody who has already chosen
-#: and wants to know what they are about to run. ``edullm check --help`` printed fifteen
-#: flags and never said what ``check`` was for, which made the most-read page in the tool
-#: the one page that answered nothing.
+#: A SECOND TABLE BESIDE ``BUILT_TODAY`` BECAUSE THEY ANSWER TWO QUESTIONS. That one is one
+#: line of the list :data:`BUILT_TODAY` holds, read by somebody choosing a verb, and it has to
+#: fit beside every other line in it. This is the paragraph above the flags, read by somebody
+#: who has already chosen and wants to know what they are about to run. ``edullm check
+#: --help`` printed fifteen flags and never said what ``check`` was for, which made the
+#: most-read page in the tool the one page that answered nothing.
 #:
 #: The unbuilt verbs are not here. Theirs is derived from :data:`NOT_BUILT_YET` in
 #: :func:`build_parser_and_verbs`, so a plan cannot be described twice and differently, and

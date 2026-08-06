@@ -50,9 +50,24 @@ reported as deferred rather than as passed. Reporting them as passed is the fail
 paragraph exists to prevent; ``adarsh-rajesh-first-run.md`` is a transcript of what it
 costs when a submitter believes a clean preflight means a submission will go through.
 
-**IT IS TWO CHECKS DEFERRED AND NOT MORE, WHICH IS WHY THE VERB IS WORTH RUNNING.** Of the
-seven compile-time refusals ``system-overview.md`` lists under "The submission path", five
-are decided here.
+**IT IS TWO CHECKS DEFERRED AND NOT MORE, WHICH IS WHY THE VERB IS WORTH RUNNING.**
+:data:`DEFERRED_TO_SUBMIT` is the whole of what a laptop cannot decide, and everything else
+``submission.compile_submission`` refuses is refused here first, bar one:
+``require_a_tensor_parallel_flag_vllm_reads`` is called there and not by :func:`_check_command`,
+so a tensor-parallel width the vLLM server will not read clears this verb and is refused at
+compile time. That is a gap rather than a design and it is named here because naming it is
+what makes it findable.
+
+**THIS PARAGRAPH QUOTED A COUNT OUT OF ``system-overview.md`` UNTIL 2026-08-06 AND
+``config/reports/surfaces.yaml`` QUOTED A DIFFERENT ONE OFF THE SAME LIST.** Both were copies
+of a list that had moved under them, both were right when they were typed, and neither was
+checkable against anything but a document. What is checkable is this tree: the compile step's
+rules are the calls in ``submission.compile_submission``, this verb's are the calls in
+:func:`run_preflight` and :func:`_check_command`, and every refusal either can raise is a
+``SubmissionRefusedError`` subclass in ``edullm_platform/errors.py`` carrying its own
+``reason_code``. Count those three and the two documents cannot disagree, because neither is
+being asked. ``tests/test_cli_no_hardcoded_bounds.py`` holds the sentence above to
+:data:`DEFERRED_TO_SUBMIT` for the same reason.
 """
 
 from __future__ import annotations

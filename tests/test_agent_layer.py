@@ -32,7 +32,11 @@ from edullm_platform.cli.main import (
     RETIRED,
     build_parser_and_verbs,
 )
-from tests.test_cli_no_hardcoded_bounds import WRITTEN_BOUND
+from tests.test_cli_no_hardcoded_bounds import (
+    WRITTEN_BOUND,
+    count_claims,
+    point_it_at_the_tree,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 AGENTS = PROJECT_ROOT / "AGENTS.md"
@@ -307,6 +311,25 @@ def test_the_document_writes_no_bound_the_configuration_owns(document: Path) -> 
         + "\nSend the reader to edullm check --json instead, which prints it from the "
         "loaded configuration."
     )
+
+
+@pytest.mark.parametrize("document", AGENT_DOCUMENTS, ids=lambda path: path.name)
+def test_the_document_writes_no_count_the_tree_owns(document: Path) -> None:
+    """The half above cannot reach, and the same rule from the same module rather than a second.
+
+    A configuration owns a threshold and the tree owns a count, so `edullm check --json` is
+    the wrong place to send a reader for how many verbs there are. What it is right about is
+    the shape of the mistake: the document is a copy, the copy is what goes stale, and
+    nothing compares them. AGENTS.md counts the verbs today and is correct today, which is
+    exactly the state every claim in the 2026-08-06 sweep was in when it was written.
+    """
+    text = " ".join(document.read_text(encoding="utf-8").split())
+    written = [
+        (f"{document.name}:{line}", said, countable)
+        for line, said, countable in count_claims([(1, text)])
+    ]
+
+    assert not written, point_it_at_the_tree(written, where=document.name)
 
 
 def test_the_rule_names_every_exit_code_the_binary_can_return() -> None:
