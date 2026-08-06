@@ -840,20 +840,36 @@ slices:
         deployed: {release: true}
         under_test: {not_reached: the verb files an ask and no grant is behind it}
 
-      # BOTH `no`s DESCRIBED A BRANCH THAT WAS MERGED HOURS LATER AND NOTHING RE-READ THEM.
-      # `config/repositories.yaml` on `origin/main` carries `open-instruct-scored-rewards`, so
-      # the registration is written and live rather than sitting on a branch. What is still true
-      # is the half that belongs to somebody else: that repository's `main` holds no `.edullm/`
-      # directory, so the `dockerfile_path` this entry declares points at nothing and no image
-      # has ever been built. That is the honest `no` and it is a different `no` from the one
-      # this row was carrying.
+      # THIS ROW CARRIED TWO SENTENCES ABOUT SOMEBODY ELSE'S REPOSITORY AND BOTH WENT FALSE
+      # WITHIN A DAY OF BEING WRITTEN. They said that repository's `main` held no `.edullm/`
+      # directory and that no image had ever been built from it. Both were true on 2026-08-04,
+      # neither was true on 2026-08-05, and nothing re-read them -- so a status board went on
+      # reporting a team as blocked, two people were listed as blocked who were not, and an
+      # agent was briefed to write a Dockerfile over one that had existed for a day.
+      #
+      # THE DEFECT WAS THE SHAPE RATHER THAN THE WORDING. Every other cell in this file is a
+      # rule something evaluates; these two were prose, and prose about a tree this repository
+      # does not own has no mechanism that can ever falsify it. So they are rules now, and
+      # `under_test` points at the check rather than at a state: the daily
+      # `registered-dockerfiles` job re-asks whether this registration still describes the
+      # repository it names, which is the strongest thing anything here can hold about another
+      # repository and is deliberately weaker than "an image exists". Whether one does is an
+      # ECR question needing an AWS credential no pull-request path holds, and it is not
+      # restated here in words, because a word is what went stale.
       - id: register-open-instruct
         name: Registering the first outside codebase
         designed: {reached: overview draws it}
         planned: {task: the-population/12}
         built: {grep: [config/repositories.yaml, "open-instruct-scored-rewards"]}
-        deployed: {not_reached: "the repository's own main holds no .edullm directory to build from"}
-        under_test: {not_reached: no image has been built from it}
+        deployed:
+          {
+            grep:
+              [
+                infra/ecr-repositories.yaml,
+                "sbsandbox-intern-edullm-open-instruct-scored-rewards",
+              ],
+          }
+        under_test: {tests: [tests/test_registered_dockerfiles.py]}
 
       # THE EXEMPTION CANNOT BE WRITTEN WHERE PEOPLE KEEP LOOKING FOR IT. `NotPrincipal` is
       # only valid in a resource policy or a service control policy, and a permission boundary

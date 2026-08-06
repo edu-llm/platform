@@ -96,6 +96,21 @@ jobs:
     name: Write the registration and open a pull request
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # THE TOKEN IS DECLARED ON THE JOB RATHER THAN ON THE STEP THAT NEEDS IT, AND THAT IS NOT
+    # LAZINESS. `tools/register_repository.py` reads the repository being registered over
+    # `gh api` before it writes anything, and `gh` needs a token even for a public read.
+    # `test_the_workflow_hands_the_tool_every_input_it_offers` holds the registration step's
+    # `env` equal to the dispatch inputs in both directions, which is a good invariant -- an
+    # input the form collects and nothing passes on is worse than an absent one -- and a
+    # credential is not an input. So it goes here, where it is available to the step without
+    # being mistaken for one.
+    #
+    # It is the workflow token and nothing is stored. Every registered repository is public,
+    # so the reads are ones an anonymous caller could make; `gh` merely insists on presenting
+    # something. This grants no access to any other repository's settings, which is why the
+    # publisher variable is checked in build-research-image.yml instead of here.
+    env:
+      GH_TOKEN: ${{ github.token }}
     permissions:
       # Enough to push a branch and open a pull request against it, and nothing else. No
       # `id-token: write`, for the reason at the top of this file.
@@ -130,6 +145,14 @@ jobs:
       # The record goes to a file rather than to a variable so the next two steps read the
       # same bytes this one produced. It carries the diff, the derived destination name, the
       # branch, and the follow-up steps that need a person.
+      #
+      # NO `--offline`, EVER, FROM HERE. The tool asks GitHub whether the repository it is
+      # about to register is the repository the registration describes -- the id resolves to
+      # that name, the branch is there, `dockerfile_path` is a file on it, `build_context` is
+      # a directory, and some workflow calls the platform's reusable build -- and refuses when
+      # any of that is already false. That flag exists for a laptop with no session and it
+      # turns every one of those claims back into a string nobody checked, which is the state
+      # `open-instruct-scored-rewards` was registered in.
       - name: Write the registration
         env:
           REPOSITORY: ${{ inputs.repository }}

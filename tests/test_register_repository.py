@@ -136,12 +136,22 @@ class Result(NamedTuple):
 
 
 def run(tree: Path, capsys: pytest.CaptureFixture[str], /, **overrides: str) -> Result:
+    """One invocation, offline unless a test says otherwise.
+
+    ``--offline`` IS THE DEFAULT HERE AND NOT IN THE TOOL, and the asymmetry is deliberate.
+    Every test in this module is about what gets written into eight files, and none of them
+    is about GitHub; a suite that reached the network to answer those questions would be slow,
+    flaky and dependent on the state of six repositories nobody here controls. The claim reads
+    are exercised against a stubbed ``gh`` in the section at the bottom, where the subject is
+    the reads themselves.
+    """
     arguments = {
         "--repository": "olmo-mixer",
         "--github-repository-id": "1399999999",
         "--dockerfile-path": ".edullm/Dockerfile",
         "--reason": REASON,
         "--project-root": str(tree),
+        "--offline": "",
     }
     arguments.update(overrides)
     code = register_repository.main(
@@ -1037,3 +1047,372 @@ def test_the_pull_request_body_says_what_the_diff_cannot(
     for item in register_repository.FOLLOW_UPS:
         assert item.summary in body
     assert "Approve workflows to run" in body
+
+
+# --- What the registration reads off the repository it names -------------------------------
+#
+# THE DEFECT THESE COVER IS THAT THERE WAS NOTHING HERE. Four of the eight fields describe a
+# tree this repository does not own and every one of them went into a reviewed file
+# unexamined, which is how `open-instruct-scored-rewards` was registered declaring a
+# Dockerfile against a repository with no `.edullm` directory and reached the submission form
+# with nothing anywhere going red.
+#
+# The reads themselves are tested in `tests/test_registered_dockerfiles.py`, which owns them.
+# What is tested here is the wiring: that the tool asks, that it asks about the entry it is
+# about to write rather than about anything else, that a false claim stops the write, and that
+# a question nobody could put is not mistaken for a question that came back clean.
+
+
+def refuse(reason: str, message: str = "not there") -> object:
+    return register_repository.Finding(
+        reason, message, register_repository.EXIT_MISSING
+    )
+
+
+def could_not_look(reason: str = "registered_dockerfile_not_read") -> object:
+    return register_repository.Finding(
+        reason, "gh auth login", register_repository.EXIT_UNUSABLE
+    )
+
+
+def test_the_claims_are_read_about_the_entry_the_tool_is_about_to_write(
+    tree: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: check the registry as it already stands rather than the new entry.
+
+    A check that read the committed entries would pass on every registration ever made and
+    say nothing about the one being added, which is the only one nobody has looked at. So the
+    subject of the read is asserted, field by field, against the arguments handed in.
+    """
+    seen: list[tuple[object, str]] = []
+
+    def spy(entry: object, organization: str) -> tuple[object, ...]:
+        seen.append((entry, organization))
+        return ()
+
+    monkeypatch.setattr(register_repository, "check_registration", spy)
+
+    arguments = {
+        "--repository": "olmo-mixer",
+        "--github-repository-id": "1399999999",
+        "--dockerfile-path": "images/Dockerfile",
+        "--default-branch": "release",
+        "--build-context": "src",
+        "--reason": REASON,
+        "--project-root": str(tree),
+    }
+    assert (
+        register_repository.main(
+            [part for pair in arguments.items() for part in pair if part]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert len(seen) == 1
+    entry, organization = seen[0]
+    assert entry.repository == "olmo-mixer"
+    assert entry.github_repository_id == 1399999999
+    assert entry.default_branch == "release"
+    assert entry.dockerfile_path == "images/Dockerfile"
+    assert entry.build_context == "src"
+    assert organization == "edu-llm"
+
+
+def test_a_claim_the_repository_falsifies_refuses_the_registration_and_writes_nothing(
+    tree: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE WHOLE POINT, and the assertion that matters is that the tree is untouched.
+
+    A tool that reported the finding and wrote the files anyway would leave the pull request
+    that started this, with the refusal one scroll up a workflow log nobody reads twice.
+    """
+    before = {relative: (tree / relative).read_text(encoding="utf-8") for relative in TOUCHED}
+    monkeypatch.setattr(
+        register_repository,
+        "check_registration",
+        lambda *_: (
+            refuse(
+                "registered_dockerfile_is_absent",
+                "images/Dockerfile is not on release.",
+            ),
+        ),
+    )
+
+    arguments = {
+        "--repository": "olmo-mixer",
+        "--github-repository-id": "1399999999",
+        "--dockerfile-path": "images/Dockerfile",
+        "--reason": REASON,
+        "--project-root": str(tree),
+    }
+    code = register_repository.main(
+        [part for pair in arguments.items() for part in pair if part]
+    )
+    captured = capsys.readouterr()
+
+    assert code == register_repository.EXIT_REFUSED
+    assert "registered_dockerfile_is_absent" in captured.err
+    assert "images/Dockerfile is not on release." in captured.err
+    for relative, text in before.items():
+        assert (tree / relative).read_text(encoding="utf-8") == text, relative
+
+
+def test_every_falsified_claim_is_reported_rather_than_the_first(
+    tree: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One refusal per dispatch is three dispatches to learn three things.
+
+    The caller is a person waiting on a workflow run, and the argument `AGENTS.md` makes
+    about `edullm check` -- list every refusal at once rather than one per attempt -- applies
+    to the tool that opens the pull request too.
+    """
+    monkeypatch.setattr(
+        register_repository,
+        "check_registration",
+        lambda *_: (
+            refuse("registered_dockerfile_is_absent", "no Dockerfile"),
+            refuse("no_workflow_calls_the_platform_build", "no caller"),
+        ),
+    )
+
+    arguments = {
+        "--repository": "olmo-mixer",
+        "--github-repository-id": "1399999999",
+        "--dockerfile-path": ".edullm/Dockerfile",
+        "--reason": REASON,
+        "--project-root": str(tree),
+    }
+    code = register_repository.main(
+        [part for pair in arguments.items() for part in pair if part]
+    )
+    captured = capsys.readouterr()
+
+    assert code == register_repository.EXIT_REFUSED
+    assert "registered_dockerfile_is_absent" in captured.err
+    assert "no_workflow_calls_the_platform_build" in captured.err
+
+
+def test_a_question_nobody_could_put_is_exit_two_rather_than_a_refusal(
+    tree: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: treat an unreadable answer as a falsified claim.
+
+    Reporting an absent Dockerfile on the morning `gh` is logged out sends somebody to open a
+    pull request against a repository whose file is sitting right there. Exit 2 is the
+    tool-could-not-be-driven door, it names `--offline` as the way past, and it still writes
+    nothing -- a claim nobody could check is not a claim that holds.
+    """
+    before = (tree / "config/repositories.yaml").read_text(encoding="utf-8")
+    monkeypatch.setattr(
+        register_repository,
+        "check_registration",
+        lambda *_: (could_not_look(),),
+    )
+
+    arguments = {
+        "--repository": "olmo-mixer",
+        "--github-repository-id": "1399999999",
+        "--dockerfile-path": ".edullm/Dockerfile",
+        "--reason": REASON,
+        "--project-root": str(tree),
+    }
+    code = register_repository.main(
+        [part for pair in arguments.items() for part in pair if part]
+    )
+    captured = capsys.readouterr()
+
+    assert code == register_repository.EXIT_UNUSABLE
+    assert code != register_repository.EXIT_REFUSED
+    assert "registered_dockerfile_not_read" in captured.err
+    assert "--offline" in captured.err
+    assert (tree / "config/repositories.yaml").read_text(encoding="utf-8") == before
+
+
+def test_the_local_checks_run_before_the_network_ones(
+    tree: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A name already registered is a refusal that costs no round trip and no waiting.
+
+    Everything the tool can decide from this tree is free, deterministic and offline, so it
+    is decided first. It also makes a repository-side refusal mean what it says: the entry
+    has already been shown to be writable, so the refusal is about the repository.
+    """
+    asked = False
+
+    def spy(*_: object) -> tuple[object, ...]:
+        nonlocal asked
+        asked = True
+        return ()
+
+    monkeypatch.setattr(register_repository, "check_registration", spy)
+
+    arguments = {
+        "--repository": "OLMo-core",  # already in the committed registry
+        "--github-repository-id": "1306868157",
+        "--dockerfile-path": ".edullm/Dockerfile",
+        "--reason": REASON,
+        "--project-root": str(tree),
+    }
+    code = register_repository.main(
+        [part for pair in arguments.items() for part in pair if part]
+    )
+    capsys.readouterr()
+
+    assert code == register_repository.EXIT_REFUSED
+    assert not asked, "a repeat registration must not cost a read"
+
+
+def test_the_body_names_every_claim_that_was_checked_and_every_one_that_cannot_be(
+    tree: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A CHECK NOBODY IS TOLD ABOUT IS WORTH LESS THAN ONE THEY ARE, and a short list of
+    checks reads as a complete one unless the gaps are printed beside it.
+
+    So the body carries both, and it carries the sentence that stops the registration-time
+    check being mistaken for the audit -- which is how the audit gets deleted as redundant.
+    """
+    monkeypatch.setattr(register_repository, "check_registration", lambda *_: ())
+
+    arguments = {
+        "--repository": "olmo-mixer",
+        "--github-repository-id": "1399999999",
+        "--dockerfile-path": ".edullm/Dockerfile",
+        "--reason": REASON,
+        "--project-root": str(tree),
+    }
+    assert (
+        register_repository.main(
+            [part for pair in arguments.items() for part in pair if part]
+        )
+        == 0
+    )
+    record = json.loads(capsys.readouterr().out)
+    body = record["pull_request_body"]
+    flat = " ".join(body.split())
+
+    for claim, _ in register_repository.CLAIMS:
+        assert claim in flat, claim
+    for claim, _ in register_repository.UNCHECKABLE_CLAIMS:
+        assert claim in flat, claim
+    assert "None of that is a statement about tomorrow" in flat
+    assert "audit.yml" in body
+    assert record["claims_checked"] is True
+    assert record["claims"] == [claim for claim, _ in register_repository.CLAIMS]
+
+
+def test_offline_says_so_in_the_record_and_in_the_body_rather_than_reading_as_checked(
+    tree: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: make `--offline` quiet.
+
+    A flag that skips the checks and leaves the body reading exactly as a checked one turns
+    every claim back into a string nobody put to GitHub while looking like the opposite. The
+    record carries a boolean so a later tool can tell without parsing English.
+    """
+    record = run(tree, capsys).record
+    flat = " ".join(record["pull_request_body"].split())
+
+    assert record["claims_checked"] is False
+    assert record["claims"] == []
+    assert "**Nothing was.**" in flat
+    assert "--offline" in flat
+    assert "open-instruct-scored-rewards" in flat
+    # Still lists what a reviewer now has to read by hand, and still says the audit will ask.
+    for claim, _ in register_repository.CLAIMS:
+        assert claim in flat, claim
+    assert "audit.yml" in flat
+
+
+def test_every_claim_nothing_here_can_check_says_why_and_names_no_credential_as_the_fix() -> None:
+    """WHAT SEPARATES A CHECKABLE CLAIM FROM AN UNCHECKABLE ONE IS THE ENDPOINT, NOT EFFORT.
+
+    `repositories/{id}`, `contents` and `branches` answer a token that is a collaborator on
+    nothing, which is what makes the five checked claims free. `actions/variables`,
+    `actions/secrets`, `hooks`, `keys` and `branches/{branch}/protection` answer 401, and the
+    credential that would open them is a stored collaborator token --
+    `test_the_repository_holds_no_secret_a_branch_could_read` forbids one by name. The rule
+    that would have to be broken to build the live check is the rule the check would be
+    watching.
+
+    So every entry has to say why it cannot be checked rather than merely that it is not, and
+    none of them may propose a stored credential as the answer.
+    """
+    assert register_repository.UNCHECKABLE_CLAIMS
+
+    for claim, detail in register_repository.UNCHECKABLE_CLAIMS:
+        assert claim.strip()
+        assert len(detail.split()) > 20, claim
+        assert detail.rstrip().endswith("."), claim
+
+    joined = " ".join(detail for _, detail in register_repository.UNCHECKABLE_CLAIMS)
+    assert "401" in joined
+    assert "actions/variables" in joined
+    # The two doors an unreadable fact may leave by: a check somewhere it can be made, or an
+    # honest silence. Never a token in this repository.
+    assert "build-research-image.yml" in joined
+    assert "audit" in joined
+
+
+def test_no_claim_is_both_checked_and_declared_uncheckable() -> None:
+    """The two lists go into the same pull request body, so an overlap is a contradiction."""
+    checked = {claim for claim, _ in register_repository.CLAIMS}
+    uncheckable = {claim for claim, _ in register_repository.UNCHECKABLE_CLAIMS}
+
+    assert checked
+    assert uncheckable
+    assert checked & uncheckable == set()
+
+
+def test_the_runbook_and_the_skill_both_name_the_variable_nothing_can_read() -> None:
+    """THE PUREST CASE OF THE CLASS, AND IT WAS DOCUMENTED NOWHERE.
+
+    All six research repositories carry `AWS_ECR_PUBLISHER_ROLE_ARN` as a repository
+    variable, set by hand, with no organization variable behind it -- and before 2026-08-06
+    its only mention in this repository was one example comment in the reusable build. Not the
+    runbook this tool prints, not the skill that writes the caller workflow. A person could
+    follow either to the letter and produce a repository that reads as fully registered and
+    publishes nothing, which is what `edullm-p1` did for days.
+
+    Read from both documents in both directions: the step exists, and it says the thing that
+    makes it a step rather than a default, which is that nothing inherits it.
+    """
+    runbook = " ".join(
+        f"{item.summary} {item.detail}" for item in register_repository.FOLLOW_UPS
+    )
+    skill = " ".join(
+        (
+            PROJECT_ROOT / ".cursor/skills/registering-a-repository/SKILL.md"
+        ).read_text(encoding="utf-8").split()
+    )
+
+    for text, where in ((runbook, "runbook"), (skill, "skill")):
+        assert "AWS_ECR_PUBLISHER_ROLE_ARN" in text, where
+        assert "no organization variable" in text, where
+        assert "per repository" in text, where
+        assert "publisher_role_arn_is_empty" in text, where
+
+
+def test_the_workflow_gives_the_tool_a_token_and_never_asks_it_to_skip_the_reads() -> None:
+    """Mutation: dispatch with `--offline`, or forget the token and let the reads fail.
+
+    The reads are the point of the tool now, and there are two ways to have written them and
+    still ship a registration nobody checked. `--offline` is the loud one; an absent token is
+    the quiet one, because `gh` needs something to present even for a read an anonymous caller
+    could make, and without it every claim leaves by the exit-2 door -- which somebody in a
+    hurry then passes `--offline` to get around.
+
+    The token is on the job rather than on the step, because
+    `test_the_workflow_hands_the_tool_every_input_it_offers` holds that step's `env` equal to
+    the dispatch inputs in both directions and a credential is not an input.
+    """
+    workflow = load_workflow(WORKFLOW_PATH)
+    job = workflow["jobs"]["register"]
+    registration = step(job, "Write the registration")
+
+    assert job["env"]["GH_TOKEN"] == "${{ github.token }}"
+    assert "--offline" not in registration["run"]
+    assert "--offline" not in str(workflow)
+    # No stored credential appears anywhere: the reads are ones a token that is a collaborator
+    # on nothing can make, which is what keeps the whole check free.
+    assert "secrets." not in str(registration)
