@@ -1227,8 +1227,10 @@ def test_the_history_job_keeps_the_reading_where_it_can_be_diffed(
 ) -> None:
     """Mutation: append to main, or force-push the branch the way the run index will.
 
-    main refuses this push and should, because branch protection wants an approving review
-    and a code-owner review. The branch is appended to rather than force-pushed because with
+    main refuses this push and should, because branch protection wants two status checks
+    this token cannot produce. It wanted an approving review and a code-owner review until
+    2026-08-05 and the push was refused then too. The branch is appended to rather than
+    force-pushed because with
     a source that forgets, last week is the only copy of last week -- which is the opposite of
     the run index, where a snapshot refreshed on state change is overwritten in place and its
     history is noise.

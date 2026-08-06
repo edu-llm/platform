@@ -50,9 +50,11 @@ __all__ = [
 ]
 
 #: Where the index lives. An orphan branch under ``machine/`` so that it does not read as
-#: somebody's feature branch, and off ``main`` because branch protection wants an approving
-#: review and a code-owner review on every commit there -- buying an exception to that in
-#: order to publish an index is the wrong trade. Spelled here rather than in the workflow
+#: somebody's feature branch, and off ``main`` because branch protection wants two status
+#: checks on every commit there that a workflow token cannot produce -- buying an exception
+#: to that in order to publish an index is the wrong trade. It wanted an approving review
+#: and a code-owner review until 2026-08-05, and the answer was the same then.
+#: Spelled here rather than in the workflow
 #: alone because the CLI reads the same ref and a rename on one side is a lookup that finds
 #: nothing and reports the run as unknown.
 RUN_INDEX_BRANCH: Final = "machine/run-index"

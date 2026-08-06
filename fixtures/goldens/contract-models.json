@@ -915,7 +915,7 @@
       "module": "edullm_platform.phase5_evidence",
       "name": "BranchProtectionEvidence",
       "schema_version": "unversioned",
-      "structural_digest": "sha256:844ce60279a4834229d3fafed970f0b1e57efba02023995eacc35a84d2ecef21"
+      "structural_digest": "sha256:eb128b52a94ae5268b63a3e9f2a0e807d2a51ed38ec99032bc262efbd82ad1b9"
     },
     {
       "base": false,
@@ -923,6 +923,13 @@
       "name": "PublishedImageEvidence",
       "schema_version": "unversioned",
       "structural_digest": "sha256:edd8d7f244bd221cad534be10b7841232a22d7f1d6a3683fbddad2dac5d2734d"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.phase5_evidence",
+      "name": "RequiredCheckEvidence",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:84ac5428dfd97b9f60464c69084e7b8ddcdf2366c35dd6d07e380e0631232cc1"
     },
     {
       "base": false,

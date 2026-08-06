@@ -62,6 +62,7 @@ from edullm_platform.phase5_evidence import (
     AdmittedRunEvidence,
     BranchProtectionEvidence,
     PublishedImageEvidence,
+    RequiredCheckEvidence,
     RunAuthorizationEvidence,
 )
 
@@ -327,6 +328,34 @@ def capture_published_image(
     )
 
 
+def _required_checks(checks: dict[str, Any]) -> tuple[RequiredCheckEvidence, ...]:
+    """Every context a merge waits on, with the app entitled to report it.
+
+    Read from ``checks`` rather than from ``contexts``. GitHub answers with both and they
+    are the same names, but ``contexts`` is the older shape and carries no app -- so a
+    capture taken from it cannot tell a context only this repository's workflows may report
+    from one anybody with a token may post, which is the difference the criterion rests on.
+    ``contexts`` is still read as the fallback, because a branch protected before the app
+    field existed answers with that list alone and recording nothing would read as a branch
+    with no required checks.
+    """
+    pinned = checks.get("checks")
+    if pinned:
+        found = [
+            RequiredCheckEvidence(
+                context=str(entry["context"]),
+                app_id=int(entry["app_id"]) if entry.get("app_id") is not None else None,
+            )
+            for entry in pinned
+        ]
+    else:
+        found = [
+            RequiredCheckEvidence(context=str(context), app_id=None)
+            for context in checks.get("contexts") or ()
+        ]
+    return tuple(sorted(found, key=lambda check: check.context))
+
+
 def capture_branch_protection(*, branch: str) -> BranchProtectionEvidence:
     """How the default branch is protected, read from GitHub rather than from a document."""
     protection = _gh(f"repos/{REPOSITORY_SLUG}/branches/{branch}/protection")
@@ -349,7 +378,7 @@ def capture_branch_protection(*, branch: str) -> BranchProtectionEvidence:
         required_conversation_resolution=bool(
             (protection.get("required_conversation_resolution") or {}).get("enabled", False)
         ),
-        required_status_checks=tuple(sorted(checks.get("contexts") or ())),
+        required_status_checks=_required_checks(checks),
     )
 
 
@@ -418,6 +447,9 @@ def _target(arguments: argparse.Namespace) -> int:
         write_model(arguments.output_dir / BRANCH_PROTECTION_RECORD, protection)
         written.append(BRANCH_PROTECTION_RECORD)
         summary["enforce_admins"] = protection.enforce_admins
+        summary["required_status_checks"] = [
+            check.context for check in protection.required_status_checks
+        ]
 
     summary["written"] = sorted(written)
     report(summary)

@@ -1,4 +1,12 @@
-# Who has to review a change to the things IAM trusts.
+# Who is asked to look at a change to the things IAM trusts.
+#
+# THIS FILE ROUTES AND NO LONGER GATES. require_code_owner_reviews came off main on
+# 2026-08-05 with the approving review count, on the owner's instruction, so GitHub still
+# requests these people on a pull request touching their paths and a merge no longer waits
+# for them. Everything below was written while it gated and the argument is left as it was,
+# because what it explains is why config is owned more widely than the rest, and that is
+# still the shape of the file. What holds main now is the two required status checks, and
+# tests/test_phase5_run_evidence.py asserts them against a committed capture.
 #
 # Write access to this repository is merge access to five workflow files pinned by name in
 # three IAM trust policies -- and to the source and configuration that ship inside the two
@@ -17,11 +25,11 @@
 # counted on 2026-08-04. The window is anchored to a commit rather than left as "the last
 # 99", which slides: measured the same way on 2026-08-05 it reads 85 and 23, so the sentence
 # would have gone on asserting two numbers nobody had measured. The proportion is what the
-# argument rests on and it has held. Branch protection sets
-# require_code_owner_reviews with required_approving_review_count 1, and all 36
-# collaborators already hold write or better. So the review queue for eight research teams
-# was two people, and the largest single thing they were queueing on was config: profiles,
-# workloads, the roster, datasets.
+# argument rests on and it has held. Branch protection then set require_code_owner_reviews
+# with required_approving_review_count 1, and all 36 collaborators already held write or
+# better. So the review queue for eight research teams was two people, and the largest
+# single thing they were queueing on was config: profiles, workloads, the roster, datasets.
+# That queue is what the removal on 2026-08-05 was for.
 #
 # config/ is also the least dangerous place to be wrong. Every file under it is loaded and
 # cross-checked by the suite, which catches an incoherent profile, an unplaceable workload
