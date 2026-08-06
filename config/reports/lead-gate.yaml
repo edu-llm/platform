@@ -23,9 +23,11 @@
 # and long enough that a clean week is silent.
 #
 # Under config/reports/ rather than config/ for the reason config/reports/asks.yaml gives: the
-# eight control-plane files in docs-frank/reference/system-overview.md do not include this, and
-# .github/workflows/release-tag.yml names six files under config/ and no directory, so a number
-# here moves no installed CLI's answer and earns no version.
+# nine control-plane files in docs-frank/reference/system-overview.md do not include this, and
+# .github/workflows/release-tag.yml names seven paths under config/ and no directory, so a
+# number here earns no version. It moves no installed CLI's answer either, though not for that
+# reason: config/ rides in the wheel entire, and what makes this one harmless is that nothing
+# the binary runs opens it. tools/report_who_can_open_the_lead_gate.py reads it, on a runner.
 schema_version: 1
 
 # Inclusive. A capture of exactly this age still stands; older than this is red.

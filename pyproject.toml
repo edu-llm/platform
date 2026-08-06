@@ -63,10 +63,18 @@ reader = [
 ]
 
 # THE BINARY. One command installs one executable, which is the whole of what a researcher
-# needs on day one -- `docs-frank/reference/system-overview.md` counts twelve of the
-# fourteen surfaces that reach a researcher as this one command:
+# needs on day one -- `docs-frank/reference/system-overview.md` counts nine of the eleven
+# surfaces that reach a researcher as this one command:
 #
 #   uv tool install --force git+https://github.com/edu-llm/platform@v3.9.2
+#
+# IT READ `twelve of the fourteen` UNTIL 2026-08-06 AND HAD SINCE #193, which is the same claim
+# about the same denominator and one of the two had to be wrong. The document is the one that is
+# right, and the way that was settled is that its numerator is checkable here and its pair is
+# not: the binary is `edullm_platform.cli.main.BUILT_TODAY`, which is nine verbs, and the other
+# two surfaces the document draws are `git` and the one issue form. Nine and eleven. Nothing in
+# this tree has ever made twelve and fourteen true together, so where that pair came from is not
+# recoverable -- which is the argument for counting `BUILT_TODAY` rather than restating a number.
 #
 # THAT LINE IS TESTED RATHER THAN PROOFREAD, by tests/test_cli_install_command.py, which
 # holds it to the one in `edullm_platform.cli.release`. What used to be written here was
