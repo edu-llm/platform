@@ -335,6 +335,11 @@ def test_the_expiry_is_printed_before_anything_starts(
     The slice is done when a researcher "loses it on a schedule they were warned about". The tag
     is what the janitor reads and the line is the warning. A machine that expires silently
     teaches thirty-five people that the platform destroys work.
+
+    Read with the wrapping taken back out, because these are paragraphs written for a terminal
+    and the line breaks fall wherever the width puts them. This asserted against the raw stream
+    and went red on a sentence that had not changed, only moved: a clause added above it pushed
+    the wrap into the middle of the phrase.
     """
     runner = a_laptop(tmp_path)
 
@@ -346,7 +351,7 @@ def test_the_expiry_is_printed_before_anything_starts(
     )
 
     assert "expires" in out
-    assert "Nothing here is recorded as citable" in out
+    assert "Nothing here is recorded as citable" in " ".join(out.split())
 
 
 def test_nothing_this_verb_prints_carries_an_ansi_escape(

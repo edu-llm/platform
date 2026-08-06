@@ -125,7 +125,9 @@ from edullm_platform.cli.lane import (
     agent_online_argv,
     another_zone_may_answer,
     assume_lane_argv,
+    carry_back_script,
     command_line,
+    command_not_found_said,
     credentials_environment,
     default_compute_profile,
     expiry_for_a_new_machine,
@@ -157,7 +159,9 @@ from edullm_platform.cli.lane import (
     subnets_to_try,
     terminate_argv,
     what_stopping_did,
+    what_the_machine_carries,
     whose_machine_refusals,
+    work_directory,
     working_uri,
     zones_offering,
     zones_offering_argv,
@@ -1161,6 +1165,7 @@ def main(
                 runner=command_runner,
                 out=stdout,
                 err=stderr,
+                cwd=here,
             )
         if verb == "stop":
             return _stop(arguments, runner=command_runner, out=stdout, err=stderr)
@@ -1735,6 +1740,11 @@ def _machine_never_answered(machine: str, settings: WorkingTierSettings) -> str:
 # run
 # ---------------------------------------------------------------------------------------
 
+#: What a POSIX shell exits with when it cannot find the command it was given. Not this
+#: binary's own exit code and never returned by it: it is read off the remote sentinel, where
+#: it is the status of the researcher's own line on the machine.
+COMMAND_NOT_FOUND: Final = 127
+
 
 def _run(
     arguments: argparse.Namespace,
@@ -1764,13 +1774,16 @@ def _run(
     print(
         "\n".join(
             _wrapped(
-                f"Your files go to {uri} and survive the machine. Nothing here is recorded as "
-                "citable, and nothing was checked.",
+                f"Your files go to {uri} and land in "
+                f"{work_directory(session.request.project)} on the machine, which is where "
+                "the command runs. Nothing here is recorded as citable, and nothing was "
+                "checked.",
                 indent="",
             )
         ),
         file=out,
     )
+    print("\n".join(_wrapped(what_the_machine_carries(), indent="")), file=out)
     print(file=out)
 
     command = command_line(arguments.command)
@@ -1807,6 +1820,12 @@ def _run(
         return EXIT_UNREACHABLE
     if status != 0:
         print(f"the command exited {status}", file=err)
+        # ONE STATUS GETS A SENTENCE AND THE REST GET THE NUMBER, BECAUSE ONE OF THEM IS ABOUT
+        # THE MACHINE AND THE REST ARE ABOUT THE RESEARCHER'S PROGRAM. 127 is the shell saying
+        # it could not find the command at all, which is a fact about what is installed here,
+        # and it is what the first `edullm run` anybody ever made came back with.
+        if status == COMMAND_NOT_FOUND:
+            print("\n".join(_wrapped(command_not_found_said(), indent="")), file=err)
         return EXIT_REFUSED
     return EXIT_OK
 
@@ -1875,11 +1894,21 @@ def _shell(
     runner: CommandRunner,
     out: TextIO,
     err: TextIO,
+    cwd: Path,
 ) -> int:
     """A terminal on a machine of your own, or a notebook forwarded to your browser.
 
     **NOTHING HERE CALLS ``run_preflight`` EITHER.** ``tests/test_lane_verdicts.py`` holds both
     verbs to that, and the reason is the same one: nothing is recorded, approved or cited.
+
+    **IT SHIPS THE TREE AND CARRIES IT BACK, WHICH IT DID NOT UNTIL THE TWO VERBS WERE
+    MEASURED AGAINST EACH OTHER.** ``run``'s help says it ships this working tree; ``shell``
+    said nothing about a tree and shipped none, and the session it opened stood in the Systems
+    Manager agent's own directory. So the person who debugged something at a prompt and then
+    scripted it with ``run`` was working on two different machines' worth of state: different
+    files, a different directory, a different shell and a different ``PATH``. The three
+    ``cwd``-shaped lines below are the same three ``run`` performs, in the same order, and
+    ``tests/test_lane_environment.py`` holds them to it.
     """
     configuration = _configuration(arguments)
     if after_the_dashes:
@@ -1890,19 +1919,26 @@ def _shell(
         return session
 
     settings = session.settings
-    uri = working_uri(person=session.request.person, project=session.request.project)
+    project = session.request.project
+    uri = working_uri(person=session.request.person, project=project)
     print("\n".join(_wrapped(session.expiry.said(session.machine), indent="")), file=out)
-    print(
-        "\n".join(
-            _wrapped(
-                f"Anything you want to keep goes in {uri}, which survives the machine. Nothing "
-                "here is recorded as citable, and nothing was checked.",
-                indent="",
-            )
-        ),
-        file=out,
-    )
     if arguments.notebook:
+        # THE FORWARD SHIPS NOTHING AND SAYS SO, WHICH IS NOT AN INCONSISTENCY WITH THE BRANCH
+        # BELOW. It opens a tunnel and runs nothing on the machine, and the Jupyter it reaches
+        # is one the researcher started themselves -- from a shell, which is the branch that
+        # does the shipping. Syncing here would mean a second session on the way to a port
+        # forward, to fetch a tree for a process that is already running.
+        print(
+            "\n".join(
+                _wrapped(
+                    f"Anything you want to keep goes in {uri}, which survives the machine. "
+                    "Nothing here is recorded as citable, and nothing was checked.",
+                    indent="",
+                )
+            ),
+            file=out,
+        )
+        print("\n".join(_wrapped(what_the_machine_carries(), indent="")), file=out)
         print(
             "\n".join(
                 _wrapped(
@@ -1918,6 +1954,19 @@ def _shell(
         print(
             "\n".join(
                 _wrapped(
+                    f"This directory goes to {uri} and lands in {work_directory(project)} on "
+                    "the machine, which is where the shell opens. What is there when you "
+                    "leave is carried back. Nothing here is recorded as citable, and nothing "
+                    "was checked.",
+                    indent="",
+                )
+            ),
+            file=out,
+        )
+        print("\n".join(_wrapped(what_the_machine_carries(), indent="")), file=out)
+        print(
+            "\n".join(
+                _wrapped(
                     "For an editor over SSH, put this in your ssh config for a host of any "
                     "name, then point the editor at that host:",
                     indent="",
@@ -1925,10 +1974,16 @@ def _shell(
             ),
             file=out,
         )
-        print(
-            f"\n  {ssh_proxy_command(session.machine, system=platform.system())}\n", file=out
-        )
+        print(f"\n  {ssh_proxy_command(session.machine, system=platform.system())}\n", file=out)
     print(file=out)
+
+    # THE SAME UPLOAD ``run`` MAKES, WITH THE SAME EXCLUSION, BEFORE THE SESSION OPENS. It is
+    # skipped for the forward, which reaches no shell and no directory.
+    if not arguments.notebook:
+        runner(
+            ("aws", "s3", "sync", str(cwd), uri, "--exclude", ".git/*", "--only-show-errors"),
+            env=session.environment,
+        )
 
     # EVERYTHING THIS VERB HAS TO SAY IS SAID BEFORE THE CHILD IS STARTED, AND THEN PUSHED OUT.
     # From here the child owns the terminal and writes to the same descriptors directly, so
@@ -1943,7 +1998,7 @@ def _shell(
                 session.machine, settings=settings, local_port=LOCAL_NOTEBOOK_PORT
             )
             if arguments.notebook
-            else shell_session_argv(session.machine),
+            else shell_session_argv(session.machine, uri=uri, project=project),
             env=session.environment,
             # **THE WHOLE OF WHAT MAKES THIS VERB A TERMINAL RATHER THAN A TRANSCRIPT.** Without
             # it the runner captures both streams and this printed them once the child was gone:
@@ -1965,11 +2020,53 @@ def _shell(
         # machine is running and billing, which makes the reassurance false as well as wrong.
         # The expiry printed at the top is what the person actually needs, and they have it.
         pass
+    # AFTER THE SESSION AND NOT INSIDE IT, WHICH IS THE ONLY MOMENT A SHELL HAS. ``run`` syncs
+    # back when its command returns; a shell has no such moment until the researcher leaves, and
+    # this is it -- including after Ctrl-C, which is why it is below the handler rather than in
+    # the ``try``. Without it, standing somebody in /work/<project> would be a trap: the
+    # paragraph above says what is there is carried back, and an hour of work would go with the
+    # machine.
+    if not arguments.notebook:
+        carried = runner(
+            remote_command_argv(
+                session.machine, command=carry_back_script(uri=uri, project=project)
+            ),
+            env=session.environment,
+            stdin_stays_open=True,
+        )
+        if not carried.ok:
+            print(_nothing_was_carried_back(uri, project), end="", file=err)
+            return EXIT_UNREACHABLE
     # THE SESSION'S OWN EXIT STATUS IS NOT THE RESEARCHER'S VERDICT AND IS NOT REPORTED AS ONE.
     # A shell that the person left with Ctrl-D and a shell they left after a failed command exit
     # the same way, and neither is a statement about anything. run reads a sentinel because it
     # asked one question; this asked none.
     return EXIT_OK
+
+
+def _nothing_was_carried_back(uri: str, project: str) -> str:
+    """**THE ONE THING THIS VERB REPORTS A FAILURE FOR, BECAUSE WORK IS AT STAKE.**
+
+    Everything else a shell does is the researcher's business and its exit status says nothing.
+    This is different: the paragraph printed on the way in promised that what is in the work
+    directory when they leave is carried back, and if the carry failed that promise is false
+    while the machine is still ticking towards its expiry. It names the directory and the
+    address so the person can do it themselves from another shell, which costs one command and
+    is the whole remedy.
+    """
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                f"the session ended but {work_directory(project)} could not be carried back to "
+                f"{uri}, so anything you did in there is on the machine and nowhere else. The "
+                "machine is still running until its expiry. edullm shell again and "
+                f"`aws s3 sync . {uri}` from inside it is the remedy.",
+                indent="",
+            ),
+            "",
+        ]
+    )
 
 
 def _shell_takes_no_command(given: Sequence[str]) -> str:
@@ -2294,9 +2391,7 @@ def _submit(
     submitter = github_login(runner, allow_network=True)
     declared = arguments.spec if arguments.spec else find_spec(cwd)
     spec = load_spec(declared) if declared is not None else None
-    preflight = _preflight(
-        arguments, configuration, facts, spec, submitter, spec_path=declared
-    )
+    preflight = _preflight(arguments, configuration, facts, spec, submitter, spec_path=declared)
 
     if preflight.refused and not arguments.force:
         print(render_refusals(preflight.refusals), end="", file=err)
@@ -2321,9 +2416,7 @@ def _submit(
     dispatched_at = datetime.now(UTC)
     actions.dispatch(
         SUBMIT_WORKFLOW,
-        _submission_form(
-            preflight.request, edullm_version=installed_version().version
-        ),
+        _submission_form(preflight.request, edullm_version=installed_version().version),
         courtesy=(EDULLM_VERSION_FIELD,),
     )
     print(f"dispatching {SUBMIT_WORKFLOW} ... queued", file=out)
@@ -2466,9 +2559,7 @@ def _say_whether_this_edullm_is_current(
         print(file=err)
 
 
-def _submission_form(
-    request: SubmissionRequest, *, edullm_version: str | None
-) -> dict[str, str]:
+def _submission_form(request: SubmissionRequest, *, edullm_version: str | None) -> dict[str, str]:
     """``SubmissionInputs`` field for field, plus the one input that is not one of them.
 
     ``image_digest`` is deliberately absent rather than empty. The workflow derives it from
