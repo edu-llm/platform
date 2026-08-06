@@ -877,20 +877,6 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # has opened for that exact path in a day, and the coupling is the finding: the file the
     # header of reviewed_configuration.py went out of its way to keep the vocabulary *out
     # of* is config.py, and it reached three zips through a different module anyway.
-        PendingRelease(
-            function="janitor",
-            reason=(
-                "One member added to ConfigFile for config/accelerators.yaml, reached "
-                "through researcher_lane.py, which the janitor's zip carries for two tag "
-                "keys and a role name. janitor_handler.py builds its settings in "
-                "_settings_from_environment and never calls load_lane_settings, and nothing "
-                "it does reads the vocabulary, so this is bytes and no behaviour."
-            ),
-            cleared_by="uv run python tools/release_lambda.py --function janitor",
-            builds_to="e07efe963ec9cadb79f7345a14d9074c125e359a588e0661f99db687a757e96a",
-            released="50922d41d3750af154e3b2342cfe634c4105b398ed2895a2de585b48579b98d9",
-            recorded_on=date(2026, 8, 6),
-        ),
     # A FIFTEENTH AND A SIXTEENTH, BOTH FROM ONE CORRECTED COMMENT, WHICH IS THE CHEAPEST
     # EDIT THIS REGISTER HAS EVER OPENED FOR AND IS WORTH RECORDING AS SUCH. config/
     # policy.yaml is packaged verbatim by two builders -- it is in ADMISSION_CONFIG and it
@@ -906,33 +892,28 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # attempt on a workload profile carrying no checkpoint contract, which is a fact about
     # config/workload-catalog.yaml rather than about the codebase that would have to resume.
     # Two of the six registered repositories pass it and restart from step 0.
-        PendingRelease(
-            function="validator",
-            reason=(
-                "A corrected comment in config/policy.yaml, which build_admission_lambda "
-                "names in ADMISSION_CONFIG and packages verbatim. policy_version, "
-                "automatic_below_cost_usd, image_scan, approval_scope, both approver roles "
-                "and every denied_outright condition are byte-identical, so the deployed "
-                "validator classifies every request exactly as this tree does."
-            ),
-            cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="d7171b01c6cb49c614f851167daa70db845a6ff12c729415b8b9dc55b12cba7a",
-            released="df9952459e54ff0ebbce89660b5faf3b7a87bae47d2a0856c2553c9735d2740f",
-            recorded_on=date(2026, 8, 6),
-        ),
-        PendingRelease(
-            function="notifier",
-            reason=(
-                "The same corrected comment in config/policy.yaml, which joined "
-                "NOTIFIER_CONFIG because the approval message reads the policy. The notifier "
-                "quotes policy_version and the approver roles and reads no comment, so this "
-                "is bytes and no message."
-            ),
-            cleared_by="uv run python tools/release_lambda.py --function notifier",
-            builds_to="12c2b29e4c5bfa32a60a637c0f1e9d51415106eff661de32775bfd63d2e71708",
-            released="b291227b4905c7ac9b89b78e3f8b3491ab8912d5768059a9d00d945927e8c53f",
-            recorded_on=date(2026, 8, 6),
-        ),
+    # ALL THREE WERE CLEARED BY ONE COMMAND ON 2026-08-06, AND THE SHAPE OF THAT IS THE POINT
+    # RATHER THAN THE TIDYING. The register held three entries for three unrelated causes: the
+    # janitor for a ConfigFile member #351 had to add, and the validator and the notifier for
+    # the corrected policy.yaml comment above. The change that cleared them was doing neither
+    # of those things -- it was correcting a third file, config/workload-catalog.yaml, which
+    # told anybody reaching for the unobtainable gpu-8xh100 that gpu-8xa100 was "eight 80 GB
+    # cards" when config/accelerators.yaml measures p4d.24xlarge at 40,960 MiB per device.
+    #
+    # `tools/release_lambda.py --function all` cut one release per function and each carried
+    # everything its tree held, which is the only way a zip can be released: it is built from
+    # the working tree and not from a change, so the validator's new bytes carry the policy
+    # comment *and* the catalogue correction, and the janitor's carry the ConfigFile member
+    # even though nothing in this change touched it. Three causes, three releases, not five.
+    # The recorder was left alone because its builder names no file under config/ and no
+    # module that moved, and the tool skipped it rather than being told to.
+    #
+    # WHAT THAT COSTS SOMEBODY READING THIS LATER. A release note cannot be written per cause,
+    # because the digest has no per-cause decomposition -- the only true statement about the
+    # bytes is the tree they were built from. So the commit is the record, and the reason each
+    # entry above gave for its own difference is kept in this comment rather than deleted with
+    # the entry, because a digest that moved for three reasons is a digest nobody can explain
+    # from the register once the register is empty.
     )
     return one_record_per_function(releases)
 
