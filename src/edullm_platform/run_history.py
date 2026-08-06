@@ -39,6 +39,16 @@ A cohort of one is not a distribution. :data:`RUNS_FOR_A_FIGURE` is the number o
 runs a rung needs before it is quoted, and a rung short of it is passed over for a coarser
 one rather than reported thinly.
 
+**AND EVERY ANSWER CARRIES THE DATE IT WAS MEASURED ON.** The digest is a committed file, so
+it ages from the moment it lands: an install from a tag reads the reading that tag carried,
+and nothing on a laptop can refresh it. A duration quoted with no date is a claim about the
+platform as it is, and after a month it is a claim about a platform that no longer exists --
+which is the same invention the three refusals above are for, arriving through time rather
+than through a thin sample. :func:`_measured` is one clause appended to all three sentences,
+so a reader can discount an old reading themselves and nothing has to guess a shelf life on
+their behalf. It is one clause in one place because the alternative is each of the three
+renderers composing its own, which is how they come to disagree.
+
 **THE KEY IS A LADDER AND THE RUNG THAT ANSWERED IS PRINTED.** The obvious key is repository,
 workload profile, compute profile and dataset, and against a store holding 133 results it is
 specific enough to match nothing for most submissions. The obvious repair, loosening the key
@@ -235,6 +245,11 @@ class HistoryAnswer:
     #: the two refusals. Carried so that ``--json`` can publish the counts rather than the
     #: prose, which is the split the rest of the CLI already makes.
     cohort: Cohort | None = None
+    #: When the reading behind this answer was built, and ``None`` only for
+    #: :data:`NO_HISTORY_PACKAGED`, where there is no reading to have a date. Carried beside
+    #: the sentence for the same reason the counts are: a caller reading ``--json`` should
+    #: get the timestamp as a timestamp rather than parse it back out of prose.
+    measured_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -263,11 +278,37 @@ class RunHistory:
             if cohort is None:
                 continue
             if cohort.answerable:
-                return HistoryAnswer(said=_said(cohort), cohort=cohort)
+                return HistoryAnswer(
+                    said=_said(cohort) + self._measured(),
+                    cohort=cohort,
+                    measured_at=self.built_at,
+                )
             seen_but_thin = seen_but_thin or cohort
         if seen_but_thin is not None:
-            return HistoryAnswer(said=_thin_said(seen_but_thin), cohort=seen_but_thin)
-        return HistoryAnswer(said=NOTHING_LIKE_THIS_YET)
+            return HistoryAnswer(
+                said=_thin_said(seen_but_thin) + self._measured(),
+                cohort=seen_but_thin,
+                measured_at=self.built_at,
+            )
+        # THE DATE MATTERS MOST HERE, WHICH IS THE OPPOSITE OF WHAT IT LOOKS LIKE. "Nothing
+        # of this shape has run" is the one answer a reader is likely to act on by assuming
+        # they are first, and it is only true of the runs this reading saw.
+        return HistoryAnswer(
+            said=NOTHING_LIKE_THIS_YET + self._measured(), measured_at=self.built_at
+        )
+
+    def _measured(self) -> str:
+        """When this reading was taken and how much it saw, appended to every answer.
+
+        A date and not an age. An age would have to be computed against the clock of
+        whoever is reading, which makes the sentence in a test, in a pull request body and
+        on a terminal three different strings for one reading, and makes a golden file
+        rot overnight. A date is what the reading is, and a reader subtracts.
+        """
+        return (
+            f" Measured on {self.built_at.date().isoformat()} over "
+            f"{self.runs_read} run(s) recorded by this platform."
+        )
 
     def _cohort(self, rung: int, key: tuple[str, ...]) -> Cohort | None:
         for cohort in self.cohorts:

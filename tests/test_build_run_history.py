@@ -212,20 +212,23 @@ def test_a_local_lineage_tree_goes_through_the_one_collector(tmp_path: Path) -> 
 def test_the_committed_fixtures_do_not_reach_the_bar_and_that_is_the_honest_answer(
     tmp_path: Path,
 ) -> None:
-    """What this repository can measure without an account, said rather than papered over.
+    """What this repository can measure without an account, and what the committed file is not.
 
-    The lineage store holds 133 result records and this tree holds four runs of fixture
-    evidence, one of which has an attempt. So a digest built from what is committed here
-    answers for nothing, and committing one would put a reading in front of researchers that
-    describes a store four runs deep.
+    This tree holds four runs of fixture evidence, one of which has an attempt. So a digest
+    built from what is committed here answers for nothing, and a digest built from these
+    fixtures put in front of researchers would describe a store four runs deep.
 
-    That is why ``config/run-history.json`` is absent from this repository and why
-    ``edullm check`` says no reading is packaged. The file arrives when somebody runs this
-    tool against the real store.
+    THE ASSERTION AT THE BOTTOM USED TO BE THAT THE FILE WAS ABSENT, AND THAT WAS A
+    STATEMENT ABOUT A DAY RATHER THAN A PROPERTY. #267 shipped the lookup with no reading
+    because the agent that built it held no credentials, so "there is no digest" was the
+    honest thing to record then. There is one now, read off the lineage store, and the
+    property worth holding is the one the absence was standing in for: whatever is committed
+    describes the real store and not this fixture tree.
 
-    Mutation: commit a digest built from these fixtures. This test does not catch that on
-    its own; the assertion below is what makes the reason inspectable, and the absent file
-    is asserted by the row above it.
+    Mutation: commit a digest built from these fixtures, or from any four runs. The bar is
+    what catches it. A fixture-derived digest answers for nothing by construction -- which
+    the first half of this case proves -- so a committed digest that reaches the bar cannot
+    be one, and one that stopped reaching it is a reading nobody should be shipping either.
     """
     tool = build_run_history()
     reading = a_reading(
@@ -246,10 +249,18 @@ def test_the_committed_fixtures_do_not_reach_the_bar_and_that_is_the_honest_answ
     history = load_run_history(config_dir)
     assert history is not None
     assert not any(cohort.answerable for cohort in history.cohorts)
-    assert not (PROJECT_ROOT / "config" / HISTORY_FILENAME).exists(), (
-        "a digest built from four fixture runs would describe a store this platform does "
-        "not have; the reading is produced by tools/build_run_history.py against the "
-        "lineage store and lands in its own pull request"
+
+    committed = load_run_history(PROJECT_ROOT / "config")
+    assert committed is not None, (
+        f"config/{HISTORY_FILENAME} is what every install quotes durations from. It is "
+        "produced by tools/build_run_history.py against the lineage store and lands in its "
+        "own pull request"
+    )
+    assert committed.runs_read > history.runs_read
+    quotable = [cohort for cohort in committed.cohorts if cohort.answerable]
+    assert quotable, (
+        "the committed digest answers for nothing, so either it was built from fixtures or "
+        "the store it was built from has stopped holding enough successes to quote"
     )
 
 

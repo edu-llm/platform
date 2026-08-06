@@ -159,6 +159,12 @@ def _history_of(preflight: Preflight) -> dict[str, Any] | None:
     ``cohort`` is ``None`` when there is no reading packaged and when nothing of this shape
     has ever succeeded, and ``said`` is what tells those apart. Both are honest answers and
     neither is a number.
+
+    ``measured_at`` is the one field a caller has to read before it trusts the rest. The
+    digest is committed and travels with the install, so an old install quotes an old
+    reading and has no way to know it is old. A caller deciding whether to believe a median
+    branches on this; one printing a line to a person can print ``said``, which carries the
+    same date in words.
     """
     answer = preflight.history
     if answer is None:
@@ -166,6 +172,7 @@ def _history_of(preflight: Preflight) -> dict[str, Any] | None:
     cohort = answer.cohort
     return {
         "said": answer.said,
+        "measured_at": None if answer.measured_at is None else answer.measured_at.isoformat(),
         "matched_on": None if cohort is None else list(RUNGS[cohort.rung][0]),
         "succeeded": None if cohort is None else cohort.succeeded,
         "failed": None if cohort is None else cohort.failed,

@@ -137,7 +137,8 @@ def test_a_shape_nothing_has_run_is_told_so_rather_than_given_a_number() -> None
     answer = history.answer(shape_of(Shape(workload_profile="something-nobody-has-run")))
 
     assert answer.cohort is None
-    assert answer.said == NOTHING_LIKE_THIS_YET
+    assert answer.said.startswith(NOTHING_LIKE_THIS_YET)
+    assert "median" not in answer.said
 
 
 def test_an_install_carrying_no_reading_says_that_and_not_that_nothing_has_run() -> None:
@@ -200,6 +201,75 @@ def test_a_thin_cohort_is_counted_rather_than_quoted() -> None:
     assert answer.cohort.answerable is False
     assert "median" not in answer.said
     assert f"fewer than the {RUNS_FOR_A_FIGURE} successes" in answer.said
+
+
+# ---------------------------------------------------------------------------------------
+# The fourth thing it must not invent: that the reading is current
+# ---------------------------------------------------------------------------------------
+
+
+def test_every_answer_says_when_it_was_measured_and_over_how_many_runs() -> None:
+    """THE STALENESS ANSWER. Mutation: drop ``_measured`` from one of the three sentences.
+
+    The digest is a committed file that travels with an install, so a reader on a month-old
+    tag is quoting a month-old platform and nothing on their laptop can tell them. All three
+    sentences carry it, because the one most likely to be acted on wrongly is the refusal:
+    "nothing of this shape has run" invites somebody to conclude they are first, and it is
+    only ever true of the runs the reading saw.
+
+    Asserted over all three together rather than one case each, so a sentence added later
+    without the clause fails here rather than shipping bare.
+    """
+    thin = summarise(
+        tuple(a_run(seconds=s, run_id=f"run_{i}") for i, s in enumerate((600, 1800))),
+        built_at=STARTED,
+    )
+    quotable = summarise(three_successes(), built_at=STARTED)
+
+    answers = (
+        quotable.answer(shape_of(Shape())),
+        thin.answer(shape_of(Shape())),
+        quotable.answer(shape_of(Shape(workload_profile="nobody-has-run-this"))),
+    )
+
+    for answer in answers:
+        assert "Measured on 2026-08-01" in answer.said
+        assert answer.measured_at == STARTED
+    assert "over 3 run(s) recorded by this platform" in answers[0].said
+    assert "over 2 run(s) recorded by this platform" in answers[1].said
+
+
+def test_the_install_that_carries_no_reading_claims_no_date() -> None:
+    """Mutation: give the missing-reading answer a date too, from the clock.
+
+    There is no reading, so there is nothing that was measured and no date that would be
+    true. A sentence saying "measured on today" over an install carrying nothing is the
+    worst of the four answers: it is the only one that would be actively false.
+    """
+    answer = history_for(Shape(), history=None)
+
+    assert answer.measured_at is None
+    assert "Measured on" not in answer.said
+
+
+def test_the_date_is_the_readings_own_and_not_the_clock_of_whoever_asks() -> None:
+    """Mutation: render an age in days instead of the date it was built.
+
+    An age is computed against the reader's clock, which makes one reading three different
+    strings -- in a test, in a pull request body and on a terminal -- and rots a golden
+    overnight. Two answers from one reading taken at different moments have to be the same
+    string, which is what this asserts by asking the same history twice.
+    """
+    history = summarise(three_successes(), built_at=datetime(2026, 1, 2, 3, 4, tzinfo=UTC))
+
+    first = history.answer(shape_of(Shape()))
+    second = history.answer(shape_of(Shape()))
+
+    assert first.said == second.said
+    assert "Measured on 2026-01-02 over" in first.said
+    # The date and not the time. A median over a handful of runs does not become a
+    # different measurement at a different hour of the day it was taken.
+    assert "03:04" not in first.said
 
 
 def test_a_run_that_never_reached_an_instance_is_in_neither_count() -> None:

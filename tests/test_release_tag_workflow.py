@@ -66,6 +66,7 @@ from workflow_support import (
 from edullm_platform.cli import configuration as cli_configuration
 from edullm_platform.cli.actions import PLATFORM_REPOSITORY
 from edullm_platform.cli.release import install_command
+from edullm_platform.run_history import HISTORY_FILENAME
 
 sys.path.insert(0, str(PROJECT_ROOT / "tools"))
 from release_paths import (
@@ -189,14 +190,30 @@ def configuration_files(monkeypatch: pytest.MonkeyPatch) -> tuple[str, ...]:
     capacity table, a set of execution targets and a folder of generated reports that the
     CLI never reads. ``v0.2.1`` announced that the reviewed configuration had moved when the
     only file that changed was ``config/capacity.yaml``.
+
+    BOTH LOADERS, WHICH IS THE PART THAT WAS ABOUT TO GO WRONG AGAIN. ``run-history.json``
+    is JSON among the YAML and is therefore read by ``load_run_history`` rather than by
+    ``load_yaml``, so a fixture watching one function would have reported six files while
+    the CLI opened seven -- and the file it missed is the one whose whole purpose is to
+    change what ``edullm check`` prints. The failure would have been silent in the
+    direction that matters: the digest would move, no release would be cut, and every
+    install would go on quoting the durations of whatever tag it was installed from.
+
+    Watched rather than listed for the same reason as before. Whatever
+    ``load_reviewed_configuration`` opens is the answer, and a loader added later is caught
+    here rather than remembered.
     """
     opened: list[str] = []
 
-    def record(path: Path, model: object) -> object:
+    def record_yaml(path: Path, model: object) -> object:
         opened.append(Path(path).name)
         return object()
 
-    monkeypatch.setattr(cli_configuration, "load_yaml", record)
+    def record_history(directory: Path) -> None:
+        opened.append(HISTORY_FILENAME)
+
+    monkeypatch.setattr(cli_configuration, "load_yaml", record_yaml)
+    monkeypatch.setattr(cli_configuration, "load_run_history", record_history)
     cli_configuration.load_reviewed_configuration(PROJECT_ROOT / "config")
     return tuple(opened)
 
@@ -358,7 +375,11 @@ def test_the_release_note_asks_about_the_files_the_cli_actually_opens(
     declared = str(step(release_job(), CUT_STEP)["env"]["CONFIGURATION_FILES"]).split()
 
     assert sorted(declared) == sorted(f"config/{name}" for name in configuration_files)
-    assert len(configuration_files) == 6, "the loader opens a different number of files now"
+    assert len(configuration_files) == 7, "the loader opens a different number of files now"
+    assert f"config/{HISTORY_FILENAME}" in declared, (
+        "the digest is what edullm check quotes durations from, so a release that moves it "
+        "is a release after which an install answers differently"
+    )
 
 
 # --------------------------------------------------------------------------------------

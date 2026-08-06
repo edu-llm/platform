@@ -1,0 +1,933 @@
+{
+  "built_at": "2026-08-06T01:12:54.644168+00:00",
+  "cohorts": [
+    {
+      "failed": 0,
+      "fastest_seconds": "0.17",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "cpu-32vcpu",
+        "none"
+      ],
+      "median_seconds": "0.24",
+      "rung": 0,
+      "slowest_seconds": "38.62",
+      "succeeded": 4
+    },
+    {
+      "failed": 2,
+      "fastest_seconds": "57.913",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "gpu-1xa10g",
+        "fineweb2-phase0-equal-bpe-2b-v1"
+      ],
+      "median_seconds": "57.913",
+      "rung": 0,
+      "slowest_seconds": "57.913",
+      "succeeded": 1
+    },
+    {
+      "failed": 2,
+      "fastest_seconds": "63.013",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "gpu-1xa10g",
+        "fineweb2-phase0-equal-superbpe-2b-v1"
+      ],
+      "median_seconds": "63.013",
+      "rung": 0,
+      "slowest_seconds": "63.013",
+      "succeeded": 1
+    },
+    {
+      "failed": 6,
+      "fastest_seconds": "8.907",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "gpu-1xa10g",
+        "none"
+      ],
+      "median_seconds": "305.568",
+      "rung": 0,
+      "slowest_seconds": "13094.305",
+      "succeeded": 9
+    },
+    {
+      "failed": 1,
+      "fastest_seconds": "5.197",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "gpu-1xa10g",
+        "regmix-10b-v1"
+      ],
+      "median_seconds": "5.197",
+      "rung": 0,
+      "slowest_seconds": "5.197",
+      "succeeded": 1
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "142.578",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "gpu-1xl4",
+        "none"
+      ],
+      "median_seconds": "514.605",
+      "rung": 0,
+      "slowest_seconds": "1272.825",
+      "succeeded": 3
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "5.848",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "gpu-1xl4",
+        "olmo-150b-dolma2-v1"
+      ],
+      "median_seconds": "5.848",
+      "rung": 0,
+      "slowest_seconds": "5.848",
+      "succeeded": 1
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "440.657",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "gpu-1xl40s",
+        "regmix-10b-v1"
+      ],
+      "median_seconds": "440.657",
+      "rung": 0,
+      "slowest_seconds": "440.657",
+      "succeeded": 1
+    },
+    {
+      "failed": 3,
+      "fastest_seconds": "0.215",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "gpu-1xt4",
+        "none"
+      ],
+      "median_seconds": "24.415",
+      "rung": 0,
+      "slowest_seconds": "25.364",
+      "succeeded": 5
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "233.888",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "gpu-4xa10g",
+        "regmix-10b-v1"
+      ],
+      "median_seconds": "233.888",
+      "rung": 0,
+      "slowest_seconds": "233.888",
+      "succeeded": 1
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "884.62",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "gpu-4xl40s",
+        "olmo-150b-dolma2-v1"
+      ],
+      "median_seconds": "884.62",
+      "rung": 0,
+      "slowest_seconds": "884.62",
+      "succeeded": 1
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "243.513",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "gpu-8xa100",
+        "olmo-150b-dolma2-v1"
+      ],
+      "median_seconds": "243.513",
+      "rung": 0,
+      "slowest_seconds": "243.513",
+      "succeeded": 1
+    },
+    {
+      "failed": 1,
+      "fastest_seconds": "0.185",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check-cpu",
+        "cpu-32vcpu",
+        "none"
+      ],
+      "median_seconds": "0.251",
+      "rung": 0,
+      "slowest_seconds": "0.841",
+      "succeeded": 3
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "0.264",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check-cpu",
+        "cpu-32vcpu",
+        "refhq-regmix-5p5b-v2"
+      ],
+      "median_seconds": "0.264",
+      "rung": 0,
+      "slowest_seconds": "0.264",
+      "succeeded": 1
+    },
+    {
+      "failed": 1,
+      "fastest_seconds": null,
+      "key": [
+        "OLMo-core",
+        "olmo-core-check-cpu",
+        "cpu-32vcpu",
+        "regmix-10b-v1"
+      ],
+      "median_seconds": null,
+      "rung": 0,
+      "slowest_seconds": null,
+      "succeeded": 0
+    },
+    {
+      "failed": 1,
+      "fastest_seconds": "50.989",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check-gpu",
+        "gpu-1xa10g",
+        "none"
+      ],
+      "median_seconds": "50.989",
+      "rung": 0,
+      "slowest_seconds": "50.989",
+      "succeeded": 1
+    },
+    {
+      "failed": 2,
+      "fastest_seconds": "287.93",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check-gpu",
+        "gpu-1xa10g",
+        "olmo-150b-dolma2-v1"
+      ],
+      "median_seconds": "287.93",
+      "rung": 0,
+      "slowest_seconds": "359.652",
+      "succeeded": 2
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "524.569",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check-gpu",
+        "gpu-1xa10g",
+        "olmo-original-30b-v1"
+      ],
+      "median_seconds": "524.569",
+      "rung": 0,
+      "slowest_seconds": "524.569",
+      "succeeded": 1
+    },
+    {
+      "failed": 11,
+      "fastest_seconds": "5.295",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check-gpu",
+        "gpu-1xa10g",
+        "regmix-10b-v1"
+      ],
+      "median_seconds": "175.35",
+      "rung": 0,
+      "slowest_seconds": "470.993",
+      "succeeded": 3
+    },
+    {
+      "failed": 3,
+      "fastest_seconds": "0.157",
+      "key": [
+        "OLMo-core",
+        "olmo-core-cpu-smoke",
+        "cpu-32vcpu",
+        "dolma-2026-07"
+      ],
+      "median_seconds": "0.221",
+      "rung": 0,
+      "slowest_seconds": "0.322",
+      "succeeded": 6
+    },
+    {
+      "failed": 1,
+      "fastest_seconds": "0.256",
+      "key": [
+        "OLMo-core",
+        "olmo-core-gpu-smoke",
+        "gpu-1xa10g",
+        "dolma-2026-07"
+      ],
+      "median_seconds": "18.508",
+      "rung": 0,
+      "slowest_seconds": "35.613",
+      "succeeded": 3
+    },
+    {
+      "failed": 1,
+      "fastest_seconds": "2836.843",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train",
+        "gpu-1xa10g",
+        "none"
+      ],
+      "median_seconds": "6979.661",
+      "rung": 0,
+      "slowest_seconds": "10593.922",
+      "succeeded": 5
+    },
+    {
+      "failed": 4,
+      "fastest_seconds": "1155.479",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train",
+        "gpu-4xa10g",
+        "none"
+      ],
+      "median_seconds": "5326.933",
+      "rung": 0,
+      "slowest_seconds": "38546.655",
+      "succeeded": 6
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "389.485",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train",
+        "gpu-4xa10g",
+        "regmix-10b-v1"
+      ],
+      "median_seconds": "389.485",
+      "rung": 0,
+      "slowest_seconds": "389.485",
+      "succeeded": 1
+    },
+    {
+      "failed": 2,
+      "fastest_seconds": "4343.542",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train",
+        "gpu-4xl40s",
+        "none"
+      ],
+      "median_seconds": "4343.542",
+      "rung": 0,
+      "slowest_seconds": "11435.919",
+      "succeeded": 2
+    },
+    {
+      "failed": 2,
+      "fastest_seconds": "9689.748",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train",
+        "gpu-4xl40s",
+        "regmix-10b-v1"
+      ],
+      "median_seconds": "9689.748",
+      "rung": 0,
+      "slowest_seconds": "9689.748",
+      "succeeded": 1
+    },
+    {
+      "failed": 4,
+      "fastest_seconds": "11883.568",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train",
+        "gpu-8xa100",
+        "none"
+      ],
+      "median_seconds": "11883.568",
+      "rung": 0,
+      "slowest_seconds": "50314.937",
+      "succeeded": 2
+    },
+    {
+      "failed": 5,
+      "fastest_seconds": "237.524",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train",
+        "gpu-8xa100",
+        "olmo-150b-dolma2-v1"
+      ],
+      "median_seconds": "4571.002",
+      "rung": 0,
+      "slowest_seconds": "27161.491",
+      "succeeded": 3
+    },
+    {
+      "failed": 5,
+      "fastest_seconds": null,
+      "key": [
+        "OLMo-core",
+        "olmo-core-train",
+        "gpu-8xa100",
+        "regmix-10b-v1"
+      ],
+      "median_seconds": null,
+      "rung": 0,
+      "slowest_seconds": null,
+      "succeeded": 0
+    },
+    {
+      "failed": 1,
+      "fastest_seconds": "3611.875",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train",
+        "gpu-8xa10g",
+        "fineweb2-phase0-equal-bpe-2b-v1"
+      ],
+      "median_seconds": "3611.875",
+      "rung": 0,
+      "slowest_seconds": "3611.875",
+      "succeeded": 1
+    },
+    {
+      "failed": 1,
+      "fastest_seconds": "3616.246",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train",
+        "gpu-8xa10g",
+        "fineweb2-phase0-equal-superbpe-2b-v1"
+      ],
+      "median_seconds": "3616.246",
+      "rung": 0,
+      "slowest_seconds": "3616.246",
+      "succeeded": 1
+    },
+    {
+      "failed": 1,
+      "fastest_seconds": "66.896",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train",
+        "gpu-8xa10g",
+        "none"
+      ],
+      "median_seconds": "66.896",
+      "rung": 0,
+      "slowest_seconds": "66.896",
+      "succeeded": 1
+    },
+    {
+      "failed": 1,
+      "fastest_seconds": null,
+      "key": [
+        "OLMo-core",
+        "olmo-core-train",
+        "gpu-8xa10g",
+        "regmix-10b-v1"
+      ],
+      "median_seconds": null,
+      "rung": 0,
+      "slowest_seconds": null,
+      "succeeded": 0
+    },
+    {
+      "failed": 5,
+      "fastest_seconds": null,
+      "key": [
+        "OLMo-core",
+        "olmo-core-train-1gpu",
+        "gpu-1xa10g",
+        "none"
+      ],
+      "median_seconds": null,
+      "rung": 0,
+      "slowest_seconds": null,
+      "succeeded": 0
+    },
+    {
+      "failed": 7,
+      "fastest_seconds": "5.698",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train-1gpu",
+        "gpu-1xa10g",
+        "regmix-10b-v1"
+      ],
+      "median_seconds": "1791.795",
+      "rung": 0,
+      "slowest_seconds": "27978.87",
+      "succeeded": 6
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "272.662",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train-4gpu",
+        "gpu-4xa10g",
+        "olmo-150b-dolma2-v1"
+      ],
+      "median_seconds": "272.662",
+      "rung": 0,
+      "slowest_seconds": "272.662",
+      "succeeded": 1
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "0.252",
+      "key": [
+        "edullm-data",
+        "edullm-data-validate",
+        "cpu-32vcpu",
+        "none"
+      ],
+      "median_seconds": "0.252",
+      "rung": 0,
+      "slowest_seconds": "0.252",
+      "succeeded": 1
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "2.6",
+      "key": [
+        "olmo-eval-full",
+        "olmo-eval-check-cpu",
+        "cpu-32vcpu",
+        "none"
+      ],
+      "median_seconds": "2.6",
+      "rung": 0,
+      "slowest_seconds": "2.6",
+      "succeeded": 1
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "0.17",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "cpu-32vcpu"
+      ],
+      "median_seconds": "0.24",
+      "rung": 1,
+      "slowest_seconds": "38.62",
+      "succeeded": 4
+    },
+    {
+      "failed": 11,
+      "fastest_seconds": "5.197",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "gpu-1xa10g"
+      ],
+      "median_seconds": "63.013",
+      "rung": 1,
+      "slowest_seconds": "13094.305",
+      "succeeded": 12
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "5.848",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "gpu-1xl4"
+      ],
+      "median_seconds": "142.578",
+      "rung": 1,
+      "slowest_seconds": "1272.825",
+      "succeeded": 4
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "440.657",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "gpu-1xl40s"
+      ],
+      "median_seconds": "440.657",
+      "rung": 1,
+      "slowest_seconds": "440.657",
+      "succeeded": 1
+    },
+    {
+      "failed": 3,
+      "fastest_seconds": "0.215",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "gpu-1xt4"
+      ],
+      "median_seconds": "24.415",
+      "rung": 1,
+      "slowest_seconds": "25.364",
+      "succeeded": 5
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "233.888",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "gpu-4xa10g"
+      ],
+      "median_seconds": "233.888",
+      "rung": 1,
+      "slowest_seconds": "233.888",
+      "succeeded": 1
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "884.62",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "gpu-4xl40s"
+      ],
+      "median_seconds": "884.62",
+      "rung": 1,
+      "slowest_seconds": "884.62",
+      "succeeded": 1
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "243.513",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check",
+        "gpu-8xa100"
+      ],
+      "median_seconds": "243.513",
+      "rung": 1,
+      "slowest_seconds": "243.513",
+      "succeeded": 1
+    },
+    {
+      "failed": 2,
+      "fastest_seconds": "0.185",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check-cpu",
+        "cpu-32vcpu"
+      ],
+      "median_seconds": "0.251",
+      "rung": 1,
+      "slowest_seconds": "0.841",
+      "succeeded": 4
+    },
+    {
+      "failed": 14,
+      "fastest_seconds": "5.295",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check-gpu",
+        "gpu-1xa10g"
+      ],
+      "median_seconds": "287.93",
+      "rung": 1,
+      "slowest_seconds": "524.569",
+      "succeeded": 7
+    },
+    {
+      "failed": 3,
+      "fastest_seconds": "0.157",
+      "key": [
+        "OLMo-core",
+        "olmo-core-cpu-smoke",
+        "cpu-32vcpu"
+      ],
+      "median_seconds": "0.221",
+      "rung": 1,
+      "slowest_seconds": "0.322",
+      "succeeded": 6
+    },
+    {
+      "failed": 1,
+      "fastest_seconds": "0.256",
+      "key": [
+        "OLMo-core",
+        "olmo-core-gpu-smoke",
+        "gpu-1xa10g"
+      ],
+      "median_seconds": "18.508",
+      "rung": 1,
+      "slowest_seconds": "35.613",
+      "succeeded": 3
+    },
+    {
+      "failed": 1,
+      "fastest_seconds": "2836.843",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train",
+        "gpu-1xa10g"
+      ],
+      "median_seconds": "6979.661",
+      "rung": 1,
+      "slowest_seconds": "10593.922",
+      "succeeded": 5
+    },
+    {
+      "failed": 4,
+      "fastest_seconds": "389.485",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train",
+        "gpu-4xa10g"
+      ],
+      "median_seconds": "5326.933",
+      "rung": 1,
+      "slowest_seconds": "38546.655",
+      "succeeded": 7
+    },
+    {
+      "failed": 4,
+      "fastest_seconds": "4343.542",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train",
+        "gpu-4xl40s"
+      ],
+      "median_seconds": "9689.748",
+      "rung": 1,
+      "slowest_seconds": "11435.919",
+      "succeeded": 3
+    },
+    {
+      "failed": 14,
+      "fastest_seconds": "237.524",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train",
+        "gpu-8xa100"
+      ],
+      "median_seconds": "11883.568",
+      "rung": 1,
+      "slowest_seconds": "50314.937",
+      "succeeded": 5
+    },
+    {
+      "failed": 4,
+      "fastest_seconds": "66.896",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train",
+        "gpu-8xa10g"
+      ],
+      "median_seconds": "3611.875",
+      "rung": 1,
+      "slowest_seconds": "3616.246",
+      "succeeded": 3
+    },
+    {
+      "failed": 12,
+      "fastest_seconds": "5.698",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train-1gpu",
+        "gpu-1xa10g"
+      ],
+      "median_seconds": "1791.795",
+      "rung": 1,
+      "slowest_seconds": "27978.87",
+      "succeeded": 6
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "272.662",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train-4gpu",
+        "gpu-4xa10g"
+      ],
+      "median_seconds": "272.662",
+      "rung": 1,
+      "slowest_seconds": "272.662",
+      "succeeded": 1
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "0.252",
+      "key": [
+        "edullm-data",
+        "edullm-data-validate",
+        "cpu-32vcpu"
+      ],
+      "median_seconds": "0.252",
+      "rung": 1,
+      "slowest_seconds": "0.252",
+      "succeeded": 1
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "2.6",
+      "key": [
+        "olmo-eval-full",
+        "olmo-eval-check-cpu",
+        "cpu-32vcpu"
+      ],
+      "median_seconds": "2.6",
+      "rung": 1,
+      "slowest_seconds": "2.6",
+      "succeeded": 1
+    },
+    {
+      "failed": 14,
+      "fastest_seconds": "0.17",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check"
+      ],
+      "median_seconds": "62.399",
+      "rung": 2,
+      "slowest_seconds": "13094.305",
+      "succeeded": 29
+    },
+    {
+      "failed": 2,
+      "fastest_seconds": "0.185",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check-cpu"
+      ],
+      "median_seconds": "0.251",
+      "rung": 2,
+      "slowest_seconds": "0.841",
+      "succeeded": 4
+    },
+    {
+      "failed": 14,
+      "fastest_seconds": "5.295",
+      "key": [
+        "OLMo-core",
+        "olmo-core-check-gpu"
+      ],
+      "median_seconds": "287.93",
+      "rung": 2,
+      "slowest_seconds": "524.569",
+      "succeeded": 7
+    },
+    {
+      "failed": 3,
+      "fastest_seconds": "0.157",
+      "key": [
+        "OLMo-core",
+        "olmo-core-cpu-smoke"
+      ],
+      "median_seconds": "0.221",
+      "rung": 2,
+      "slowest_seconds": "0.322",
+      "succeeded": 6
+    },
+    {
+      "failed": 1,
+      "fastest_seconds": "0.256",
+      "key": [
+        "OLMo-core",
+        "olmo-core-gpu-smoke"
+      ],
+      "median_seconds": "18.508",
+      "rung": 2,
+      "slowest_seconds": "35.613",
+      "succeeded": 3
+    },
+    {
+      "failed": 27,
+      "fastest_seconds": "66.896",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train"
+      ],
+      "median_seconds": "5326.933",
+      "rung": 2,
+      "slowest_seconds": "50314.937",
+      "succeeded": 23
+    },
+    {
+      "failed": 12,
+      "fastest_seconds": "5.698",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train-1gpu"
+      ],
+      "median_seconds": "1791.795",
+      "rung": 2,
+      "slowest_seconds": "27978.87",
+      "succeeded": 6
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "272.662",
+      "key": [
+        "OLMo-core",
+        "olmo-core-train-4gpu"
+      ],
+      "median_seconds": "272.662",
+      "rung": 2,
+      "slowest_seconds": "272.662",
+      "succeeded": 1
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "0.252",
+      "key": [
+        "edullm-data",
+        "edullm-data-validate"
+      ],
+      "median_seconds": "0.252",
+      "rung": 2,
+      "slowest_seconds": "0.252",
+      "succeeded": 1
+    },
+    {
+      "failed": 0,
+      "fastest_seconds": "2.6",
+      "key": [
+        "olmo-eval-full",
+        "olmo-eval-check-cpu"
+      ],
+      "median_seconds": "2.6",
+      "rung": 2,
+      "slowest_seconds": "2.6",
+      "succeeded": 1
+    }
+  ],
+  "format_version": 1,
+  "runs_read": 201,
+  "runs_with_a_duration": 81
+}
