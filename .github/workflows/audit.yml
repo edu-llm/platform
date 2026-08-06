@@ -62,6 +62,16 @@ name: The audit (what the platform recorded, against what is actually there)
 #     appended to, never force-pushed, because with a perishable source the history is the
 #     product; the single writer is this file's own `concurrency: group: audit`.
 #
+#   activity-history — the tenth, and the second that writes rather than judges. It takes the
+#     same artifact substrate-capture published, turns it into the day's page and commits it
+#     to the `machine/activity` branch. It holds no AWS identity either, and for a second
+#     reason beyond the split above: it needs none. Every figure on the page comes out of the
+#     reading, which is the whole point of the substrate being one pipeline — a page that
+#     re-read the account would be a second ingestion, and two ingestions eventually disagree
+#     about one run and publish two dollar figures for it. The one section it cannot fill is
+#     the budget, which needs Cost Explorer and a credential; the page says so where the
+#     figures would be.
+#
 #   registered-dockerfiles — the seventh, and the only one whose subject is other people's
 #     repositories. It reads the research repositories over the GitHub API to ask whether
 #     each registration's dockerfile_path is actually on the branch it names, which is a
@@ -949,6 +959,109 @@ jobs:
           git add --force substrate/
           git diff --cached --quiet || git commit -m "substrate: $(date -u +%F)"
           git push origin machine/substrate
+
+  activity-history:
+    name: the day is a page somebody can read
+    needs: substrate-capture
+    # ALWAYS, FOR THE REASON THE HISTORY JOB GIVES AND ONE MORE. The capture goes red when a
+    # source was refused and still writes what it did read, and the morning a source was
+    # refused is exactly the morning the page is worth having, because the page is where the
+    # refusal is written in words. What this cannot do is invent one: with no artifact there
+    # is no reading, and it exits without writing anything.
+    if: always()
+    runs-on: ubuntu-latest
+    # NO id-token, SO THIS JOB CANNOT REACH THE ACCOUNT HOWEVER ITS STEPS ARE WRITTEN. Same
+    # separation substrate-history is built on, and tests/test_ci_workflow.py holds the two
+    # sets disjoint. It costs the budget section, which needs Cost Explorer; the page prints
+    # the reason rather than an empty heading.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Collect the reading
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: substrate
+          path: substrate/
+
+      # THE PAGE IS A VIEW OVER THE READING BESIDE IT AND READS NOTHING ELSE. --reading is
+      # what makes that true, and it is why this job needs no credential: a second collection
+      # here would be a second ingestion of one account, and the two would eventually
+      # disagree about one run and publish two dollar figures for it.
+      #
+      # The day is the reading's own day rather than yesterday, because the collector reads
+      # one day of CloudTrail and the tool refuses a mismatch list built from a window nobody
+      # asked about. Reporting yesterday from today's reading would cost the mismatch arm
+      # every morning; reporting today costs the last nineteen hours of runs, which the next
+      # morning's page carries in full.
+      - name: Write the day as a page
+        run: |
+          set -euo pipefail
+          day="$(date -u +%F)"
+          reading="substrate/${day}.json"
+          if [[ ! -s "${reading}" ]]; then
+            echo "activity_has_no_reading_to_read" >&2
+            echo "substrate-capture published no reading for ${day}, so there is nothing to" >&2
+            echo "make a page out of. The capture's own failure is the one to read." >&2
+            exit 1
+          fi
+          uv run --frozen python tools/report_activity.py \
+            --day "${day}" --reading "${reading}" --output-dir activity --offline
+          {
+            echo "## The activity of ${day}"
+            echo
+            cat "activity/${day}.md"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      # BEFORE THE PUSH, AND UNCONDITIONALLY. Same hand-off argument as the reading's: a
+      # branch push that is refused must cost the branch and not the page.
+      - name: Publish the page
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: activity
+          path: activity/
+          if-no-files-found: warn
+          retention-days: 90
+
+      # APPENDED TO, NEVER FORCE-PUSHED, for the reason the readings are: the history is the
+      # product. A page is how somebody sees that a source has been refused for a week, and
+      # that is a diff rather than a value. The single writer is this file's own concurrency
+      # group, which is what makes an append safe.
+      - name: Keep the page on the machine/activity branch
+        run: |
+          set -euo pipefail
+          [[ -n "$(ls -A activity 2>/dev/null || true)" ]] || {
+            echo "no page was written, so there is nothing to keep"
+            exit 0
+          }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # THE PAGE IS MOVED ASIDE BEFORE THE SWITCH, WHICH THE SIBLING JOB DOES NOT DO. A
+          # page for a day this branch already carries is an untracked file git refuses to
+          # overwrite, so `git switch` fails, the `||` falls through to `--orphan`, and the
+          # push is then rejected as non-fast-forward -- a red job for a re-run, which is a
+          # thing somebody does to a page far more often than to a reading.
+          written="$(mktemp -d)"
+          cp -R activity/. "${written}/"
+          rm -rf activity
+          git fetch origin machine/activity --depth=1 || true
+          git switch machine/activity 2>/dev/null || git switch --orphan machine/activity
+          mkdir -p activity
+          cp -R "${written}/." activity/
+          git add --force activity/
+          git diff --cached --quiet || git commit -m "activity: $(date -u +%F)"
+          git push origin machine/activity
 
   roster-against-the-account:
     name: who the account knows about that the roster does not

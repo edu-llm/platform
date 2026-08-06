@@ -33,7 +33,9 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +81,7 @@ BOARD_JOB = "visibility-board"
 PLACEMENT_JOB = "placement-verdicts"
 CAPTURE_JOB = "substrate-capture"
 HISTORY_JOB = "substrate-history"
+ACTIVITY_JOB = "activity-history"
 ASKS_JOB = "open-asks"
 ROSTER_JOB = "roster-against-the-account"
 #: The first job in the file and the one the informational check had never covered. Found by
@@ -92,6 +95,7 @@ STACKS_TOOL = "tools/verify_deployed_stacks.py"
 BOARD_TOOL = "tools/visibility_board.py"
 PLACEMENT_TOOL = "tools/verify_placement_verdicts.py"
 CAPTURE_TOOL = "tools/read_substrate.py"
+ACTIVITY_TOOL = "tools/report_activity.py"
 ASKS_TOOL = "tools/report_asks.py"
 
 RECONCILE_STEP = "Reconcile what those runs actually wrote"
@@ -104,6 +108,9 @@ PLACEMENT_STEP = "Recompute each placement verdict from the sixteen queues"
 CAPTURE_STEP = "Read the account and write today down"
 CAPTURE_UPLOAD_STEP = "Publish the reading"
 HISTORY_STEP = "Keep the reading on the machine/substrate branch"
+ACTIVITY_STEP = "Write the day as a page"
+ACTIVITY_UPLOAD_STEP = "Publish the page"
+ACTIVITY_HISTORY_STEP = "Keep the page on the machine/activity branch"
 ASKS_STEP = "Count the open asks"
 DOCKERFILES_STEP = "Check every registration against the repository it names"
 GUARD_STEP = "Check the audit reader role is deployed"
@@ -113,6 +120,8 @@ GUARD_STEP = "Check the audit reader role is deployed"
 #: a branch nobody reads succeeds exactly as a push to the right one does.
 HISTORY_BRANCH = "machine/substrate"
 CAPTURE_ARTIFACT = "substrate"
+ACTIVITY_BRANCH = "machine/activity"
+ACTIVITY_ARTIFACT = "activity"
 
 #: Every job here that takes a credential. Each one is held to the same guard, the same
 #: role and the same refusal to be informational, so the list is what a seventh such job has
@@ -1312,6 +1321,214 @@ def test_the_history_job_commits_nothing_when_no_reading_was_published(
 
 
 # ----------------------------------------------------------------------------------------
+# The page, which is a view over the reading and reads nothing else
+# ----------------------------------------------------------------------------------------
+
+
+def _seed_a_branch(root: Path, pages: dict[str, str]) -> Path:
+    """A bare origin already carrying `machine/activity`, and the URL to reach it by.
+
+    ``file://`` rather than a path, because the step fetches with ``--depth=1`` and git
+    refuses a shallow fetch over the local transport. A path here would make the fetch fail,
+    the `|| true` swallow it and the switch fall through to `--orphan`, which is the state
+    the test below exists to prove does not happen.
+    """
+    origin = root / "origin.git"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(origin)], check=True,
+                   capture_output=True)
+    seed = root / "seed"
+    (seed / "activity").mkdir(parents=True)
+    for name, body in pages.items():
+        (seed / "activity" / name).write_text(body, encoding="utf-8")
+    for command in (
+        ["git", "init", "-b", ACTIVITY_BRANCH],
+        ["git", "config", "user.email", "seed@example.invalid"],
+        ["git", "config", "user.name", "seed"],
+        ["git", "add", "activity"],
+        ["git", "commit", "-m", "seed"],
+        ["git", "remote", "add", "origin", f"file://{origin}"],
+        ["git", "push", "origin", ACTIVITY_BRANCH],
+    ):
+        subprocess.run(command, cwd=seed, check=True, capture_output=True)
+    return origin
+
+
+def _a_checkout_holding(root: Path, origin: Path, pages: dict[str, str]) -> Path:
+    """What the runner has when the branch step starts: a tree, and an untracked page."""
+    work = root / "work"
+    (work / "activity").mkdir(parents=True)
+    (work / "README.md").write_text("the tree the tool ran from\n", encoding="utf-8")
+    for name, body in pages.items():
+        (work / "activity" / name).write_text(body, encoding="utf-8")
+    for command in (
+        ["git", "init", "-b", "main"],
+        ["git", "config", "user.email", "runner@example.invalid"],
+        ["git", "config", "user.name", "runner"],
+        ["git", "add", "README.md"],
+        ["git", "commit", "-m", "tree"],
+        ["git", "remote", "add", "origin", f"file://{origin}"],
+    ):
+        subprocess.run(command, cwd=work, check=True, capture_output=True)
+    return work
+
+
+def test_the_activity_job_reads_the_reading_and_never_the_account(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: drop --reading and let the tool collect, or add the credential preamble.
+
+    The page and the reading beside it are one pipeline and two publications, and the whole
+    value of that is that they cannot disagree about one run. A page that re-read the account
+    would be a second ingestion, and the disagreement would surface as two dollar figures for
+    the same thing. It is also what makes this job safe to give a repository write: it holds
+    no AWS identity because it needs none.
+    """
+    job = workflow["jobs"][ACTIVITY_JOB]
+    body = step(job, ACTIVITY_STEP)["run"]
+
+    assert ACTIVITY_TOOL in body
+    assert "--reading" in body
+    assert job["permissions"] == {"contents": "write"}
+    assert "id-token" not in job["permissions"]
+    assert [item for item in job["steps"] if "aws-actions/" in item.get("uses", "")] == []
+
+
+def test_the_page_is_named_by_the_day_in_utc(workflow: dict[str, Any], tmp_path: Path) -> None:
+    """Mutation: name the page with the local date, or with a fixed name.
+
+    A fixed name overwrites yesterday, and the history is the product: a page is how somebody
+    sees that a source has been refused for a week, which is a diff rather than a value. A
+    local date produces two names for one morning the first time anybody dispatches this from
+    a laptop.
+    """
+    body = step(workflow["jobs"][ACTIVITY_JOB], ACTIVITY_STEP)["run"]
+    assert "date -u" in body, "the runner is UTC and a laptop is not"
+
+    stub = write_stub(
+        tmp_path / "bin",
+        "uv",
+        'mkdir -p activity\nprintf "# a page\\n" > "activity/$(date -u +%F).md"',
+    )
+    (tmp_path / "substrate").mkdir()
+    (tmp_path / f"substrate/{datetime.now(UTC):%Y-%m-%d}.json").write_text("{}", encoding="utf-8")
+    summary = tmp_path / "summary.md"
+
+    finished = run_step_script(
+        body,
+        cwd=tmp_path,
+        env={"GITHUB_STEP_SUMMARY": str(summary)},
+        stub_bin=stub.parent,
+    )
+
+    assert finished.returncode == 0, finished.stderr
+    written = sorted(path.name for path in (tmp_path / "activity").iterdir())
+    assert len(written) == 1
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}\.md", written[0]), written
+    assert "a page" in summary.read_text(encoding="utf-8")
+
+
+def test_a_morning_with_no_reading_writes_no_page(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: run the tool anyway and let it report a day on which nothing happened.
+
+    A page saying nothing ran and a morning nobody could read the account are the same
+    document and only one of them is true. The capture writes no file when the collection
+    failed outright, so the absence is what has to travel, and this job's redness is what
+    says the page is missing rather than empty.
+    """
+    stub = write_stub(tmp_path / "bin", "uv", 'echo "uv $*" >&2\nexit 0')
+    (tmp_path / "substrate").mkdir()
+
+    finished = run_step_script(
+        step(workflow["jobs"][ACTIVITY_JOB], ACTIVITY_STEP)["run"],
+        cwd=tmp_path,
+        env={"GITHUB_STEP_SUMMARY": str(tmp_path / "summary.md")},
+        stub_bin=stub.parent,
+    )
+
+    assert finished.returncode != 0
+    assert "activity_has_no_reading_to_read" in finished.stderr
+    assert not (tmp_path / "activity").exists()
+
+
+def test_the_page_is_published_before_anything_can_lose_it(workflow: dict[str, Any]) -> None:
+    """Mutation: upload after the branch push, or only on success.
+
+    A push that is refused must cost the branch and not the page. The artifact is also the
+    only copy on a morning the branch protection posture changes, which has happened here.
+    """
+    job = workflow["jobs"][ACTIVITY_JOB]
+    names = [str(item.get("name", "")) for item in job["steps"]]
+    upload = step(job, ACTIVITY_UPLOAD_STEP)
+
+    assert upload["uses"].startswith("actions/upload-artifact@")
+    assert upload["if"] == "always()"
+    assert upload["with"]["name"] == ACTIVITY_ARTIFACT
+    assert names.index(ACTIVITY_STEP) < names.index(ACTIVITY_UPLOAD_STEP)
+    assert names.index(ACTIVITY_UPLOAD_STEP) < names.index(ACTIVITY_HISTORY_STEP)
+
+
+def test_the_activity_branch_is_appended_to_rather_than_force_pushed(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: force-push the branch the way the run index does.
+
+    The run index is overwritten in place because a snapshot refreshed on state change has a
+    history that is noise. This is the opposite: the page for a day is the only page for that
+    day, and yesterday's is what makes today's readable.
+    """
+    body = step(workflow["jobs"][ACTIVITY_JOB], ACTIVITY_HISTORY_STEP)["run"]
+
+    assert f"git push origin {ACTIVITY_BRANCH}" in body
+    assert "--force" not in body.split("git push")[1], "the history is the product here"
+    assert "git switch --orphan" in body, "the pages carry none of the tree they came from"
+
+
+def test_a_second_run_on_one_day_keeps_the_pages_the_branch_already_had(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: switch to the branch before moving the freshly written page aside.
+
+    A page for a day the branch already carries is an untracked file git refuses to overwrite,
+    so the switch fails, the `||` falls through to `--orphan`, and what gets pushed is a
+    branch holding one day. The push is refused as non-fast-forward, so nothing is lost -- but
+    the job is red for a re-run, which is a thing somebody does to a page far more often than
+    to a reading. Run against real git rather than a stub, because the failure is git's
+    behaviour and a stub would be asserting this test's own idea of it.
+    """
+    today = f"{datetime.now(UTC):%Y-%m-%d}.md"
+    origin = _seed_a_branch(tmp_path, {"2026-08-04.md": "older\n", today: "the first attempt\n"})
+    work = _a_checkout_holding(tmp_path, origin, {today: "the second attempt\n"})
+
+    finished = run_step_script(
+        step(workflow["jobs"][ACTIVITY_JOB], ACTIVITY_HISTORY_STEP)["run"],
+        cwd=work,
+        env={"HOME": str(tmp_path)},
+        stub_bin=None,
+    )
+
+    assert finished.returncode == 0, finished.stderr
+    listed = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", ACTIVITY_BRANCH],
+        cwd=origin,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert sorted(listed.stdout.split()) == ["activity/2026-08-04.md", f"activity/{today}"]
+
+    rewritten = subprocess.run(
+        ["git", "show", f"{ACTIVITY_BRANCH}:activity/{today}"],
+        cwd=origin,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert rewritten.stdout == "the second attempt\n"
+
+
+# ----------------------------------------------------------------------------------------
 # Counting the asks, which is the only job here that reads no AWS
 # ----------------------------------------------------------------------------------------
 
@@ -1387,11 +1604,11 @@ def test_nothing_in_any_of_these_jobs_is_allowed_to_be_informational(
     assert "exit 0" not in body
 
 
-#: The one job above excused from the per-job check, and why. substrate-history has
-#: `needs: substrate-capture` by design -- it publishes what the capture read -- so the
-#: "a failure elsewhere must not skip this" assertion cannot hold for it. Named here rather
-#: than simply left out, so that the sweep below can tell an excused job from a forgotten one.
-NEEDS_ITS_PREDECESSOR = (HISTORY_JOB,)
+#: The two jobs above excused from the per-job check, and why. Both publish what the capture
+#: read, so both carry `needs: substrate-capture` by design and the "a failure elsewhere must
+#: not skip this" assertion cannot hold for either. Named here rather than simply left out, so
+#: that the sweep below can tell an excused job from a forgotten one.
+NEEDS_ITS_PREDECESSOR = (HISTORY_JOB, ACTIVITY_JOB)
 
 
 def test_every_job_in_this_file_is_either_checked_above_or_excused_by_name(
