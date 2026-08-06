@@ -114,6 +114,7 @@ RESOLVE_UPLOAD_STEP = "Upload what the registry answered"
 RESOLVE_DOWNLOAD_STEP = "Download what the registry answered"
 FORM_STEP = "Assemble the submission form"
 COMPILE_STEP = "Compile the submission"
+GATE_STEP = "Check the gate this run is routed to still asks somebody"
 APPROVAL_STEP = "Read who released the gate"
 VERIFY_STEP = "Recompute the manifest hash after approval"
 REQUEST_STEP = "Assemble the admission request"
@@ -687,9 +688,10 @@ def test_no_run_body_interpolates_a_github_expression() -> None:
 def test_every_run_body_enables_strict_bash() -> None:
     bodies = list(_run_bodies())
 
-    # Twenty-four since the run index job arrived. Counted rather than sampled, so a body
-    # added without the strict line fails here instead of running past its first error.
-    assert len(bodies) == 24
+    # Twenty-five since the compile job started reading whether the gate still asks anybody.
+    # Counted rather than sampled, so a body added without the strict line fails here instead
+    # of running past its first error.
+    assert len(bodies) == 25
     for name, script in bodies:
         assert script.startswith("set -euo pipefail\n"), name
 
@@ -2051,6 +2053,155 @@ def _run_approval_step(
     output_file = tmp_path / "step-output.txt"
     lines = output_file.read_text(encoding="utf-8").splitlines() if output_file.exists() else []
     return result, dict(line.split("=", 1) for line in lines)
+
+
+#: What ``GET /repos/{owner}/{repo}/environments/{name}`` returned for ``run-approval-lead``
+#: on 2026-08-06, reduced to the two keys the step reads.
+GATE_WITH_A_REVIEWER = json.dumps(
+    {
+        "name": "run-approval-lead",
+        "protection_rules": [
+            {
+                "type": "required_reviewers",
+                "prevent_self_review": False,
+                "reviewers": [{"type": "Team", "reviewer": {"slug": "team-leads"}}],
+            },
+            {"type": "branch_policy"},
+        ],
+    }
+)
+
+#: The same environment after this repository is converted to private on a plan that does not
+#: carry the control. GitHub removes the rule; nothing else about the response changes, and
+#: nothing anywhere reports it.
+GATE_WITH_NOBODY = json.dumps(
+    {"name": "run-approval-lead", "protection_rules": [{"type": "branch_policy"}]}
+)
+
+
+def _run_gate_step(tmp_path: Path, *, gh_body: str) -> subprocess.CompletedProcess[str]:
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "gh", gh_body)
+    return run_step_script(
+        step(_job("compile"), GATE_STEP)["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "GH_TOKEN": "a-token",
+            "RUN_REPOSITORY": PLATFORM_REPOSITORY,
+            "GATE": ApprovalEnvironment.LEAD.value,
+        },
+        stub_bin=stub_bin,
+    )
+
+
+def test_a_gate_that_still_asks_a_reviewer_lets_the_submission_through(tmp_path: Path) -> None:
+    """The other side, so the step cannot pass this module by refusing nothing.
+
+    Mutation: invert the ``-eq 0`` to ``-ne 0``. Every routine submission is then refused with
+    a message about the gate having been deleted, which is the failure this whole step was
+    written to avoid causing.
+    """
+    result = _run_gate_step(tmp_path, gh_body=f"cat <<'JSON'\n{GATE_WITH_A_REVIEWER}\nJSON\n")
+
+    assert result.returncode == 0, result.stderr
+    assert "still asks a reviewer" in result.stdout
+
+
+def test_a_gate_that_has_stopped_asking_anybody_stops_the_submission(tmp_path: Path) -> None:
+    """THE ONE THAT MATTERS. Mutation: report the finding and exit zero.
+
+    This is what converting the repository to private looks like from inside a submission.
+    The protection rule is gone, so the submit job below would deploy to an environment with
+    nothing on it, assume the admission role and start an execution with nobody asked and no
+    approval record anywhere. Nothing fails, because a job whose environment carries no
+    protection rule is a job that runs -- so an exit zero here is indistinguishable from a
+    working gate, and the run spends money.
+
+    The message says the submission was not refused on the merits, because it was not, and a
+    researcher who reads this as their own mistake goes and edits a manifest that is fine.
+    """
+    result = _run_gate_step(tmp_path, gh_body=f"cat <<'JSON'\n{GATE_WITH_NOBODY}\nJSON\n")
+
+    assert result.returncode == 1
+    assert "gate_asks_nobody" in result.stderr
+    assert "not been refused on the merits" in result.stderr
+    assert "private" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("probe", "gh_body"),
+    [
+        ("the endpoint refused", 'echo "gh: Not Found (HTTP 404)" >&2\nexit 1\n'),
+        ("gh could not reach GitHub", 'echo "connection reset" >&2\nexit 1\n'),
+        ("the body is not JSON", "printf 'not json at all\\n'\n"),
+        ("the body is JSON of the wrong shape", "printf '{\"unexpected\": true}\\n'\n"),
+    ],
+)
+def test_a_gate_that_could_not_be_read_never_refuses_the_submission(
+    tmp_path: Path,
+    probe: str,
+    gh_body: str,
+) -> None:
+    """Mutation: treat an unreadable answer the same as an answer of nobody.
+
+    It is the strict reading and it is the wrong trade. A gate check that turns a GitHub
+    hiccup, a rate limit or a response shape nobody anticipated into a refused submission
+    costs every submitter their dispatch for a fault none of them caused, and it costs it on
+    the morning GitHub is having a bad day rather than at random. What is being protected
+    against is a setting somebody changed, which persists and is read again at 05:00; being
+    blind to it for one dispatch is cheap and refusing all of them is not.
+
+    So only a complete answer of zero required-reviewer rules refuses, and everything else
+    warns and carries on.
+    """
+    result = _run_gate_step(tmp_path, gh_body=gh_body)
+
+    assert result.returncode == 0, f"{probe}: {result.stderr}"
+    assert "gate_asks_nobody" not in result.stderr
+    assert "::warning::" in result.stdout, probe
+
+
+def test_the_gate_check_is_skipped_exactly_where_no_reviewer_is_the_design() -> None:
+    """Two gates carry no reviewer on purpose and must not be read as deleted ones.
+
+    ``run-approval-automatic`` has a branch policy and nobody, which is what the automatic
+    class means, and a dispatch from a branch demotes to ``run-approval-preview``, which is
+    bounded by ``infra/iam/run-preview-role.yaml`` rather than by a person. Read against
+    either, this step would refuse every cheap run and every branch preview.
+
+    The class half is written against what the compile step computed rather than against
+    ``inputs.``, for the reason the approval read gives: a submitter who can skip this from
+    the form can submit to a gate nobody is holding and have the step agree.
+
+    Mutation: drop the ``github.ref`` half. Every branch dispatch is then refused, and the
+    preview path exists precisely so that the submission path can be tried before it is
+    merged.
+    """
+    condition = step(_job("compile"), GATE_STEP)["if"]
+
+    assert condition == (
+        "github.ref == 'refs/heads/main' "
+        "&& steps.compile.outputs.approval_class != 'automatic'"
+    )
+    assert ApprovalClass.AUTOMATIC.value in condition
+    assert "inputs." not in condition
+
+
+def test_the_gate_is_read_before_a_reviewer_is_ever_asked() -> None:
+    """Mutation: move this step into the submit job, beside the approval read.
+
+    That is the natural place for it and it is one step too late. The submit job's
+    ``environment:`` key is what makes GitHub wait, so by the time any step of that job runs
+    the gate has already either held or not held. Read there, a deleted gate is reported after
+    the run has passed through where it should have stopped.
+    """
+    compile_steps = [item.get("name") for item in _job("compile")["steps"]]
+    submit_steps = [item.get("name") for item in _job("submit")["steps"]]
+
+    assert GATE_STEP in compile_steps
+    assert GATE_STEP not in submit_steps
+    assert compile_steps.index(GATE_STEP) > compile_steps.index(COMPILE_STEP)
 
 
 def test_the_approval_read_is_skipped_only_for_the_gate_that_has_no_reviewers() -> None:
