@@ -253,6 +253,65 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
             ),
         ),
         PendingAmendment(
+            role_name="sbsandbox-intern-edullm-batch-execution",
+            reason=(
+                "The ecr:BatchGetImage grant that lets the container start. Same "
+                "registration and same omission as the admission states record below: "
+                "tools/register_repository.py writes infra/ecr-repositories.yaml and "
+                "infra/iam/ecr-publisher-role.yaml and leaves every other file that "
+                "enumerates one ARN per submittable repository alone. Until the stack is "
+                "applied a job naming edullm-p1 is placed, gets its node, and then cannot "
+                "pull the image, which Batch reports as a CannotPullContainerError naming "
+                "the image rather than the grant."
+            ),
+            cleared_by=(
+                "The deploy-phase3-batch.yml run that fires on merge to main, then "
+                "tools/capture_phase3_evidence.py, then delete this record. CI applies the "
+                "Phase 3 stacks, so this needs a workflow run rather than a person."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element=(
+                        "inline policy 'pull-the-image-and-open-the-log-stream' "
+                        "statement 2 resources"
+                    ),
+                    detail=(
+                        "the template declares resources the deployed role does not: "
+                        "arn:<partition>:ecr:<region>:<account>:repository/"
+                        "sbsandbox-intern-edullm-p1"
+                    ),
+                ),
+            ),
+        ),
+        PendingAmendment(
+            role_name="sbsandbox-intern-edullm-batch-instance",
+            reason=(
+                "The instance-side half of the same pull. The execution role authorises the "
+                "pull and this role is what the ECS agent on the node presents, so both have "
+                "to name the repository or the image does not arrive. One registration, one "
+                "deploy, two records, because the findings are compared per role."
+            ),
+            cleared_by=(
+                "The deploy-phase3-batch.yml run that fires on merge to main, then "
+                "tools/capture_phase3_evidence.py, then delete this record."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element=(
+                        "inline policy 'join-the-batch-managed-ecs-cluster' "
+                        "statement 3 resources"
+                    ),
+                    detail=(
+                        "the template declares resources the deployed role does not: "
+                        "arn:<partition>:ecr:<region>:<account>:repository/"
+                        "sbsandbox-intern-edullm-p1"
+                    ),
+                ),
+            ),
+        ),
+        PendingAmendment(
             role_name="sbsandbox-intern-edullm-admission-states",
             reason=(
                 "The other half of registering edullm-p1, and the half tools/"
