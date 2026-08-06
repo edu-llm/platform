@@ -17,7 +17,7 @@ name = "edullm-platform"
 #
 # 0.2.0 rather than 0.1.1 because 0.1.0 was never released and nothing was ever installed
 # from a tag; the first tag this repository has should not look like the second.
-version = "3.9.2"
+version = "3.9.3"
 requires-python = ">=3.12"
 dependencies = [
   "pydantic>=2,<3",
@@ -66,7 +66,7 @@ reader = [
 # needs on day one -- `docs-frank/reference/system-overview.md` counts nine of the eleven
 # surfaces that reach a researcher as this one command:
 #
-#   uv tool install --force git+https://github.com/edu-llm/platform@v3.9.2
+#   uv tool install --force git+https://github.com/edu-llm/platform@v3.9.3
 #
 # IT READ `twelve of the fourteen` UNTIL 2026-08-06 AND HAD SINCE #193, which is the same claim
 # about the same denominator and one of the two had to be wrong. The document is the one that is
