@@ -15,7 +15,7 @@ from tests.infrastructure_support import INFRA_ROOT, load_template
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_PATH = INFRA_ROOT / "scratch-bucket.yaml"
-SETTINGS = load_working_tier_settings(PROJECT_ROOT / "config" / "reports" / "working-tier.yaml")
+SETTINGS = load_working_tier_settings(PROJECT_ROOT / "config")
 
 
 def bucket() -> dict[str, object]:

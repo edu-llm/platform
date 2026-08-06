@@ -111,6 +111,7 @@ from edullm_platform.cli.intake import (
     routed_to_ask,
 )
 from edullm_platform.cli.lane import (
+    AWS_LOGIN_COMMAND,
     GPU_AMI_PARAMETER,
     SESSION_PLUGIN,
     LaneRequest,
@@ -1232,6 +1233,11 @@ class _LaneSession:
     machine: str
     expires_at: str
     environment: dict[str, str]
+    #: The working tier's four numbers, read once for the whole session. ``edullm shell``
+    #: read them a second time for the notebook port, out of a second resolution of a
+    #: directory that had already been resolved, which is the arrangement that lets one
+    #: invocation answer out of two installs.
+    settings: WorkingTierSettings
 
 
 def _lane_session(
@@ -1250,7 +1256,16 @@ def _lane_session(
     **NOTHING HERE CALLS ``run_preflight``.** ``tests/test_lane_verdicts.py`` fails if it ever
     does, and the argument is in ``cli/lane.py``'s header: the refusals that path makes are about
     a submission that will be recorded, approved and cited, and none of those three happens here.
+
+    **THE TWO SETTINGS FILES ARE READ FIRST, BEFORE THE PLUGIN CHECK AND BEFORE ANY CALL.**
+    They were read after ``sts:GetCallerIdentity`` and after the refusals, which meant a broken
+    installation was reported only to somebody who already held a session, and the one thing this
+    module could answer with no account at all was the last thing it did. Both reads are pure
+    local file reads off ``configuration.directory``, so putting them first costs nothing and
+    makes an installation that cannot find its own numbers say so immediately.
     """
+    settings = load_working_tier_settings(configuration.directory)
+    hours = arguments.hours or load_lane_settings(configuration.directory).default_lifetime_hours
     if shutil.which(SESSION_PLUGIN) is None:
         print(render_refusals((missing_plugin_refusal(),)), end="", file=err)
         return EXIT_UNUSABLE
@@ -1280,8 +1295,6 @@ def _lane_session(
     if warning is not None:
         print("\n".join(_wrapped(warning, indent="")), file=err)
 
-    settings = load_working_tier_settings()
-    hours = arguments.hours or load_lane_settings().default_lifetime_hours
     assumed = runner(
         assume_lane_argv(
             account=str(facts["Account"]),
@@ -1302,7 +1315,11 @@ def _lane_session(
     expiry = expires_at(datetime.now(tz=UTC), hours)
     if existing:
         return _LaneSession(
-            request=request, machine=existing[0], expires_at=expiry, environment=environment
+            request=request,
+            machine=existing[0],
+            expires_at=expiry,
+            environment=environment,
+            settings=settings,
         )
 
     machine = _start_a_machine(
@@ -1318,7 +1335,11 @@ def _lane_session(
     if isinstance(machine, int):
         return machine
     return _LaneSession(
-        request=request, machine=machine, expires_at=expiry, environment=environment
+        request=request,
+        machine=machine,
+        expires_at=expiry,
+        environment=environment,
+        settings=settings,
     )
 
 
@@ -1419,14 +1440,23 @@ def _start_a_machine(
 
 
 def _no_aws_session(said: str) -> str:
-    """No credential at all, which is the first thing a newcomer hits and is not a refusal."""
+    """No credential at all, which is the first thing a newcomer hits and is not a refusal.
+
+    **IT NAMES THE COMMAND, BECAUSE THERE IS EXACTLY ONE AND ASSUMING IT IS KNOWN IS HOW A
+    NEWCOMER GETS STUCK HERE.** This used to say "log in the way you normally do", which is
+    an instruction for somebody who has already done it once. Every human session in this
+    account comes from the broker and from nothing else -- there are no long-lived keys to
+    fall back on and creating one is refused -- so the way is ``sb-aws-creds login``, and a
+    refusal that will not say so is asking the reader to go and find out.
+    """
     return "\n".join(
         [
             "",
             *_wrapped(
                 "AWS would not say who you are, so no machine was asked for. The lane needs an "
-                "AWS session the way the recorded path needs gh: log in the way you normally do "
-                f"and run this again. What it said: {said.strip()}",
+                f"AWS session the way the recorded path needs gh: run `{AWS_LOGIN_COMMAND}`, "
+                "complete the browser approval it opens, and run this again. "
+                f"What AWS said: {said.strip()}",
                 indent="",
             ),
             "",
@@ -1654,7 +1684,7 @@ def _shell(
     if isinstance(session, int):
         return session
 
-    settings = load_working_tier_settings()
+    settings = session.settings
     uri = working_uri(person=session.request.person, project=session.request.project)
     print(f"{session.machine} expires {session.expires_at}", file=out)
     print(

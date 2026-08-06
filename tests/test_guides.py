@@ -590,6 +590,54 @@ def test_the_guide_names_every_shape_whose_card_has_no_bfloat16(olmo_core_guide:
     )
 
 
+def test_the_setup_section_does_not_deny_the_credential_two_verbs_need(
+    platform_guide: str,
+) -> None:
+    """Mutation: put "Nothing else." back after uv and gh.
+
+    IT WAS TRUE FOR FIVE VERBS AND FALSE FOR TWO, WHICH IS THE WORST SHAPE A SETUP
+    INSTRUCTION CAN HAVE. ``check`` and ``submit`` hold no cloud credential by design and the
+    sentence was written about them. ``edullm run`` and ``edullm shell`` shipped afterwards
+    and need an AWS session, so the guide went on telling every reader in as many words that
+    the two verbs they were about to try required nothing they did not already have. A person
+    who believes it reads the refusal as a broken tool rather than as a missing step.
+
+    Held as the absence of the denial and the presence of the command, rather than as a
+    paragraph, because how it is worded is nobody's business but the writer's and whether it
+    contradicts the platform is everybody's.
+    """
+    setup = platform_guide.split("## From a terminal", 1)[1].split("\n## ", 1)[0]
+
+    assert "Nothing else." not in setup, (
+        "the setup section says nothing beyond uv and gh is needed, which is false for "
+        "edullm run and edullm shell -- both need an AWS session and the Session Manager "
+        "plugin, and this is the only place a reader is told what setup costs"
+    )
+    for verb in ("edullm run", "edullm shell"):
+        assert verb in setup, (
+            f"the section that lists what you need does not mention {verb}, so the two "
+            "verbs with a credential requirement are documented nowhere"
+        )
+
+
+def test_the_guide_and_the_refusal_name_the_same_way_to_get_a_session(
+    platform_guide: str,
+) -> None:
+    """Mutation: reword one of the two and leave the other.
+
+    There is one broker in this organization and no long-lived keys, so there is one command,
+    and a guide and a refusal that name it differently send a reader looking for a second
+    one. Read out of the constant the refusal interpolates rather than typed here, so the
+    copy in the guide is held to the copy a person is shown at the moment they need it.
+    """
+    from edullm_platform.cli.lane import AWS_LOGIN_COMMAND
+
+    assert AWS_LOGIN_COMMAND in platform_guide, (
+        f"the guide does not name {AWS_LOGIN_COMMAND!r}, which is what edullm prints when "
+        "a lane verb finds no AWS session"
+    )
+
+
 def test_the_guide_does_not_promise_a_size_that_costs_a_download(platform_guide: str) -> None:
     """The largest corpus is 630 GB on a machine with far less disk.
 

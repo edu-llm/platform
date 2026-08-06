@@ -27,7 +27,7 @@ from edullm_platform.cli.lane import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SETTINGS = load_working_tier_settings(PROJECT_ROOT / "config" / "reports" / "working-tier.yaml")
+SETTINGS = load_working_tier_settings(PROJECT_ROOT / "config")
 INSTANCE = "i-0000000000000aaaa"
 
 

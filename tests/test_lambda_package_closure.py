@@ -39,6 +39,7 @@ from pathlib import Path
 
 import pytest
 
+from edullm_platform.reviewed_configuration import ConfigFile
 from tools.build_admission_lambda import (
     ADMISSION_CONFIG,
     ADMISSION_ENTRYPOINT,
@@ -126,14 +127,37 @@ def config_filenames_named_by(entrypoint: str) -> set[str]:
     is not necessarily naming configuration. ``manifest_helpers.py`` is in the validator's
     packaged set and names six fixture files; those live under ``fixtures/``, are read by
     tests rather than by the function, and are nothing this builder should ship.
+
+    **TWO SPELLINGS ARE READ AND ONE MODULE IS SKIPPED, WHICH IS WHAT KEEPS THIS HONEST NOW
+    THAT THERE IS A SHARED VOCABULARY.** ``edullm_platform.config`` defines
+    :class:`ConfigFile`, is in all four closures, and names every reviewed file there without
+    reading any of them. Counting it would report each of the four functions as reading all
+    seven and demand that every builder package them, which is the churn these lists exist to
+    end. So the module that declares the vocabulary is skipped -- derived from
+    ``ConfigFile.__module__`` rather than written down, so moving the class moves the skip.
+
+    Skipping it is only safe because the other spelling is counted. A handler written today
+    names a file as ``ConfigFile.POLICY`` and carries no literal at all, so a reader that saw
+    only literals would report a handler that reads configuration as reading none, and the
+    other direction of this test would then demand its builder stop packaging what it needs.
+    A member reference outside that module counts as exactly the file it stands for.
     """
     on_disk = {path.name for path in CONFIG_ROOT.glob("*.yaml")}
     named: set[str] = set()
     for member in reachable_modules(PROJECT_ROOT, entrypoint):
+        if module_name_of(member) == ConfigFile.__module__:
+            continue
         for node in ast.walk(ast.parse((PACKAGE_ROOT / member).read_text(encoding="utf-8"))):
             if isinstance(node, ast.Constant) and node.value in on_disk:
                 named.add(node.value)
-    return named
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == ConfigFile.__name__
+                and node.attr in ConfigFile.__members__
+            ):
+                named.add(Path(ConfigFile[node.attr].value).name)
+    return named & on_disk
 
 
 @pytest.mark.parametrize(("entrypoint", "declared"), PACKAGED_CONFIG)

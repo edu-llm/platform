@@ -23,7 +23,7 @@ from edullm_platform.cli.lane import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SETTINGS_PATH = PROJECT_ROOT / "config" / "reports" / "working-tier.yaml"
+CONFIG_DIR = PROJECT_ROOT / "config"
 
 #: AWS's own documented example account. The one twelve-digit literal
 #: tests/test_evidence.py's tree-wide scan exempts, so an ARN written here with any other
@@ -111,7 +111,7 @@ def test_the_shipped_settings_load() -> None:
     Every number the lane reads is in this file, so an absent one is two verbs that cannot decide
     how big a disk to ask for or how long to wait for a machine to answer.
     """
-    settings = load_working_tier_settings(SETTINGS_PATH)
+    settings = load_working_tier_settings(CONFIG_DIR)
 
     assert settings.object_expiry_days > 0
     assert settings.root_volume_gib > 0

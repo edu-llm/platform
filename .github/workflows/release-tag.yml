@@ -121,6 +121,7 @@ on:
       - "src/edullm_platform/placement.py"
       - "src/edullm_platform/precision.py"
       - "src/edullm_platform/researcher_lane.py"
+      - "src/edullm_platform/reviewed_configuration.py"
       - "src/edullm_platform/run_history.py"
       - "src/edullm_platform/submission.py"
       - "config/datasets.yaml"
