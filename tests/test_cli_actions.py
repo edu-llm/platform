@@ -171,6 +171,68 @@ def test_the_report_a_workflow_teed_into_its_summary_is_recovered_from_the_job_l
     assert "Current runner version" not in described
 
 
+#: A job log shaped the way a real one is: the runner talks before the report and goes on
+#: talking after it, and the section a verb wants is the last one anything writes.
+#:
+#: The fixture above ends at the report, which is why it passed while the shipped behaviour
+#: was to keep everything to the end of the file. A log that stops where the answer stops is
+#: not a log this code ever meets.
+LOG_WITH_A_RUNNER_TALKING_AFTERWARDS = (
+    "cancel\tSet up job\t2099-01-01T00:00:00.0000000Z Current runner version: '2.320.0'\n"
+    "cancel\tSet up job\t2099-01-01T00:00:00.0000000Z ##[group]Operating System\n"
+    "cancel\tSay what the run is doing\t2099-01-01T00:00:01.0000000Z ## run_0198\n"
+    "cancel\tSay what the run is doing\t2099-01-01T00:00:02.0000000Z | Status | SUCCEEDED |\n"
+    "cancel\tShow the last fifty\t2099-01-01T00:00:03.0000000Z ### The last lines this run printed\n"
+    "cancel\tShow the last fifty\t2099-01-01T00:00:04.0000000Z 9 line(s), oldest first\n"
+    "cancel\tShow the last fifty\t2099-01-01T00:00:05.0000000Z step 200 loss 5.9\n"
+    "cancel\tPost Check out the platform\t2099-01-01T00:00:06.0000000Z Post job cleanup.\n"
+    "cancel\tPost Check out the platform\t2099-01-01T00:00:07.0000000Z "
+    "[command]/usr/bin/git config --global --add safe.directory /home/runner/work/platform\n"
+    "cancel\tComplete job\t2099-01-01T00:00:08.0000000Z Cleaning up orphan processes\n"
+)
+
+
+def test_the_last_section_of_a_report_ends_where_the_step_that_wrote_it_ends() -> None:
+    """Mutation: keep every line after the heading, which is what shipped.
+
+    ``keeping`` was turned on at a matching heading and turned off only at the next one, so
+    the section a verb asked for ran to the end of the file whenever it was the last one
+    anything wrote -- which it is for both ``logs`` and, on a run that reached AWS,
+    ``status``. What a researcher got was their answer followed by the runner's own
+    housekeeping: ``Post job cleanup``, a ``git config --global --add safe.directory``, and
+    ``Cleaning up orphan processes``. About seventy lines of it on a real run.
+
+    The boundary is the step, which is already in every line ``gh run view --log`` returns
+    and needed no new parsing. A report block is written by one step; the runner's
+    housekeeping is written by the post steps and by ``Complete job``.
+
+    Asserted as an equality rather than as the absence of three strings, because a denylist
+    of the noise seen once is the fix that leaves the fourth line in.
+    """
+    tailed = read_report_sections(
+        LOG_WITH_A_RUNNER_TALKING_AFTERWARDS, ("The last lines this run printed",)
+    )
+
+    assert tailed == (
+        "### The last lines this run printed\n9 line(s), oldest first\nstep 200 loss 5.9"
+    )
+
+
+def test_a_section_the_runner_interrupted_is_not_cut_short_by_its_own_grouping() -> None:
+    """Mutation: end the section at the first line whose step differs, rather than tracking it.
+
+    ``## run_0198`` is followed by a step that writes no heading at all, and the section
+    after it is a different report. Ending on any change of step would be the same rule read
+    backwards and would drop the table's last row on a log where the runner interleaves a
+    line. What ends a section is the step it started in ending, and the next heading.
+    """
+    described = read_report_sections(LOG_WITH_A_RUNNER_TALKING_AFTERWARDS, ("run_0198",))
+
+    assert described == "## run_0198\n| Status | SUCCEEDED |"
+    assert "Post job cleanup" not in described
+    assert "The last lines" not in described
+
+
 @pytest.mark.parametrize("verb", sorted(NOT_BUILT_YET))
 def test_a_settled_verb_that_is_unbuilt_says_so_rather_than_being_absent(
     verb: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
