@@ -57,7 +57,7 @@ CREDENTIALED_AUDIT_JOBS = frozenset(
 #: write into this repository could publish a reading it invented, which is the same argument
 #: ``infra/iam/audit-reader-role.yaml`` makes for the reader role holding no write in the
 #: account: a check able to change what it is checking can produce its own all-clear.
-PUBLISHING_AUDIT_JOBS = frozenset({"substrate-history"})
+PUBLISHING_AUDIT_JOBS = frozenset({"substrate-history", "activity-history"})
 
 #: The scheduled jobs that read this repository's own issues, which is a third thing a job
 #: here can be and the only one that reaches neither the account nor a write. Declared as a
