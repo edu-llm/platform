@@ -74,6 +74,150 @@ class WandbRunRef(ContractModel):
     run_id: str = Field(pattern=WANDB_NAME_PATTERN)
 
 
+#: How many objects of one checkpoint directory carry a payload digest in the record.
+#:
+#: A sharded checkpoint can hold hundreds of objects and a lineage record must not grow with
+#: the width of the parallelism that wrote it. Past this the payload reading records nothing
+#: per object and says :attr:`PayloadDigestOutcome.TOO_MANY_OBJECTS`, on the same argument
+#: :data:`~edullm_platform.lifecycle_projection.MAXIMUM_LISTING_PAGES` makes: a partial
+#: answer presented as a whole one is worse than a named absence.
+PAYLOAD_OBJECT_CEILING = 64
+
+
+class PayloadDigestOutcome(StrEnum):
+    """Which source answered for a checkpoint's payload digests, or why none did.
+
+    THE SOURCE IS RECORDED BECAUSE TWO OF THEM ARE NOT COMPARABLE WITH EACH OTHER. A CRC32C
+    and an entity tag are both derived from the bytes and are different functions of them,
+    so a checkpoint read one way and a checkpoint read the other way cannot be told apart
+    from told alike. A reader that only saw the digests would compare them anyway.
+
+    ``NOT_ATTEMPTED``, ``REFUSED`` and ``TOO_MANY_OBJECTS`` are the honest-silence members.
+    Each one means the record holds no digest, and each says something different about why,
+    which is the distinction that makes them worth separating rather than collapsing into a
+    null. None of the three is a failure of the run.
+    """
+
+    #: S3's own attested checksum, per object, from ``GetObjectAttributes``. The strongest
+    #: reading available and the only one that is a checksum of the payload as such.
+    OBJECT_ATTRIBUTES = "object_attributes"
+    #: The entity tag the listing already returned. Derived from the payload and free, and
+    #: weaker: it is a function of how the object was uploaded as well as of its bytes, so
+    #: two byte-identical payloads written with different part sizes carry different tags.
+    #: What it can do is the thing this field exists for -- differ when the bytes differ.
+    LISTING_ETAG = "listing_etag"
+    #: Nothing was asked. The ordinary shape for a projection built without a store behind
+    #: it, and the same meaning :attr:`CheckpointListingOutcome.NOT_ATTEMPTED` carries.
+    NOT_ATTEMPTED = "not_attempted"
+    #: A source was asked and did not answer. Distinct from ``NOT_ATTEMPTED`` for the reason
+    #: :attr:`CheckpointListingOutcome.REFUSED` is distinct from it: one means nobody looked
+    #: and the other means somebody was not allowed to.
+    REFUSED = "refused"
+    #: More objects under one checkpoint than :data:`PAYLOAD_OBJECT_CEILING`.
+    TOO_MANY_OBJECTS = "too_many_objects"
+
+    @property
+    def is_read(self) -> bool:
+        """Whether a digest of the bytes is actually in hand under this outcome."""
+        return self in {PayloadDigestOutcome.OBJECT_ATTRIBUTES, PayloadDigestOutcome.LISTING_ETAG}
+
+
+PayloadDigestOutcomeValue = Annotated[
+    PayloadDigestOutcome, BeforeValidator(parse_str_enum(PayloadDigestOutcome))
+]
+
+
+class PayloadObject(ContractModel):
+    """One object of a checkpoint, with a digest of what is in it rather than of its name.
+
+    ``name`` is relative to the checkpoint directory -- ``model.pt``, ``_SUCCESS`` -- and
+    not the full key, which carries the run id and would therefore differ between any two
+    runs for a reason that has nothing to do with the bytes. Two runs' objects line up by
+    this name, so a comparison can say which object moved.
+    """
+
+    schema_version: Literal[1]
+    name: str = Field(min_length=1, max_length=256)
+    size_bytes: int = Field(ge=0)
+    #: The digest, prefixed by what computed it: ``crc32c:`` for S3's attested checksum in
+    #: the base64 the API returns, ``etag:`` for the listing's entity tag. ``None`` when the
+    #: source answered for other objects and not for this one, which is a real case -- an
+    #: object uploaded before checksums existed has no CRC32C for S3 to attest.
+    digest: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class CheckpointPayload(ContractModel):
+    """What is inside a checkpoint, as against what its objects are called.
+
+    THIS EXISTS BECAUSE ``CheckpointManifest.checksum`` IS NAMED FOR THE BYTES AND IS NOT A
+    FUNCTION OF THEM. That field is a SHA-256 over the ``(key, size)`` listing the recorder
+    saw, so two runs holding different weights record one identical value in the only field
+    a reader would go to, and the comparison of those two runs printed no row at all. The
+    silence was not agreement. Measured on ``run_019fd3a1`` and ``run_019fd3a2``: identical
+    ``checksum``, different S3 CRC32C, and 716,708,889 bytes of a 762 MB payload differing
+    from offset 30,080 on.
+
+    IT ADDS INFORMATION AND IT ADDS NO GATE, WHICH IS THE POINT AND NOT A CAVEAT. Two runs
+    of one submission on one dataset legitimately hold different bytes, because the order a
+    GPU reduces in is not fixed. Nothing in this platform refuses, retries or warns on a
+    difference here. ``run_comparison.VARIANCE_CAUSES`` carries a named cause for it, which
+    is what makes it a line in a report rather than a finding, and
+    ``docs-frank/reference/decisions.md`` records the ruling that what is proven is the same
+    code on the same data on the same machine shape, never the same output bytes.
+
+    ``checksum`` is left where it is rather than renamed to what it actually describes.
+    Every one of the 133 result records in the store carries it, ``ContractModel`` forbids
+    unknown fields, and ``CheckpointRef`` quotes it into every resume reference -- so a
+    rename is a store none of this can read. The two fields therefore sit beside each other
+    and this one is the one that answers the question.
+    """
+
+    schema_version: Literal[1]
+    outcome: PayloadDigestOutcomeValue
+    #: Every object of the checkpoint, sorted by name so that two runs' entries line up by
+    #: index. Empty whenever the outcome is not one a digest arrives under, because nothing
+    #: was read rather than nothing was there.
+    objects: Annotated[tuple[PayloadObject, ...], BeforeValidator(require_ordered_sequence)] = (
+        Field(default=(), strict=False)
+    )
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> Self:
+        if not self.outcome.is_read:
+            if self.objects:
+                raise ValueError(
+                    "a payload reading that got no digest must record no objects, so that a "
+                    f"reader cannot take {self.outcome.value} for a description of the bytes"
+                )
+            return self
+        if not self.objects:
+            raise ValueError(
+                f"a payload reading of {self.outcome.value} claims a source answered, so it "
+                "must record the objects it answered about"
+            )
+        if len(self.objects) > PAYLOAD_OBJECT_CEILING:
+            raise ValueError(
+                f"a payload reading holds at most {PAYLOAD_OBJECT_CEILING} objects; past that "
+                "the outcome is too_many_objects and no object is recorded"
+            )
+        names = [one.name for one in self.objects]
+        if names != sorted(names):
+            raise ValueError("a payload reading's objects must be sorted by name")
+        if len(set(names)) != len(names):
+            raise ValueError("a payload reading may name each object once")
+        if all(one.digest is None for one in self.objects):
+            raise ValueError(
+                f"a payload reading of {self.outcome.value} that got no digest for any object "
+                "did not read the bytes, and must say refused rather than name a source"
+            )
+        return self
+
+    @property
+    def digests(self) -> dict[str, str]:
+        """Name to digest, for the objects that have one. Empty under honest silence."""
+        return {one.name: one.digest for one in self.objects if one.digest is not None}
+
+
 class CheckpointManifest(ContractModel):
     schema_version: Literal[1]
     uri: SandboxS3Prefix
@@ -81,8 +225,15 @@ class CheckpointManifest(ContractModel):
     epoch: int | None = Field(ge=0)
     created_at: UtcTimestamp
     size_bytes: int = Field(gt=0)
+    #: A SHA-256 over the ``(name, size)`` listing, NOT over the payload. See
+    #: :class:`CheckpointPayload`, which is the field that reads the bytes.
     checksum: Sha256Digest
     success_marker_uri: str | None = Field(min_length=1)
+    #: What is in the checkpoint. Defaulted, because the 133 result records already in the
+    #: store were written before this existed and every one of them must still read. Absent
+    #: means the record predates the field, which is a different fact from a record that
+    #: carries the field and says nothing was read, and the comparison separates the two.
+    payload: CheckpointPayload | None = Field(default=None)
 
     @model_validator(mode="after")
     def validate_success_marker(self) -> Self:

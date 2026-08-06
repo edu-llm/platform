@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import pytest
 
-from tests.test_run_comparison import LEFT, RIGHT, checkpoint, written
+from edullm_platform.run_comparison import cause_for
+from tests.test_run_comparison import LEFT, RIGHT, checkpoint, payload_reading, written
 from tools.compare_two_runs import (
     CELL_BUDGET,
     EXIT_DIFFERED,
@@ -349,17 +350,47 @@ def test_the_directory_nobody_could_read_is_in_the_json_and_not_only_printed(
     ] == [(LEFT, "step-20"), (RIGHT, "step-20")]
 
 
-def test_a_comparison_that_walked_a_checkpoint_says_its_payload_was_not_compared(
+def with_checkpoint(root: Path, payload: dict[str, Any] | None) -> None:
+    """Both fixture runs given one checkpoint each, carrying a payload reading.
+
+    ``None`` means each run gets its own reading, so the two differ the way two real runs do.
+    A dict means both get the same one, which is the only way to make them agree.
+    """
+    written(root, LEFT)
+    written(root, RIGHT)
+    for run_id in (LEFT, RIGHT):
+        edited(
+            root,
+            run_id,
+            "result",
+            lambda document, run_id=run_id: document.update(  # type: ignore[misc]
+                checkpoints=[
+                    checkpoint(
+                        run_id,
+                        payload=(payload_reading(run_id) if payload is None else payload),
+                    )
+                ]
+            ),
+        )
+
+
+def test_a_checkpoint_recorded_before_the_payload_field_says_the_bytes_were_not_read(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Mutation: let a table with no `checksum` row stand for two identical checkpoints.
 
-    With the layout fixed, both spine runs record one checkpoint whose ``checksum`` is a
-    SHA-256 over the two object names and their sizes. Those are identical, so the field is
-    identical, so no row appears. The payloads are not identical -- ``1a3f1588...`` against
-    ``606e9ee2...`` in the markers -- and nothing in the record can show it. Silence about
-    a digest that was never read is the same defect as silence about a directory that was
-    never parsed, one level further in.
+    Both spine runs record one checkpoint whose ``checksum`` is a SHA-256 over the two
+    object names and their sizes. Those are identical, so the field is identical, so no row
+    appears. The payloads are not identical -- 716,708,889 of 762,258,865 bytes differ --
+    and a record written before ``CheckpointManifest.payload`` existed cannot show it.
+    Silence about a digest that was never read is the same defect as silence about a
+    directory that was never parsed, one level further in.
+
+    **This case exits MATCHED and the `refused` case below exits UNVERIFIED, deliberately.**
+    A record with no payload reading at all is every result record written before the field
+    existed, and the store holds 149 of them. Failing a comparison of two of those would be
+    this tool reporting history as a defect. What it does instead is refuse to let the
+    absence read as agreement, in the report, which is what the ``checksum`` caveat did.
     """
     written(tmp_path, LEFT)
     written(tmp_path, RIGHT)
@@ -377,8 +408,182 @@ def test_a_comparison_that_walked_a_checkpoint_says_its_payload_was_not_compared
 
     assert code == EXIT_MATCHED
     assert not [line for line in rows(printed) if ".checksum" in line]
-    assert "The checkpoint payloads were not compared" in printed
-    assert "1 checkpoint(s) were compared" in printed
+    assert "carry no payload reading at all" in printed
+    assert "not a statement that the two checkpoints hold the same weights" in printed
+
+
+def test_two_runs_whose_payloads_differ_say_so_in_the_table_and_still_exit_zero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: leave "the bytes a GPU wrote" out of VARIANCE_CAUSES.
+
+    THIS IS THE WHOLE POINT OF THE CHANGE AND BOTH HALVES OF THE ASSERTION MATTER. The
+    digest rows must be there, because a record that cannot see two checkpoints holding
+    different bytes is the gap this closed. The exit code must be zero, because two runs of
+    one submission on one dataset legitimately hold different bytes -- a GPU does not fix
+    the order it reduces in -- and a platform that failed on that would be refusing the
+    ordinary case. Delete the cause and the difference becomes unexplained, which is exit 1:
+    the tool would then be reporting nondeterministic floating point as a finding, and the
+    exit-code assertion is what catches it.
+
+    The four entity tags are the ones S3 actually holds for ``run_019fd3a1`` and
+    ``run_019fd3a2``.
+    """
+    with_checkpoint(tmp_path, None)
+
+    code, printed = compared(tmp_path, capsys)
+
+    digests = [line for line in rows(printed) if "payload.objects" in line and "digest" in line]
+    assert code == EXIT_MATCHED
+    assert len(digests) == 2
+    assert all("the bytes a GPU wrote" in line for line in digests)
+    assert "1 of 1 checkpoint(s) carry a digest of the payload on both sides" in printed
+    assert "retries or refuses" in printed
+
+
+def test_two_runs_whose_payloads_agree_produce_no_digest_row_at_all(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: make the digest a value that cannot be equal between two runs.
+
+    A composite over every object of the checkpoint would have been the obvious shape and is
+    unusable, because ``_SUCCESS`` embeds the instant it was written and the digest of the
+    payload beside it -- so a composite differs between any two runs whatever the weights
+    are, and a field that can never say "same" is a check that cannot pass. That is the
+    mirror of the check that cannot fail, and it is the same defect wearing the other face.
+    Per object is what makes both answers reachable, and this is what goes red if the shape
+    ever moves back.
+    """
+    with_checkpoint(tmp_path, payload_reading(LEFT))
+
+    code, printed = compared(tmp_path, capsys)
+
+    assert code == EXIT_MATCHED
+    assert not [line for line in rows(printed) if "payload.objects" in line]
+    assert "1 of 1 checkpoint(s) carry a digest of the payload on both sides" in printed
+
+
+def test_a_record_that_says_it_read_no_digest_is_unverified_rather_than_agreement(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: count `refused` as a payload that was compared.
+
+    Two records that both say ``refused`` agree about the outcome, so no row appears in the
+    table, so the report reads exactly like two checkpoints holding the same bytes. That is
+    the ``EXIT_UNVERIFIED`` case one level in: nothing was compared, and neither "agreed"
+    nor "differed" is true of nothing. Drop ``payloads_unverified`` from the exit condition
+    in ``main`` and this goes red while the table stays byte-identical, which is the point --
+    the table is the thing that cannot tell you.
+    """
+    with_checkpoint(tmp_path, {"schema_version": 1, "outcome": "refused", "objects": []})
+
+    code, printed = compared(tmp_path, capsys)
+
+    assert code == EXIT_UNVERIFIED
+    assert not [line for line in rows(printed) if "payload" in line]
+    assert "their silence is not agreement" in printed
+    assert printed.count("reports `refused`") == 2
+
+
+def test_a_shorter_object_is_a_finding_even_though_a_different_digest_is_not(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: widen the digest's cause to the whole payload object.
+
+    The cause excuses the bytes and must not excuse the shape. ``torch.save`` writes a
+    length fixed by the model's shapes and dtypes, so two runs of one submission produce
+    payloads of one size; a shorter one is a write that stopped. Widen the pattern from
+    ``.digest`` to ``.+`` and a truncated checkpoint passes as nondeterminism.
+    """
+    truncated = payload_reading(RIGHT)
+    objects = cast("list[dict[str, Any]]", truncated["objects"])
+    objects[1]["size_bytes"] = 12
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT)
+    edited(
+        tmp_path,
+        LEFT,
+        "result",
+        lambda document: document.update(
+            checkpoints=[checkpoint(LEFT, payload=payload_reading(LEFT))]
+        ),
+    )
+    edited(
+        tmp_path,
+        RIGHT,
+        "result",
+        lambda document: document.update(checkpoints=[checkpoint(RIGHT, payload=truncated)]),
+    )
+
+    code, printed = compared(tmp_path, capsys)
+
+    sizes = [line for line in rows(printed) if "payload.objects[1].size_bytes" in line]
+    assert code == EXIT_DIFFERED
+    assert len(sizes) == 1
+    assert "**nothing explains this**" in sizes[0]
+
+
+def test_a_crc32c_is_not_compared_against_an_entity_tag(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: give `payload.outcome` a cause, the way every other varying leaf has one.
+
+    A CRC32C and an MD5-derived entity tag are two different functions of one payload, so
+    two byte-identical checkpoints read by different sources produce two unequal digests --
+    and those digests are excused, correctly, by "the bytes a GPU wrote". The outcome row
+    beside them is the only thing that says the comparison was meaningless. It goes live the
+    day ``s3:GetObjectAttributes`` is deployed and one of a pair was recorded before it, and
+    it will look exactly like a field that varies for a boring reason, which is the moment
+    somebody adds a cause for it and this test is what stops them.
+
+    Named as that mutation rather than "take it out of ``REQUIRED_FIELD_FAMILIES``", because
+    that one was tried and did not kill this: an outcome row with no cause is unexplained
+    whether or not a family also claims it. The family entry earns its place one case over,
+    where one record carries the reading and the other does not and
+    ``required_field_coverage`` reports it missing rather than only unexplained.
+    """
+    attested = {
+        "schema_version": 1,
+        "outcome": "object_attributes",
+        "objects": [
+            {
+                "schema_version": 1,
+                "name": "_SUCCESS",
+                "size_bytes": 227,
+                "digest": "crc32c:D3/CCQ==",
+            },
+            {
+                "schema_version": 1,
+                "name": "model.pt",
+                "size_bytes": 762_258_865,
+                "digest": "crc32c:2G9ejw==",
+            },
+        ],
+    }
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT)
+    edited(
+        tmp_path,
+        LEFT,
+        "result",
+        lambda document: document.update(
+            checkpoints=[checkpoint(LEFT, payload=payload_reading(LEFT))]
+        ),
+    )
+    edited(
+        tmp_path,
+        RIGHT,
+        "result",
+        lambda document: document.update(checkpoints=[checkpoint(RIGHT, payload=attested)]),
+    )
+
+    code, printed = compared(tmp_path, capsys)
+
+    outcomes = [line for line in rows(printed) if "payload.outcome" in line]
+    assert code == EXIT_DIFFERED
+    assert len(outcomes) == 1
+    assert "**nothing explains this**" in outcomes[0]
+    assert cause_for("result.checkpoints[0].payload.outcome") is None
 
 
 def test_a_pair_that_saved_nothing_is_not_told_its_payloads_went_uncompared(

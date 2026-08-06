@@ -2237,6 +2237,19 @@ def test_the_recorder_role_writes_lineage_and_cannot_make_anything_happen() -> N
     refuse. The property this test holds is unchanged: the recorder still cannot cause an
     effect, and reading a document some other principal already wrote starts no job and
     changes no state.
+
+    ``s3:GetObjectAttributes`` is the third read and is bounded the same way, by resource
+    rather than by condition: it names the checkpoint path under the outputs bucket and no
+    other key. It answers with an object's size, its parts and the checksum S3 computed when
+    the object was written, which is how ``CheckpointManifest.payload`` can say two runs
+    hold different bytes without anything downloading 762 MB to find out. It returns no byte
+    of the object, so the sentence above is unchanged: it starts no job, changes no state,
+    and nothing downstream can tell that it was called.
+
+    What the exact list still refuses is a SECOND ``s3:GetObject`` wide enough to cover a
+    checkpoint, which is how a checksum would otherwise be computed and is the easy way this
+    declines to take. It would be a grant over every weight every team wrote, to compute
+    something S3 has already computed and will hand over without sending a byte.
     """
     actions = role_actions(LIFECYCLE_ROLE_PATH, LIFECYCLE_ROLE_NAME)
     s3_actions = [action for action in actions if action.startswith("s3:")]
@@ -2251,8 +2264,22 @@ def test_the_recorder_role_writes_lineage_and_cannot_make_anything_happen() -> N
     reading = [
         statement for statement in statements if "s3:GetObject" in statement_actions(statement)
     ]
+    attributes = [
+        statement
+        for statement in statements
+        if "s3:GetObjectAttributes" in statement_actions(statement)
+    ]
 
-    assert s3_actions == ["s3:PutObject", "s3:ListBucket", "s3:GetObject"]
+    assert s3_actions == [
+        "s3:PutObject",
+        "s3:ListBucket",
+        "s3:GetObject",
+        "s3:GetObjectAttributes",
+    ]
+    assert len(attributes) == 1
+    assert resource_arns(attributes[0]["Resource"]) == [
+        f"arn:${{AWS::Partition}}:s3:::{OUTPUTS_BUCKET}/teams/*/runs/*/checkpoints/*"
+    ]
     assert "sqs:ReceiveMessage" in actions
     assert "sqs:DeleteMessage" in actions
     assert len(listing) == 1

@@ -48,6 +48,17 @@
           ],
           "title": "Epoch"
         },
+        "payload": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CheckpointPayload"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "schema_version": {
           "const": 1,
           "title": "Schema Version",
@@ -92,6 +103,34 @@
         "success_marker_uri"
       ],
       "title": "CheckpointManifest",
+      "type": "object"
+    },
+    "CheckpointPayload": {
+      "additionalProperties": false,
+      "description": "What is inside a checkpoint, as against what its objects are called.\n\nTHIS EXISTS BECAUSE ``CheckpointManifest.checksum`` IS NAMED FOR THE BYTES AND IS NOT A\nFUNCTION OF THEM. That field is a SHA-256 over the ``(key, size)`` listing the recorder\nsaw, so two runs holding different weights record one identical value in the only field\na reader would go to, and the comparison of those two runs printed no row at all. The\nsilence was not agreement. Measured on ``run_019fd3a1`` and ``run_019fd3a2``: identical\n``checksum``, different S3 CRC32C, and 716,708,889 bytes of a 762 MB payload differing\nfrom offset 30,080 on.\n\nIT ADDS INFORMATION AND IT ADDS NO GATE, WHICH IS THE POINT AND NOT A CAVEAT. Two runs\nof one submission on one dataset legitimately hold different bytes, because the order a\nGPU reduces in is not fixed. Nothing in this platform refuses, retries or warns on a\ndifference here. ``run_comparison.VARIANCE_CAUSES`` carries a named cause for it, which\nis what makes it a line in a report rather than a finding, and\n``docs-frank/reference/decisions.md`` records the ruling that what is proven is the same\ncode on the same data on the same machine shape, never the same output bytes.\n\n``checksum`` is left where it is rather than renamed to what it actually describes.\nEvery one of the 133 result records in the store carries it, ``ContractModel`` forbids\nunknown fields, and ``CheckpointRef`` quotes it into every resume reference -- so a\nrename is a store none of this can read. The two fields therefore sit beside each other\nand this one is the one that answers the question.",
+      "properties": {
+        "objects": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PayloadObject"
+          },
+          "title": "Objects",
+          "type": "array"
+        },
+        "outcome": {
+          "$ref": "#/$defs/PayloadDigestOutcome"
+        },
+        "schema_version": {
+          "const": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "outcome"
+      ],
+      "title": "CheckpointPayload",
       "type": "object"
     },
     "CheckpointSurvey": {
@@ -197,6 +236,61 @@
         "metrics"
       ],
       "title": "EvalMetrics",
+      "type": "object"
+    },
+    "PayloadDigestOutcome": {
+      "description": "Which source answered for a checkpoint's payload digests, or why none did.\n\nTHE SOURCE IS RECORDED BECAUSE TWO OF THEM ARE NOT COMPARABLE WITH EACH OTHER. A CRC32C\nand an entity tag are both derived from the bytes and are different functions of them,\nso a checkpoint read one way and a checkpoint read the other way cannot be told apart\nfrom told alike. A reader that only saw the digests would compare them anyway.\n\n``NOT_ATTEMPTED``, ``REFUSED`` and ``TOO_MANY_OBJECTS`` are the honest-silence members.\nEach one means the record holds no digest, and each says something different about why,\nwhich is the distinction that makes them worth separating rather than collapsing into a\nnull. None of the three is a failure of the run.",
+      "enum": [
+        "object_attributes",
+        "listing_etag",
+        "not_attempted",
+        "refused",
+        "too_many_objects"
+      ],
+      "title": "PayloadDigestOutcome",
+      "type": "string"
+    },
+    "PayloadObject": {
+      "additionalProperties": false,
+      "description": "One object of a checkpoint, with a digest of what is in it rather than of its name.\n\n``name`` is relative to the checkpoint directory -- ``model.pt``, ``_SUCCESS`` -- and\nnot the full key, which carries the run id and would therefore differ between any two\nruns for a reason that has nothing to do with the bytes. Two runs' objects line up by\nthis name, so a comparison can say which object moved.",
+      "properties": {
+        "digest": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Digest"
+        },
+        "name": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "name",
+        "size_bytes"
+      ],
+      "title": "PayloadObject",
       "type": "object"
     },
     "RetentionClass": {
