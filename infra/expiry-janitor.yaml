@@ -79,17 +79,18 @@ Resources:
       # the change set comes back empty, and `deploy --no-fail-on-empty-changeset` reports
       # success while the old code keeps running.
       #
-      # THE VERSION BELOW IS A PLACEHOLDER AND THE ZIP HAS NEVER BEEN UPLOADED. The digest in
-      # infra/expiry-janitor-release.yaml is real -- the package builds deterministically from
-      # this tree -- and the object does not exist, so there is no version id to pin. The
-      # phase-3 workflow's janitor step checks for this exact token and skips rather than
-      # failing an unrelated dispatch on a stack nobody can create yet;
-      # tests/test_janitor_package.py holds the token in all three places or in none, so the
-      # release that removes it removes the guard in the same change.
+      # THE VERSION BELOW NAMES A REAL OBJECT, uploaded 2026-08-06 by
+      # tools/release_lambda.py --function janitor --force. The --force was needed and is not a
+      # bypass: the record's digest already described this tree, so the tool's "already
+      # released" comparison would have skipped an upload of an object that was not in the
+      # bucket, which is the exact case that flag documents. The phase-3 workflow's janitor step
+      # carried a guard checking for the placeholder token that used to sit here and skipping;
+      # tests/test_janitor_package.py holds the token in all three places or in none, so that
+      # guard came out in the same change as this line.
       Code:
         S3Bucket: sbsandbox-intern-edullm-artifacts
         S3Key: expiry-janitor/expiry-janitor.zip
-        S3ObjectVersion: PLACEHOLDER-UNTIL-THE-FIRST-UPLOAD
+        S3ObjectVersion: VS.b59wWeTsluXKozm3pf0W475vVyDzp
       # THE THREE NUMBERS, FROM config/reports/researcher-lane.yaml AND NOT FROM ANYBODY'S
       # MEMORY. The zip carries no configuration, so this is how they reach the function, and
       # tests/test_janitor_infrastructure.py holds each one equal to that file. The handler
