@@ -41,9 +41,13 @@
 #   {not_reached: <short reason>}        a person checked and it does not
 #   {unknown: <what settles it>} nobody can currently answer, and what would
 #
-# A lookup may carry `or:` holding one of the last four. That is the fallback for a row whose
-# lookup needs a credential this run did not have, and it prints with the `*` and the date. It
-# is not a second opinion: when the lookup runs, the lookup wins.
+# A lookup may carry `or:` holding one of the last four. It records what somebody last believed
+# about a row whose lookup needs a credential most runs do not have. IT IS NOT AN ANSWER AND IT
+# IS NOT COUNTED. Until 2026-08-06 it was substituted for the lookup whenever the lookup could
+# not run, so a throttled or unauthenticated run promoted twelve opinions into the `deployed`
+# tally and reported no unread rows where it had read nothing at all. Now the cell reads
+# `not read` either way and the standing answer travels in the note, because a board that
+# answers from memory under load reads best exactly when it knows least.
 #
 # ADDING A ROW. Put it in the slice that owns it, give it a lookup rather than an answer, and
 # if you cannot give it a lookup say so in the stage itself. A row nobody can move is still

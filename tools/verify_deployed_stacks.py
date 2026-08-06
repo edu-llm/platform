@@ -93,6 +93,7 @@ INFRA_ROOT = PROJECT_ROOT / "infra"
 IAM_ROOT = INFRA_ROOT / "iam"
 
 __all__ = [
+    "DEFAULT_REGION",
     "DIFFERENCES_REPORTED",
     "EXIT_DISAGREES",
     "EXIT_OK",
@@ -114,6 +115,14 @@ __all__ = [
 ]
 
 EXIT_OK: Final = 0
+
+#: The region every stack in :data:`STACKS` is deployed in, named once so that a second
+#: reader cannot disagree with this one about where to look. ``tools/scoreboard.py`` defaulted
+#: to ``us-east-2`` while this defaulted to ``us-east-1``, and a board run with a valid session
+#: and no ``--region`` therefore listed an empty region and reported fourteen live stacks as
+#: undeployed. It read 30 of 55 where the account holds 43 of 55, and nothing about the output
+#: said which region had been read.
+DEFAULT_REGION: Final = "us-east-1"
 
 #: The account and ``main`` disagree. A definite answer about the account, which is why a
 #: declared stack that is not deployed and a deployed stack nothing declares are both here:
@@ -629,6 +638,26 @@ def list_deployed_stacks(*, profile: str | None, region: str) -> dict[str, str]:
             code=EXIT_UNUSABLE,
         ) from error
 
+    # A SHORT READ IS REFUSED RATHER THAN RETURNED. The CLI follows the pages itself and
+    # strips the token when it reaches the end, so a token surviving into the answer means
+    # something capped the walk -- `--no-paginate`, `--max-items`, or a `max_items` in the
+    # profile, none of which this call passes and any of which a caller's environment can.
+    # Read live on 2026-08-06 the account holds 143 stack summaries over two pages, so this
+    # is one page short of the ceiling rather than a hypothetical, and a truncated listing is
+    # indistinguishable from a complete one at every point downstream: a stack that fell off
+    # the second page reports as declared-and-not-deployed here and reads as an undeployed
+    # row on the board. Neither says the page ran out.
+    if answer.get("NextToken"):
+        raise DeployedStackFinding(
+            "deployed_stacks_not_listed",
+            f"the stack listing stopped after {len(summaries)} summaries with more pages "
+            "left, so the account has not been enumerated. Something capped the pagination: "
+            "--no-paginate or --max-items on the call, or a max_items setting in the profile "
+            "this ran under. A partial listing is not reported as a listing, because a stack "
+            "on a page nobody read is indistinguishable from a stack that is not deployed.",
+            code=EXIT_UNUSABLE,
+        )
+
     return {
         summary["StackName"]: summary["StackStatus"]
         for summary in summaries
@@ -685,7 +714,7 @@ def build_parser() -> argparse.ArgumentParser:
     # No default profile. The audit runs on an assumed role and passes none, and a default
     # of `sbsandbox` would send it looking for an SSO session that is not there.
     parser.add_argument("--profile", default=None)
-    parser.add_argument("--region", default="us-east-1")
+    parser.add_argument("--region", default=DEFAULT_REGION)
     return parser
 
 

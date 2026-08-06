@@ -88,21 +88,28 @@ def test_a_lookup_that_could_not_run_says_so_rather_than_answering(tmp_path: Pat
     assert "account" in cell.note
 
 
-def test_a_fallback_is_used_only_when_the_lookup_cannot_run_and_prints_as_a_persons_answer(
+def test_a_lookup_that_could_not_run_is_not_answered_out_of_the_manifests_standing_note(
     tmp_path: Path,
 ) -> None:
-    """Mutation: let the declared fallback win, or let it apply when the lookup returned no.
+    """Mutation: substitute the `or:` answer for the reading the lookup could not take.
 
-    The fallback exists so a board read from a laptop is legible, not so a stale opinion can
-    outrank a reading. When the account answers, the account is the answer, and when it does
-    not, what stands in for it has to be visibly somebody's recollection.
+    This is how the board answered until 2026-08-06 and it is the silent downgrade to opinion
+    that made it untrustworthy. Fifteen `deployed` rows declare a fallback and nine of those
+    say `reached`, so a run that could not reach CloudFormation promoted nine opinions into
+    the tally and reported no unread rows at all: it printed 39 of 53 where the run beside it
+    that could see printed 43 of 55, and the blind one looked the more complete of the two. A
+    `*` in a table cell does not carry that. The standing answer is still worth printing, so
+    it travels in the note, where it cannot be counted.
     """
     stage = {"stack": "sbsandbox-intern-edullm-janitor", "or": {"reached": "applied by hand"}}
 
     unread = resolve(stage, Sources(tree=tmp_path, healthy_stacks=None))
-    contradicted = resolve(stage, Sources(tree=tmp_path, healthy_stacks=frozenset()))
+    contradicted = resolve(stage, Sources(tree=tmp_path, healthy_stacks=frozenset({"other"})))
 
-    assert (unread.mark, unread.derived) == (Mark.REACHED, False)
+    assert unread.mark is Mark.NOT_READ
+    assert not unread.moved
+    assert "applied by hand" in unread.note
+    assert "not a reading" in unread.note
     assert (contradicted.mark, contradicted.derived) == (Mark.NOT_REACHED, True)
 
 
@@ -214,12 +221,15 @@ def test_a_stage_is_never_inferred_from_the_one_before_it(manifest: Any) -> None
             assert set(STAGES) <= set(surface), surface["id"]
 
 
-def test_a_tally_counts_neither_the_rows_a_stage_skips_nor_the_rows_nobody_read() -> None:
-    """Mutation: divide by the number of rows.
+def test_a_tally_skips_the_rows_a_stage_misses_and_keeps_the_rows_nobody_read() -> None:
+    """Mutation: drop the unread rows out of the denominator along with the `n/a` ones.
 
-    Thirty-odd rows are `n/a` at `deployed` because they are contracts and config files, and
-    several more read `not read` without a session. Counting those in the denominator makes the
-    fraction move when the credential changes rather than when the work does.
+    Forty-one rows are `n/a` at `deployed` because they are contracts and config files, and
+    those genuinely are not rows the stage applies to. An unread row is: it is a row nobody
+    got an answer for tonight. Letting it leave meant the fraction improved as the instrument
+    learned less, which is the wrong way round for every purpose a board has. Measured on
+    2026-08-06: with a session the denominator was 55 and without one it was 53, so the two
+    figures a reader was invited to compare were fractions of different wholes.
     """
     board = [
         Slice(
@@ -233,7 +243,69 @@ def test_a_tally_counts_neither_the_rows_a_stage_skips_nor_the_rows_nobody_read(
         )
     ]
 
-    assert count_reached(board, "built") == (1, 2)
+    assert count_reached(board, "built") == (1, 3)
+
+
+def test_a_stack_being_deployed_while_the_board_is_read_is_unread_rather_than_absent(
+    tmp_path: Path,
+) -> None:
+    """Mutation: read every status that is not one of the three healthy ones as absent.
+
+    This is the one-row flap. Five profiled runs in the same minute on 2026-08-06 returned
+    43 of 55 four times and 42 once, while an agent was applying stacks and one of them was
+    part-way through an update. A stack mid-update is not a stack that is not there, and both
+    the yes and the no it gets are true for less than a minute. Saying so is the only answer
+    that survives being read twice, and it tells the reader to re-read rather than to go and
+    look for a deploy that was undone.
+
+    `REVIEW_IN_PROGRESS` is deliberately outside this. It reads like the others and it does
+    not resolve on its own, so calling it unread would hide a real `no` behind a word, and one
+    of those sat in this account unreported for five days already.
+    """
+    applied = frozenset({"sbsandbox-intern-edullm-phase3-batch"})
+    in_flight = frozenset({"sbsandbox-intern-edullm-janitor"})
+    sources = Sources(tree=tmp_path, healthy_stacks=applied, stacks_mid_flight=in_flight)
+
+    deployed = resolve({"stack": "sbsandbox-intern-edullm-phase3-batch"}, sources)
+    mid_flight = resolve({"stack": "sbsandbox-intern-edullm-janitor"}, sources)
+    absent = resolve({"stack": "sbsandbox-intern-edullm-notifications"}, sources)
+
+    assert deployed.mark is Mark.REACHED
+    assert mid_flight.mark is Mark.NOT_READ
+    assert "mid-flight" in mid_flight.note
+    assert absent.mark is Mark.NOT_REACHED
+
+
+def test_the_denominator_of_every_stage_is_the_same_whatever_the_run_could_reach(
+    manifest: Any,
+) -> None:
+    """Mutation: let any source's reachability change how many rows the stage applies to.
+
+    This is the property the whole repair exists for, stated over the real manifest rather
+    than over a fixture, because the fixture cannot catch a row added later with a rule whose
+    unreadable form leaves the tally. Four readings inside two hours on 2026-08-06 reported
+    denominators of 55 and 53 for the same ninety-six rows, and a reader given both had no way
+    to know they were not comparable. A denominator is a fact about the manifest.
+    """
+    blind = Sources(tree=PROJECT_ROOT)
+    seeing = Sources(
+        tree=PROJECT_ROOT,
+        on_main=frozenset({"AGENTS.md"}),
+        collected_tests=frozenset({"tests/test_stages.py"}),
+        healthy_stacks=frozenset({"sbsandbox-intern-edullm-phase3-batch"}),
+        buckets=frozenset({"edullm-landing"}),
+        environments=frozenset({"run-approval-lead"}),
+        released=True,
+        plan_tasks=frozenset({"the-measurement/4"}),
+    )
+    partial = Sources(tree=PROJECT_ROOT, released=False, buckets=frozenset())
+
+    for stage in STAGES:
+        wholes = {
+            count_reached(resolve_manifest(manifest, sources), stage)[1]
+            for sources in (blind, seeing, partial)
+        }
+        assert len(wholes) == 1, f"{stage} counted {wholes} rows depending on what answered"
 
 
 def test_a_stack_that_rolled_back_is_not_a_deploy() -> None:

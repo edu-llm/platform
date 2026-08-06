@@ -917,6 +917,67 @@ def test_a_listing_that_was_refused_does_not_stop_the_stacks_being_compared(
     assert GPU_ROLES_STACK in out, "the stacks the table names were still compared"
 
 
+def test_a_listing_that_stopped_part_way_through_is_not_reported_as_a_listing(
+    module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: read the summaries that came back and ignore the token saying there are more.
+
+    The CLI walks the pages itself and strips the token when it reaches the end, so a token
+    surviving into the answer means something capped the walk: `--no-paginate`, `--max-items`,
+    or a `max_items` in whichever profile the caller happened to be running under, none of
+    which this call passes and any of which the environment can supply. Read live on
+    2026-08-06 the account holds 143 stack summaries over two pages, so this is one page short
+    of the ceiling and not a hypothetical.
+
+    A short read is silent at every point downstream. A stack that fell off the second page
+    reports here as declared and not deployed, and on `tools/scoreboard.py` it reads as an
+    undeployed row in the column the owner watches for movement. Neither of those says the
+    page ran out, and both are the same shape as real bad news.
+    """
+    summaries = [
+        {"StackName": f"{module.STACK_NAME_PREFIX}phase3-batch", "StackStatus": "UPDATE_COMPLETE"}
+    ]
+    capped = json.dumps({"StackSummaries": summaries, "NextToken": "there-is-more"})
+
+    def run(command: Sequence[str], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(list(command), 0, capped, "")
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+
+    with pytest.raises(module.DeployedStackFinding) as raised:
+        module.list_deployed_stacks(profile=None, region="us-east-1")
+
+    assert raised.value.reason == "deployed_stacks_not_listed"
+    assert raised.value.code == module.EXIT_UNUSABLE
+    assert "more pages left" in raised.value.detail
+
+
+def test_a_listing_that_timed_out_is_not_reported_as_an_account_holding_nothing(
+    module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: let a hung call fall through to the empty mapping at the bottom.
+
+    A timeout and an account with no stacks in it are the same value if nothing separates
+    them, and the second is a legitimate answer that every caller believes. The board reads
+    this listing to decide fourteen `deployed` cells, so a call that hung for two minutes
+    would turn into fourteen confident `no`s with a denominator that never moved.
+    """
+
+    def hung(command: Sequence[str], **_: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd=list(command), timeout=120)
+
+    monkeypatch.setattr(module.subprocess, "run", hung)
+
+    with pytest.raises(module.DeployedStackFinding) as raised:
+        module.list_deployed_stacks(profile=None, region="us-east-1")
+
+    assert raised.value.reason == "deployed_stacks_not_listed"
+    assert raised.value.code == module.EXIT_UNUSABLE
+    assert "did not complete" in raised.value.detail
+
+
 def test_a_disagreement_outranks_a_call_that_could_not_be_made(
     module: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -1018,9 +1079,7 @@ def test_an_answer_that_is_not_a_template_is_unusable_rather_than_a_mismatch(
     assert "deployed_stack_is_not_main" not in err
 
 
-def test_a_mapped_template_that_is_not_on_disk_is_unusable(
-    module: Any, tmp_path: Path
-) -> None:
+def test_a_mapped_template_that_is_not_on_disk_is_unusable(module: Any, tmp_path: Path) -> None:
     """A defect in the checkout rather than a statement about the account.
 
     Every template in the table is committed, so a missing one means this ran from somewhere
