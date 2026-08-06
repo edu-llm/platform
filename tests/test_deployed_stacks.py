@@ -515,21 +515,18 @@ def test_a_stack_belonging_to_another_team_is_not_reported(
     assert "mcat-dev-api" not in out + err
 
 
-@pytest.mark.parametrize("status", ["DELETE_COMPLETE", "REVIEW_IN_PROGRESS"])
-def test_a_status_holding_no_deployed_template_is_not_read_as_a_deployed_stack(
+def test_a_deleted_stack_the_table_claims_is_reported_as_not_deployed(
     module: Any,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     agreeing: dict[str, str],
-    status: str,
 ) -> None:
-    """The two statuses where the name exists and nothing is applied under it.
+    """The one status where the name is in the listing and the account holds no stack.
 
-    A deleted stack is returned by `list-stacks` forever, so reading it as deployed would
-    report a stack that is not there. A stack in REVIEW_IN_PROGRESS has a change set and has
-    never been applied, so there is no deployed template to fetch. Neither is skipped
-    quietly: a table entry in either state falls out as declared and not deployed, which is
-    the finding on the line below.
+    `list-stacks` returns a deleted stack forever, so reading it as deployed would compare
+    against a stack that is not there. It is dropped from the listing rather than reported,
+    and a table entry in that state is not thereby skipped: it falls out as declared and
+    not deployed, which is the finding this asserts.
     """
     absent = dict(agreeing)
     del absent[GPU_ROLES_STACK]
@@ -538,7 +535,7 @@ def test_a_status_holding_no_deployed_template_is_not_read_as_a_deployed_stack(
         module,
         absent,
         also_listed=[GPU_ROLES_STACK],
-        statuses={GPU_ROLES_STACK: status},
+        statuses={GPU_ROLES_STACK: "DELETE_COMPLETE"},
     )
 
     code, _, err = run_main(module, capsys)
@@ -557,18 +554,50 @@ def test_only_the_three_statuses_that_mean_a_template_took_are_read_as_deployed(
     rather than by membership so that widening it is an edit to this line: the way this
     check goes quiet again is somebody adding a status here to make a red run green.
     """
-    assert module.STATUSES_WITH_A_TEMPLATE_APPLIED == frozenset(
-        {"CREATE_COMPLETE", "UPDATE_COMPLETE", "IMPORT_COMPLETE"}
-    )
-    assert not (
-        module.STATUSES_WITH_A_TEMPLATE_APPLIED & module.STATUSES_WITHOUT_A_DEPLOYED_TEMPLATE
-    )
+    assert module.STATUSES_WITH_A_TEMPLATE_APPLIED == frozenset(HEALTHY_STATUSES)
+    assert not (module.STATUSES_WITH_A_TEMPLATE_APPLIED & module.STATUSES_WITHOUT_A_STACK)
 
+
+def test_the_only_status_dropped_from_the_listing_is_the_one_with_no_stack_behind_it(
+    module: Any,
+) -> None:
+    """WHERE THE LINE IS DRAWN, ASSERTED AS AN EQUALITY SO THAT MOVING IT IS AN EDIT HERE.
+
+    The listing is the input to every finding downstream, so a status filtered out of it is
+    a stack nothing reports rather than a stack reported differently. That makes this set
+    the one place in the tool where adding a name is a decision to see less, and the only
+    defensible reason to add one is that there is no stack: `list-stacks` keeps returning a
+    deleted name forever, so reporting those would give the report a permanent tail of
+    lines nobody can act on.
+
+    It held REVIEW_IN_PROGRESS as well until 2026-08-06, on the argument that a stack the
+    table claims falls out as declared-and-not-deployed anyway. True, and it says nothing
+    about a stack the table does not claim -- which is the one that went unreported.
+
+    The three lists this file parametrises over are held to the API reference's twenty-three
+    here too, so a status added to one of them and not the others cannot make the coverage
+    below look wider than it is.
+    """
+    assert module.STATUSES_WITHOUT_A_STACK == frozenset({"DELETE_COMPLETE"})
+
+    every_status = [*STATUSES_A_STACK_EXISTS_IN, *module.STATUSES_WITHOUT_A_STACK]
+    assert len(set(every_status)) == len(every_status), "a status is listed twice"
+    assert len(every_status) == 23, "the API reference lists twenty-three StackStatus values"
+
+
+#: The three that mean CloudFormation holds a template applied in full, restated as literals
+#: rather than read off the tool. Reading them off the tool would make a case widened there
+#: widen silently here too, and the whole point of the allow-list is that widening it is an
+#: edit somebody reviews.
+HEALTHY_STATUSES = ["CREATE_COMPLETE", "UPDATE_COMPLETE", "IMPORT_COMPLETE"]
 
 #: Every status the CloudFormation API reference lists for ``StackStatus``, less the three
-#: that mean the template took and the two that mean the name exists with nothing under it.
-#: Each of these must be a finding, and the list is written out rather than derived so that a
-#: status dropping out of it is a visible edit.
+#: above and less ``DELETE_COMPLETE``. Each of these must be a finding, and the list is
+#: written out rather than derived so that a status dropping out of it is a visible edit.
+#:
+#: ``REVIEW_IN_PROGRESS`` belongs here and used to be exempt. A change set was created
+#: against the name and never executed, so nothing is deployed under it -- which is exactly
+#: what makes it unhealthy rather than what made it safe to skip.
 UNHEALTHY_STATUSES = [
     "CREATE_IN_PROGRESS",
     "CREATE_FAILED",
@@ -577,6 +606,7 @@ UNHEALTHY_STATUSES = [
     "ROLLBACK_COMPLETE",
     "DELETE_IN_PROGRESS",
     "DELETE_FAILED",
+    "REVIEW_IN_PROGRESS",
     "UPDATE_IN_PROGRESS",
     "UPDATE_COMPLETE_CLEANUP_IN_PROGRESS",
     "UPDATE_FAILED",
@@ -590,8 +620,18 @@ UNHEALTHY_STATUSES = [
     "IMPORT_ROLLBACK_COMPLETE",
 ]
 
+#: Every status under which the account holds a stack: twenty-two of the twenty-three the
+#: API reference lists. ``DELETE_COMPLETE`` is the twenty-third and is the only one that is
+#: a name with nothing behind it.
+STATUSES_A_STACK_EXISTS_IN = [*HEALTHY_STATUSES, *UNHEALTHY_STATUSES]
 
-@pytest.mark.parametrize("status", [*UNHEALTHY_STATUSES, "SOME_STATUS_INVENTED_IN_2027"])
+#: Stands in for the status this file does not know about, which is the one that matters.
+#: Every case parametrised over the list above is also run over this, because a case that
+#: enumerates is a case that stops covering the moment AWS adds a twenty-fourth.
+INVENTED_STATUS = "SOME_STATUS_INVENTED_IN_2027"
+
+
+@pytest.mark.parametrize("status", [*UNHEALTHY_STATUSES, INVENTED_STATUS])
 def test_a_status_that_does_not_mean_the_template_took_is_a_finding(
     module: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -629,6 +669,119 @@ def test_a_status_that_does_not_mean_the_template_took_is_a_finding(
     # that is not the problem, and not as unreadable, which would send them to a grant.
     assert "deployed_stack_is_not_main" not in err
     assert "deployed_stack_unreadable" not in err
+
+
+@pytest.mark.parametrize("status", [*STATUSES_A_STACK_EXISTS_IN, INVENTED_STATUS])
+def test_a_stack_nothing_accounts_for_is_a_finding_in_every_status_it_can_exist_in(
+    module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    agreeing: dict[str, str],
+    status: str,
+) -> None:
+    """THE CASE THAT WOULD HAVE CAUGHT THE STACK THAT REPORTED NOTHING AT ALL.
+
+    Mutation: put a status into STATUSES_WITHOUT_A_STACK. That is not a hypothetical
+    mutation -- REVIEW_IN_PROGRESS was in it, and it is how
+    sbsandbox-intern-edullm-ecr-repositories sat in the account for five days producing no
+    finding on any path. Filtered out of the listing before the status pass runs, it could
+    not be reported as unhealthy; missing from the listing, it could not be reported as
+    unaccounted for; missing from STACKS, it could not be reported as declared and not
+    deployed. Three ways to be caught and it was caught by none of them, because all three
+    read the listing and the filter is upstream of all three.
+
+    Parametrised over every status a stack can exist in rather than over the one that went
+    wrong, because a case naming REVIEW_IN_PROGRESS is the same bug relocated: it passes on
+    the day somebody exempts DELETE_FAILED for being noisy. What is being asserted is the
+    rule -- a stack the account holds under our prefix that this repository cannot account
+    for produces a finding, whatever state CloudFormation has it in -- and the invented
+    status is in the list because the rule has to hold for a status this file has never
+    heard of.
+
+    The stack is deliberately absent from STACKS and the account otherwise agrees with main
+    everywhere, so nothing else in the run is red. A tool that reported this stack only
+    because something else was wrong would pass the cases above and fail here.
+    """
+    answer_cloudformation_with(
+        monkeypatch,
+        module,
+        agreeing,
+        also_listed=[UNMAPPED_STACK],
+        statuses={UNMAPPED_STACK: status},
+    )
+
+    code, out, err = run_main(module, capsys)
+
+    assert code == module.EXIT_DISAGREES
+    assert UNMAPPED_STACK in err, f"{status} produced no finding naming the stack"
+    assert "deployed_stack_is_unaccounted_for" in err
+    # Naming the table is the actionable half whatever the status: the reader has to decide
+    # whether the stack belongs before deciding anything about the state it is in.
+    assert "tools/verify_deployed_stacks.py" in err
+    assert f"{UNMAPPED_STACK} is deployed from" not in out
+
+
+@pytest.mark.parametrize("status", [*UNHEALTHY_STATUSES, INVENTED_STATUS])
+def test_a_stack_nothing_accounts_for_is_reported_for_its_status_as_well(
+    module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    agreeing: dict[str, str],
+    status: str,
+) -> None:
+    """Both findings, because they are two true things with two different repairs.
+
+    Mutation: report the unclaimed name and stop, on the grounds that a stack nobody
+    declares is one finding rather than two. It is not. That the table does not claim it
+    says this check cannot tell whether it matches main; that its status is not one of the
+    three says the account is not what any template claims. A reader told only the first
+    goes looking for the template it was deployed from, and for a stack in
+    REVIEW_IN_PROGRESS or ROLLBACK_COMPLETE there is no such thing.
+    """
+    answer_cloudformation_with(
+        monkeypatch,
+        module,
+        agreeing,
+        also_listed=[UNMAPPED_STACK],
+        statuses={UNMAPPED_STACK: status},
+    )
+
+    _, _, err = run_main(module, capsys)
+
+    assert "deployed_stack_is_not_healthy" in err
+    assert "deployed_stack_is_unaccounted_for" in err
+    assert status in err
+
+
+def test_a_deleted_stack_nothing_accounts_for_is_where_the_line_is_drawn(
+    module: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    agreeing: dict[str, str],
+) -> None:
+    """The other side of the case above, and the reason it is a line rather than nothing.
+
+    Mutation: report every name the listing returns, which is the obvious way to be sure
+    nothing is missed. `list-stacks` returns a deleted stack forever, so that would give
+    the report a tail that grows by one every time anybody deletes anything and never
+    shrinks, with nothing for a reader to do about any line in it. A report with a standing
+    tail is a report people skim, and this check is the one that has to be read at 05:00.
+
+    So the rule is about existence rather than about interest: DELETE_COMPLETE is dropped
+    because there is no stack, and every other status is reported because there is.
+    """
+    answer_cloudformation_with(
+        monkeypatch,
+        module,
+        agreeing,
+        also_listed=[UNMAPPED_STACK],
+        statuses={UNMAPPED_STACK: "DELETE_COMPLETE"},
+    )
+
+    code, out, err = run_main(module, capsys)
+
+    assert code == module.EXIT_OK, err
+    assert UNMAPPED_STACK not in out + err
 
 
 def test_the_rolled_back_create_that_this_check_called_a_pass(

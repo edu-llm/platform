@@ -41,6 +41,24 @@ read as a clean pass here while it was breaking a deploy workflow -- ``get-templ
 the template a failed create attempted, so the comparison agreed with itself about resources
 the account did not hold. See :data:`STATUSES_WITH_A_TEMPLATE_APPLIED`.
 
+**What makes a stack reportable is that it is ours and that it exists. Its status decides
+which finding, never whether there is one.** Ours is :data:`STACK_NAME_PREFIX`, which is
+where the seventy-odd stacks belonging to sixteen other teams stop being this check's
+business. Exists is every status but ``DELETE_COMPLETE``, which is a name ``list-stacks``
+goes on returning forever with no stack behind it. Those are the only two lines, and neither
+is drawn on whether a stack looks worth reporting.
+
+**The second line used to be drawn somewhere else and a stack fell through every path at
+once.** ``REVIEW_IN_PROGRESS`` was dropped from the listing beside ``DELETE_COMPLETE``, on
+the argument that a stack the table claims falls out as declared-and-not-deployed on the
+next line. That argument is sound and it holds only for stacks the table claims.
+``sbsandbox-intern-edullm-ecr-repositories`` was not one of those: dropped from the listing
+it could not be reported as unaccounted for, and absent from :data:`STACKS` it could not be
+reported as declared and not deployed. So a misspelling of ``…-phase1-ecr``, left behind by
+a deploy on 2026-08-01 whose change set failed and was never executed, produced no finding
+on any path for five days -- not a wrong answer, an absence. See
+:data:`STATUSES_WITHOUT_A_STACK`.
+
 **The two non-zero exits mean different things and a caller must not merge them.** Exit 1
 says the account and ``main`` disagree and sends a reader to a stack. Exit 2 says this check
 did not manage to look and sends them to a credential or a grant. Reporting the second as the
@@ -81,7 +99,7 @@ __all__ = [
     "EXIT_UNUSABLE",
     "STACKS",
     "STACK_NAME_PREFIX",
-    "STATUSES_WITHOUT_A_DEPLOYED_TEMPLATE",
+    "STATUSES_WITHOUT_A_STACK",
     "STATUSES_WITH_A_TEMPLATE_APPLIED",
     "DeployedStackFinding",
     "Difference",
@@ -126,17 +144,27 @@ VALUE_WIDTH: Final = 200
 #: ``infra/README.md`` names every laptop-deployed one.
 STACK_NAME_PREFIX: Final = "sbsandbox-intern-edullm-"
 
-#: The two statuses under which a stack name exists and no template is applied to it. A
-#: deleted stack is returned by ``list-stacks`` forever, and a stack in ``REVIEW_IN_PROGRESS``
-#: has a change set that was never executed.
+#: The one status under which ``list-stacks`` returns a name and the account holds no stack.
+#: A deleted stack is returned forever, so carrying these into the listing would give the
+#: report a permanent tail of lines naming stacks that are not there, growing by one every
+#: time anybody deletes anything, with nothing for a reader to do about any of them. A report
+#: with a standing tail is a report people learn to skim, and skimming is how the thing at
+#: the top gets missed.
 #:
-#: These two are dropped from the listing rather than reported, and that is safe for these
-#: two alone: a stack the table claims then falls out as declared and not deployed, which is
-#: a finding on the next line. Nothing else may be dropped, and
-#: :data:`STATUSES_WITH_A_TEMPLATE_APPLIED` is what enforces that.
-STATUSES_WITHOUT_A_DEPLOYED_TEMPLATE: Final = frozenset(
-    {"DELETE_COMPLETE", "REVIEW_IN_PROGRESS"}
-)
+#: **The test for membership here is "is there a stack", not "is this worth reporting".**
+#: That distinction is the whole of this constant. Anything else under
+#: :data:`STACK_NAME_PREFIX` is a stack that exists: it holds a name nobody else can use, it
+#: may hold resources, and something put it there. So it goes into the listing and earns a
+#: finding -- from :data:`STATUSES_WITH_A_TEMPLATE_APPLIED` if its status is not one of the
+#: three, from the unaccounted-for pass if :data:`STACKS` does not claim it, and from both if
+#: both, which is two true things about one stack rather than a duplicate.
+#:
+#: **This was a set of two, and the second was ``REVIEW_IN_PROGRESS``.** The module docstring
+#: has the stack that cost and why the argument for dropping it did not cover the case that
+#: arrived. The general form of that mistake is dropping a status because every stack in it
+#: *that anybody had thought of* would be caught elsewhere, and the way to not make it again
+#: is to have one reason for dropping a status and have that reason be that there is no stack.
+STATUSES_WITHOUT_A_STACK: Final = frozenset({"DELETE_COMPLETE"})
 
 #: Every status under which CloudFormation holds a template applied in full and the resources
 #: it declares exist. These three and no others, enumerated from the ``StackStatus`` valid
@@ -548,6 +576,12 @@ def list_deployed_stacks(*, profile: str | None, region: str) -> dict[str, str]:
     written by whoever last thought about this file, so the stack it will not contain is the
     one somebody deploys next; listing the account is how that stack gets reported instead of
     skipped.
+
+    Filtered on two things and no others: the name is ours, and the status is not
+    :data:`STATUSES_WITHOUT_A_STACK`. Anything filtered here is invisible to every finding
+    downstream, because those all read this answer, so a status dropped here is a stack
+    nothing reports rather than a stack reported differently. That is what happened to
+    ``REVIEW_IN_PROGRESS`` and it is why the second condition is about existence.
     """
     call = [
         "aws",
@@ -599,7 +633,7 @@ def list_deployed_stacks(*, profile: str | None, region: str) -> dict[str, str]:
         summary["StackName"]: summary["StackStatus"]
         for summary in summaries
         if str(summary.get("StackName", "")).startswith(STACK_NAME_PREFIX)
-        and summary.get("StackStatus") not in STATUSES_WITHOUT_A_DEPLOYED_TEMPLATE
+        and summary.get("StackStatus") not in STATUSES_WITHOUT_A_STACK
     }
 
 
@@ -695,6 +729,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             "It cannot be updated, so every subsequent deploy of it fails on the state rather "
             "than on the template, and the repair is to delete the stack and deploy again "
             "once whatever refused the create has been fixed.\n"
+            "  REVIEW_IN_PROGRESS means a change set was created against this name and never "
+            "executed, so the name is taken and nothing is deployed under it. A deploy from "
+            "here executes a fresh change set and creates the stack normally. If the name "
+            "itself is the mistake -- a typo for a stack that already exists is how this one "
+            "arrives -- then deleting it costs nothing, but confirm that with "
+            "list-stack-resources before you do, because a name being plausible is not "
+            "evidence about what is under it.\n"
             "  Any other status means an operation stopped partway or was undone, and the "
             "stack events say which resource and why.",
             code=EXIT_DISAGREES,
@@ -702,17 +743,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         findings.append(unwell)
         _report(unwell)
 
+    # Independent of the status pass above, and a stack can earn both. An unhealthy status
+    # says the account is not what any template claims; an unclaimed name says this
+    # repository cannot say which template it should be. They are two true things about one
+    # stack with two different repairs, and collapsing them would mean choosing which of the
+    # two a reader is told -- which is how a stack that is both ends up reported as neither.
     unaccounted = sorted(set(deployed) - set(STACKS)) if deployed is not None else []
     for name in unaccounted:
         unclaimed = DeployedStackFinding(
             "deployed_stack_is_unaccounted_for",
-            f"{name} is deployed and nothing in this repository declares which template it "
-            "was deployed from, so this check has no idea whether it matches main and is not "
-            "going to pretend it does. Add it to STACKS in tools/verify_deployed_stacks.py "
-            "beside the template it was applied from, add its ARN to the "
-            "cloudformation:GetTemplate grant in infra/iam/audit-reader-role.yaml, and "
-            "record the stack name in infra/README.md if it is applied by hand. If it should "
-            "not exist, that is the finding.",
+            f"the account holds a stack called {name} and nothing in this repository "
+            "declares which template it was deployed from, so this check has no idea whether "
+            "it matches main and is not going to pretend it does. Add it to STACKS in "
+            "tools/verify_deployed_stacks.py beside the template it was applied from, add "
+            "its ARN to the cloudformation:GetTemplate grant in "
+            "infra/iam/audit-reader-role.yaml, and record the stack name in "
+            "infra/README.md if it is applied by hand. If it should not exist, that is the "
+            "finding.",
             code=EXIT_DISAGREES,
         )
         findings.append(unclaimed)
