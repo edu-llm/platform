@@ -9,14 +9,21 @@ writes it into the file, and never asks the repository whether it has one. Its o
 says "conventionally .edullm/Dockerfile", which is the convention four registrations follow
 and the fifth was written from.
 
-**This was shipped.** ``open-instruct-scored-rewards`` was registered with
-``dockerfile_path: .edullm/Dockerfile`` and has no ``.edullm`` directory on ``main``. The
+**This was shipped.** ``open-instruct-scored-rewards`` was registered on 2026-08-04 with
+``dockerfile_path: .edullm/Dockerfile`` and no ``.edullm`` directory on ``main``. The
 registration validated, merged, created its ECR repository, widened the publisher role and
 reached the submission form's dropdown. Nothing went red, because nothing looks: the file is
-read by ``docker build`` inside the caller repository's own workflow, and that repository has
-no caller workflow either, so no build has ever run to discover it. A registration in that
-state is worse than an absent one -- it is submittable, and what a submitter gets is a build
+read by ``docker build`` inside the caller repository's own workflow, and that repository had
+no caller workflow either, so no build had run to discover it. A registration in that state
+is worse than an absent one -- it is submittable, and what a submitter gets is a build
 failure in somebody else's repository rather than a refusal that names the cause.
+
+**That repository is out of that state and the paragraph above is history, not the registry
+as it stands.** It has carried ``.edullm/Dockerfile`` and a caller workflow on ``main`` since
+2026-08-05, and five builds have since succeeded. Both sentences were written in the present
+tense on 2026-08-05, seven hours before the merge that ended them, which is the argument for
+the paragraph below rather than an exception to it: what goes stale here is any sentence
+naming a repository, so the check itself names none.
 
 **The subject is the registry and is never a list in here.** A check that restated which
 repositories to ask about would go stale on the next registration in exactly the way the
