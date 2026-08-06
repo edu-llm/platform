@@ -19,3 +19,7 @@ build/
 dist/
 *.egg-info/
 .eggs/
+
+# Written by tools/report_activity.py on a laptop. The scheduled run commits its copy to the
+# machine/activity branch instead; see .github/workflows/audit.yml.
+/activity/
