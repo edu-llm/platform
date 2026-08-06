@@ -33,7 +33,7 @@ from __future__ import annotations
 import io
 import json
 import os
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from pathlib import Path
 
 import pytest
@@ -151,10 +151,69 @@ FAKE_ACCOUNT = "123456789012"
 
 LANE_INSTANCE = "i-0000000000000aaaa"
 
+#: Every zone ``infra/batch-network.yaml`` declares a subnet in, and the one of the six that is
+#: different. The account answers ``describe-subnets`` with all six for the lane's tag filter,
+#: in an order of its own that puts ``us-east-1f`` first, which is the order these are written
+#: in. Measured on 2026-08-06.
+LANE_ZONES = (
+    "us-east-1f",
+    "us-east-1a",
+    "us-east-1d",
+    "us-east-1c",
+    "us-east-1e",
+    "us-east-1b",
+)
+
+#: The p5-only zone. ``infra/batch-network.yaml`` declares it for the two H100 shapes and its
+#: Name tag says so, and EC2 offers neither ``g6.xlarge`` nor ``g4dn.xlarge`` there.
+LANE_ZONE_FOR_P5_ONLY = "us-east-1e"
+
+#: What EC2 answers for every shape a lane verb defaults to, which is five of the six. Kept as
+#: the derived set rather than written out, so a zone added above reaches both.
+LANE_ZONES_OFFERING = tuple(zone for zone in LANE_ZONES if zone != LANE_ZONE_FOR_P5_ONLY)
+
+#: A fake subnet id per zone, shaped like a real one and distinct per zone so a test can read
+#: which zone a launch was aimed at out of the argv.
+LANE_SUBNETS = {
+    zone: f"subnet-0000000000000{index:02d}b" for index, zone in enumerate(LANE_ZONES)
+}
+
+#: What EC2 says when a zone has none of a shape to sell, in the words it actually uses. Copied
+#: from a ``p5.4xlarge`` refused in ``us-east-1a`` on 2026-08-06, including the trailing list of
+#: other zones -- which is not a capacity reading and names zones that were also empty.
+NO_CAPACITY = (
+    "An error occurred (InsufficientInstanceCapacity) when calling the RunInstances "
+    "operation (reached max retries: 2): We currently do not have sufficient {instance_type} "
+    "capacity in the Availability Zone you requested ({zone}). Our system will be working on "
+    "provisioning additional capacity."
+)
+
 #: The expiry a reused fixture machine carries on its tag. Deliberately a round instant that no
 #: arithmetic against the test clock produces, so a verb that computed one instead of reading
 #: this cannot match it by coincidence.
 LANE_EXISTING_EXPIRY = "2026-08-06T09:00:00Z"
+
+
+def _run_instances(
+    capacity_in: Collection[str],
+) -> Callable[[tuple[str, ...]], CommandResult]:
+    """A launch that answers per zone, read off the ``--subnet-id`` the argv carries.
+
+    Keyed on the subnet rather than on a call counter, because what the lane decides is *which
+    zone* and a counter would pass for a verb that asked the same zone five times -- which is
+    exactly the defect this exists to catch.
+    """
+    zone_of = {subnet: zone for zone, subnet in LANE_SUBNETS.items()}
+
+    def answer(argv: tuple[str, ...]) -> CommandResult:
+        subnet = argv[argv.index("--subnet-id") + 1]
+        instance_type = argv[argv.index("--instance-type") + 1]
+        zone = zone_of.get(subnet, subnet)
+        if zone in capacity_in:
+            return ok(f"{LANE_INSTANCE}\n")
+        return failed(NO_CAPACITY.format(instance_type=instance_type, zone=zone), returncode=254)
+
+    return answer
 
 
 def lane_answers(
@@ -163,7 +222,9 @@ def lane_answers(
     existing_expiry: str | None = LANE_EXISTING_EXPIRY,
     remote_exit: int | None = 0,
     agent: str = "Online",
-) -> dict[tuple[str, ...], CommandResult]:
+    capacity_in: Collection[str] | None = None,
+    offerings: Collection[str] | None = None,
+) -> dict[tuple[str, ...], CommandResult | Callable[[tuple[str, ...]], CommandResult]]:
     """Every AWS call a lane verb makes, answered as a laptop already holding a session.
 
     ``remote_exit`` of ``None`` is a session that dropped: the stream carries output and no
@@ -175,6 +236,18 @@ def lane_answers(
     account have to agree about the answer's shape or a test proves nothing about a laptop.
     ``existing_expiry`` of ``None`` is a machine carrying no such tag, which is a machine
     launched before the tag existed or one somebody stripped.
+
+    **``describe-subnets`` ANSWERS ALL SIX WITH THEIR ZONES, AND IT ANSWERED ONE BARE ID UNTIL
+    2026-08-06 -- WHICH IS THE SAME DEFECT ONE CALL OVER.** A fixture holding a single subnet
+    cannot tell a lane that tries every zone from one that pins the first, so every test about
+    the thing this network is for would have passed either way. The six are the six the account
+    declares, in the order the account returns them, and the fifth of them is the ``us-east-1e``
+    subnet that exists for ``p5`` and nothing else.
+
+    ``capacity_in`` is the zones that have a machine to sell, defaulting to all of them.
+    ``offerings`` is what ``describe-instance-type-offerings`` answers, defaulting to the five
+    zones the account offers every shape the lane can default to. Passing ``()`` for either is
+    a zone list with nothing in it, which is the state a failed or throttled call leaves.
 
     Which repository the caller is standing in is :func:`git_answers`' business and not this
     one's. It changes no AWS answer, and the case the whole slice turns on -- a directory nothing
@@ -206,7 +279,14 @@ def lane_answers(
             )
         ),
         ("aws", "ssm", "get-parameter"): ok("ami-000000000000000aa\n"),
-        ("aws", "ec2", "describe-subnets"): ok(json.dumps(["subnet-000000000000000bb"])),
+        ("aws", "ec2", "describe-subnets"): ok(
+            json.dumps(
+                [{"subnet": LANE_SUBNETS[zone], "zone": zone} for zone in LANE_ZONES]
+            )
+        ),
+        ("aws", "ec2", "describe-instance-type-offerings"): ok(
+            json.dumps(list(LANE_ZONES_OFFERING if offerings is None else offerings))
+        ),
         ("aws", "ec2", "describe-security-groups"): ok(json.dumps(["sg-000000000000000cc"])),
         ("aws", "ec2", "describe-instances"): ok(
             json.dumps(
@@ -225,7 +305,9 @@ def lane_answers(
                 else []
             )
         ),
-        ("aws", "ec2", "run-instances"): ok(f"{LANE_INSTANCE}\n"),
+        ("aws", "ec2", "run-instances"): _run_instances(
+            LANE_ZONES if capacity_in is None else capacity_in
+        ),
         ("aws", "ssm", "describe-instance-information"): ok(f"{agent}\n"),
         ("aws", "s3", "sync"): ok(""),
         ("aws", "ssm", "start-session"): ok(f"hello from the machine{sentinel}"),
