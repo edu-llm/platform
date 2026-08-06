@@ -54,9 +54,11 @@ from edullm_platform.approval_gate import (
     GateFinding,
     compare_gate,
     compare_lead_team_membership,
+    compare_the_branch_policy,
     compare_the_environment_list,
     compare_visibility,
     declared_gate,
+    read_branch_policy_names,
     read_environment,
 )
 from edullm_platform.config import load_yaml
@@ -220,6 +222,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             continue
         try:
             payload = _github(f"repos/{repository}/environments/{name}")
+            # A second call per environment, and the endpoint answers an anonymous request
+            # on a public repository exactly as the first does — verified against this
+            # repository on 2026-08-06, HTTP 200 with no session. Which branches may deploy
+            # to a gate is not in the environment body: that carries the two boolean forms
+            # and not the patterns, so reading only the first would report a gate as pinned
+            # while its one named pattern was `*`.
+            branch_policy = _github(
+                f"repos/{repository}/environments/{name}/deployment-branch-policies"
+            )
         except GitHubUnreachable as error:
             print("environment_unreadable", file=sys.stderr)
             print(str(error), file=sys.stderr)
@@ -227,7 +238,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not isinstance(payload, dict):
             print(f"environment_unreadable: {name} answered nothing", file=sys.stderr)
             return EXIT_UNUSABLE
+        if not isinstance(branch_policy, dict):
+            print(f"branch_policy_unreadable: {name} answered nothing", file=sys.stderr)
+            return EXIT_UNUSABLE
         findings.extend(compare_gate(declared, read_environment(payload), inventory.admins))
+        findings.extend(
+            compare_the_branch_policy(declared, read_branch_policy_names(branch_policy))
+        )
 
     routine_approvers = tuple(
         member.github_login
@@ -263,7 +280,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             if gate.reviewer_logins_are_the_roster_admins
             else "reviewer-less by design"
         )
-        print(f"{gate.name} is {reviewers}, and GitHub agrees.")
+        branches = ", ".join(gate.branch_policy_names)
+        print(f"{gate.name} is {reviewers} and deployable from {branches}, and GitHub agrees.")
     print(f"The repository is {visibility}, so the gate is a control GitHub still offers.")
     if options.check_team_membership:
         print(

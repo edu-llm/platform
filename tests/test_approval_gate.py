@@ -18,23 +18,37 @@ built here rather than committed under ``fixtures/evidence/`` on purpose: these 
 observations of the account and must not be read as any, they are the response *shape* the
 parser is written against, and a fixture with a freshness window would make this module fail
 for a reason having nothing to do with the parser.
+
+**Two endpoints and two comparisons, because one environment's answer lives in each.** The
+body above carries the two boolean forms of the deployment branch policy and not the branch
+patterns under them; those come from ``…/environments/{name}/deployment-branch-policies``.
+That is why :func:`compare_the_branch_policy` is separate from :func:`compare_gate` rather
+than a clause inside it — a caller that reached only the first endpoint would otherwise
+report a gate as checked while the one setting that says which branches may deploy to it went
+unread. That setting is how the fourth environment stayed invisible: three gates are pinned
+to ``main`` and ``run-approval-preview`` is ``*``, and nothing anywhere read either.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pytest
 
+from edullm_platform import approval_gate
 from edullm_platform.approval_gate import (
+    DECLARED_ENVIRONMENT_NAMES,
     DECLARED_GATES,
     LEAD_APPROVAL_GATE,
+    PREVIEW_GATE,
     compare_gate,
     compare_lead_team_membership,
+    compare_the_branch_policy,
     compare_the_environment_list,
     compare_visibility,
     declared_gate,
+    read_branch_policy_names,
     read_environment,
 )
 from edullm_platform.config import load_yaml
@@ -72,10 +86,21 @@ def routine_approvers(inventory: OrganizationInventory) -> tuple[str, ...]:
     )
 
 
+#: What GitHub returns under ``deployment_branch_policy`` for all four of this repository's
+#: environments, read from the account on 2026-08-06. The *names* under it are not here: they
+#: come from ``…/deployment-branch-policies``, which is a second call and a second comparison,
+#: and the four environments do not agree on them.
+NAMED_BRANCH_POLICY: Final[dict[str, bool]] = {
+    "protected_branches": False,
+    "custom_branch_policies": True,
+}
+
+
 def team_reviewed(slug: str = LEAD_APPROVAL_TEAM_SLUG, **overrides: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "name": LEAD_APPROVAL_GATE,
         "can_admins_bypass": False,
+        "deployment_branch_policy": dict(NAMED_BRANCH_POLICY),
         "protection_rules": [
             {
                 "id": 60981222,
@@ -94,6 +119,7 @@ def user_reviewed(*logins: str, **overrides: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "name": "run-approval-admin",
         "can_admins_bypass": False,
+        "deployment_branch_policy": dict(NAMED_BRANCH_POLICY),
         "protection_rules": [
             {
                 "type": "required_reviewers",
@@ -113,6 +139,7 @@ def unreviewed(name: str = "run-approval-automatic", **overrides: Any) -> dict[s
     payload: dict[str, Any] = {
         "name": name,
         "can_admins_bypass": False,
+        "deployment_branch_policy": dict(NAMED_BRANCH_POLICY),
         "protection_rules": [{"type": "branch_policy"}],
     }
     payload.update(overrides)
@@ -285,6 +312,152 @@ def test_an_admin_bypass_is_reported_and_an_absent_field_counts_as_one(
     )
 
 
+def test_the_branch_policy_form_is_held_to_the_named_one_on_every_gate(
+    roster_admins: tuple[str, ...],
+) -> None:
+    """Which branches may deploy is a control, and until 2026-08-06 nothing read it live.
+
+    The two forms are not equivalent and the distinction is the whole reason both flags are
+    asserted rather than a summary. ``protected_branches`` defers to whatever branch
+    protection happens to cover, so an environment on that form widens the moment somebody
+    protects a second branch — for a reason nobody would connect to this control, and leaving
+    the declared patterns with nothing to be the answer to.
+
+    Mutation: read a missing ``deployment_branch_policy`` as the named form, which is the
+    forgiving default somebody writes to stop a sparse payload reporting. An environment with
+    no branch policy at all accepts a deployment from every branch, so the one shape that
+    means "unrestricted" would be the one shape that passes. Applied, and the third assertion
+    goes red.
+    """
+    gate = declared_gate(LEAD_APPROVAL_GATE)
+    assert gate is not None
+
+    assert reasons(compare_gate(gate, read_environment(team_reviewed()), roster_admins)) == []
+
+    inherited = team_reviewed()
+    inherited["deployment_branch_policy"] = {
+        "protected_branches": True,
+        "custom_branch_policies": False,
+    }
+    assert "the_branch_policy_is_not_the_named_form" in reasons(
+        compare_gate(gate, read_environment(inherited), roster_admins)
+    )
+
+    absent = team_reviewed()
+    del absent["deployment_branch_policy"]
+    assert "the_branch_policy_is_not_the_named_form" in reasons(
+        compare_gate(gate, read_environment(absent), roster_admins)
+    )
+
+
+def test_the_branch_patterns_are_declared_per_gate_and_the_four_disagree() -> None:
+    """The setting the fourth environment differs on, and the reason a blanket check fails.
+
+    Three gates admit ``main`` and ``run-approval-preview`` admits ``*``. Asserting one answer
+    across all four is what ``tests/test_phase2_github_evidence.py`` did until 2026-08-06, and
+    it was a red waiting for whoever next re-captured — a red whose only clearing edit is the
+    one that stops checking the other three.
+
+    Mutation: declare ``("main",)`` on the preview gate, which is what "tightening" it looks
+    like. Every role trusted to ``submit-run.yml`` pins its subject to ``refs/heads/main``, so
+    the preview path then has no environment a branch dispatch can enter and the submission
+    path goes back to being the one path nobody can exercise before merging it. Applied, and
+    the last assertion goes red.
+    """
+    pinned = declared_gate(LEAD_APPROVAL_GATE)
+    preview = declared_gate(PREVIEW_GATE)
+    assert pinned is not None and preview is not None
+
+    assert compare_the_branch_policy(pinned, ("main",)) == ()
+    assert reasons(compare_the_branch_policy(pinned, ("main", "release/*"))) == [
+        "the_branch_policy_moved"
+    ]
+    assert reasons(compare_the_branch_policy(pinned, ())) == ["the_branch_policy_moved"]
+
+    assert compare_the_branch_policy(preview, ("*",)) == ()
+    assert reasons(compare_the_branch_policy(preview, ("main",))) == ["the_branch_policy_moved"]
+
+
+def test_a_tag_pattern_is_not_read_as_a_branch_that_may_deploy() -> None:
+    """The endpoint answers both kinds and only one of them restricts a deployment.
+
+    Mutation: drop the ``type`` filter from ``read_branch_policy_names``. A gate whose only
+    branch entry had been replaced by a tag entry named ``main`` then reads as pinned to
+    ``main`` while admitting every branch — the exact reading this whole module exists to
+    refuse, arrived at through a key nobody thought about. Applied, and the last assertion
+    goes red.
+    """
+    assert read_branch_policy_names({"branch_policies": [{"name": "main", "type": "branch"}]}) == (
+        "main",
+    )
+
+    # Absent ``type`` reads as a branch, because that is what the endpoint returned before
+    # tag policies existed and a missing key is not a tag.
+    assert read_branch_policy_names({"branch_policies": [{"name": "main"}]}) == ("main",)
+
+    assert read_branch_policy_names({"branch_policies": []}) == ()
+    assert read_branch_policy_names({}) == ()
+    assert read_branch_policy_names({"branch_policies": [{"name": "main", "type": "tag"}]}) == ()
+
+
+def test_the_two_environment_lists_are_named_apart_and_only_one_means_all_of_them() -> None:
+    """The mistake this branch was opened for, written down where it cannot be made again.
+
+    ``phase2_evidence.APPROVAL_ENVIRONMENT_NAMES`` is the three subjects the admission role's
+    trust policy enumerates. ``DECLARED_ENVIRONMENT_NAMES`` is every environment on the
+    repository. The two coincided until 2026-08-04, were used interchangeably because of it,
+    and stopped coinciding when ``run-approval-preview`` was created — leaving three equality
+    assertions in ``tests/test_phase2_github_evidence.py`` that would go red on whoever next
+    refreshed the evidence, for a correct reason, arguing for a wrong repair.
+
+    ``tests/test_run_preview_role.py::test_the_preview_environment_is_not_one_of_the_admission
+    _gates`` holds the other end: the preview gate must never enter the trust enumeration,
+    because the preview role exists precisely so a branch reaches something other than
+    admission. So this is not drift to be closed. It is two sets that are permanently
+    different and were spelled as one.
+
+    Mutation: define ``DECLARED_ENVIRONMENT_NAMES`` as ``APPROVAL_ENVIRONMENT_NAMES``, which
+    is what somebody "removing a duplicate list" would do. Applied, and this goes red.
+    """
+    assert set(APPROVAL_ENVIRONMENT_NAMES) < set(DECLARED_ENVIRONMENT_NAMES)
+    assert set(DECLARED_ENVIRONMENT_NAMES) - set(APPROVAL_ENVIRONMENT_NAMES) == {PREVIEW_GATE}
+    assert PREVIEW_GATE not in APPROVAL_ENVIRONMENT_NAMES
+
+    # Derived from the declaration rather than written beside it, so a fifth environment
+    # cannot be declared into one and left out of the other.
+    assert DECLARED_ENVIRONMENT_NAMES == tuple(gate.name for gate in DECLARED_GATES)
+
+
+def test_every_comparison_this_module_exports_is_one_the_scheduled_tool_makes() -> None:
+    """A comparison nothing calls is a check that reports nothing, and looks like coverage.
+
+    Written as a sweep over ``__all__`` rather than as a list of the five, because the failure
+    it exists for is the sixth: somebody adds a comparison here, tests it thoroughly, and
+    never wires it into ``tools/verify_the_gate.py`` — whereupon the daily job goes on
+    printing green while the new setting is unread, and the tests for it all pass. That is
+    precisely how the deployment branch policy came to be declared nowhere and read by
+    nothing while three environments were being watched closely.
+
+    ``compare_lead_team_membership`` is reached only behind ``--check-team-membership`` and is
+    still named in the source, which is what this asserts. Whether the scheduled run makes it
+    is a different question and the tool answers it in its own words, in the paragraph it
+    prints when the flag is absent.
+
+    Mutation: delete the ``compare_the_branch_policy`` call from ``main``. The suite is
+    otherwise silent about it — every test above drives the pure function directly. Applied,
+    and this goes red naming it.
+    """
+    source = (PROJECT_ROOT / "tools" / "verify_the_gate.py").read_text(encoding="utf-8")
+    exported = [name for name in approval_gate.__all__ if name.startswith("compare_")]
+
+    assert len(exported) >= 5
+    uncalled = sorted(name for name in exported if f"{name}(" not in source)
+    assert not uncalled, (
+        "exported by edullm_platform.approval_gate and called nowhere in "
+        f"tools/verify_the_gate.py, so nothing reads it every morning: {uncalled}"
+    )
+
+
 def test_a_private_repository_below_team_is_reported() -> None:
     """The highest-consequence footgun in the system, and it is one click with no error.
 
@@ -434,11 +607,29 @@ def test_the_shipped_declaration_agrees_with_what_github_answered(
         "run-approval-automatic": unreviewed(),
         LEAD_APPROVAL_GATE: team_reviewed(),
         "run-approval-admin": user_reviewed(*roster_admins),
-        "run-approval-preview": unreviewed(name="run-approval-preview"),
+        PREVIEW_GATE: unreviewed(name=PREVIEW_GATE),
+    }
+    # What ``…/deployment-branch-policies`` answered for each of the four on the same day,
+    # and the one reading among all of these where the fourth environment differs from its
+    # siblings. Kept beside the bodies rather than folded into them because it is a second
+    # call, and a test that merged the two would let a caller reach only the first and still
+    # look covered.
+    live_branch_policies = {
+        "run-approval-automatic": {"branch_policies": [{"name": "main", "type": "branch"}]},
+        LEAD_APPROVAL_GATE: {"branch_policies": [{"name": "main", "type": "branch"}]},
+        "run-approval-admin": {"branch_policies": [{"name": "main", "type": "branch"}]},
+        PREVIEW_GATE: {"branch_policies": [{"name": "*", "type": "branch"}]},
     }
 
     assert compare_the_environment_list(live) == ()
+    assert set(live) == set(DECLARED_ENVIRONMENT_NAMES)
     for name, payload in live.items():
         gate = declared_gate(name)
         assert gate is not None, name
         assert compare_gate(gate, read_environment(payload), roster_admins) == (), name
+        assert (
+            compare_the_branch_policy(
+                gate, read_branch_policy_names(live_branch_policies[name])
+            )
+            == ()
+        ), name
