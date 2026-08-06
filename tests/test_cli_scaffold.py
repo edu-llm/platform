@@ -22,8 +22,12 @@ import pytest
 
 from edullm_platform.cli.intake import SELF_SERVICE_KINDS
 from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED, EXIT_UNUSABLE
-from edullm_platform.cli.spec import load_spec
+from edullm_platform.cli.spec import RunSpec, load_spec
 from edullm_platform.cli.workspace import CommandResult
+from edullm_platform.config import load_yaml
+from edullm_platform.contracts.workload import ComputeProfile, WorkloadCatalog
+from edullm_platform.errors import SubmissionRefusedError
+from edullm_platform.precision import gpu_of, require_bfloat16_only_where_the_hardware_has_it
 from tests.cli_support import (
     CONFIG_DIR,
     FakeRunner,
@@ -35,6 +39,39 @@ from tests.cli_support import (
 )
 
 FIRST_CHECK = ["check", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"]
+
+CATALOG = load_yaml(CONFIG_DIR / "workload-catalog.yaml", WorkloadCatalog)
+
+#: The dotted override OLMo-core's config system takes, which is the spelling
+#: ``.edullm/train_on_corpus.py`` sets in code and never writes into argv. Used below to ask
+#: the precision guard what it would say about a run the scaffold's own default describes.
+BFLOAT16 = "train_module.dp_config.param_dtype=bfloat16"
+
+
+def suggested(root: Path) -> ComputeProfile:
+    """The catalog entry behind the shape a scaffold just wrote, or a failure naming it."""
+    spec = load_spec(root / ".edullm" / "run.yaml")
+    found = next(
+        (
+            profile
+            for profile in CATALOG.compute_profiles
+            if profile.name == spec.suggested_compute
+        ),
+        None,
+    )
+    assert found is not None, f"{spec.suggested_compute!r} is not a shape the catalog prices"
+    return found
+
+
+def scaffold_a_training_repository(root: Path) -> None:
+    """A tree shaped like the clone a researcher opens: ``.edullm/`` with an entry point.
+
+    An empty tree is not this case. ``_find_entry_point`` answers ``None`` there, so the
+    command is the submission form's default, the workload's checkpoint rule refuses it, and
+    the scaffold's compute choice is never the thing under test.
+    """
+    (root / ".edullm").mkdir(exist_ok=True)
+    (root / ".edullm" / "train_on_corpus.py").write_text("print(1)\n", encoding="utf-8")
 
 Answers = dict[tuple[str, ...], CommandResult | Callable[[tuple[str, ...]], CommandResult]]
 
@@ -477,6 +514,185 @@ def test_the_header_names_the_configuration_the_choices_were_read_from(
     written = (tmp_path / ".edullm" / "run.yaml").read_text(encoding="utf-8")
     assert str(CONFIG_DIR) in written
     assert "olmo-core-check, olmo-core-train" in written
+
+
+def test_the_shape_a_first_spec_suggests_can_run_a_trainer_that_defaults_to_bfloat16(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE PAIR THIS SCAFFOLD USED TO HAND EVERY NEW RESEARCHER, AND IT COULD NOT WORK.
+
+    Mutation: order the provisioned GPUs by price and take the first, without asking whether
+    the card can run the workload beside it. That is the shipped behaviour and it wrote
+    ``olmo-core-train`` against ``gpu-1xt4`` -- a workload whose entry point builds its
+    data-parallel config in bfloat16 and a T4, which is the one NVIDIA generation with
+    tensor cores and no bfloat16 in the silicon.
+
+    **NOTHING ANYWHERE ELSE COULD CATCH IT, WHICH IS WHY THE ASSERTION IS HERE.** The dtype
+    is set in code rather than in argv, so ``bfloat16_request_in`` reads a command carrying
+    no bfloat16 token and :mod:`edullm_platform.precision` documents at length that it
+    cannot see this. Measured in a fresh ``--depth 1`` clone on 2026-08-06: ``check``
+    returned exit 0, no refusals, ``approval_class: automatic`` -- so nobody was asked to
+    look -- and priced it at $25.25. The job then dies on the first kernel that needs the
+    format, after the instance has been obtained and billed.
+
+    The oracle is the guard rather than a shape name, which is what makes this a test the
+    catalog can move under. It asks the question the run asks: put the dtype the program
+    sets in code into the command, and see whether the platform would refuse the shape the
+    scaffold chose. A refusal means the scaffold suggested hardware its own workload cannot
+    use.
+    """
+    scaffold_a_training_repository(tmp_path)
+    runner = FakeRunner(git_answers(tmp_path))
+
+    invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+
+    profile = suggested(tmp_path)
+    card = gpu_of(profile)
+    assert card is not None and card.architecture.supports_bfloat16, (
+        f"a first spec suggests {profile.name}, whose card has no bfloat16, against a "
+        "workload whose entry point defaults to it"
+    )
+    # Said again through the guard that would refuse the submission, so the two cannot come
+    # apart: a capability table that stopped agreeing with the refusal would fail here.
+    require_bfloat16_only_where_the_hardware_has_it(
+        command=("bash", "-lc", f"python .edullm/train_on_corpus.py {BFLOAT16}"),
+        compute_profile=profile.name,
+        catalog=CATALOG,
+    )
+
+
+def test_the_shape_it_suggests_is_the_cheapest_of_the_ones_that_can_run_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The opposite mutation, and without it the fix above is satisfied by suggesting a p5.
+
+    Mutation: drop the price ordering, or filter to cards with bfloat16 and then take the
+    largest. Every assertion in the case above still passes, and a first ``check`` prices a
+    newcomer's smoke run on eight H100s. The suggestion's job is to be edited, so a wrong
+    default should still fail towards the cheaper end -- of the shapes that can run at all,
+    which is the only clause that changed.
+
+    Read out of the catalog rather than written down, so promoting a cheaper card with the
+    format moves this test rather than breaking it.
+    """
+    scaffold_a_training_repository(tmp_path)
+    runner = FakeRunner(git_answers(tmp_path))
+
+    invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+
+    cheapest = min(
+        (
+            profile
+            for profile in CATALOG.compute_profiles
+            if profile.provisioned
+            and profile.accelerator == "gpu"
+            and (card := gpu_of(profile)) is not None
+            and card.architecture.supports_bfloat16
+        ),
+        key=lambda profile: (profile.hourly_rate_usd, profile.name),
+    )
+
+    assert suggested(tmp_path).name == cheapest.name
+
+
+def test_a_card_without_bfloat16_is_written_with_the_two_spellings_that_would_be_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: print the sentence on every scaffold, or on none of them.
+
+    Both halves are asserted because either alone is passed by a constant. A scaffold that
+    always prints it puts six lines about hardware nobody chose into the file every
+    researcher opens; one that never prints it leaves ``--compute gpu-1xt4`` looking like an
+    ordinary saving, which is the whole trap wearing a flag.
+
+    What it has to name is the two spellings, because they are the only thing that moves
+    this run from a billed failure to a free refusal: the guard reads command text, the
+    program sets its dtype in code, and writing the dtype in is what puts the run back in
+    the guard's view. The scaffold will not write it in unasked -- ``--param-dtype`` is a
+    flag OLMo-core's entry point happens to have and somebody else's does not.
+    """
+    scaffold_a_training_repository(tmp_path)
+    runner = FakeRunner(git_answers(tmp_path))
+
+    invoke(
+        [*FIRST_CHECK, "--compute", "gpu-1xt4"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+    chosen = (tmp_path / ".edullm" / "run.yaml").read_text(encoding="utf-8")
+    (tmp_path / ".edullm" / "run.yaml").unlink()
+    invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+    defaulted = (tmp_path / ".edullm" / "run.yaml").read_text(encoding="utf-8")
+
+    assert "no bfloat16 in the hardware" in chosen
+    assert BFLOAT16 in chosen and "--param-dtype bfloat16" in chosen
+    assert "no bfloat16" not in defaulted
+    # The comment is a comment: the file still reads back as the spec it renders.
+    assert load_spec(tmp_path / ".edullm" / "run.yaml").suggested_compute is not None
+
+
+def test_a_turing_shape_the_researcher_chose_is_written_rather_than_overruled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: apply the bfloat16 filter to ``--compute`` as well as to the default.
+
+    A declared profile is a decision somebody made and a suggestion is one this tool made,
+    and the fix above is only about the second. fp16 with loss scaling on a T4 is a real
+    recipe, ``precision`` refuses no command that does not ask for the format, and a
+    scaffold that quietly wrote a different shape from the one on the command line would be
+    the worse failure of the two: it costs more per hour than the researcher asked for, and
+    nothing in the file says the tool overruled them.
+    """
+    scaffold_a_training_repository(tmp_path)
+    runner = FakeRunner(git_answers(tmp_path))
+
+    invoke(
+        [*FIRST_CHECK, "--compute", "gpu-1xt4"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert suggested(tmp_path).name == "gpu-1xt4"
+
+
+def test_the_default_is_a_run_the_platform_would_refuse_on_the_shape_it_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control, which is what makes the case above evidence rather than a tautology.
+
+    Mutation: give ``TURING`` ``supports_bfloat16=True``, or stop calling ``precision`` from
+    the scaffold at all. Both leave every other case here green -- the first because the
+    filter then excludes nothing and the cheapest GPU is a T4 again with a table saying that
+    is fine, the second because ``gpu-1xt4`` and ``gpu-1xl4`` are both shapes the catalog
+    prices and nothing else compares them.
+
+    So the same command is put to the guard twice, on the shape the scaffold used to write
+    and on the one it writes now, and the two answers have to differ. This is the pair the
+    brief asks to be proved in both directions, on the case that matters: the dtype is not
+    in the command the scaffold wrote, so it is supplied here exactly as the program supplies
+    it to itself.
+    """
+    scaffold_a_training_repository(tmp_path)
+    runner = FakeRunner(git_answers(tmp_path))
+
+    invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+    spec: RunSpec = load_spec(tmp_path / ".edullm" / "run.yaml")
+    as_the_program_sets_it = (*spec.argv[:-1], f"{spec.argv[-1]} {BFLOAT16}")
+
+    with pytest.raises(SubmissionRefusedError) as refused:
+        require_bfloat16_only_where_the_hardware_has_it(
+            command=as_the_program_sets_it, compute_profile="gpu-1xt4", catalog=CATALOG
+        )
+    require_bfloat16_only_where_the_hardware_has_it(
+        command=as_the_program_sets_it,
+        compute_profile=str(spec.suggested_compute),
+        catalog=CATALOG,
+    )
+
+    assert "no bfloat16 in the hardware" in str(refused.value)
+    assert spec.suggested_compute != "gpu-1xt4"
 
 
 def test_a_spec_that_is_not_one_is_named_field_by_field_and_not_by_pydantic(
