@@ -18,6 +18,8 @@ Then the guide for what you are actually doing:
 
 Nothing above needs anything installed. If you would rather work in a terminal than in the Actions UI, `uv tool install --force git+https://github.com/edu-llm/platform` puts the `edullm` command on your path. It prices a submission offline before it sends it, and submits, follows and stops runs. Re-running that same line is how you upgrade, and do not reach for `uv tool upgrade`: for a tool installed from git it answers `Nothing to upgrade` however far behind you are. [From a terminal](guides/the-platform.md#from-a-terminal) is the whole of it.
 
+Working through Cursor, Claude Code or Codex rather than typing the commands yourself? [**A skill for your coding agent**](skills/README.md) is one file to drop into your own repository, and it is what stops an agent writing a shell script that talks to AWS.
+
 ## What it does
 
 You get CPU and GPU machines from a single T4 up to eight H100s, without touching AWS. Picking a workload profile fixes the machine, the time limit, the retry limit and the checkpointing together, so there is one decision rather than four.
