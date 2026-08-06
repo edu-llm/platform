@@ -151,6 +151,28 @@
         {
           "action_match": {
             "actions": [
+              "s3:CreateBucket",
+              "s3:Get*",
+              "s3:ListBucket",
+              "s3:PutBucketPublicAccessBlock",
+              "s3:PutEncryptionConfiguration",
+              "s3:PutLifecycleConfiguration"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:s3:::edullm-scratch"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
               "s3:GetObject",
               "s3:GetObjectVersion",
               "s3:PutObject",
@@ -694,7 +716,7 @@
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-08-06T01:37:48Z",
+  "observed_at": "2026-08-06T02:04:14Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "sbsandbox-intern-edullm-infra-deployer",
   "source": "aws",

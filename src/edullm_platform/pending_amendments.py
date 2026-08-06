@@ -93,9 +93,6 @@ __all__ = [
     "releases_beyond_their_window",
 ]
 
-DEPLOYER_ROLE_NAME: Final = "sbsandbox-intern-edullm-infra-deployer"
-
-
 class PendingAmendmentError(ValueError):
     """A recorded pending amendment is not something a reader could act on."""
 
@@ -239,279 +236,36 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
     # records for one role would each describe an account state that never exists, and after
     # the same apply three of them would be failing and unclearable rather than one of them
     # being shorter.
-    amendments: tuple[PendingAmendment, ...] = (
-        PendingAmendment(
-            role_name="sbsandbox-intern-edullm-ecr-publisher",
-            reason=(
-                "Registering edullm-p1 widens this role in the three places a registration "
-                "always widens it: the repository_id the trust policy accepts, the OIDC "
-                "subject it matches, and the ECR repository ARN the inline policy may push "
-                "to. All three are template edits, and this is an IAM stack, so the account "
-                "catches up from a laptop rather than from CI. Until it does, a build in "
-                "edullm-p1 presents a repository id the trust policy does not list and dies "
-                "at AssumeRole with a message that reads like a broken role ARN. Nothing "
-                "else is waiting on it: the ECR repository itself is a CloudFormation "
-                "resource that deploy-phase1-ecr.yml creates when this merges."
-            ),
-            cleared_by=(
-                "aws cloudformation deploy --stack-name "
-                "sbsandbox-intern-edullm-ecr-publisher-iam --template-file "
-                "infra/iam/ecr-publisher-role.yaml --capabilities CAPABILITY_NAMED_IAM "
-                "--no-fail-on-empty-changeset --profile sbsandbox --region us-east-1, then "
-                "tools/capture_phase1_evidence.py --target roles, then delete this record"
-            ),
-            findings=(
-                RoleDriftFinding(
-                    direction=DriftDirection.NARROWER,
-                    element="trust policy statement 1 conditions",
-                    detail=(
-                        "StringEquals token.actions.githubusercontent.com:repository_id "
-                        "does not accept values the template does: 1314176548"
-                    ),
-                ),
-                RoleDriftFinding(
-                    direction=DriftDirection.NARROWER,
-                    element="trust policy statement 1 conditions",
-                    detail=(
-                        "StringLike token.actions.githubusercontent.com:sub does not "
-                        "accept values the template does: "
-                        "repo:edu-llm@306859726/edullm-p1@1314176548:ref:refs/heads/*"
-                    ),
-                ),
-                RoleDriftFinding(
-                    direction=DriftDirection.NARROWER,
-                    element="inline policy 'publish-research-images' statement 2 resources",
-                    detail=(
-                        "the template declares resources the deployed role does not: "
-                        "arn:<partition>:ecr:<region>:<account>:repository/"
-                        "sbsandbox-intern-edullm-p1"
-                    ),
-                ),
-            ),
-        ),
-        PendingAmendment(
-            role_name="sbsandbox-intern-edullm-batch-execution",
-            reason=(
-                "The ecr:BatchGetImage grant that lets the container start. Same "
-                "registration and same omission as the admission states record below: "
-                "tools/register_repository.py writes infra/ecr-repositories.yaml and "
-                "infra/iam/ecr-publisher-role.yaml and leaves every other file that "
-                "enumerates one ARN per submittable repository alone. Until the stack is "
-                "applied a job naming edullm-p1 is placed, gets its node, and then cannot "
-                "pull the image, which Batch reports as a CannotPullContainerError naming "
-                "the image rather than the grant."
-            ),
-            cleared_by=(
-                "The deploy-phase3-batch.yml run that fires on merge to main, then "
-                "tools/capture_phase3_evidence.py, then delete this record. CI applies the "
-                "Phase 3 stacks, so this needs a workflow run rather than a person."
-            ),
-            findings=(
-                RoleDriftFinding(
-                    direction=DriftDirection.NARROWER,
-                    element=(
-                        "inline policy 'pull-the-image-and-open-the-log-stream' "
-                        "statement 2 resources"
-                    ),
-                    detail=(
-                        "the template declares resources the deployed role does not: "
-                        "arn:<partition>:ecr:<region>:<account>:repository/"
-                        "sbsandbox-intern-edullm-p1"
-                    ),
-                ),
-            ),
-        ),
-        PendingAmendment(
-            role_name="sbsandbox-intern-edullm-batch-instance",
-            reason=(
-                "The instance-side half of the same pull. The execution role authorises the "
-                "pull and this role is what the ECS agent on the node presents, so both have "
-                "to name the repository or the image does not arrive. One registration, one "
-                "deploy, two records, because the findings are compared per role."
-            ),
-            cleared_by=(
-                "The deploy-phase3-batch.yml run that fires on merge to main, then "
-                "tools/capture_phase3_evidence.py, then delete this record."
-            ),
-            findings=(
-                RoleDriftFinding(
-                    direction=DriftDirection.NARROWER,
-                    element=(
-                        "inline policy 'join-the-batch-managed-ecs-cluster' "
-                        "statement 3 resources"
-                    ),
-                    detail=(
-                        "the template declares resources the deployed role does not: "
-                        "arn:<partition>:ecr:<region>:<account>:repository/"
-                        "sbsandbox-intern-edullm-p1"
-                    ),
-                ),
-            ),
-        ),
-        PendingAmendment(
-            role_name="sbsandbox-intern-edullm-admission-states",
-            reason=(
-                "The other half of registering edullm-p1, and the half tools/"
-                "register_repository.py does not write. That tool amends "
-                "infra/ecr-repositories.yaml and infra/iam/ecr-publisher-role.yaml and "
-                "nothing else, so the five places that enumerate one ARN per submittable "
-                "repository were left behind: this role's ecr:DescribeImageScanFindings, "
-                "and the four ecr:BatchGetImage grants in infra/iam/batch-roles.yaml and "
-                "infra/iam/batch-gpu-roles.yaml. All five are amended here. Only this one "
-                "reports drift, because it is the only one of the five whose role has a "
-                "committed capture. Until the stack is applied, a submission naming "
-                "edullm-p1 is refused at the scan-findings read with a message about the "
-                "image rather than about the grant."
-            ),
-            cleared_by=(
-                "The deploy-phase2-admission.yml run that fires on merge to main, then "
-                "tools/capture_phase2_evidence.py, then delete this record. Unlike the "
-                "publisher role above this needs no laptop: the Phase 2 stacks are applied "
-                "by CI, so the window is one workflow run rather than one person."
-            ),
-            findings=(
-                RoleDriftFinding(
-                    direction=DriftDirection.NARROWER,
-                    element="inline policy 'run-admission-workflow' statement 7 resources",
-                    detail=(
-                        "the template declares resources the deployed role does not: "
-                        "arn:<partition>:ecr:<region>:<account>:repository/"
-                        "sbsandbox-intern-edullm-p1"
-                    ),
-                ),
-            ),
-        ),
-        PendingAmendment(
-            role_name=DEPLOYER_ROLE_NAME,
-            reason=(
-                "infra/scratch-bucket.yaml creates edullm-scratch, and every S3 grant this "
-                "role held was scoped to arn:aws:s3:::sbsandbox-intern-edullm-*, which that "
-                "name does not match, so the working tier is a stack only a laptop can "
-                "apply. It is granted by its exact name rather than by widening that scope "
-                "to edullm-*, because a wildcard there would bring edullm-data and "
-                "edullm-landing inside a pipeline's reach and this role holds "
-                "s3:PutBucketPolicy. The actions are read off what that template actually "
-                "sets: CreateBucket, PutLifecycleConfiguration, PutBucketPublicAccessBlock "
-                "and PutEncryptionConfiguration, with the configuration reads the "
-                "AWS::S3::Bucket handler makes on every Read, and no s3:DeleteBucket because "
-                "the template retains the bucket on delete and on replace. Until the stack "
-                "is applied the CI deploy of sbsandbox-intern-edullm-scratch is refused on "
-                "CreateBucket, and the refusal reads like a broken template rather than a "
-                "missing grant."
-                "\n\n"
-                "THIS RECORD CARRIED FOUR FINDINGS AND THE ACCOUNT HAS CAUGHT UP WITH THREE "
-                "OF THEM. The expiry janitor's two iam:PassRole resources, the notifier's "
-                "one, and the EventBridge Scheduler statement all landed when "
-                "sbsandbox-intern-edullm-infra-deployer-iam was applied at 00:24 UTC on "
-                "2026-08-06, eight hours after the capture this is compared against was "
-                "taken. The account was read again and reports the S3 statement below and "
-                "nothing else, and fixtures/evidence/phase-1/roles/ carries a capture taken "
-                "after the apply, because the equality is against the committed capture and "
-                "trimming the record without re-taking it would only move which of the two "
-                "the record disagrees with. Read from the account rather than inferred from "
-                "the fact that an apply happened: which of four differences a partial apply "
-                "closed is not something a deploy log answers, and guessing wrong leaves a "
-                "record that describes a state nothing is in."
-                "\n\n"
-                "THAT THE RECORD STOPPED FITTING IS THE EQUALITY CHECK WORKING AND NOT A "
-                "DEFECT, WHICH IS WORTH SAYING BECAUSE THE TEMPTING REPAIR IS THE WRONG ONE. "
-                "`explains` compares the findings in both directions, so three of four going "
-                "away makes the record fail rather than go on quietly covering the fourth -- "
-                "which is the entire reason it is an equality and not a containment. The "
-                "repair is to trim it to what the account still shows. Relaxing the "
-                "comparison so that a record keeps explaining a subset of itself would buy "
-                "one green run and give every later record the ability to absorb a "
-                "difference nobody wrote down."
-            ),
-            cleared_by=(
-                "Applying sbsandbox-intern-edullm-notifier-iam and then "
-                "sbsandbox-intern-edullm-infra-deployer-iam from a laptop with an SSO "
-                "session, per infra/README.md under 'The expiry janitor's stacks' and 'The "
-                "notifier', and re-taking the Phase 1 role capture. Until it is applied the "
-                "CI deploys of sbsandbox-intern-edullm-janitor and "
-                "sbsandbox-intern-edullm-notifier are refused on CreateFunction, and the "
-                "refusal reads like a broken template rather than a missing grant; the CI "
-                "deploy of sbsandbox-intern-edullm-scratch is refused on CreateBucket, which "
-                "reads the same way. That apply needs --s3-bucket "
-                "sbsandbox-intern-edullm-artifacts --s3-prefix "
-                "cloudformation-templates/checksummed, because this template is past the "
-                "51200-byte limit on a template submitted inline."
-            ),
-            findings=(
-                RoleDriftFinding(
-                    direction=DriftDirection.NARROWER,
-                    element="inline policy 'deploy-phase2-admission-stacks'",
-                    detail=(
-                        "the template declares a statement the deployed role does not: Allow "
-                        "Action [s3:CreateBucket, s3:Get*, s3:ListBucket, "
-                        "s3:PutBucketPublicAccessBlock, s3:PutEncryptionConfiguration, "
-                        "s3:PutLifecycleConfiguration] Resource "
-                        "[arn:<partition>:s3:::edullm-scratch]"
-                    ),
-                ),
-            ),
-        ),
-        # A SECOND RECORD BECAUSE IT IS A SECOND ROLE, WHICH IS THE SPLIT THIS REGISTRY
-        # WANTS. The note above refuses two records for one role, because a capture reports
-        # the sum of the drift on it and two records would each describe an account state
-        # that never exists. That reasoning is about one role. This is a different role and
-        # a different stack, and applying one does nothing for the other.
-        #
-        # IT IS ALSO THE MILDEST RECORD THIS REGISTRY HAS HELD, WHICH IS WORTH SAYING
-        # PLAINLY BECAUSE EVERY OTHER ENTRY HERE DESCRIBES SOMETHING BROKEN UNTIL IT IS
-        # DEPLOYED. Five GPU profiles were unsubmittable for two days behind one of them.
-        # This one blocks nothing at all: the field it would improve is already being
-        # recorded from the entity tag the listing returns.
-        PendingAmendment(
-            role_name="sbsandbox-intern-edullm-lifecycle-lambda",
-            reason=(
-                "infra/iam/lifecycle-lambda-role.yaml adds s3:GetObjectAttributes to the "
-                "record-what-batch-reported inline policy, scoped to "
-                "sbsandbox-intern-edullm-outputs/teams/*/runs/*/checkpoints/*, which is the "
-                "same shape the s3:ListBucket condition beside it uses. It is what lets the "
-                "recorder put S3's own attested CRC32C into CheckpointManifest.payload "
-                "instead of the ETag the listing already returns."
-                "\n\n"
-                "NOTHING IS BROKEN WHILE THIS IS OPEN. lifecycle_projection._attested_digests "
-                "catches the refusal, stops asking after the first one rather than paying an "
-                "AccessDenied per object, and falls back to the entity tags it already had. "
-                "The record then says listing_etag, which is a true statement about a real "
-                "payload-derived digest -- weaker only in that an ETag is a function of how "
-                "an object was uploaded as well as of its bytes. Two runs holding different "
-                "weights are visible either way, which is the whole point of the field. If "
-                "this is never applied the record says listing_etag forever and is not wrong "
-                "about anything."
-                "\n\n"
-                "It is s3:GetObjectAttributes and deliberately not a second s3:GetObject, "
-                "which the metrics.json statement above it shows is not forbidden here. "
-                "GetObjectAttributes returns the checksum, the size and the part layout and "
-                "cannot return a byte of the object, so the recorder gains the ability to "
-                "say what a checkpoint hashes to without gaining the ability to read what "
-                "any team's run produced. A GetObject wide enough to cover checkpoints would "
-                "be a grant over every weight every team wrote, to compute something S3 has "
-                "already computed."
-            ),
-            cleared_by=(
-                "Deploying the sbsandbox-intern-edullm-phase3-lifecycle-iam stack from a "
-                "laptop with an SSO session, per infra/README.md, then re-capturing the "
-                "Phase 3 roles. The re-capture is what ends this record: the findings are "
-                "compared for equality, so it fails the moment the account stops differing "
-                "in exactly this way."
-            ),
-            findings=(
-                RoleDriftFinding(
-                    direction=DriftDirection.NARROWER,
-                    element="inline policy 'record-what-batch-reported'",
-                    detail=(
-                        "the template declares a statement the deployed role does not: Allow "
-                        "Action [s3:GetObjectAttributes] Resource "
-                        "[arn:<partition>:s3:::sbsandbox-intern-edullm-outputs/teams/*/runs/"
-                        "*/checkpoints/*]"
-                    ),
-                ),
-            ),
-        ),
-    )
+    #
+    # ALL SIX RECORDS WERE CLEARED ON 2026-08-06 BY ONE SITTING OF HAND APPLIES. Five of
+    # the six were one registration: #250 registered edullm-p1, and
+    # tools/register_repository.py writes infra/ecr-repositories.yaml and
+    # infra/iam/ecr-publisher-role.yaml and nothing else, so the repository had to be added
+    # by hand to the publisher, both Batch roles, both GPU Batch roles and the admission
+    # states role. Four stacks carried that: sbsandbox-intern-edullm-ecr-publisher-iam,
+    # -phase3-batch-iam, -phase4-gpu-iam and -phase2-admission-service-roles. The deployer's
+    # edullm-scratch grant cleared with -infra-deployer-iam and the recorder's
+    # s3:GetObjectAttributes with -phase3-lifecycle-iam. Six records covered seven roles'
+    # worth of drift, because the two GPU roles carry no committed capture and so reported
+    # none of it.
+    #
+    # THREE OF THE SIX NAMED A WORKFLOW AS WHAT WOULD END THEM AND NO WORKFLOW COULD HAVE.
+    # The batch-execution, batch-instance and admission-states records each said a
+    # deploy-phase3-batch.yml or deploy-phase2-admission.yml run on merge to main would
+    # clear them. Neither workflow deploys the stack that holds those roles: the Phase 3 one
+    # applies phase3-outputs, phase3-network, phase3-batch, phase4-gpu, phase4-gpu-shapes,
+    # notifications, phase3-events and janitor, and the Phase 2 one applies phase2-lineage,
+    # phase2-artifacts and phase2-admission. Not one -iam stack appears in either, which is
+    # infra/README.md's "Why IAM is laptop-only" holding exactly as written. So those three
+    # records were waiting on an event that was never going to happen, and they would have
+    # stood until somebody read the workflow rather than the record.
+    #
+    # WHAT TO WRITE INSTEAD, BECAUSE THE FAILURE WAS CHEAP TO MAKE AND EXPENSIVE TO SPOT. A
+    # cleared_by naming a workflow is a prediction about that workflow's contents, and
+    # nothing here compares the two, so the register cannot tell a run that has not happened
+    # from a run that will never contain the stack. Where the role lives in an IAM stack,
+    # say the apply and say it is a laptop one.
+    amendments: tuple[PendingAmendment, ...] = ()
     declared = declared_role_templates()
     for amendment in amendments:
         if amendment.role_name not in declared:

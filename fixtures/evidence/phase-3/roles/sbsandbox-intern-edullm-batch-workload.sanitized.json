@@ -95,7 +95,7 @@
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-08-06T00:24:02Z",
+  "observed_at": "2026-08-06T02:04:34Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "sbsandbox-intern-edullm-batch-workload",
   "source": "aws",
