@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 
 import pytest
 
+from edullm_platform.cli.lane import SESSION_PLUGIN
 from edullm_platform.cli.main import main
 from edullm_platform.cli.preferences import DEFAULT_TEAM_FILE, PREFERENCES_DIRECTORY
 from edullm_platform.cli.workspace import CommandResult
@@ -66,6 +68,9 @@ class FakeRunner:
     def __init__(self, answers: Mapping[tuple[str, ...], CommandResult | Callable[[tuple[str, ...]], CommandResult]]) -> None:
         self._answers = dict(answers)
         self.calls: list[tuple[str, ...]] = []
+        #: Beside ``calls`` rather than zipped into it, because a case about the lane wants the
+        #: credential a call carried and every case that came before wants only the argv.
+        self.environments: list[dict[str, str]] = []
 
     def __call__(
         self,
@@ -73,8 +78,10 @@ class FakeRunner:
         *,
         cwd: Path | None = None,
         timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> CommandResult:
         self.calls.append(argv)
+        self.environments.append(dict(env or {}))
         matches = [prefix for prefix in self._answers if argv[: len(prefix)] == prefix]
         if not matches:
             raise UnexpectedCommandError(
@@ -119,6 +126,65 @@ def git_answers(
         ("git", "branch", "--remotes", "--contains"): ok(
             "  origin/edullm/an-arm\n" if pushed else ""
         ),
+    }
+
+
+#: The account id every lane fixture answers with. AWS reserves it for documentation, and
+#: tests/test_evidence.py scans the tracked tree for anything shaped like a real one and allows
+#: exactly this. Twelve zeroes is rejected there, so a fixture cannot quietly use one.
+FAKE_ACCOUNT = "123456789012"
+
+LANE_INSTANCE = "i-0000000000000aaaa"
+
+
+def lane_answers(
+    *,
+    existing: str | None = None,
+    remote_exit: int | None = 0,
+    agent: str = "Online",
+) -> dict[tuple[str, ...], CommandResult]:
+    """Every AWS call a lane verb makes, answered as a laptop already holding a session.
+
+    ``remote_exit`` of ``None`` is a session that dropped: the stream carries output and no
+    sentinel, which is what a Spot interruption in the middle of a command looks like.
+
+    Which repository the caller is standing in is :func:`git_answers`' business and not this
+    one's. It changes no AWS answer, and the case the whole slice turns on -- a directory nothing
+    registers -- is expressed by passing it there.
+    """
+    sentinel = "" if remote_exit is None else f"\nedullm-exit:{remote_exit}\n"
+    return {
+        ("aws", "sts", "get-caller-identity"): ok(
+            json.dumps(
+                {
+                    "Account": FAKE_ACCOUNT,
+                    "Arn": (
+                        f"arn:aws:sts::{FAKE_ACCOUNT}:assumed-role/Intern-caiiris-sbsandbox"
+                        "/broker-caiiris-1785873426"
+                    ),
+                }
+            )
+        ),
+        ("aws", "sts", "assume-role"): ok(
+            json.dumps(
+                {
+                    "Credentials": {
+                        "AccessKeyId": "AKIAEXAMPLE",
+                        "SecretAccessKey": "secret",
+                        "SessionToken": "token",
+                        "Expiration": "2026-08-06T00:00:00Z",
+                    }
+                }
+            )
+        ),
+        ("aws", "ssm", "get-parameter"): ok("ami-000000000000000aa\n"),
+        ("aws", "ec2", "describe-subnets"): ok(json.dumps(["subnet-000000000000000bb"])),
+        ("aws", "ec2", "describe-security-groups"): ok(json.dumps(["sg-000000000000000cc"])),
+        ("aws", "ec2", "describe-instances"): ok(json.dumps([existing] if existing else [])),
+        ("aws", "ec2", "run-instances"): ok(f"{LANE_INSTANCE}\n"),
+        ("aws", "ssm", "describe-instance-information"): ok(f"{agent}\n"),
+        ("aws", "s3", "sync"): ok(""),
+        ("aws", "ssm", "start-session"): ok(f"hello from the machine{sentinel}"),
     }
 
 
@@ -178,6 +244,7 @@ def invoke(
     monkeypatch: pytest.MonkeyPatch,
     login: str | None = SUBMITTER,
     config_dir: Path = CONFIG_DIR,
+    plugin: bool = True,
 ) -> tuple[int, str, str]:
     """Run the CLI as a person would, with both streams captured and no ambient identity.
 
@@ -202,9 +269,29 @@ def invoke(
     the directory rather than about its contents: ``check`` now names which reviewed
     configuration answered, and a case asserting that has to be able to point it somewhere it
     can recognise in the output.
+
+    ``plugin`` puts a Session Manager plugin on PATH, or keeps one off it, and is the same kind
+    of measure as the two directories above. The lane verbs check for it with ``shutil.which``,
+    which reads the developer's own laptop: without this, whether the lane cases pass would
+    depend on whether that laptop has the plugin installed, and the case that asserts the
+    refusal would fail on a laptop that does. PATH is prepended rather than replaced, because
+    the runner is a fake and the ``git`` this suite does not shell out to is still wanted by
+    anything that looks.
     """
     monkeypatch.setenv("GH_CONFIG_DIR", str(cwd / "_no-gh-config"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home(cwd)))
+    tools = cwd / "_tools"
+    tools.mkdir(exist_ok=True)
+    if plugin:
+        stub = tools / SESSION_PLUGIN
+        stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        stub.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{tools}{os.pathsep}{os.environ['PATH']}")
+    else:
+        # THE WHOLE PATH AND NOT A PREPEND, because a prepend cannot hide a plugin that is
+        # further along it. Nothing under test shells out for real -- the runner is a fake --
+        # so an empty PATH answers the one question this branch is asking.
+        monkeypatch.setenv("PATH", str(tools))
     if login is None:
         monkeypatch.delenv("EDULLM_GITHUB_LOGIN", raising=False)
     else:

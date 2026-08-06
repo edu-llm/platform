@@ -94,6 +94,7 @@ from edullm_platform.phase3_evidence import (
 from edullm_platform.publisher_denials import assumed_role_identity
 from edullm_platform.role_drift import (
     DATASET_VALIDATOR_ROLE_TEMPLATES,
+    LANE_ROLE_TEMPLATES,
     PHASE3_ROLE_TEMPLATES,
     RESEARCHER_ROLE_TEMPLATES,
     PolicyNotComparableError,
@@ -1500,6 +1501,19 @@ def capture_dataset_validator_target(arguments: argparse.Namespace) -> int:
     )
 
 
+def capture_lane_target(arguments: argparse.Namespace) -> int:
+    """The role a lane machine wears, once it exists to be read.
+
+    A target of its own for the reason written above ``LANE_ROLE_TEMPLATES``: one registry per
+    unit of work, so a role belonging to the exploration route drifting cannot fail a capture of
+    Phase 3's four and vice versa.
+
+    Nothing here is new machinery. ``capture_one_registry`` walks whichever registry it is handed,
+    so a target is a registry plus an output directory, and both are the exploration route's.
+    """
+    return capture_one_registry(arguments, target_name="lane", role_templates=LANE_ROLE_TEMPLATES)
+
+
 def capture_phase2_roles_target(arguments: argparse.Namespace) -> int:
     """The three roles the admission gate runs as, compared to the templates declaring them.
 
@@ -1708,6 +1722,7 @@ CAPTURE_TARGETS: Final[dict[str, Callable[[argparse.Namespace], int]]] = {
     "account": capture_account_target,
     "compute-environment": capture_compute_environment_target,
     "dataset-validator": capture_dataset_validator_target,
+    "lane": capture_lane_target,
     "phase2-roles": capture_phase2_roles_target,
     "researcher-role": capture_researcher_role_target,
     "roles": capture_roles_target,

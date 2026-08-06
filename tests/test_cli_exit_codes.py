@@ -44,7 +44,15 @@ from edullm_platform.cli.main import (
     NOT_BUILT_YET,
     build_parser_and_verbs,
 )
-from tests.cli_support import FakeRunner, failed, git_answers, invoke, ok, write_spec
+from tests.cli_support import (
+    FakeRunner,
+    failed,
+    git_answers,
+    invoke,
+    lane_answers,
+    ok,
+    write_spec,
+)
 
 RUN_ID = "run_019fd2a1-4e07-7a3c-9d55-1b2f8c0e6a41"
 
@@ -58,6 +66,8 @@ A_VALUE_FOR = {
     "--experiment": "an-experiment",
     "--dataset": "none",
     "--detail": "what I have already tried",
+    "--project": "mixlaw",
+    "--compute": "gpu-1xt4",
 }
 
 #: Which value to give a verb whose positional takes ``choices``, where the choices do not
@@ -146,7 +156,29 @@ def argv_for(verb: str) -> list[str]:
     # names it, because both halves are exit paths and both are what these cases are about.
     if "run_id" in usage and RUN_ID not in argv:
         argv.append(RUN_ID)
+    # A lane verb's command is optional to argparse and required by the verb, which the
+    # bracket-stripping above cannot see: ``run`` with no command prints a sentence and exits 2
+    # without reaching a single call, so every case below would be asserting about a verb it
+    # never drove. ``true`` because these cases are about how the binary exits and not about
+    # what ran. The separator is the point of the flag and is what
+    # ``test_the_command_s_own_flags_reach_it_rather_than_this_binary`` is about.
+    if "command" in usage:
+        argv += ["--", "true"]
     return argv
+
+
+def driving(verb: str, *extra: str) -> list[str]:
+    """One verb with enough to reach its work, plus flags meant for this binary.
+
+    APPENDING WOULD PUT THEM ON THE WRONG SIDE OF A LANE VERB'S ``--``. Everything after that
+    separator belongs to the researcher's own program, so ``run ... -- true --nonesuch x`` is
+    not a mistake at all: it runs ``true --nonesuch x`` on a machine and exits 0, and a case
+    about how a typo is reported would pass while reporting nothing. Spliced in ahead of the
+    separator, which is where somebody typing a flag for ``edullm`` would put it.
+    """
+    argv = argv_for(verb)
+    at = argv.index("--") if "--" in argv else len(argv)
+    return [verb, *argv[:at], *extra, *argv[at:]]
 
 
 SUBMIT_RUN = 19407766
@@ -227,6 +259,11 @@ def a_platform(
     answers[("gh", "issue", "create")] = (
         gh if gh is not None else ok("https://github.com/edu-llm/platform/issues/301\n")
     )
+    # The lane verbs drive aws rather than gh, and they are in the population these cases run
+    # over, so their calls belong here for the same reason ``gh issue create`` does. Merged
+    # after the gh answers and not before, so a case that hands one ``gh`` answer to every call
+    # still overrides the ones it means to.
+    answers.update(lane_answers())
     return FakeRunner(answers)
 
 
@@ -307,7 +344,7 @@ def test_a_flag_no_verb_takes_is_the_same_class_of_mistake_on_every_verb(
     runner = a_platform(tmp_path)
 
     code = code_of(
-        [verb, *argv_for(verb), "--nonesuch", "x"],
+        driving(verb, "--nonesuch", "x"),
         runner=runner,
         cwd=tmp_path,
         monkeypatch=monkeypatch,
@@ -337,7 +374,7 @@ def test_a_number_that_is_not_a_number_is_one_class_whichever_flag_carried_it(
 
     codes = {
         verb: code_of(
-            [verb, *argv_for(verb), flag, "nope"],
+            driving(verb, flag, "nope"),
             runner=runner,
             cwd=tmp_path,
             monkeypatch=monkeypatch,
@@ -518,7 +555,14 @@ def test_an_interrupt_is_130_and_a_sentence_rather_than_a_traceback(
         raise KeyboardInterrupt
 
     runner = a_platform(tmp_path)
-    monkeypatch.setattr(runner, "_answers", {("git",): interrupted, ("gh",): interrupted})
+    monkeypatch.setattr(
+        runner,
+        "_answers",
+        # ``aws`` beside the other two because the lane verbs drive it and nothing else, so a
+        # dict naming only git and gh would meet FakeRunner's refusal to invent an answer on
+        # those verbs and report a fixture gap as a missing interrupt handler.
+        {("git",): interrupted, ("gh",): interrupted, ("aws",): interrupted},
+    )
 
     code, _, err = invoke(
         [verb, *argv_for(verb)], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch

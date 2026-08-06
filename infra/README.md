@@ -2067,3 +2067,83 @@ aws logs filter-log-events \
 ```
 
 Anything other than `0` means every message is coming from the fallback.
+## The exploration route's stacks, in dependency order
+
+| # | Stack | Template | Roles or resources | Applied from |
+| --- | --- | --- | --- | --- |
+| 1 | `sbsandbox-intern-edullm-work` | `infra/work-bucket.yaml` | the `edullm-work` bucket | laptop |
+| 2 | `sbsandbox-intern-edullm-lane-instance-iam` | `infra/iam/lane-instance-role.yaml` | `edullm-lane-instance` and its instance profile | laptop |
+
+Both from a laptop, and the first one is not an IAM stack.
+`sbsandbox-intern-edullm-infra-deployer` scopes every S3 grant it holds to
+`arn:aws:s3:::sbsandbox-intern-edullm-*`, and the bucket is `edullm-work`, so CI is denied at
+`CreateBucket`. Widening that scope is itself a hand-applied IAM change, to let a pipeline create
+one bucket that is created once.
+
+Stack 1 goes first because stack 2 grants against the bucket's ARN. IAM does not require the
+resource of a grant to exist, so the order is not forced, and creating the target first costs
+nothing and getting it wrong is hard to see.
+
+### Deploying stack 1, the bucket
+
+```bash
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-work \
+  --template-file infra/work-bucket.yaml \
+  --profile sbsandbox \
+  --region us-east-1
+```
+
+Then read the account back rather than the template:
+
+```bash
+aws s3api get-bucket-lifecycle-configuration \
+  --bucket edullm-work \
+  --profile sbsandbox --region us-east-1
+
+aws s3api get-public-access-block \
+  --bucket edullm-work \
+  --profile sbsandbox --region us-east-1
+```
+
+Two rules must come back, `expire-working-objects` and `abort-incomplete-multipart-uploads`, and
+all four public-access flags must be true. No `--capabilities` flag, because the stack creates no
+named IAM resource.
+
+### Deploying stack 2, the lane instance role
+
+```bash
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-lane-instance-iam \
+  --template-file infra/iam/lane-instance-role.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --profile sbsandbox \
+  --region us-east-1
+```
+
+`CAPABILITY_NAMED_IAM` rather than `CAPABILITY_IAM`, because the role and the instance profile are
+both named and CloudFormation refuses a named IAM resource without it.
+
+Then read the role back, as after every deploy above:
+
+```bash
+aws iam get-role \
+  --role-name edullm-lane-instance \
+  --profile sbsandbox --region us-east-1
+
+aws iam list-attached-role-policies \
+  --role-name edullm-lane-instance \
+  --profile sbsandbox --region us-east-1
+
+aws iam get-instance-profile \
+  --instance-profile-name edullm-lane-instance \
+  --profile sbsandbox --region us-east-1
+```
+
+`PermissionsBoundary` must name `InternSandboxBoundary`. `AttachedPolicies` must hold exactly
+`AmazonSSMManagedInstanceCore` and nothing else, because a second attachment on the one principal
+nobody reviews is the widening least likely to be noticed. The instance profile must carry the
+role, and the profile name must be the one `run_instances_argv` passes as
+`--iam-instance-profile Name=`; a mismatch there fails a launch after a machine has been priced.
+Any bucket other than `edullm-work` in the inline policy means the machine reaches past the
+working tier and the role should be narrowed rather than left.

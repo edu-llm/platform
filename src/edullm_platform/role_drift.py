@@ -90,6 +90,8 @@ __all__ = [
     "EVIDENCE_ONLY_ROLE_FIELDS",
     "FOREIGN_ACCOUNT_PLACEHOLDER",
     "INFRA_DEPLOYER_ROLE_NAME",
+    "LANE_ROLE_CAPTURE_DIR",
+    "LANE_ROLE_TEMPLATES",
     "PHASE3_ROLE_TEMPLATES",
     "PHASE5_ROLE_TEMPLATES",
     "PUBLISHER_ROLE_NAME",
@@ -225,6 +227,17 @@ RESEARCHER_ROLE_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
 #: sibling of ``roles/`` is what keeps the reader above from reporting it as a capture nothing
 #: declares.
 RESEARCHER_ROLE_CAPTURE_DIR: Final = Path("fixtures") / "evidence" / "researcher-lane" / "roles"
+
+#: The exploration route's one role. A single entry rather than a pair, because the researcher
+#: role belongs to the population plan's registry and this one is the machine's.
+LANE_ROLE_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
+    ("edullm-lane-instance", "infra/iam/lane-instance-role.yaml"),
+)
+
+#: Where captures of the registry above are committed. A directory of its own, for the reason
+#: written above ``DATASET_VALIDATOR_CAPTURE_DIR``: the capture reader reports in both directions,
+#: so a directory is implicitly owned by exactly one registry.
+LANE_ROLE_CAPTURE_DIR: Final = Path("fixtures") / "evidence" / "lane" / "roles"
 
 #: What ``DeployedRoleEvidence`` carries that a template projection cannot: the evidence
 #: envelope. Derived rather than restated, so a field added to the evidence record has to

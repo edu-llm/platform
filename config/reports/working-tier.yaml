@@ -1,0 +1,48 @@
+# The four numbers edullm run and edullm shell read, and the one the work bucket's lifecycle
+# rule is held equal to.
+#
+# UNDER config/reports/ RATHER THAN config/, AND THAT IS WHAT KEEPS IT OFF THE RELEASE TRIGGER.
+# docs-frank/reference/system-overview.md names the configuration files that are the control
+# plane, and .github/workflows/release-tag.yml lists exactly six of them as paths an installed
+# CLI can observe. A seventh in config/ would either contradict that document or cut a release
+# on every edit to a disk size. config/reports/ is where operational limits that are not the
+# control plane already live, beside config/reports/checkpoint-acknowledgements.yaml and the
+# researcher lane's own settings.
+#
+# THE CONSEQUENCE IS WORTH KNOWING BEFORE CHANGING A NUMBER HERE. An installed CLI carries the
+# copy from the release it was installed at, and no release is cut when this file moves, so a
+# change here reaches researchers on their next re-install for some other reason. Every number
+# below is one where that lag is harmless. A number where it would not be belongs in config/.
+schema_version: 1
+
+# How long an object in edullm-work survives. Ninety days is a term: it outlasts the longest
+# thing anybody does in one sitting and it is short enough that a bucket nobody prunes does not
+# become a bill nobody can explain. The working tier is the one place in the design where the
+# rule is "yours until you promote it", and a promotion is a copy into landing, so nothing here
+# is the only copy of anything that matters.
+#
+# infra/work-bucket.yaml carries this same number as an ExpirationInDays and
+# tests/test_work_bucket_template.py holds the two equal, which is what stops the file and the
+# deployed rule disagreeing.
+object_expiry_days: 90
+
+# The root volume every lane machine boots on. The default on the deep-learning AMI is 30 GiB
+# against a base image that is most of that, and the account has already paid for the lesson:
+# docs-frank/superpowers/specs/2026-08-04-platform-buildout-design.md records three pre-training
+# arms killed by P-family instances booting on 30 GiB against a 37.2 GiB corpus, and the Batch
+# environment now boots on 500 GiB. Two hundred is the lane's share of that argument. It is a
+# gp3 volume, it is deleted with the instance, and anything worth keeping is in edullm-work.
+root_volume_gib: 200
+
+# How long a verb waits for a new machine to answer Systems Manager before giving up on it. Ten
+# minutes. The instance itself reaches running in about a minute and the agent registers shortly
+# after; the rest of the budget is for a shape that has to be found, which config/capacity.yaml
+# records as ranging from immediate to a wait. The verb prints what it is waiting for rather
+# than sitting silent, so this bound is the point at which waiting stops being useful rather
+# than the point at which anybody's patience runs out.
+boot_wait_seconds: 600
+
+# The port Jupyter binds on the instance and the port the forward offers on the laptop. Eight
+# eight eight eight is Jupyter's own default, which means a notebook started by hand on the
+# machine is reachable without anybody passing a flag.
+notebook_port: 8888
