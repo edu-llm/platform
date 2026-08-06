@@ -26,6 +26,7 @@ of somebody still exists.
 from __future__ import annotations
 
 import re
+import shlex
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
@@ -49,10 +50,23 @@ POLICY_PATH = PROJECT_ROOT / "config" / "policy.yaml"
 CAPACITY_PATH = PROJECT_ROOT / "config" / "capacity.yaml"
 CATALOGUE_PATH = PROJECT_ROOT / "config" / "workload-catalog.yaml"
 INFRA_README_PATH = PROJECT_ROOT / "infra" / "README.md"
+PYPROJECT_PATH = PROJECT_ROOT / "pyproject.toml"
 
 
 def catalogue() -> WorkloadCatalog:
     return load_yaml(CATALOGUE_PATH, WorkloadCatalog)
+
+
+def released_version() -> str:
+    """The version somebody who runs the install line in day one will end up holding.
+
+    Read out of ``pyproject.toml`` rather than out of the installed distribution, because a
+    contributor's environment is an editable install of this tree and the number a guide has
+    to be true about is the one this tree publishes.
+    """
+    found = re.search(r"^version = \"([^\"]+)\"", PYPROJECT_PATH.read_text(encoding="utf-8"), re.MULTILINE)
+    assert found is not None, "pyproject.toml declares no version"
+    return found.group(1)
 
 
 def researcher_facing() -> dict[str, str]:
@@ -1100,3 +1114,81 @@ def test_no_guide_denies_a_notification_channel_the_infrastructure_record_says_e
             "created and pointing at #edullm-runs. One of the two is stale and it is not "
             "the one under infra/"
         )
+
+
+def test_the_version_day_one_makes_a_reader_check_for_is_one_they_can_install() -> None:
+    """Mutation: raise the floor in day one above the version this repository releases.
+
+    The quoting bug shipped in the tool rather than on the platform, so merging the fix
+    repaired nobody: an install at 3.4.7 keeps sending unquoted commands until the person
+    holding it runs ``uv tool install --force`` again. Day one therefore makes a reader read
+    ``edullm --version`` back and names a floor, and a floor is a number that goes stale in
+    two ways. Above the released version it sends everybody chasing a tool that does not
+    exist. Below the release that fixed the thing it is not a floor at all, which is why the
+    lower bound here is the release the fix went out in rather than anything softer.
+    """
+    pages = researcher_facing()
+    floors = {
+        name: set(re.findall(r"read \*{0,2}(\d+\.\d+\.\d+) or higher", page))
+        for name, page in pages.items()
+    }
+
+    assert floors[DAY_ONE_GUIDE_PATH.name], (
+        "day-one.md names no version floor, so a reader with a 3.4.7 install is told to "
+        "run --version and given nothing to compare it against"
+    )
+    named = set().union(*floors.values())
+    assert len(named) == 1, (
+        f"the pages name more than one floor between them, {sorted(named)}: "
+        f"{ {name: sorted(found) for name, found in floors.items() if found} }. A reader "
+        "who follows two of these cannot tell which install is good enough"
+    )
+
+    floor = tuple(int(part) for part in next(iter(named)).split("."))
+    released = released_version()
+    assert floor >= (3, 4, 8), (
+        f"the guides ask for {next(iter(named))} or higher, which is below 3.4.8. 3.4.8 is "
+        "the release that stopped submit unquoting the command, so a lower floor clears an "
+        "install that still has the bug"
+    )
+    assert floor <= tuple(int(part) for part in released.split(".")), (
+        f"the guides ask for {next(iter(named))} or higher and this repository releases "
+        f"{released}, so nobody following the install line can satisfy it"
+    )
+
+
+def test_the_refusal_day_one_quotes_is_the_refusal_a_stale_install_earns() -> None:
+    """Mutation: reword the refusal day one quotes, or the guard that raises it.
+
+    A researcher on 3.4.7 meets this text and nothing else, two minutes after submitting,
+    and the recognisable part is what it says rather than that it was a refusal. So the
+    block is quoted verbatim and held against the guard that produces it, with the day-one
+    command as the input, because that is the command the thirty-five of them will run.
+
+    The advice on the last line is why quoting it matters. It tells them to quote the whole
+    program, they already did, and the tool took the quotes off between their terminal and
+    the form. The guide has to say that, and it can only say it while the words it is
+    talking about are the words that arrive.
+    """
+    from edullm_platform.contracts.validation import require_a_shell_command_that_kept_its_quotes
+
+    day_one = DAY_ONE_GUIDE_PATH.read_text(encoding="utf-8")
+    quoted = ["bash", "-lc", 'python .edullm/time_attention.py "$EDULLM_RUN_ID"']
+
+    # What 3.4.7 put on the form, and what the compile job then splits it back into.
+    unquoted = shlex.split(" ".join(quoted))
+    with pytest.raises(ValueError) as refusal:
+        require_a_shell_command_that_kept_its_quotes(unquoted)
+    printed = " ".join(str(refusal.value).split())
+
+    blocks = [" ".join(block.split()) for block in fenced_blocks(day_one)]
+    assert printed in blocks, (
+        "day-one.md does not quote the refusal a 3.4.7 install earns. The guard now says:"
+        f"\n\n{printed}\n\nQuote that, wrapped however the page wraps, or the one page a "
+        "newcomer reads describes a refusal they will not recognise when it arrives"
+    )
+
+    assert require_a_shell_command_that_kept_its_quotes(quoted) == quoted, (
+        "the guard now refuses the day-one command as it is actually quoted, which makes "
+        "the whole submission path unreachable rather than making this guide wrong"
+    )

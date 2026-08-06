@@ -201,7 +201,10 @@ The same loop without the Actions UI. One binary:
 
 ```
 uv tool install --force git+https://github.com/edu-llm/platform
+edullm --version
 ```
+
+**Read that version back, and read 3.4.8 or higher.** Below it, `submit` strips the quoting off your command on the way to the form and the compile job refuses the submission two minutes later. The fix travels with the install rather than with the platform, so an old install stays broken until that first line is run again. [Day one](day-one.md#install-the-tool-then-read-the-version-back) prints the refusal it earns, so you can recognise it.
 
 You need [uv](https://docs.astral.sh/uv/) and a `gh` that is logged in with `gh auth login`. That is the whole of it for the five verbs below. `check`, `submit`, `status`, `logs` and `cancel` drive `git` and `gh` rather than holding a credential of their own, so they can do what you can do and nothing more, and there is no AWS account anywhere in this. All five were run on 2026-08-06 with `AWS_PROFILE`, both key variables and both configuration paths pointed at nothing, and all five answered normally.
 

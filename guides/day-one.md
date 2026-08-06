@@ -2,15 +2,33 @@
 
 From nothing to a run that printed a number. Read this one and nothing else. Every command below was run on 2026-08-06 and what it printed is what is written here.
 
-## Install the tool
+## Install the tool, then read the version back
+
+Two commands, and the second one is a step rather than a note. Four seconds for the pair.
 
 ```
 uv tool install --force git+https://github.com/edu-llm/platform
+edullm --version
 ```
 
-Four seconds. Then `edullm --version`, which prints the version and the commit it was built from.
+**That has to read 3.4.8 or higher.** Look at it. An install at 3.4.7 or below sends a command the platform cannot run, and you find out two minutes later.
+
+Up to and including 3.4.7, `submit` rejoined your command with a plain space and lost the quoting on the way out. The day-one command below leaves as `bash -lc python .edullm/time_attention.py "$EDULLM_RUN_ID"`, the compile job splits it on the spaces, counts three words where `-lc` takes one, and refuses:
+
+```
+bash -lc reads exactly one word as the command, and this submission gives it 3. It would
+run `python` alone and hand the rest to it as $0, $1, $2 -- which starts, costs an
+instance, and exits without running your program. Quote the whole program: bash -lc
+'python .edullm/time_attention.py $EDULLM_RUN_ID'
+```
+
+The count moves with your command. The advice on the last line is the trap: you did quote the whole program, the tool took the quotes off between your terminal and the form, and the line it hands back is the line you already had. Re-typing it more carefully is what everybody tries and it changes nothing. The platform was not down while this was happening, either. Six submissions went through in the same hours as seven of these.
+
+**The fix ships in the tool rather than on the platform**, so 3.4.8 landing on `main` repaired no install but the ones made after it.
 
 **Re-run that same line to upgrade.** `--force` makes it idempotent, so the one line installs, upgrades and repairs. Reach for it rather than `uv tool upgrade`, whose answer depends on how the tool was installed: from the bare URL above it re-resolves the default branch and does upgrade, but from a release note's line, which pins that release's tag, it answers `Nothing to upgrade` and exits 0 however far behind you are. Both installs are in the field and you are unlikely to remember which is yours. Naming the command rather than the package is no better: `uv tool upgrade edullm` errors and then suggests installing `edullm`, which fails too, because `edullm` is the command and `edullm-platform` is the package.
+
+`--version` prints the commit next to the number. If that commit is not one on `main`, you are carrying a working copy somebody built rather than the released tool, and the `--force` line replaces it. Worth reading rather than assuming: the machine that proved the quoting fix was carrying a 3.5.0 built out of a local worktree, and it had to be replaced before it could test what a researcher would actually get.
 
 If the shell cannot find `edullm` afterwards, compare `uv tool dir --bin` against `which -a edullm`, or `where.exe edullm` on Windows. They should be the same directory. Two lines means something else called `edullm` is on your path first.
 
@@ -90,6 +108,8 @@ Your commit has to have been built into an image before a run can name it, and a
 3. Push the branch under `edullm/`. The image build takes three to eight minutes.
 4. `edullm check` again. It should print no refusals.
 5. `edullm submit`.
+
+**A refusal for a commit with no image is the platform working rather than the platform broken.** It caught somebody on 2026-08-06 who pushed and submitted in the same minute, while the build was still running. Wait out the three to eight minutes and submit again. If you pushed a while ago and still meet it, `git fetch` first, because the question is asked of the remote-tracking branches your clone holds rather than of GitHub.
 
 Two checks are deferred to submit time and `check` names both, because they need the container registry and this tool holds no credential for it. A clean `check` is not a promise.
 
