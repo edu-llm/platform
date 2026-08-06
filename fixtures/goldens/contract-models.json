@@ -397,7 +397,7 @@
       "module": "edullm_platform.contracts.results",
       "name": "ResultManifest",
       "schema_version": "1",
-      "structural_digest": "sha256:2d0675671bef8a7a576697d1c892b9eff9776ad1db1ecf7a58c28b91f45daa20"
+      "structural_digest": "sha256:e9513cd0bebe4e83f7b1723d26eb999d2436d55ccb9ce357255046c1c9e3888e"
     },
     {
       "base": false,
