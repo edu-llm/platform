@@ -803,7 +803,62 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # infra/notifications.yaml. So the digest worth reading is the one Lambda answers with
     # after that, and tools/verify_deployed_lambdas.py is what reads it. A workflow log saying
     # the upload succeeded is not the same claim.
-    releases: tuple[PendingRelease, ...] = ()
+    #
+    # A TENTH, ELEVENTH AND TWELFTH, ALL ONE CONTRACT FIELD, AND THE FIRST TIME ALL THREE ZIPS
+    # HAVE MOVED TOGETHER FOR A REASON THAT IS THE SAME REASON. ResultManifest.attempt_id
+    # became nullable, so a job Batch never places writes a result naming why instead of
+    # writing nothing. The recorder is the function that does it; the validator and the
+    # notifier move because they import the contract, which is the mechanism the sixth,
+    # seventh and the unrecorded third describe, arriving again with all three tripwires in
+    # place this time. Each was checked against a build of origin/main first, and all three
+    # matched their release records there, so this change is the whole of the difference.
+    #
+    # THE WINDOW IS AN OLD RECORD READING BETTER THAN A NEW ONE, WHICH IS THE HARMLESS
+    # DIRECTION. The deployed recorder goes on writing no result for a job that never
+    # placed -- exactly what it does today -- so nothing regresses and nothing a submitter
+    # can meet changes. What waits is the improvement. The validator and the notifier read
+    # the contract and neither reads this field, so for them the window is bytes and no
+    # behaviour at all.
+    releases: tuple[PendingRelease, ...] = (
+        PendingRelease(
+            function="recorder",
+            reason=(
+                "ResultManifest.attempt_id is nullable, so a terminal Batch job with no "
+                "attempt now yields a result record carrying the reason it never started. "
+                "Until the upload, MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT and a queue "
+                "cancellation both go on being written nowhere, which is today's behaviour "
+                "rather than a regression."
+            ),
+            cleared_by="uv run python tools/release_lambda.py --function recorder",
+            builds_to="11d4c78a8ddc2b22c8a43dd5224d00a3e038f86403a8ba2e50c8f88a6d92c8b1",
+            released="b577164f077a7541b0e3efefbae9c11878af725908649b8edfd9ee1dfe1aa7ce",
+            recorded_on=date(2026, 8, 6),
+        ),
+        PendingRelease(
+            function="validator",
+            reason=(
+                "The same nullable attempt_id, reached by importing contracts/results.py. "
+                "The validator does not read the field, so its packaged bytes move and "
+                "nothing it decides does."
+            ),
+            cleared_by="uv run python tools/release_lambda.py --function validator",
+            builds_to="df9952459e54ff0ebbce89660b5faf3b7a87bae47d2a0856c2553c9735d2740f",
+            released="da7313e1055d1abdafb79d7a83c344bdbde32cc7a6739b36df99291c0643f2e9",
+            recorded_on=date(2026, 8, 6),
+        ),
+        PendingRelease(
+            function="notifier",
+            reason=(
+                "The same nullable attempt_id, reached through notifications/facts.py "
+                "importing contracts/results.py. Nothing the notifier says about a run "
+                "reads the field, so this is bytes and no behaviour."
+            ),
+            cleared_by="uv run python tools/release_lambda.py --function notifier",
+            builds_to="abb7d03146dda3e231a36ff04f950f874a924b03c15b3f6dab54b5e1da485540",
+            released="b85765ebc5f0c14ae8b28ebfd088a36475c242b6261028955bc3d4f2f943cbe3",
+            recorded_on=date(2026, 8, 6),
+        ),
+    )
     return one_record_per_function(releases)
 
 

@@ -90,13 +90,22 @@ than a duplicate. What *is* checkable without any of that is the collapse itself
 consecutive pair in :data:`BATCH_STATUS_PROGRESSION` must project to a pair the transition
 table permits, and :func:`transition_is_recordable` is what a test uses to say so.
 
-**A terminal event yields an attempt and a result; a non-terminal one yields neither.**
+**A terminal event yields a result; a non-terminal one yields nothing but its event.**
 ``SchedulerAttempt`` requires ``started_at``, ``ended_at`` and ``terminal_state``, so it
 cannot honestly be written before a job stops, and a ``ResultManifest`` written on
-``RUNNING`` records an outcome for a job that is still going. The one terminal case that
-yields neither is a job stopped before any attempt began -- cancelled out of the queue --
-which has no attempt window to describe and therefore no outcome to attribute to an
-attempt. Its lifecycle event is still written, and that is the whole of what happened.
+``RUNNING`` records an outcome for a job that is still going.
+
+**A terminal event yields an attempt only where there was one, and that used to cost the
+run its whole record.** A job Batch never places has no attempt window to describe, which
+was read as having no outcome to attribute -- so a job refused for
+``MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT`` and a job cancelled out of the queue each
+wrote a lifecycle event and no result, and the one string saying why went nowhere. But the
+outcome belongs to the run rather than to the attempt: the run stopped, Batch said why on
+the job itself, and the submitter's own cancellation reason is on the job too.
+``ResultManifest.attempt_id`` is therefore nullable, and a run that never started now says
+so in the record a researcher reads. What is still required is an instant: with no
+``stoppedAt`` on either the attempt or the job there is no moment to date the record to,
+and nothing is written rather than something dated by a clock that was not measuring this.
 """
 
 from __future__ import annotations
@@ -358,9 +367,11 @@ class UnreadableBatchEventError(ValueError):
 class LifecycleProjection:
     """What one delivery says, in the contracts the lineage store holds.
 
-    ``attempt`` and ``result`` are ``None`` for every non-terminal state, and for the one
-    terminal state with no attempt to describe. ``event`` is never ``None``: a delivery
-    that could be read at all says at least that the run reached a state.
+    ``attempt`` and ``result`` are ``None`` for every non-terminal state. ``attempt`` is
+    also ``None`` on a terminal job Batch never placed, where ``result`` is not: the run
+    stopped and the reason is on the job, so the outcome is recordable and the attempt is
+    not. ``event`` is never ``None``: a delivery that could be read at all says at least
+    that the run reached a state.
     """
 
     event: LifecycleEvent
@@ -1226,6 +1237,14 @@ def project_batch_state_change(
     result: ResultManifest | None = None
     attempt_id: str | None = None
     terminal_state = _terminal_state(state)
+    # AN EMPTY MAPPING WHERE THERE WAS NO ATTEMPT, AND EVERY READER BELOW ALREADY ANSWERS
+    # CORRECTLY FOR IT. `_container_exit_code` and `_container_reason` find no container
+    # and say None, which is true -- nothing ran, so nothing exited and nothing failed --
+    # and `_status_reason` falls through to the job, which is where Batch puts
+    # MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT and where the cancellation path puts the
+    # reason the submitter typed. So the no-attempt case needs no branch of its own here,
+    # only permission to reach this far.
+    attempt_detail: Mapping[str, Any] = {}
 
     if last is not None:
         ordinal, attempt_detail = last
@@ -1236,16 +1255,17 @@ def project_batch_state_change(
             attempt_ordinal=ordinal,
             started_at_ms=started_at_ms,
         )
-        if terminal_state is not None:
-            # Batch records the stop on the attempt; the job-level instant is read only
-            # when it does not, which happens for a job stopped between the attempt being
-            # recorded and the container reporting. Neither present means there is no
-            # window to describe, and inventing one would put a duration in an immutable
-            # record that nothing measured.
-            ended_at = _instant(attempt_detail.get("stoppedAt")) or _instant(
-                detail.get("stoppedAt")
-            )
-            if ended_at is not None:
+
+    if terminal_state is not None:
+        # Batch records the stop on the attempt; the job-level instant is read when it
+        # does not, which happens for a job stopped between the attempt being recorded and
+        # the container reporting, and for every job that never had an attempt at all.
+        # Neither present means there is no window to describe, and inventing one would
+        # put a duration in an immutable record that nothing measured.
+        ended_at = _instant(attempt_detail.get("stoppedAt")) or _instant(detail.get("stoppedAt"))
+        if ended_at is not None:
+            if last is not None:
+                assert attempt_id is not None  # derived above from this same attempt
                 attempt = SchedulerAttempt(
                     schema_version=1,
                     attempt_id=attempt_id,
@@ -1256,78 +1276,80 @@ def project_batch_state_change(
                     ended_at=ended_at,
                     terminal_state=terminal_state,
                 )
-                checkpoints_written, checkpoint_survey = _checkpoints_written(
-                    detail,
+            checkpoints_written, checkpoint_survey = _checkpoints_written(
+                detail,
+                output_bucket=output_bucket,
+                checkpoint_lister=checkpoint_lister,
+            )
+            result = ResultManifest(
+                schema_version=1,
+                run_id=run_id,
+                # None where the run never got an attempt, which is the whole of what
+                # this record is for on such a run. See ResultManifest.attempt_id.
+                attempt_id=attempt_id,
+                outcome=terminal_state,
+                # The prefix a run writes under, recorded for every outcome rather
+                # than only for a success. It names where anything this run produced
+                # would be, which is as true of a job that failed halfway as of one
+                # that finished, and a reader chasing partial output of a failed run
+                # would otherwise have nothing to follow.
+                #
+                # Read out of the event rather than rebuilt here; see
+                # container_output_prefix for why, and for what the schema does and
+                # does not carry. Empty when the job carried no prefix, because a
+                # location nobody named is not a location this record should invent.
+                output_prefixes=tuple(prefix for prefix in (written_under,) if prefix),
+                exit_code=_container_exit_code(attempt_detail),
+                # WHAT BATCH SAID, WHICH THIS PROJECTION HAS ALWAYS READ AND NEVER
+                # KEPT. Both strings were already being parsed a few lines up, to ask
+                # whether either starts with `edullm:cancelled`, and then dropped. So
+                # the four runs that never created a log stream were unattributable
+                # while the reason sat in the event this function was handed.
+                #
+                # Written on every outcome rather than only on a failure. A succeeded
+                # job usually carries no reason at all, so the field is None where
+                # there is nothing to say, and a reason on a success is worth keeping
+                # for exactly the same reason as one on a failure: nobody can go back
+                # and read it later.
+                status_reason=_status_reason(detail, attempt_detail),
+                container_reason=_container_reason(attempt_detail),
+                # WHAT THE RUN PRODUCED, WHICH THIS RECORD COULD NOT PREVIOUSLY SAY.
+                #
+                # Both fields were written empty on every result, so a run that trained
+                # for hours and wrote a 762 MB checkpoint and a run that saved nothing
+                # were the same record. The comment that stood here said neither could
+                # be known from an event, and it was half right. The W&B run is
+                # knowable, because the entity and the project are in the event's own
+                # container environment and the naming contract supplies the third
+                # field -- see wandb_run_for. The checkpoint list is not in the event,
+                # and it is not guessed at either; it is read from the prefix the
+                # container was told to write to, and only when a caller supplied
+                # something to read with.
+                #
+                # Recorded for a failed run as well as a succeeded one, deliberately.
+                # An attempt reclaimed at hour eleven of twelve has checkpoints, and
+                # they are the whole reason a retry is worth paying for -- a record
+                # that listed them only on success would be silent about exactly the
+                # runs somebody needs to resume.
+                checkpoints=checkpoints_written,
+                # What the listing behind that field saw, which is a separate fact from
+                # what it parsed. An empty list beside `objects_seen: 16` is a run that
+                # saved in a layout nothing here reads; beside `objects_seen: 0` and
+                # `outcome: listed` it is a run that genuinely saved nothing; beside
+                # `outcome: refused` it is nobody having looked.
+                checkpoint_survey=checkpoint_survey,
+                # What the run scored. None on every workload that is not an
+                # evaluation, and on every caller that supplied no reader, which is all
+                # of them until the lifecycle recorder is released against this tree.
+                eval_metrics=_metrics_written(
+                    written_under=written_under,
                     output_bucket=output_bucket,
-                    checkpoint_lister=checkpoint_lister,
-                )
-                result = ResultManifest(
-                    schema_version=1,
-                    run_id=run_id,
-                    attempt_id=attempt_id,
-                    outcome=terminal_state,
-                    # The prefix a run writes under, recorded for every outcome rather
-                    # than only for a success. It names where anything this run produced
-                    # would be, which is as true of a job that failed halfway as of one
-                    # that finished, and a reader chasing partial output of a failed run
-                    # would otherwise have nothing to follow.
-                    #
-                    # Read out of the event rather than rebuilt here; see
-                    # container_output_prefix for why, and for what the schema does and
-                    # does not carry. Empty when the job carried no prefix, because a
-                    # location nobody named is not a location this record should invent.
-                    output_prefixes=tuple(prefix for prefix in (written_under,) if prefix),
-                    exit_code=_container_exit_code(attempt_detail),
-                    # WHAT BATCH SAID, WHICH THIS PROJECTION HAS ALWAYS READ AND NEVER
-                    # KEPT. Both strings were already being parsed a few lines up, to ask
-                    # whether either starts with `edullm:cancelled`, and then dropped. So
-                    # the four runs that never created a log stream were unattributable
-                    # while the reason sat in the event this function was handed.
-                    #
-                    # Written on every outcome rather than only on a failure. A succeeded
-                    # job usually carries no reason at all, so the field is None where
-                    # there is nothing to say, and a reason on a success is worth keeping
-                    # for exactly the same reason as one on a failure: nobody can go back
-                    # and read it later.
-                    status_reason=_status_reason(detail, attempt_detail),
-                    container_reason=_container_reason(attempt_detail),
-                    # WHAT THE RUN PRODUCED, WHICH THIS RECORD COULD NOT PREVIOUSLY SAY.
-                    #
-                    # Both fields were written empty on every result, so a run that trained
-                    # for hours and wrote a 762 MB checkpoint and a run that saved nothing
-                    # were the same record. The comment that stood here said neither could
-                    # be known from an event, and it was half right. The W&B run is
-                    # knowable, because the entity and the project are in the event's own
-                    # container environment and the naming contract supplies the third
-                    # field -- see wandb_run_for. The checkpoint list is not in the event,
-                    # and it is not guessed at either; it is read from the prefix the
-                    # container was told to write to, and only when a caller supplied
-                    # something to read with.
-                    #
-                    # Recorded for a failed run as well as a succeeded one, deliberately.
-                    # An attempt reclaimed at hour eleven of twelve has checkpoints, and
-                    # they are the whole reason a retry is worth paying for -- a record
-                    # that listed them only on success would be silent about exactly the
-                    # runs somebody needs to resume.
-                    checkpoints=checkpoints_written,
-                    # What the listing behind that field saw, which is a separate fact from
-                    # what it parsed. An empty list beside `objects_seen: 16` is a run that
-                    # saved in a layout nothing here reads; beside `objects_seen: 0` and
-                    # `outcome: listed` it is a run that genuinely saved nothing; beside
-                    # `outcome: refused` it is nobody having looked.
-                    checkpoint_survey=checkpoint_survey,
-                    # What the run scored. None on every workload that is not an
-                    # evaluation, and on every caller that supplied no reader, which is all
-                    # of them until the lifecycle recorder is released against this tree.
-                    eval_metrics=_metrics_written(
-                        written_under=written_under,
-                        output_bucket=output_bucket,
-                        metrics_reader=metrics_reader,
-                    ),
-                    wandb_run=wandb_run_for(run_id, detail),
-                    retention_class=retention_class,
-                    completed_at=ended_at,
-                )
+                    metrics_reader=metrics_reader,
+                ),
+                wandb_run=wandb_run_for(run_id, detail),
+                retention_class=retention_class,
+                completed_at=ended_at,
+            )
 
     event = LifecycleEvent(
         schema_version=1,

@@ -335,9 +335,16 @@
   "additionalProperties": false,
   "properties": {
     "attempt_id": {
-      "pattern": "^att_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
-      "title": "Attempt Id",
-      "type": "string"
+      "anyOf": [
+        {
+          "pattern": "^att_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Attempt Id"
     },
     "checkpoint_survey": {
       "anyOf": [
