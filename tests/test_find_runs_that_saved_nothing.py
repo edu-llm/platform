@@ -47,6 +47,7 @@ from find_runs_that_saved_nothing import (
     render,
 )
 
+from edullm_platform.cells import CellOutcome
 from edullm_platform.checkpoints import CheckpointState
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.admission import IntentRecord
@@ -590,6 +591,19 @@ def test_the_report_says_nothing_is_wrong_rather_than_printing_an_empty_table() 
     assert "nothing here to be wrong" in render([])
 
 
+def one_cell(outcome: AttemptTerminalState | None) -> CellOutcome | None:
+    """A single-container run's ending, in the shape the report now carries.
+
+    Most of this file's runs are one cell, and one cell aggregates to itself: the counts
+    beside the word are 1 and 1 or 1 and 0, which is the reading that keeps a single-cell
+    run saying exactly what it said before the fan-out reading existed.
+    """
+    if outcome is None:
+        return None
+    succeeded = int(outcome is AttemptTerminalState.SUCCEEDED)
+    return CellOutcome(state=outcome.value, total=1, succeeded=succeeded, failed=1 - succeeded)
+
+
 def described(
     run_id: str,
     state: CheckpointState,
@@ -607,7 +621,7 @@ def described(
         objects=objects,
         state=state,
         detail="what the reader found",
-        outcome=outcome,
+        outcome=one_cell(outcome),
         outcome_known=outcome_known,
         acknowledged=acknowledged,
     )
@@ -778,7 +792,7 @@ def test_a_run_with_no_result_record_has_not_finished_and_is_not_judged() -> Non
     states = [described("run_going", CheckpointState.ABSENT, 0, outcome=None, outcome_known=True)]
 
     assert not states[0].judged
-    assert "no result record" in render(states)
+    assert "no record of how it ended" in render(states)
 
 
 def test_with_no_result_records_at_all_every_run_is_judged_as_before() -> None:
@@ -796,12 +810,16 @@ def test_with_no_result_records_at_all_every_run_is_judged_as_before() -> None:
     assert "## Wrote something that will not load" in render(states)
 
 
-def test_the_absence_of_a_result_tree_is_not_the_same_as_an_empty_one(tmp_path: Path) -> None:
+def test_the_absence_of_a_record_tree_is_not_the_same_as_an_empty_one(tmp_path: Path) -> None:
     """``None`` and ``{}`` mean opposite things and the loader keeps them apart.
 
     An empty mapping is "these runs finished and none of them succeeded". ``None`` is "nobody
     looked". A loader returning ``{}`` for both would let a missing sync scope the report down
     to nothing and report success.
+
+    Either prefix present is enough to have looked, because either one alone answers for some
+    runs: ``attempt/`` for every run that reached an instance, ``result/`` for the ones Batch
+    refused to place.
     """
     assert _load_outcomes(tmp_path) is None
 
@@ -811,7 +829,9 @@ def test_the_absence_of_a_result_tree_is_not_the_same_as_an_empty_one(tmp_path: 
 
     write_result(tmp_path, RUN_ID, "succeeded")
 
-    assert _load_outcomes(tmp_path) == {RUN_ID: AttemptTerminalState.SUCCEEDED}
+    assert _load_outcomes(tmp_path) == {
+        RUN_ID: CellOutcome(state="succeeded", total=1, succeeded=1, failed=0)
+    }
 
 
 def test_a_failed_run_does_not_fail_the_audit_but_a_succeeded_one_does(

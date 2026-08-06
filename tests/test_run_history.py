@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from edullm_platform.cells import said_of_cells
 from edullm_platform.run_history import (
     HISTORY_FILENAME,
     HISTORY_FORMAT_VERSION,
@@ -85,6 +86,10 @@ def a_run(
             AttemptFacts(
                 attempt_id=f"att_{ordinal}",
                 ordinal=ordinal,
+                # One scheduler job across all of them, because these are retries of one
+                # container rather than cells of a fan-out, and the ordinal only means a
+                # retry inside one job. See edullm_platform.cells.
+                scheduler_job_id="00000000-0000-0000-0000-00000000000a",
                 started_at=STARTED,
                 ended_at=STARTED + timedelta(seconds=seconds),
                 terminal_state=state,
@@ -93,6 +98,10 @@ def a_run(
         ),
         state=state,
         state_source="attempt",
+        cells_total=1,
+        cells_succeeded=1 if state == "succeeded" else 0,
+        cells_failed=0 if state == "succeeded" else 1,
+        cells_said=said_of_cells(total=1, succeeded=1 if state == "succeeded" else 0),
         seconds=Decimal(seconds),
         cost_usd=Decimal("1.00"),
         unpriced_reason=None,
@@ -106,6 +115,10 @@ def a_run_that_never_started(*, shape: Shape | None = None) -> RunFacts:
             "attempts": (),
             "state": "submitted",
             "state_source": "intent",
+            "cells_total": None,
+            "cells_succeeded": None,
+            "cells_failed": None,
+            "cells_said": None,
             "seconds": Decimal(0),
             "cost_usd": None,
             "unpriced_reason": "no attempt record: this run never reached an instance",
