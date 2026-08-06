@@ -1122,6 +1122,26 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # so it never opens a configuration file and never reaches the enum member that moved. The
     # sweep is unaware Studio exists, which is also the honest statement of what this verb does
     # not get: no janitor arm, no ExpiresAt, and `--stop` as the only thing that stops an app.
+    #
+    # AND THEN A THIRD CAUSE ON THE SAME RECORD, FROM THE SAME COUPLING, IN THE SAME DAY.
+    # `edullm data` adds config/reports/corpora.json, which is a reviewed configuration file,
+    # which is a ConfigFile member, which researcher_lane.py imports and this zip carries. So
+    # the digest moved a third time for a report the sweep has no reader for. Three arrivals of
+    # one finding is no longer an incident recurring: the vocabulary reaches three zips through
+    # a module none of them reads it in, and every new report under config/ will go on moving
+    # them until that import is broken. That is the thing to fix, and it is not this merge.
+    #
+    # ONE RECORD AND NOT THREE, WHICH IS THE ONLY SHAPE `one_record_per_function` PERMITS AND
+    # ALSO THE TRUE ONE. A zip is built from the working tree rather than from a change, so a
+    # digest has no per-cause decomposition and whoever runs the line below ships all three
+    # whether they meant to or not. The first cause is the one with behaviour in it and is
+    # still the reason to cut the release; the other two are bytes.
+    #
+    # THE DIGEST HERE IS THE MERGED TREE'S AND MATCHES NEITHER BRANCH'S. #408 recorded
+    # d9cb4a6f for studio alone and #409 recorded 318e4531 for data alone. Both were right
+    # about the tree they were built on and both are wrong about this one, which is the
+    # ordinary arithmetic of integrating two changes that move one artifact and the reason
+    # this was rebuilt rather than chosen between.
     releases: tuple[PendingRelease, ...] = (
         PendingRelease(
             function="notifier",
@@ -1144,13 +1164,15 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "between this sweep's describe and its stop, and the handler now reads the "
                 "two EC2 codes that mean the machine is already off the clock as an outcome "
                 "rather than as a refusal that fails the invocation. The digest then moved "
-                "again for a second cause with no behaviour behind it at all: edullm studio "
-                "adds a ConfigFile member, researcher_lane.py imports that enum, and this zip "
-                "carries researcher_lane.py -- which the fourteenth entry in this register "
-                "recorded as a coupling rather than a one-off, and here it is again."
+                "twice more for causes with no behaviour behind them at all: edullm studio "
+                "and edullm data each add a reviewed configuration file and therefore a "
+                "ConfigFile member, which researcher_lane.py imports and this zip carries, so "
+                "a line in a StrEnum moved a Lambda for two reports the sweep never reads. "
+                "The fourteenth entry in this register recorded that coupling as the finding "
+                "rather than a one-off, and this is its third and fourth arrival."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function janitor",
-            builds_to="d9cb4a6fd46205883cc724cdd6b56e328cba0a3f1df05a0a823dd19484baa9e5",
+            builds_to="05a5cc589472e7d95800da952b740f438002ec0cd4e094ad0e71173d1e016339",
             released="e07efe963ec9cadb79f7345a14d9074c125e359a588e0661f99db687a757e96a",
             recorded_on=date(2026, 8, 6),
         ),

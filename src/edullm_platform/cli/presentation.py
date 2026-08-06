@@ -66,12 +66,21 @@ from edullm_platform.contracts.base import serialize_decimal
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalClass, ApprovalPolicy, PolicyThresholds
 from edullm_platform.contracts.workload import ComputeProfile, WorkloadProfile
+from edullm_platform.corpora import (
+    NO_SNAPSHOT_PACKAGED,
+    NOTHING_MEASURED,
+    CorporaSnapshot,
+    Corpus,
+)
 from edullm_platform.execution import CONTAINER_SHAPES
+from edullm_platform.tokenizers import THE_CONTAINERS_REFUSAL
 
 __all__ = [
     "approvers_said",
     "config_source_said",
     "plain_decimal",
+    "render_corpora",
+    "render_one_corpus",
     "render_preflight",
     "render_refusals",
     "render_run_facts",
@@ -333,6 +342,333 @@ def render_run_facts(facts: RunFacts) -> str:
 
 def _row(label: str, value: str) -> list[str]:
     return [f"  {label:<{LABEL_WIDTH}}{value}"]
+
+
+def render_corpora(
+    rows: Sequence[Corpus], *, snapshot: CorporaSnapshot | None, everything: bool
+) -> str:
+    """The corpora, in the shape somebody choosing one can read without scrolling.
+
+    **FOUR GROUPS RATHER THAN ONE TABLE, AND THE SPLIT IS THE ANSWER TO "WHAT DOES A PERSON
+    NEED TO SEE".** Somebody choosing a corpus is scanning for a size and a tokenizer, and a
+    twenty-nine-row table with tokenizers and a vendor mirror in it makes them do the join
+    this verb exists to do for them. So the table is the corpora that run, and everything
+    else is a short block underneath saying what it is and why it is not in the table.
+
+    **THE FIVE THAT EXIT 69 ARE ON THE DEFAULT VIEW AND WILL NOT GO BEHIND A FLAG.** They are
+    the reason to build this. Nothing in the platform refuses one, so a person who never types
+    ``--all`` is exactly the person who picks one this afternoon and loses a machine to it.
+    They sit below the table rather than in it because putting an unrunnable row in a list of
+    runnable ones is the ambiguity the table exists to remove.
+
+    **THE RETIRED ONES ARE ON IT TOO, AND THAT IS A DECISION RATHER THAN A DEFAULT.**
+    ``formal-proof-premises-500m-v2`` was the version to name until 2026-08-06. Somebody
+    reading a colleague's notebook from last week finds that name here and is told it is
+    superseded and by what, where an absent row would tell them the platform never had it and
+    send them to file an ask. One line each, because the refusal they would meet already
+    carries the rest.
+
+    **WHAT IS BEHIND ``--all`` IS THE SIX THAT ARE NOT CORPORA**, which is a different claim
+    from the two above. A tokenizer, a vendor mirror and a text corpus at a payload profile
+    no run may read are registered so that dependents can pin them by digest; naming one is
+    refused before it costs anything, and the refusal names the file. Nothing is hidden --
+    the footer counts them and names the flag -- but they are inputs, and a chooser reading
+    past four tokenizers to find a corpus is reading a registry rather than a menu.
+    """
+    if everything:
+        return _every_registered_row(rows, snapshot=snapshot)
+    runnable = [row for row in rows if row.runnability.will_run]
+    lines = [f"{len(runnable)} corpora a run can name today, smallest first.", ""]
+    lines += _corpus_table(runnable)
+    lines += _the_ones_that_exit_69(rows)
+    lines += _the_ones_that_are_superseded(rows)
+    lines += _what_is_not_in_the_table(rows)
+    lines += ["", _measured_said(snapshot)]
+    return "\n".join(lines) + "\n"
+
+
+def _corpus_table(rows: Sequence[Corpus]) -> list[str]:
+    """The header and one line per corpus, at whatever widths the rows actually need.
+
+    Measured rather than fixed, the way ``render_run_listing`` measures its own, so a corpus
+    with a longer reference id widens the column instead of pushing the licence off the end.
+    """
+    header = ("reference_id", "tokens", "tokenizer", "dtype", "licence")
+    cells = [
+        (row.reference_id, row.train_tokens_said, row.tokenizer, row.dtype_said, row.licence_said)
+        for row in rows
+    ]
+    if not cells:
+        return ["nothing is registered that a run could name, which is a broken registry."]
+    widths = _widths([header, *cells])
+    return [
+        _corpus_line(header, widths),
+        *(_corpus_line(entry, widths) for entry in cells),
+    ]
+
+
+def _widths(rows: Sequence[tuple[str, ...]]) -> list[int]:
+    return [max(len(row[column]) for row in rows) for column in range(5)]
+
+
+def _corpus_line(cells: tuple[str, ...], widths: Sequence[int], trailing: str = "") -> str:
+    """One row, with the token count right-aligned because it is the column a reader sorts by.
+
+    ``trailing`` is the verdict column ``--all`` adds. It is a suffix rather than a sixth
+    entry in the tuple so that the two tables cannot line their shared five columns up
+    differently, which is what a second formatter would eventually do.
+    """
+    reference, tokens, tokenizer, dtype, licence = cells[:5]
+    padded = (
+        f"{reference:<{widths[0]}}  {tokens:>{widths[1]}}  "
+        f"{tokenizer:<{widths[2]}}  {dtype:<{widths[3]}}  {licence:<{widths[4]}}"
+    )
+    return f"{padded}  {trailing}".rstrip() if trailing else padded.rstrip()
+
+
+def _the_ones_that_exit_69(rows: Sequence[Corpus]) -> list[str]:
+    """The block this verb was built for. Silent only when the gap has actually closed.
+
+    Written so that it disappears on its own. Add the missing tokenizer to
+    ``edullm_platform.tokenizers.TOKENIZERS`` and the corpus moves into the table above with
+    nobody editing this function, which is the same self-retiring property
+    ``tests/test_submission_form_options.py`` holds the dropdown to.
+    """
+    caught = [row for row in rows if row.runnability.costs_a_machine]
+    if not caught:
+        return []
+    width = max(len(row.reference_id) for row in caught)
+    return [
+        "",
+        *_wrap(
+            f"{len(caught)} more are registered and refused by nothing. A submission naming "
+            "one is admitted, spends an approval and allocates the machine, and the "
+            f"container then exits 69 with {THE_CONTAINERS_REFUSAL}.",
+        ),
+        "",
+        *(f"{row.reference_id:<{width}}  {_why_it_exits(row)}" for row in caught),
+    ]
+
+
+def _why_it_exits(row: Corpus) -> str:
+    """The one clause that separates the two ways into that state, which are not the same.
+
+    A corpus on ``tokenizer/bytes-utf8`` is waiting on an upstream feature and resolves
+    itself the day OLMo-core grows one. A corpus declaring no tokenizer is not waiting on
+    anything: its payload is pre-tokenization conversation text and the run's tokenizer comes
+    from the model, so what it needs is a workload that reads it that way. Telling somebody
+    to go and ask for a byte tokenizer when they picked the tutor corpus wastes their week.
+    """
+    if row.reference.tokenizer is None:
+        return "no tokenizer; the payload is pre-tokenization text"
+    return f"{row.reference.tokenizer}; OLMo-core cannot build it"
+
+
+def _the_ones_that_are_superseded(rows: Sequence[Corpus]) -> list[str]:
+    """Registered, withdrawn, and named here so a name from last week resolves to something.
+
+    The replacement comes off the registry rather than out of a sentence, so a corpus
+    superseded tomorrow gets a correct line with nobody writing one.
+    """
+    retired = [row for row in rows if row.retired]
+    if not retired:
+        return []
+    width = max(len(row.reference_id) for row in retired)
+    return [
+        "",
+        *_wrap(
+            f"{len(retired)} are registered and superseded, and naming one is refused "
+            "before it costs anything.",
+        ),
+        "",
+        *(f"{row.reference_id:<{width}}  {_name_instead(row)}" for row in retired),
+    ]
+
+
+def _name_instead(row: Corpus) -> str:
+    replacements = row.current_versions
+    if not replacements:
+        return "nothing was ever published under it; name none"
+    return f"name {', '.join(replacements)}"
+
+
+def _what_is_not_in_the_table(rows: Sequence[Corpus]) -> list[str]:
+    """The footer: what ``none`` is for, and how many registered names are inputs.
+
+    Counted rather than written down, so the sentence survives the next tokenizer somebody
+    registers.
+    """
+    inputs = [row for row in rows if row.runnability.verdict == "refused" and not row.retired]
+    lines = [
+        "",
+        "none is the answer for a run that reads nothing, and it is registered too.",
+        "",
+        "  edullm data <reference-id>   one corpus in full",
+    ]
+    if inputs:
+        # How many registered names are not corpora, and the flag that shows them, on the
+        # line that offers the flag. Counted rather than written, so the next tokenizer
+        # somebody registers moves this with nobody editing it.
+        lines.append(
+            f"  edullm data --all            and the {len(inputs)} that are inputs rather "
+            "than corpora"
+        )
+    return lines
+
+
+def _every_registered_row(
+    rows: Sequence[Corpus], *, snapshot: CorporaSnapshot | None
+) -> str:
+    """``--all``: one table over the whole registry, with the verdict as a column.
+
+    No grouping here, because the person who typed ``--all`` asked for the registry rather
+    than for a menu, and a registry read in reference-id order is what they can compare
+    against ``config/datasets.yaml``.
+    """
+    ordered = sorted(rows, key=lambda row: row.reference_id)
+    header = ("reference_id", "tokens", "tokenizer", "dtype", "licence", "what happens")
+    cells = [
+        (
+            row.reference_id,
+            row.train_tokens_said,
+            row.tokenizer,
+            row.dtype_said,
+            row.licence_said,
+            row.runnability.verdict,
+        )
+        for row in ordered
+    ]
+    widths = _widths([header, *cells])
+    lines = [
+        f"{len(ordered)} registered names, in the order config/datasets.yaml carries them.",
+        "",
+        _corpus_line(header, widths, header[5]),
+        *(_corpus_line(entry, widths, entry[5]) for entry in cells),
+        "",
+        *_wrap(
+            "runs means a run may name it and it will start. refused means a submission "
+            "naming it is refused before it costs anything. exits_69 means nothing refuses "
+            "it and the container cannot build its tokenizer, after the machine has been "
+            "paid for.",
+        ),
+        "",
+        _measured_said(snapshot),
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def render_one_corpus(row: Corpus, *, snapshot: CorporaSnapshot | None) -> str:
+    """One corpus in full, for somebody who has already chosen and wants the detail.
+
+    **THE SEAL IS DESCRIBED HERE AND NOWHERE ELSE, WHICH IS THE HONEST AMOUNT.** Printing
+    "sealed and frozen" beside every row of the table would be a claim the table cannot
+    support: what a seal attests is that some build of the validator, at some time, agreed
+    the digests matched, and not one of the thirty-two seals in the bucket records which
+    build or when. That is a real guarantee about the bytes and not a guarantee about which
+    checks ran, and the difference is worth a paragraph to the one reader who has narrowed
+    down to a single corpus and worth nothing to the reader scanning a list.
+    """
+    reference = row.reference
+    lines = [
+        f"{reference.dataset_id} {reference.version}",
+        reference.uri,
+        "",
+        *_the_measured_lines(row),
+        *_row("tokenizer", reference.tokenizer or "none, and that is the honest answer"),
+        *_row("payload", reference.payload_profile),
+        *_row("manifest sha256", reference.manifest_sha256),
+        "",
+        *_wrap(row.runnability.said),
+    ]
+    if row.retired:
+        lines += ["", *_wrap(_name_instead(row).capitalize() + ".")]
+    lines += _the_licence_paragraph(row)
+    if row.measurement is not None and row.measurement.note:
+        lines += ["", *_wrap(row.measurement.note)]
+    if row.measurement is None:
+        lines += ["", *_wrap(NOTHING_MEASURED)]
+    lines += [
+        "",
+        *_wrap(
+            "What the seal attests is that some build of the validator agreed the digests "
+            "matched. Which build, and when, is recorded nowhere in the sealed bucket. See "
+            "edullm-data#23.",
+        ),
+        _measured_said(snapshot, in_full=True),
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _the_measured_lines(row: Corpus) -> list[str]:
+    """Size and shape, as exact figures where the reading was exact and as dashes where not.
+
+    The exact integer rather than the table's rounded one, because somebody on this page has
+    chosen and is now computing a step count. Where the reading rounded, it says so instead
+    of printing digits nobody read.
+    """
+    measurement = row.measurement
+    if measurement is None:
+        return []
+    lines: list[str] = []
+    if measurement.train_tokens is not None and measurement.train_tokens_exact:
+        lines += _row("train tokens", f"{measurement.train_tokens:,}")
+    elif measurement.train_tokens is not None:
+        lines += _row("train tokens", f"about {row.train_tokens_said.lstrip('~')}, rounded")
+    if measurement.size_bytes is not None:
+        lines += _row("size", f"{measurement.size_bytes:,} bytes")
+    if measurement.shard_dtype is not None:
+        lines += _row("shards", measurement.shard_dtype)
+    return lines
+
+
+def _the_licence_paragraph(row: Corpus) -> list[str]:
+    """The condition somebody has to satisfy before they publish, said as a condition.
+
+    **SHARE-ALIKE GETS ITS OWN SENTENCE AND AN ABSENT LICENCE GETS A DIFFERENT ONE**, because
+    they are not the same kind of unknown. An absent licence leaves a question open. A
+    share-alike one is a condition on redistributing a model, and the corpus this matters
+    most for declares its licence id as null -- so a reader who saw only the field would
+    conclude the two were the same thing.
+    """
+    measurement = row.measurement
+    if measurement is None:
+        return []
+    if measurement.share_alike:
+        return [
+            "",
+            *_wrap(
+                "Its licence includes share-alike, which is a condition on redistributing a "
+                "model rather than an open question. Read this before you publish.",
+            ),
+        ]
+    if measurement.licence is None:
+        return [
+            "",
+            *_wrap(
+                "It declares no licence. The upstream standard prefers an honest unknown to "
+                "a false identifier, so this is a fact about the corpus rather than a gap in "
+                "the registry, and it is a question anybody publishing a model trained on it "
+                "still has to answer.",
+            ),
+        ]
+    return ["", *_row("licence", measurement.licence)]
+
+
+def _measured_said(snapshot: CorporaSnapshot | None, *, in_full: bool = False) -> str:
+    """The provenance line, short under a table and complete under one corpus.
+
+    A date and not an age, for the reason ``run_history`` gives beside its own: an age is
+    computed against the reader's clock, so the same reading printed in a test, in a pull
+    request and on a terminal would be three strings.
+    """
+    if snapshot is None:
+        return "\n".join(["", *_wrap(NO_SNAPSHOT_PACKAGED)])
+    if in_full:
+        return "\n".join(["", *_wrap(snapshot.said())])
+    return (
+        f"Measured on {snapshot.measured_at.date().isoformat()} over "
+        f"{len(snapshot.measurements)} corpora. edullm data --json says from what."
+    )
 
 
 def render_run_listing(rows: Iterable[tuple[str, str, str, str]]) -> str:

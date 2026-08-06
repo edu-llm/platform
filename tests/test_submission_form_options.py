@@ -84,7 +84,7 @@ from edullm_platform.submission import (
     _resolve_workload,
     require_a_dataset_release_that_is_current,
 )
-from tools.build_gpu_training_submission import TOKENIZERS
+from edullm_platform.tokenizers import TOKENIZERS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "submit-run.yml"

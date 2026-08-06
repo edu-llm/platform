@@ -1095,13 +1095,27 @@ def _check_dataset(
         # `dataset_is_not_a_corpus` on the next run. That is the defect #232 took out of the
         # workload refusal, sitting inside this one, and the fix is the same: the registry
         # answers which names survive every check, so this cannot suggest one that does not.
+        #
+        # AND IT NAMES A VERB NOW, WHICH IT DID NOT AND THE REPOSITORY REFUSAL ALWAYS DID.
+        # The list this prints is names and nothing else: no size, no tokenizer, no licence,
+        # and no sign that five of them reach a container which exits 69 after the machine
+        # has been paid for. A submitter who has just been refused is the reader most likely
+        # to pick the next name off it, and `edullm data` is the only place that says which
+        # of them will start. The second sentence is what the reader needs when the corpus
+        # they want is not on the list at all, and it says what actually happens rather than
+        # inventing a route: `edullm add dataset` opens no pull request, and pretending it
+        # does would send somebody to a refusal.
         offered = ", ".join(registry.names_a_run_may_still_use())
         return [
             Refusal(
                 code="unregistered_dataset",
                 detail=(
                     f"{request.dataset_release!r} is not a release config/datasets.yaml "
-                    f"carries. Registered and still usable: {offered}."
+                    f"carries. Registered and still usable: {offered}. Run edullm data for "
+                    "what is in each of those and which of them will actually start. "
+                    "Registering a new corpus is a person's job rather than a command: it "
+                    "needs facts out of the sealed bucket, so file it with edullm ask "
+                    "--kind dataset-request."
                 ),
             )
         ]

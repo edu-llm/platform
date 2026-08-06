@@ -541,7 +541,38 @@ def test_a_run_id_nothing_recent_carries_is_a_second_refusal_with_a_second_code(
     assert out == ""
 
 
-@pytest.mark.parametrize("verb", sorted(BUILT_TODAY))
+#: The verbs that drive no process at all, and so have nothing for the case below to
+#: interrupt. ``data`` reads two committed files and prints, with no git, no gh, no aws and
+#: no wait anywhere in it -- which is the property that lets it answer on a login node with
+#: no egress and for the fifteen people on the roster who hold no AWS role.
+#:
+#: NAMED RATHER THAN DERIVED, AND THE DIRECTION THAT MATTERS IS THE OTHER ONE. A set computed
+#: from "did the runner get called" would absorb a verb that *stopped* driving a process it
+#: should be driving, which is a real defect wearing an exemption. The case below this one
+#: holds the set to the tree in both directions, so a verb joining it is a line somebody
+#: wrote and a reviewer can argue with.
+DRIVES_NO_PROCESS = frozenset({"data"})
+
+
+def a_runner_that_is_interrupted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> FakeRunner:
+    def interrupted(*_: object, **__: object) -> None:
+        raise KeyboardInterrupt
+
+    runner = a_platform(tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "_answers",
+        # ``aws`` beside the other two because the lane verbs drive it and nothing else, so a
+        # dict naming only git and gh would meet FakeRunner's refusal to invent an answer on
+        # those verbs and report a fixture gap as a missing interrupt handler.
+        {("git",): interrupted, ("gh",): interrupted, ("aws",): interrupted},
+    )
+    return runner
+
+
+@pytest.mark.parametrize("verb", sorted(set(BUILT_TODAY) - DRIVES_NO_PROCESS))
 def test_an_interrupt_is_130_and_a_sentence_rather_than_a_traceback(
     verb: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -556,19 +587,7 @@ def test_an_interrupt_is_130_and_a_sentence_rather_than_a_traceback(
     wherever the process happens to be and this has to hold for every verb. What it stands
     in for is the same interrupt landing in the sleep two frames further down.
     """
-
-    def interrupted(*_: object, **__: object) -> None:
-        raise KeyboardInterrupt
-
-    runner = a_platform(tmp_path)
-    monkeypatch.setattr(
-        runner,
-        "_answers",
-        # ``aws`` beside the other two because the lane verbs drive it and nothing else, so a
-        # dict naming only git and gh would meet FakeRunner's refusal to invent an answer on
-        # those verbs and report a fixture gap as a missing interrupt handler.
-        {("git",): interrupted, ("gh",): interrupted, ("aws",): interrupted},
-    )
+    runner = a_runner_that_is_interrupted(tmp_path, monkeypatch)
 
     code, _, err = invoke(
         [verb, *argv_for(verb)], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch
@@ -577,6 +596,42 @@ def test_an_interrupt_is_130_and_a_sentence_rather_than_a_traceback(
     assert code == EXIT_INTERRUPTED
     assert "Traceback" not in err
     assert "interrupted" in err
+
+
+@pytest.mark.parametrize("verb", sorted(BUILT_TODAY))
+def test_the_verbs_that_drive_no_process_are_the_ones_declared_to(
+    verb: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Holds :data:`DRIVES_NO_PROCESS` to the tree, in both directions.
+
+    Mutation: add a verb to the set to get the case above off your back. It would pass, and
+    the interrupt handler would go unheld for that verb for ever.
+
+    The other direction is the one worth having and is why this is a test rather than a
+    comment. ``check`` reads git and ``status`` reads gh, and a change that dropped either
+    call would leave the verb answering out of thin air -- ``check`` would price a working
+    tree it never looked at -- while the case above went on passing because a verb that
+    drives nothing cannot be interrupted and would simply be excused.
+
+    Driven with the same interrupting runner, so "drove no process" is read off an exit code
+    of 130 rather than off a call log this fixture might record differently tomorrow.
+    """
+    runner = a_runner_that_is_interrupted(tmp_path, monkeypatch)
+
+    code, _, _ = invoke(
+        [verb, *argv_for(verb)], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch
+    )
+
+    if verb in DRIVES_NO_PROCESS:
+        assert code != EXIT_INTERRUPTED, (
+            f"{verb} is declared to drive no process and something interrupted it, so the "
+            "case above is excusing a verb it could have held"
+        )
+        return
+    assert code == EXIT_INTERRUPTED, (
+        f"{verb} drives no process any more, so it is answering without reading whatever it "
+        f"used to read. If that is deliberate, put it in DRIVES_NO_PROCESS with the reason"
+    )
 
 
 def test_an_interrupt_after_a_dispatch_says_what_is_still_running(

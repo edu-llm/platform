@@ -794,6 +794,52 @@ def test_a_mistyped_dataset_release_is_refused_with_the_list_it_should_have_name
     assert err == ""
 
 
+def test_the_dataset_refusal_names_the_verb_that_says_which_of_the_names_will_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**A LIST OF NAMES IS NOT AN ANSWER, AND THIS ONE WAS THE DOCUMENTED WAY TO GET IT.**
+
+    Mutation: print the names and stop, which is what it did, and which the submission skill
+    told an agent to rely on: "the detail lists what is registered".
+
+    The list is honest about what a submission may name and silent about everything a chooser
+    needs. No size, no tokenizer, no licence, and -- the one that costs a machine -- no sign
+    that some of the names in it reach a container which exits 69 after the approval has been
+    spent. A submitter who has just been refused is the reader most likely to take the next
+    name off it.
+
+    So the refusal names ``edullm data``, which is the only thing that answers, and it says
+    what a person does when the corpus they want is not registered at all. That second half
+    has to describe what actually happens: ``edullm add dataset`` opens no pull request, and
+    a refusal implying otherwise sends its reader to a second refusal.
+
+    The repository refusal has named its own verb since 2026-08-06 and this is the same
+    correction for the field beside it.
+    """
+    root, runner = checkout(tmp_path)
+
+    code, out, _ = invoke(
+        ["check", "--dataset", "no-such-corpus-v9", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+    said = " ".join(out.split())
+
+    assert code == EXIT_REFUSED
+    assert "edullm data" in said, (
+        "the refusal lists names and points at no verb, so a submitter correcting a typo has "
+        "no way to learn which of the names it offered will actually start"
+    )
+    assert "edullm ask --kind dataset-request" in said, (
+        "the refusal says nothing about getting a new corpus registered, which is the other "
+        "half of why somebody meets it"
+    )
+    assert "edullm add dataset" not in said, (
+        "that verb refuses, so naming it here sends a refused reader to a second refusal"
+    )
+
+
 def test_a_corpus_that_is_registered_and_is_not_one_is_refused_as_itself(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

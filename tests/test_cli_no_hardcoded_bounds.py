@@ -451,9 +451,10 @@ def test_the_count_rule_can_see_a_count_that_has_moved() -> None:
     said = {line: text for line, text, _ in claims}
     assert 1 in said, "the rule cannot see the count it was written for"
     # THE CONTROL, AND IT HAS TO BE MOVED EVERY TIME A VERB LANDS. It said nine until
-    # ``edullm stop`` made it ten and ``edullm studio`` made it eleven, and being made to edit
-    # it is the point rather than the friction: a control sentence that stayed correct through a
-    # change of the count would be asserting that the rule ignores this phrase, which is the
+    # ``edullm stop`` made it ten, ``edullm studio`` made it eleven and ``edullm data`` made it
+    # twelve, and being made to edit it is the point rather than the friction: a control
+    # sentence that stayed correct through a change of the count would be asserting that the
+    # rule ignores this phrase, which is the
     # failure it exists to rule out.
     assert 2 not in said, "the current count is the count, and a correct sentence must pass"
     assert set(said) == {1, 3, 4, 5}, said
