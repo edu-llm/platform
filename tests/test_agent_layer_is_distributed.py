@@ -34,6 +34,7 @@ import pytest
 
 from tools.distribute_agent_layer import (
     BEGIN_MARKER,
+    CLAUDE_IMPORT,
     END_MARKER,
     SKILL_NAMES,
     divergences,
@@ -150,6 +151,46 @@ def test_the_claude_path_is_a_link_and_not_a_second_copy(checkout: Path) -> None
         assert (link / "SKILL.md").resolve() == (
             checkout / ".agents" / "skills" / name / "SKILL.md"
         )
+
+
+def test_a_repository_that_already_had_a_claude_file_gets_the_rule_imported_into_it(
+    checkout: Path,
+) -> None:
+    """**Mutation: check that ``CLAUDE.md`` exists and go no further.**
+
+    FOUR OF THE SIX REGISTERED REPOSITORIES ALREADY HAD ONE, written before any of this and
+    saying nothing about the platform. Under the weaker check the rule would go into
+    ``AGENTS.md``, Claude Code would go on reading a file that never mentions ``edullm``, and
+    every report would say the layer was installed. That is the layer's characteristic
+    failure -- an agent with no rule is indistinguishable from an agent that read one -- and
+    it would have landed in the repositories most likely to be worked in.
+    """
+    theirs = "# Ours\n\nThe trainer sets bfloat16 in code, which the guard cannot see.\n"
+    checkout.joinpath("CLAUDE.md").write_text(theirs)
+
+    write_into(checkout)
+    text = checkout.joinpath("CLAUDE.md").read_text()
+
+    assert CLAUDE_IMPORT in text
+    assert theirs in text, "the repository's own guidance was overwritten rather than added to"
+    assert divergences(checkout) == []
+
+
+def test_a_claude_file_that_never_reaches_the_rule_is_drift(checkout: Path) -> None:
+    """The reporting half of the case above, which the workflow is what reads.
+
+    Mutation: have somebody rewrite their ``CLAUDE.md`` and drop the import while doing it.
+    Nothing else in the layer changes, every file is still present, and one host quietly
+    stops seeing any of it.
+    """
+    write_into(checkout)
+    claude = checkout / "CLAUDE.md"
+    claude.write_text(claude.read_text().replace(CLAUDE_IMPORT, "Read AGENTS.md yourself"))
+
+    found = divergences(checkout)
+
+    assert [entry.path for entry in found] == ["CLAUDE.md"]
+    assert "never reaches the rule" in found[0].detail
 
 
 def test_an_untouched_checkout_diverges_on_everything(checkout: Path) -> None:

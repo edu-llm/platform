@@ -65,8 +65,19 @@ MARKER_NOTE = (
     "     this repository's own and is never touched. -->"
 )
 
+#: Claude Code's documented way of pulling in another file, and the whole of the bridge.
+#:
+#: **A ``CLAUDE.md`` THAT MERELY EXISTS IS NOT ENOUGH, WHICH IS THE CORRECTION THAT PUT THIS
+#: HERE.** Four of the six registered repositories already had one, written before any of
+#: this and saying nothing about the platform. Writing the rule into ``AGENTS.md`` and
+#: checking only that ``CLAUDE.md`` was present would have left Claude Code reading a file
+#: that does not mention ``edullm``, in the repositories most likely to be worked in, while
+#: every check reported the layer installed. The import is what makes the one text reach the
+#: third host.
+CLAUDE_IMPORT = "@AGENTS.md"
+
 CLAUDE_BRIDGE = (
-    "@AGENTS.md\n"
+    f"{CLAUDE_IMPORT}\n"
     "\n"
     "<!-- Claude Code reads this file and does not read AGENTS.md, so this imports it.\n"
     "     Keep the guidance in AGENTS.md rather than here, so there is one text. -->\n"
@@ -188,8 +199,17 @@ def divergences(checkout: Path) -> list[Divergence]:
             )
             found.append(Divergence("AGENTS.md", diff))
 
-    if not (checkout / "CLAUDE.md").exists():
+    claude = checkout / "CLAUDE.md"
+    if not claude.exists():
         found.append(Divergence("CLAUDE.md", "missing, so Claude Code reads nothing at all"))
+    elif CLAUDE_IMPORT not in claude.read_text():
+        found.append(
+            Divergence(
+                "CLAUDE.md",
+                f"does not carry `{CLAUDE_IMPORT}`, so Claude Code reads this repository's "
+                "own guidance and never reaches the rule in AGENTS.md",
+            )
+        )
 
     return found
 
@@ -231,6 +251,13 @@ def write_into(checkout: Path) -> list[str]:
     claude = checkout / "CLAUDE.md"
     if not claude.exists():
         claude.write_text(CLAUDE_BRIDGE)
+        changed.append("CLAUDE.md")
+    elif CLAUDE_IMPORT not in claude.read_text():
+        # At the top, because Claude Code resolves imports in order and the rule is the
+        # thing that has to be true before anything else in the file makes sense. Prepended
+        # rather than spliced into a marked region: this is one line, it is not going to
+        # change, and a marker pair around it would be more machinery than the line it holds.
+        claude.write_text(f"{CLAUDE_IMPORT}\n\n{claude.read_text()}")
         changed.append("CLAUDE.md")
 
     return changed
