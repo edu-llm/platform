@@ -305,6 +305,41 @@ def test_a_clean_submission_is_cleared_and_priced_from_the_catalog(
     assert f"team              {SUBMITTER_TEAM}" in out
 
 
+def test_an_unprovisioned_shape_is_not_told_that_nothing_here_refuses_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: print the placement sentence whatever else was refused. Mine, from #325.
+
+    The placement sentence ends "and nothing here refuses it", which is true of the lane
+    verbs and true of a provisioned shape that places badly. On ``gpu-8xh100`` it landed two
+    lines above ``unprovisioned_compute_profile``, so ``check`` said nothing refuses this and
+    then refused it, in one screen. A reader who believes the first sentence concludes the
+    refusal is a bug.
+
+    The stronger fact wins. "A machine may take a while to arrive, or never arrive" describes
+    a queue that exists; there is no compute environment for ``p5.48xlarge`` at all, and the
+    refusal says that and lists what is provisioned instead.
+
+    The ``--json`` document keeps both, which is why this asserts the paragraphs only: two
+    keys a caller reads separately cannot contradict each other the way two sentences in one
+    screen do.
+    """
+    root, runner = checkout(tmp_path, compute="gpu-8xh100", command=EIGHT_PROCESS_COMMAND)
+
+    code, out, err = invoke(
+        ["check", "--dataset", "none", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+    said = " ".join((out + err).split())
+
+    assert code == EXIT_REFUSED, out + err
+    assert "unprovisioned_compute_profile" in said
+    assert "nothing here refuses it" not in said
+    assert "placing unreliably" not in said
+
+
 def test_a_shape_that_has_never_placed_is_said_so_before_the_price(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

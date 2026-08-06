@@ -1215,7 +1215,24 @@ def _check(
     # numbers below will ever be spent, and a reader who has reached the cost block has
     # already decided.
     verdict = placement_verdict(configuration, preflight.request.compute_profile)
-    said = placement_said(verdict)
+    # NOT SAID WHERE THE SHAPE HAS NO COMPUTE ENVIRONMENT, BECAUSE THE TWO CONTRADICT.
+    #
+    # The placement sentence ends "and nothing here refuses it". That is true of the lane
+    # verbs, which refuse nothing, and true of a provisioned shape that places badly. On
+    # `gpu-8xh100` it landed two lines above `unprovisioned_compute_profile`, so this verb
+    # said nothing refuses it and then refused it, in one screen -- and a reader who believes
+    # the first sentence reads the refusal as a bug.
+    #
+    # The refusal is the stronger fact and the actionable one. "A machine may take a while to
+    # arrive, or never arrive" describes a queue that exists; there is no compute environment
+    # for p5.48xlarge at all, and the refusal says so and lists what is provisioned instead.
+    # The --json document keeps both, because two keys a caller reads separately cannot
+    # contradict each other the way two sentences in one screen do.
+    said = (
+        None
+        if any(refusal.code == "unprovisioned_compute_profile" for refusal in preflight.refusals)
+        else placement_said(verdict)
+    )
     if said is not None:
         print("\n".join(_wrapped(said, indent="")), file=err if arguments.json else out)
         print(file=err if arguments.json else out)
