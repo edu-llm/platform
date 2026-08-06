@@ -228,7 +228,7 @@ Write the group you usually charge to into one file and you stop being asked.
 mkdir -p ~/.config/edullm && echo pre-training > ~/.config/edullm/team
 ```
 
-The file holds one team id on its first line and nothing else. There is no command that writes it, because there is nothing to write but the word. It goes in the same place on macOS, Linux and WSL, or under `XDG_CONFIG_HOME` if you have set one.
+The file holds one team id on its first line and nothing else. There is no command that writes it, because there is nothing to write but the word. It goes in the same place on macOS, Linux and WSL, or under `XDG_CONFIG_HOME` if you have set one. On native Windows that path is `%USERPROFILE%\.config\edullm\team`, which PowerShell will create for you with `New-Item -ItemType Directory -Force $HOME\.config\edullm`.
 
 This is yours and it is local. It is not reviewed configuration, it is read by nothing but your own `edullm`, and it does not travel with your code. `edullm check` prints the team it used and names this file on the same line, so a transcript still says where the team came from, and `--team` on the command line beats it for one run.
 

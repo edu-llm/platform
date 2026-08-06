@@ -18,6 +18,30 @@ network.** ``check`` promises to refuse in under a second without touching anyth
 an off-roster submitter is the first refusal it makes, so the login has to be free. ``gh``
 writes it into ``hosts.yml`` at login; asking the API is the fallback for a configuration
 laid out somewhere this does not expect.
+
+**WHERE THAT FILE IS DEPENDS ON THE OPERATING SYSTEM, AND ASSUMING OTHERWISE IS WHAT MADE
+THIS PACKAGE UNUSABLE ON WINDOWS.** :func:`gh_config_directory` implements ``gh``'s own
+four-step rule rather than the one convention that happens to hold on the developer's
+laptop. The header on that function carries the rule and the source for it.
+
+**WHAT NATIVE WINDOWS IS, AS OF THIS CHANGE.** The identity half is repaired and the layout
+was swept rather than assumed: ``gh``'s configuration is found where ``gh`` puts it, the
+second failure the WSL diagnostic names cannot arise here because ``gh run download --dir``
+is handed a Windows temporary directory by a Windows process rather than across the boundary
+that breaks it, and the repository-relative paths that travel to the workflow already go
+through ``as_posix``. One residue is this module's and it is not silent: a ``gh`` installed
+as a ``.bat`` or ``.cmd`` shim rather than as ``gh.exe`` would be found by
+:func:`shutil.which`, which reads ``PATHEXT``, and then not started by :mod:`subprocess`,
+which appends only ``.exe`` to a bare name. Every mainstream Windows install of ``gh`` and
+``git`` is an ``.exe``, and the failure is a ``FileNotFoundError`` naming the program rather
+than a wrong answer, which is the difference that decides whether something is worth code.
+
+**AND THE REASON THIS DEFECT SURVIVED SO LONG IS NOT IN THIS FILE.** A submitter of ``None``
+does not make ``check`` louder, it makes it quieter: the team refusal that would have fired
+is dropped along with the identity it depends on, so a Windows install with no login at all
+looked like a working one. That is being repaired elsewhere. It is worth knowing here because
+this module answers ``None`` for a living, and every one of those answers is currently read
+by something that relaxes rather than refuses.
 """
 
 from __future__ import annotations
@@ -38,6 +62,7 @@ __all__ = [
     "GitFacts",
     "SubprocessRunner",
     "ToolMissingError",
+    "gh_config_directory",
     "github_interop_diagnostic",
     "github_login",
     "read_git_facts",
@@ -49,6 +74,14 @@ LOGIN_VARIABLE = "EDULLM_GITHUB_LOGIN"
 #: What a command that ran out of time exits with, which is the convention ``timeout(1)``
 #: set and every shell script since has read.
 TIMED_OUT: Final = 124
+
+#: What ``gh`` names its own directory under ``%AppData%``. A name this project reads rather
+#: than owns, spelling and space included, because it is the literal in ``go-gh``.
+GH_WINDOWS_DIRECTORY: Final = "GitHub CLI"
+
+#: What :func:`platform.system` answers on Windows, compared case-folded because that is the
+#: only comparison an injected value cannot get subtly wrong.
+WINDOWS: Final = "windows"
 
 
 class ToolMissingError(RuntimeError):
@@ -159,10 +192,18 @@ def github_interop_diagnostic(
     quietly goes to a different operating system. Two things then break in ways nobody
     could reasonably diagnose:
 
-    ``gh.exe`` reads its credential from ``%AppData%``, which the Linux-side lookup in
-    :func:`_login_from_gh_config` will never find -- so ``check`` decides nobody is logged
-    in and refuses on the roster, while ``submit`` falls through to ``gh api user`` and
-    succeeds. Two verbs disagreeing about who you are is a bug report nobody can write.
+    ``gh.exe`` reads its credential from ``%AppData%``, and this is Linux, so
+    :func:`gh_config_directory` correctly refuses to look there and finds nothing -- so
+    ``check`` decides nobody is logged in and refuses on the roster, while ``submit`` falls
+    through to ``gh api user`` and succeeds. Two verbs disagreeing about who you are is a bug
+    report nobody can write.
+
+    **AND THE ``%AppData%`` LOOKUP ADDED FOR NATIVE WINDOWS DOES NOT RESCUE THIS ONE,
+    DELIBERATELY.** That branch is guarded on the operating system this process is running
+    on, which under WSL is Linux, whatever the ``gh`` on PATH happens to be. Ungating it
+    would let a Linux process read a credential out of a Windows path and would then be
+    wrong for every ordinary Linux machine that has an ``APPDATA`` variable from somewhere;
+    ``tests/test_cli_release.py`` holds a case that fails if anybody tries.
 
     And ``compiled_submission`` hands ``gh run download --dir`` a Linux
     ``TemporaryDirectory``. A Windows executable cannot write to a bare ``/tmp/...`` path,
@@ -175,8 +216,17 @@ def github_interop_diagnostic(
     make ``gh.exe`` usable would be clever, cross-OS, slow, and would still leave the
     credential in the wrong place; refusing would take the platform away from somebody who
     is one ``apt install`` from working. One line naming the executable and the remedy is
-    the whole of what is useful here. Native Windows is not supported and this does not
-    make it so -- it only names the failure on the arrangement that is.
+    the whole of what is useful here.
+
+    **NATIVE WINDOWS IS A SUPPORTED ARRANGEMENT AS OF THIS CHANGE, WHICH IS WHY THIS SAYS SO
+    RATHER THAN SAYING WHAT IT USED TO.** The line here read "native Windows is not
+    supported", and it was a disclaimer nothing enforced: a researcher in VS Code, whose
+    integrated terminal on Windows is PowerShell by default, met the identical
+    check-and-submit disagreement above by a different route and got no warning at all,
+    because the detector below correctly answers no. That was not an unsupported platform,
+    it was an undiagnosable one. :func:`gh_config_directory` now resolves ``gh``'s
+    configuration the way ``gh`` resolves it on each platform, both halves of the WSL failure
+    are checked above for the native case, and what remains is in this module's header.
     """
     variables = os.environ if environ is None else environ
     locate = shutil.which if which is None else which
@@ -330,6 +380,79 @@ def github_login(
     return answered.text or None
 
 
+def gh_config_directory(
+    variables: Mapping[str, str], *, system: str, home: Path | None
+) -> Path | None:
+    """Where ``gh`` keeps ``config.yml`` and ``hosts.yml``, by ``gh``'s own four-step rule.
+
+    ``GH_CONFIG_DIR``, then ``XDG_CONFIG_HOME/gh``, then ``%AppData%\\GitHub CLI`` on Windows
+    only, then ``~/.config/gh``. That is the order in ``ConfigDir`` in ``go-gh``'s
+    ``pkg/config/config.go``, which is the function the ``gh`` binary actually calls, and it
+    is the order ``gh help environment`` prints for ``GH_CONFIG_DIR``. Both were read rather
+    than remembered, because a rule guessed at here is the same bug facing the other way.
+
+    **THE THIRD STEP IS THE WHOLE OF WHY THIS FUNCTION EXISTS.** Native Windows ``gh`` writes
+    ``hosts.yml`` under ``%AppData%``, nowhere near ``~/.config``, so a lookup that knew only
+    the Unix steps decided nobody was logged in on a machine where ``gh auth login`` had just
+    succeeded. ``check`` then refused on the roster while ``submit``, which may ask the
+    network, answered with the person's actual login: two verbs disagreeing about who you
+    are, with no warning, because the WSL detector correctly says this is not WSL.
+
+    **AND THE SECOND STEP COMES BEFORE THE THIRD ON WINDOWS TOO, WHICH LOOKS WRONG AND IS
+    NOT.** ``XDG_CONFIG_HOME`` is read on every platform by ``go-gh``; only the ``AppData``
+    branch is guarded by the operating system. A Windows researcher who has that variable
+    set, from a dotfiles repository or from a runner that exports one, has a ``gh`` reading
+    from it, and a lookup that jumped straight to ``%AppData%`` would miss them. Putting
+    Windows first would also move the answer on macOS and Linux, which is the half of this
+    that already worked.
+
+    ``system`` and ``home`` are injected rather than read, so that every branch is reachable
+    from a suite on any machine. ``home`` is ``None`` where there is no home directory to
+    name, which is a container with no passwd entry: there is nowhere ``gh`` could have
+    written a login, so there is no login, rather than an exception out of a lookup whose
+    honest answer is "nobody".
+    """
+    declared = _declared(variables, "GH_CONFIG_DIR")
+    if declared:
+        return Path(declared)
+    config_home = _declared(variables, "XDG_CONFIG_HOME")
+    if config_home:
+        return Path(config_home) / "gh"
+    app_data = _declared(variables, "AppData")
+    if system.casefold() == WINDOWS and app_data:
+        return Path(app_data) / GH_WINDOWS_DIRECTORY
+    if home is None:
+        return None
+    return home / ".config" / "gh"
+
+
+def _declared(variables: Mapping[str, str], name: str) -> str:
+    """One environment variable, under either spelling of its name, or the empty string.
+
+    **THE SECOND SPELLING IS ABOUT ``AppData`` AND IS NOT DECORATION.** Windows environment
+    variables are case-insensitive and Python's own ``os.environ`` upper-cases every key it
+    holds on that platform, so the real mapping this is handed on Windows carries
+    ``APPDATA``. ``go-gh`` asks for ``AppData`` and Go's ``os.Getenv`` is case-insensitive
+    there, so that is the name worth writing down; a mapping a test hands over is an ordinary
+    dictionary and is not. Reading one spelling would leave a lookup that passed against
+    every fixture and found nothing on a Windows machine, which is the exact shape of failure
+    this whole function is repairing.
+    """
+    for spelling in (name, name.upper()):
+        value = variables.get(spelling, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _home() -> Path | None:
+    """The real home directory, or nothing where the machine cannot name one."""
+    try:
+        return Path.home()
+    except RuntimeError:
+        return None
+
+
 def _login_from_gh_config(
     variables: Mapping[str, str], config_home: Path | None
 ) -> str | None:
@@ -342,15 +465,13 @@ def _login_from_gh_config(
     """
     import yaml
 
-    if config_home is not None:
-        directory = config_home
-    else:
-        declared = variables.get("GH_CONFIG_DIR", "").strip()
-        if declared:
-            directory = Path(declared)
-        else:
-            xdg = variables.get("XDG_CONFIG_HOME", "").strip()
-            directory = Path(xdg) / "gh" if xdg else Path.home() / ".config" / "gh"
+    directory = (
+        config_home
+        if config_home is not None
+        else gh_config_directory(variables, system=platform.system(), home=_home())
+    )
+    if directory is None:
+        return None
     hosts = directory / "hosts.yml"
     if not hosts.is_file():
         return None

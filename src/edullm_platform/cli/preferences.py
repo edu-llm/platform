@@ -27,10 +27,19 @@ guide paragraph and a maintained surface, bought for people who are already comf
 writing a word into a file the refusal names for them.
 
 WHERE IT GOES IS ``gh``'S OWN RULE, SPELLED THE WAY THIS PACKAGE ALREADY SPELLS IT.
-``XDG_CONFIG_HOME`` when it is set and ``~/.config`` when it is not, which is what
-``workspace._login_from_gh_config`` does for ``hosts.yml`` and what ``gh`` itself does on
-macOS as well as on Linux. One rule, so macOS, Linux and WSL put the file in the same place
-and a researcher who moves between them types the same path. Nothing new is imported for it.
+``XDG_CONFIG_HOME`` when it is set and ``~/.config`` when it is not, which is the first two
+and the last of the four steps :func:`~edullm_platform.cli.workspace.gh_config_directory`
+takes for ``hosts.yml`` and is what ``gh`` itself does on macOS as well as on Linux. One
+rule, so macOS, Linux and WSL put the file in the same place and a researcher who moves
+between them types the same path. Nothing new is imported for it.
+
+**THE STEP NOT COPIED IS THE WINDOWS ONE, AND LEAVING IT OUT IS THE DECISION RATHER THAN THE
+OVERSIGHT.** ``gh`` falls back to ``%AppData%\\GitHub CLI`` on Windows because ``gh`` has to
+find a file it wrote itself; this file is written by a person, once, at a path a refusal
+prints for them in full. On Windows with no ``XDG_CONFIG_HOME`` it lands under
+``%USERPROFILE%\\.config\\edullm\\team``, which is readable, writable and named in the
+refusal that recommends it. A second convention here would buy a tidier path and cost a
+second place to look for a file that is already hard enough to remember.
 
 **A FILE THAT WILL NOT READ IS NOT AN ERROR AND CANNOT MISATTRIBUTE ANYTHING.** An
 unreadable or empty file answers "no default", which falls back to the roster, which either
