@@ -179,8 +179,8 @@ def approvers_said(inventory: OrganizationInventory, environment: ApprovalEnviro
     people = "person holds" if count == 1 else "people hold"
     return (
         f"{count} {people} the role {environment.value} asks for. Which accounts that gate "
-        "itself lists is a GitHub environment setting rather than part of the reviewed "
-        "configuration, and nothing here reads it."
+        "itself lists is a GitHub setting rather than reviewed configuration, and nothing "
+        "here reads it."
     )
 
 
@@ -261,8 +261,8 @@ def render_run_listing(rows: Iterable[tuple[str, str, str, str]]) -> str:
     listed = list(rows)
     if not listed:
         return (
-            "no runs. Nothing you have submitted is still known to GitHub Actions, which "
-            "keeps workflow runs for a bounded window.\n"
+            "no runs. GitHub Actions keeps workflow runs for a bounded window, and nothing "
+            "you submitted is still inside it.\n"
         )
     widths = [max(len(row[column]) for row in listed) for column in range(3)]
     lines = [
@@ -313,14 +313,12 @@ def _cost_block(preflight: Preflight) -> str:
     attempts = "attempt" if cost.maximum_attempts == 1 else "attempts"
     nodes = "node" if cost.nodes == 1 else "nodes"
     return (
-        "worst case\n"
+        f"worst case  ${plain_decimal(cost.maximum_compute_cost_usd)}\n"
         f"  ${plain_decimal(cost.hourly_rate_usd)}/hour x {cost.nodes} {nodes} x "
         f"{plain_decimal(cost.maximum_runtime_hours)}h x {cost.maximum_attempts} {attempts} x "
-        f"{cost.cells} {cells} = ${plain_decimal(cost.maximum_compute_cost_usd)}\n"
-        "  This is the ceiling, not an estimate. It is also what routes the run, so "
-        "lowering\n"
-        "  --hours is what moves a run under the automatic bound. What it is likely to\n"
-        "  cost is the block below."
+        f"{cost.cells} {cells}\n"
+        "  A ceiling rather than an estimate, and what routes the run. Lowering --hours\n"
+        "  is what moves a run under the automatic bound."
     )
 
 
@@ -353,8 +351,8 @@ def _approval_block(
     lines = ["approval"]
     if approval_class is ApprovalClass.AUTOMATIC:
         lines.append(
-            f"  automatic -- one cell, under ${plain_decimal(limits.automatic_below_cost_usd)}. "
-            "Nobody releases this."
+            f"  automatic. One cell, under ${plain_decimal(limits.automatic_below_cost_usd)}, "
+            "so nobody releases this."
         )
         return "\n".join(lines)
 

@@ -699,8 +699,8 @@ def read_run_facts(
         admitted=Admitted.UNSURE,
         because=(
             f"the admission job ended {conclusion}, which does not say whether it got as "
-            "far as starting the run -- it writes where a run went only after admission "
-            "answers. Asking AWS is the only way to be sure."
+            "far as starting the run. It writes where a run went only after admission "
+            "answers, so asking AWS is the only way to be sure."
         ),
     )
 

@@ -147,16 +147,15 @@ DEFERRED_TO_SUBMIT: Final = (
         # recognises it when the compile step makes it.
         NoPublishedImageError.reason_code,
         (
-            "Whether this commit published an image. A push to edullm/** builds one; the "
-            "registry is asked by the submission workflow, which holds the credential."
+            "Whether this commit published an image. A push to edullm/** builds one, and "
+            "the submission workflow holds the credential that asks the registry."
         ),
     ),
     (
         "image_scan_findings_unreviewed",
         (
-            "Whether the registry's scan findings for that image have been read. A scan "
-            "still running reads the same as findings nobody reviewed, so this is decided "
-            "where the findings are, and admission re-derives it after approval either way."
+            "Whether the registry's scan findings for that image have been read. Decided "
+            "where the findings are, and admission re-derives it after approval."
         ),
     ),
 )
@@ -193,10 +192,9 @@ class Refusal:
 SUBMITTER_UNKNOWN: Final = Refusal(
     code="submitter_unknown",
     detail=(
-        "gh has not recorded who you are, so this cannot say whether the roster names you, "
-        "which group your runs are charged to, or whether a group you name is one of yours. "
-        "Run gh auth login. edullm holds no credential of its own -- the submission workflow "
-        "holds the AWS one -- so gh is the whole of what it needs from you."
+        "run gh auth login. gh has not recorded who you are, so nothing here can say "
+        "whether the roster names you, which group your runs are charged to, or whether a "
+        "group you name is one of yours."
     ),
 )
 
@@ -353,8 +351,8 @@ def run_preflight(
         Refusal(
             code=condition,
             detail=(
-                f"policy denies this outright rather than classifying it: {condition}. "
-                "Admission would refuse it whoever released the gate."
+                f"policy denies {condition} outright rather than classifying it. Admission "
+                "would refuse this run whoever released the gate."
             ),
         )
         for condition in tripped
@@ -417,10 +415,8 @@ def _price_and_derive_facts(
         return Refusal(
             code="submission_cannot_be_priced",
             detail=(
-                "the manifest is well formed and the facts this platform prices and "
-                f"classifies on could not be derived from it: {first_validation_message(exc)}. "
-                "Correct the field that names -- every value on a submission is recorded, "
-                "and one the contracts refuse is one nothing downstream could store."
+                f"{first_validation_message(exc)}. Correct that field. The manifest is well "
+                "formed and this is the value that stops it being priced."
             ),
         )
     return cost, facts
@@ -465,9 +461,8 @@ def working_tree_refusals(facts: GitFacts, *, spec_path: Path | None = None) -> 
             Refusal(
                 code="not_a_repository",
                 detail=(
-                    "this directory is not inside a git repository, so there is no commit "
-                    "to submit. A run is a commit in a registered repository: the record "
-                    "names what ran, and a directory is not something a record can name."
+                    "stand in a checkout of a registered repository. This directory is not "
+                    "inside a git repository, so there is no commit to submit."
                 ),
             )
         ]
@@ -477,9 +472,8 @@ def working_tree_refusals(facts: GitFacts, *, spec_path: Path | None = None) -> 
             Refusal(
                 code="no_origin_remote",
                 detail=(
-                    "this repository has no origin remote, so which registered repository "
-                    "it is cannot be read. config/repositories.yaml is keyed on the GitHub "
-                    "name, so pass --repository, or add the remote."
+                    "pass --repository, or add an origin remote. This clone has none, and "
+                    "config/repositories.yaml is keyed on the GitHub name."
                 ),
             )
         )
@@ -488,8 +482,8 @@ def working_tree_refusals(facts: GitFacts, *, spec_path: Path | None = None) -> 
             Refusal(
                 code="no_commit",
                 detail=(
-                    "HEAD does not resolve to a commit, so there is nothing to name. A "
-                    "repository with no commits yet looks like this."
+                    "commit something first. HEAD does not resolve to a commit, so there "
+                    "is nothing for a submission to name."
                 ),
             )
         )
@@ -505,11 +499,9 @@ def working_tree_refusals(facts: GitFacts, *, spec_path: Path | None = None) -> 
             Refusal(
                 code="uncommitted_changes",
                 detail=(
-                    f"the working tree carries changes that are not in any commit: {shown}"
-                    f"{more}. A submission names a commit and the container is built from "
-                    "it, so what would run is the last commit rather than what is on your "
-                    "laptop -- and nothing downstream can tell those apart. Commit them, or "
-                    "stash them."
+                    f"commit or stash {shown}{more}. A submission names a commit and the "
+                    "image is built from it, so what would run is the last commit rather "
+                    "than what is on your laptop."
                 ),
             )
         )
@@ -518,10 +510,10 @@ def working_tree_refusals(facts: GitFacts, *, spec_path: Path | None = None) -> 
             Refusal(
                 code="commit_not_pushed",
                 detail=(
-                    f"no remote-tracking branch in this clone contains {facts.commit_sha[:12]}"
-                    ", so nothing has built an image from it. A push to edullm/** is what "
-                    "builds one. If you have just pushed, git fetch first -- this reads the "
-                    "refs this clone holds rather than asking GitHub."
+                    f"push {facts.commit_sha[:12]} to a branch under edullm/**, or git "
+                    "fetch if you already have. No remote-tracking branch in this clone "
+                    "contains it, so nothing has built an image from it, and this reads "
+                    "the refs the clone holds rather than asking GitHub."
                 ),
             )
         )
@@ -650,8 +642,8 @@ def resolve_team(
         ""
         if default is None
         else (
-            f" Writing one of them into {default.path} answers this for every later run, "
-            "and --team still overrides it."
+            f" Writing one into {default.path} answers this for every later run, and "
+            "--team still overrides it."
         )
     )
     return (
@@ -660,11 +652,10 @@ def resolve_team(
         Refusal(
             code="team_is_ambiguous",
             detail=(
-                f"the roster puts {submitter} on {', '.join(sorted(declared))}, so which "
-                "group this run is charged to is not something the roster can answer. Team "
-                "is what cost attribution groups on and what decides which lead is asked, "
-                "so it is asked rather than guessed: pass --team with one of those, or "
-                f"--team {SCRATCH_TEAM} for anything you will not keep.{write_it_down}"
+                f"pass --team with one of {', '.join(sorted(declared))}, or --team "
+                f"{SCRATCH_TEAM} for anything you will not keep. The roster puts "
+                f"{submitter} on more than one group, so it cannot say which this run is "
+                f"charged to.{write_it_down}"
             ),
         ),
     )
@@ -717,9 +708,8 @@ def _find_workload(
                 code=UnregisteredWorkloadProfileError.reason_code,
                 detail=(
                     f"{request.workload_profile!r} is not in config/workload-catalog.yaml. "
-                    f"Offered: {offered}. A workload profile fixes the runtime bound, the "
-                    "attempt bound and the checkpoint contract for one codebase, so adding "
-                    "one is a pull request against the platform."
+                    f"Pass --workload with one of: {offered}. Adding a new one is a pull "
+                    "request against the platform."
                 ),
             )
         )
@@ -738,11 +728,10 @@ def _find_workload(
             Refusal(
                 code=WorkloadProfileRepositoryMismatchError.reason_code,
                 detail=(
-                    f"workload profile {workload.name!r} belongs to repository "
-                    f"{workload.repository!r} and this submission names "
-                    f"{request.repository!r}. Registered for {request.repository}: "
-                    f"{offered}. Change workload_profile in {'.edullm/run.yaml'} or pass "
-                    "--workload."
+                    f"workload profile {workload.name!r} belongs to "
+                    f"{workload.repository!r} rather than to {request.repository!r}. Pass "
+                    f"--workload, or change workload_profile in {'.edullm/run.yaml'}. "
+                    f"Registered for {request.repository}: {offered}."
                 ),
             )
         )
@@ -770,10 +759,7 @@ def _find_compute(
         refusals.append(
             Refusal(
                 code=type(exc).reason_code,
-                detail=(
-                    f"{exc}. A submission on one of these starts costing the wait for a "
-                    f"machine rather than a refusal after approval: {provisioned}."
-                ),
+                detail=f"{exc}. Provisioned today: {provisioned}.",
             )
         )
         return None
@@ -796,9 +782,7 @@ def _check_dataset(
                 code="unregistered_dataset",
                 detail=(
                     f"{request.dataset_release!r} is not a release config/datasets.yaml "
-                    f"carries. Registered and still usable: {offered}. Naming a corpus the "
-                    "registry has never heard of is denied outright, so this never reaches "
-                    "a reviewer."
+                    f"carries. Registered and still usable: {offered}."
                 ),
             )
         ]
@@ -811,11 +795,9 @@ def _check_dataset(
             Refusal(
                 code="dataset_is_not_a_corpus",
                 detail=(
-                    f"{request.dataset_release!r} resolves to {reference.dataset_id}, and a "
-                    "run may train on pretrain/ and sft/ only. The registry knows exactly "
-                    "what this is and it is an input to a corpus rather than a corpus: a "
-                    "tokenizer read as tokens produces a loss curve nothing reports a "
-                    "problem about."
+                    f"{request.dataset_release!r} resolves to {reference.dataset_id}, which "
+                    "is an input to a corpus rather than a corpus. Name a release under "
+                    "pretrain/ or sft/, which are the two a run may train on."
                 ),
             )
         ]
@@ -846,11 +828,9 @@ def _check_team(
             Refusal(
                 code="unregistered_team",
                 detail=(
-                    f"{request.team!r} is not a team config/organization.yaml declares. "
-                    f"Declared: {', '.join(sorted(declared))}. A team that is not one of "
-                    "these books its spend to a group that does not exist, and the cost "
-                    "report groups by whatever was typed, so the run is simply not in any "
-                    "group's total."
+                    f"{request.team!r} is not a team config/organization.yaml declares, so "
+                    "this run's spend would land in no group's total. Declared: "
+                    f"{', '.join(sorted(declared))}."
                 ),
             )
         ]
@@ -877,13 +857,10 @@ def _check_team(
             Refusal(
                 code=AuthorizationReason.SUBMITTER_NOT_IN_CLAIMED_TEAM.value,
                 detail=(
-                    f"the roster records {submitter} on {mine} and this submission claims "
-                    f"{request.team!r}. Team is what cost attribution groups on, so a run "
-                    "under a group you are not in is missing from that group's total and "
-                    "counted against one that did not do the work. Nothing inside AWS "
-                    "refuses this -- the decision record simply carries team_verified false "
-                    "-- so here is where it is worth saying. Pass --team with one of yours, "
-                    "or add yourself to that group in config/organization.yaml."
+                    f"pass --team with one of {mine}, or add {submitter} to "
+                    f"{request.team!r} in config/organization.yaml. The roster does not "
+                    "record you in that group, so the spend would be counted against a "
+                    "group that did not do the work and nothing inside AWS would refuse it."
                 ),
             )
         ]
@@ -899,12 +876,10 @@ def _check_experiment(request: SubmissionRequest) -> list[Refusal]:
         Refusal(
             code=ExperimentNotASlugError.reason_code,
             detail=(
-                f"the experiment {request.experiment!r} is not a name this platform can "
-                "group on. An experiment is written in lower-case letters and digits, with "
-                "single hyphens between words and none at either end -- "
-                "context-length-sweep, tokenizer-ablation. It registers nothing and needs "
-                "no pull request; only the shape is fixed, so that two people naming the "
-                "same experiment get one group rather than two."
+                f"rewrite the experiment {request.experiment!r} in lower-case letters and "
+                "digits, with single hyphens between words and none at either end, like "
+                "context-length-sweep. It registers nothing, so any name of that shape "
+                "will do."
             ),
         )
     ]
@@ -920,10 +895,9 @@ def _check_fanout(request: SubmissionRequest) -> list[Refusal]:
             Refusal(
                 code="fanout_incomplete",
                 detail=(
-                    "a fan-out must declare both its size and what its index varies, or "
-                    "neither. In .edullm/run.yaml that is a fanout block with size and "
-                    "index_parameter; on the command line it is --fanout-size with "
-                    "--fanout-index-parameter."
+                    "pass --fanout-size and --fanout-index-parameter together, or neither. "
+                    "In .edullm/run.yaml the same pair is a fanout block with size and "
+                    "index_parameter."
                 ),
             )
         ]
@@ -950,10 +924,9 @@ def _build_manifest(
             Refusal(
                 code=RetryWithoutACheckpointContractError.reason_code,
                 detail=(
-                    f"workload profile {workload.name!r} declares no checkpoint contract, so "
-                    f"it cannot be retried; asking for {attempts} attempts would produce a "
-                    "run that restarts from nothing. Lower --attempts to 1, or move to a "
-                    "workload that checkpoints."
+                    "lower --attempts to 1, or move to a workload that checkpoints. "
+                    f"{workload.name!r} declares no checkpoint contract, so {attempts} "
+                    "attempts would produce a run that restarts from nothing."
                 ),
             )
         ]
@@ -991,8 +964,8 @@ def _build_manifest(
             Refusal(
                 code="submission_does_not_describe_a_run",
                 detail=(
-                    "the spec and the flags do not add up to something this platform can "
-                    f"record: {first_validation_message(exc)}"
+                    f"{first_validation_message(exc)}. Correct that field in the spec or on "
+                    "the command line."
                 ),
             )
         ]

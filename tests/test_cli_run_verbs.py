@@ -462,7 +462,7 @@ def test_the_wait_an_abbreviation_costs_is_named_before_it_is_paid(
         ["status", "run_019fd2a1"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch
     )
 
-    assert "resolving run_019fd2a1." in err
+    assert "resolving run_019fd2a1, which takes a few seconds." in err
     assert "resolving" not in out
 
     _, _, whole = invoke(["status", RUN_ID], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
@@ -742,7 +742,9 @@ def test_cancelling_a_run_that_never_started_names_the_operation_that_would_stop
     assert runner.ran("gh", "workflow", "run") == []
     assert "refused  nothing_admitted_to_stop" in err
     assert f"gh run cancel {SUBMIT_RUN_ID}" in err
-    assert "an approval would still start it" in err
+    # Collapsed, because the refusal is wrapped to the terminal and where the sentence
+    # breaks is a function of how long the run id in front of it is.
+    assert "an approval would still start it" in " ".join(err.split())
     # On stderr with this verb's other two refusals, and not on stdout where it used to be.
     # A caller that has to read both streams to collect one verb's refusals cannot tell
     # from the exit code which one carried this one.
