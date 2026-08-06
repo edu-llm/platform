@@ -19,6 +19,7 @@ machine, you do what you like, nothing is checked and nothing is recorded as cit
 from __future__ import annotations
 
 import json
+import random
 import re
 import shlex
 from collections.abc import Mapping, Sequence
@@ -57,13 +58,18 @@ __all__ = [
     "GPU_AMI_PARAMETER",
     "LANE_INSTANCE_PROFILE",
     "LANE_TAG_KEY",
+    "PLATFORM_NETWORK_NAME",
     "SCRATCH_BUCKET",
     "SESSION_PLUGIN",
+    "ZONE_SHAPED_REFUSALS",
     "DefaultedCompute",
     "LaneExpiry",
     "LaneRequest",
+    "LaneSubnet",
     "WorkingTierSettings",
+    "ZoneAttempt",
     "agent_online_argv",
+    "another_zone_may_answer",
     "assume_lane_argv",
     "command_line",
     "credentials_environment",
@@ -71,24 +77,31 @@ __all__ = [
     "expires_at",
     "expiry_for_a_new_machine",
     "find_machine_argv",
+    "find_subnets_argv",
     "instance_type_for",
     "lane_refusals",
+    "lane_subnets",
     "load_working_tier_settings",
     "machine_already_running",
     "missing_plugin_refusal",
+    "no_zone_had_this_shape",
     "notebook_forward_argv",
     "person_from_caller_arn",
     "placement_said",
     "placement_verdict",
     "placement_warning",
+    "refusal_code",
     "remote_command_argv",
     "remote_script",
     "run_instances_argv",
     "shell_session_argv",
     "ssh_proxy_command",
+    "subnets_to_try",
     "under_a_shell",
     "working_prefix",
     "working_uri",
+    "zones_offering",
+    "zones_offering_argv",
 ]
 
 #: The working tier. docs-frank/reference/system-overview.md, "Where data lives", draws it as a
@@ -115,6 +128,15 @@ LANE_INSTANCE_PROFILE: Final = "edullm-lane-instance"
 GPU_AMI_PARAMETER: Final = (
     "/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id"
 )
+
+#: The Name tag prefix and the group name ``infra/batch-network.yaml`` gives the platform's VPC.
+#: Read rather than pinned, so a redeploy that moves an id moves the lane with it.
+#:
+#: HERE RATHER THAN IN ``main.py``, WHICH IS WHERE IT WAS. This module's header says it owns the
+#: exact argv of every command the two verbs run, and :func:`find_subnets_argv` is now one of
+#: them, so the name and the filter that interpolates it belong in one file. ``main`` imports it
+#: for the security group query, which is the one call still assembled there.
+PLATFORM_NETWORK_NAME: Final = "sbsandbox-intern-edullm-batch"
 
 #: The tag that says which person's lane a machine belongs to, carrying the source identity.
 #:
@@ -733,6 +755,259 @@ def find_machine_argv(*, project: str, person: str) -> tuple[str, ...]:
         "Reservations[].Instances[].{machine:InstanceId,tags:Tags}",
         "--output",
         "json",
+    )
+
+
+@dataclass(frozen=True)
+class LaneSubnet:
+    """One place a lane machine could go, and the zone that decides whether it can.
+
+    The zone is carried beside the id rather than derived from it, because nothing about a
+    subnet id says where it is and the only other way to find out is a second call. It is
+    what :func:`subnets_to_try` filters on and what the refusal names, and both of those
+    read better as a zone than as seventeen hex characters nobody recognises.
+    """
+
+    subnet: str
+    zone: str
+
+
+def find_subnets_argv() -> tuple[str, ...]:
+    """Every subnet the platform's network declares, with the zone each one is in.
+
+    **THE ZONE COMES BACK WITH THE ID AND THAT IS THE WHOLE OF THIS CHANGE AT THE WIRE.**
+    This asked for ``Subnets[].SubnetId``, a bare list, and ``main`` took ``[0]`` of it. EC2
+    answers that query in an order of its own that is stable for an account -- for this one it
+    puts ``us-east-1f`` first -- so the lane pinned one zone by accident and asked it three
+    times on the morning of 2026-08-06 when it had no ``g6.xlarge`` to sell. A list of ids
+    cannot be filtered by zone or reported by zone, so both halves of the repair need this
+    query rather than that one.
+
+    ``{PLATFORM_NETWORK_NAME}-*`` still, so the network is discovered rather than pinned and a
+    redeploy that moves an id moves the lane with it. That property was right and is untouched.
+    """
+    return (
+        "aws",
+        "ec2",
+        "describe-subnets",
+        "--filters",
+        f"Name=tag:Name,Values={PLATFORM_NETWORK_NAME}-*",
+        "--query",
+        "Subnets[].{subnet:SubnetId,zone:AvailabilityZone}",
+        "--output",
+        "json",
+    )
+
+
+def zones_offering_argv(instance_type: str) -> tuple[str, ...]:
+    """Which zones EC2 sells this instance type in at all, which is not every zone.
+
+    **ASKED OF EC2 RATHER THAN READ OUT OF A FILE, AND THE FILE IS THE TEMPTING WRONG
+    ANSWER.** ``infra/batch-network.yaml`` declares six subnets and its header spends four
+    paragraphs on the one that is different: ``us-east-1e`` exists for ``p5`` and for nothing
+    else, because ``p5.48xlarge`` and ``p5.4xlarge`` are the only shapes this repository backs
+    that EC2 offers there. Its Name tag even says ``-p5-only``. A lane that tried all six for
+    a ``g6.xlarge`` would spend one attempt on a zone that can never answer, and a lane that
+    hard-coded five would be wrong the day a seventh subnet or a new shape arrives.
+
+    ``tests/test_phase3_infrastructure.py`` already carries this rule for Batch, where getting
+    it wrong is a job that sits in ``RUNNABLE`` for ever, and its own comment records the
+    distinction this call keeps: the zone list is a fact about an instance type, not a fact
+    about the network. Measured against this account on 2026-08-06, ``g6.xlarge`` is offered in
+    1a, 1b, 1c, 1d and 1f, and ``p5.4xlarge`` in all six.
+
+    Permitted to the lane's own credential: the researcher role's allow is ``*`` narrowed by
+    denies that name ``ec2:RunInstances`` and no describe, and the call was made under an
+    assumed ``edullm-researcher`` session on 2026-08-06 before this shipped.
+    """
+    return (
+        "aws",
+        "ec2",
+        "describe-instance-type-offerings",
+        "--location-type",
+        "availability-zone",
+        "--filters",
+        f"Name=instance-type,Values={instance_type}",
+        "--query",
+        "InstanceTypeOfferings[].Location",
+        "--output",
+        "json",
+    )
+
+
+def lane_subnets(described: str) -> tuple[LaneSubnet, ...]:
+    """:func:`find_subnets_argv`'s answer as the pairs it is, skipping anything malformed.
+
+    An entry that is not an object, or that is missing either half, is skipped rather than
+    unpacked, which is the rule :func:`machine_already_running` already follows and for the
+    same reason: the shape is this module's own ``--query`` and the two ship together, so the
+    only way to see something else is an install whose halves disagree, and an ``AttributeError``
+    in front of a researcher is the one thing this binary promises not to do.
+
+    Skipping reads as one fewer place to try, and skipping everything reads as no network at
+    all, which ``main`` already reports as a deploy that has not happened. Neither invents a
+    subnet, which is the failure that would matter.
+    """
+    found: list[LaneSubnet] = []
+    for entry in json.loads(described.strip() or "[]"):
+        if not isinstance(entry, dict):
+            continue
+        subnet = str(entry.get("subnet") or "")
+        zone = str(entry.get("zone") or "")
+        if subnet and zone:
+            found.append(LaneSubnet(subnet=subnet, zone=zone))
+    return tuple(found)
+
+
+def zones_offering(described: str) -> frozenset[str]:
+    """:func:`zones_offering_argv`'s answer as a set of zone names, empty where it said nothing.
+
+    Empty is the answer for a call that failed as well as for a type nothing offers, and
+    :func:`subnets_to_try` treats those the same way on purpose. See its own note.
+    """
+    return frozenset(
+        str(entry) for entry in json.loads(described.strip() or "[]") if isinstance(entry, str)
+    )
+
+
+def subnets_to_try(
+    subnets: Sequence[LaneSubnet], *, offered_in: frozenset[str]
+) -> tuple[LaneSubnet, ...]:
+    """Every place this shape could start, in an order chosen fresh for each caller.
+
+    **THE FILTER FALLS THROUGH RATHER THAN EMPTYING THE LIST**, which is the rule
+    :func:`default_compute_profile` already holds itself to. An empty ``offered_in`` is a
+    ``describe-instance-type-offerings`` that failed or a type EC2 answered nothing for, and
+    in both cases the honest move is to try every subnet and let ``RunInstances`` be the
+    judge: an unusable zone costs one refusal that allocates nothing, and refusing to launch
+    because a *describe* call did not answer would turn a hint into a gate.
+
+    **SHUFFLED, AND THAT IS THE HALF THAT IS ABOUT THIRTY-FIVE PEOPLE RATHER THAN ABOUT ONE.**
+    Ordering these deterministically fixes the outage and keeps the concentration that caused
+    it: EC2 returns this account's subnets with ``us-east-1f`` first, so every researcher who
+    typed the same command in the same hour asked the same zone for the same shape, and the
+    second choice would merely be the next zone all of them pile into together. Nothing
+    prefers a zone here -- ``infra/batch-network.yaml`` gives all six one route table, one
+    internet gateway and one security group, and the scratch bucket is regional -- so the
+    order is free to spread the demand, and spreading it is what stops one pool being asked
+    thirty-five times a minute.
+
+    Fresh per call rather than seeded, because a seed would be a second thing to get right for
+    a property that only has to hold on average. ``tests/test_lane_zones.py`` pins it by
+    drawing repeatedly and asserting more than one zone comes up first, which fails the moment
+    somebody restores EC2's order.
+    """
+    candidates = [subnet for subnet in subnets if subnet.zone in offered_in] or list(subnets)
+    random.shuffle(candidates)
+    return tuple(candidates)
+
+
+#: The EC2 error codes that mean *this zone*, right now, and that leave nothing behind.
+#:
+#: **THE LIST IS SHORT ON PURPOSE AND EVERY ADDITION HAS TO CLEAR THE SAME BAR: THE CALL
+#: ALLOCATED NOTHING AND A DIFFERENT ZONE COULD ANSWER DIFFERENTLY.** Anything else retried
+#: five times is five identical failures, five times the wait, and then a closing sentence
+#: about capacity that is false. ``VcpuLimitExceeded`` is the case that makes the point and
+#: ``config/capacity.yaml`` records it under ``gpu-8xa10g``: an account-wide quota looks
+#: exactly like scarcity from underneath, it is the same in every zone, and what it needs is
+#: a support ticket rather than another attempt. An authorization denial is the same shape.
+#:
+#: A refusal this does not recognise stops the loop, which is the safe direction for a reason
+#: that has nothing to do with tidiness. A second ``RunInstances`` after an outcome nobody
+#: could read is how one command leaves two machines billing, so "unrecognised" has to mean
+#: "stop and say what EC2 said" rather than "try the next one".
+#:
+#: ``Unsupported`` is in the list because :func:`zones_offering_argv` can only fail open: when
+#: that call did not answer, every subnet is a candidate and the ``us-east-1e`` one refuses
+#: exactly this way. Measured on 2026-08-06 -- a ``g6.xlarge`` asked for in ``us-east-1e``
+#: came back ``Unsupported`` in 1.27 seconds with nothing started.
+ZONE_SHAPED_REFUSALS: Final[frozenset[str]] = frozenset(
+    {"InsufficientInstanceCapacity", "Unsupported"}
+)
+
+#: How the AWS CLI spells an API error code in what it writes to stderr. The rest of that line
+#: is prose AWS rewords, which is the thing ``AGENTS.md`` tells every caller not to match on.
+_AWS_ERROR_CODE = re.compile(r"An error occurred \(([A-Za-z][A-Za-z0-9]*)\)")
+
+
+def refusal_code(said: str) -> str | None:
+    """The API error code out of what the AWS CLI printed, or nothing where there is none."""
+    match = _AWS_ERROR_CODE.search(said)
+    return match.group(1) if match else None
+
+
+def another_zone_may_answer(said: str) -> bool:
+    """Whether this refusal is one a different zone could answer differently.
+
+    False for a refusal carrying no recognisable code at all, which includes an ``aws`` that
+    could not be run and a call that timed out. See :data:`ZONE_SHAPED_REFUSALS` for why that
+    direction is the safe one.
+    """
+    return refusal_code(said) in ZONE_SHAPED_REFUSALS
+
+
+@dataclass(frozen=True)
+class ZoneAttempt:
+    """One zone asked for one machine, and exactly what it said back."""
+
+    zone: str
+    said: str
+
+    @property
+    def code(self) -> str:
+        """The API error code, or a stand-in where AWS printed something with none in it."""
+        return refusal_code(self.said) or "no error code"
+
+
+def no_zone_had_this_shape(
+    *, instance_type: str, profile: str, attempts: Sequence[ZoneAttempt], defaulted: bool
+) -> str:
+    """What to say when every zone that sells this shape refused to sell one now.
+
+    **IT NAMES WHAT WAS TRIED RATHER THAN WHERE TO LOOK, AND THE DIFFERENCE IS MEASURED
+    RATHER THAN STYLISTIC.** What this replaced was EC2's own sentence, which is better than
+    most refusals in this binary -- it names the zone and it lists alternatives -- but the
+    alternatives are not a capacity reading. They are the other zones the type is sold in,
+    printed identically whether those zones are full or empty. On 2026-08-06 a ``p5.4xlarge``
+    refused in 1a, 1b and 1c, and each refusal recommended the other two. A reader who took
+    that list at its word would work through zones this loop had already been refused by.
+
+    **AND IT SAYS THIS IS NOT THEM, BECAUSE THE FIRST THING A PERSON ASSUMES ABOUT THEIR FIRST
+    COMMAND FAILING IS THAT IT IS THEM.** Everything else in the lane that stops with exit 3
+    is a thing somebody could go and fix -- log in, deploy the network, install the plugin.
+    This one is weather. Saying so plainly is the difference between somebody re-reading the
+    guide for a flag they got wrong and somebody running the same command again in ten
+    minutes, which is what actually works.
+
+    The shape being defaulted is said where it was defaulted, for the reason
+    :class:`DefaultedCompute` exists at all: a person who did not choose this shape cannot
+    reason about it, and telling them they may name another is only useful if they know they
+    did not name this one.
+    """
+    # Only reachable after a zone has refused, because the caller loops until one does not.
+    # Asserted rather than defaulted: a sentence about zones that names none of them would be
+    # a refusal saying less than the one it replaced.
+    assert attempts
+    zones = ", ".join(attempt.zone for attempt in attempts)
+    codes = " and ".join(sorted({attempt.code for attempt in attempts}))
+    chose = (
+        f"{profile} is what this starts when no --compute is given, so it was chosen for you "
+        "rather than by you. "
+        if defaulted
+        else ""
+    )
+    # The whole of one refusal, once. Five near-identical AWS paragraphs is a wall nobody
+    # reads, and none at all leaves a reader with a code they cannot search for.
+    last = attempts[-1]
+    return (
+        f"no zone had a {instance_type} to sell, so nothing started and nothing is billing. "
+        f"This asked every zone EC2 offers {instance_type} in, one at a time, and all "
+        f"{len(attempts)} refused: {zones}. Each answered {codes}. {chose}"
+        "None of this is something you did or something about your account -- it is EC2 "
+        f"having no {instance_type} to hand at this minute, which changes without anybody "
+        "asking it to. Running the same command again in a few minutes is the usual remedy "
+        "and needs nothing edited. --compute names a different shape if you would rather not "
+        f"wait for this one. What EC2 said in {last.zone}: {last.said.strip()}"
     )
 
 

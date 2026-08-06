@@ -114,22 +114,28 @@ from edullm_platform.cli.intake import (
 from edullm_platform.cli.lane import (
     AWS_LOGIN_COMMAND,
     GPU_AMI_PARAMETER,
+    PLATFORM_NETWORK_NAME,
     SESSION_PLUGIN,
     LaneExpiry,
     LaneRequest,
     WorkingTierSettings,
+    ZoneAttempt,
     agent_online_argv,
+    another_zone_may_answer,
     assume_lane_argv,
     command_line,
     credentials_environment,
     default_compute_profile,
     expiry_for_a_new_machine,
     find_machine_argv,
+    find_subnets_argv,
     instance_type_for,
     lane_refusals,
+    lane_subnets,
     load_working_tier_settings,
     machine_already_running,
     missing_plugin_refusal,
+    no_zone_had_this_shape,
     notebook_forward_argv,
     person_from_caller_arn,
     placement_said,
@@ -140,7 +146,10 @@ from edullm_platform.cli.lane import (
     run_instances_argv,
     shell_session_argv,
     ssh_proxy_command,
+    subnets_to_try,
     working_uri,
+    zones_offering,
+    zones_offering_argv,
 )
 from edullm_platform.cli.machine import (
     check_document,
@@ -1272,10 +1281,6 @@ def _check(
 # the lane, which run and shell share
 # ---------------------------------------------------------------------------------------
 
-#: The Name tag prefix and the group name ``infra/batch-network.yaml`` gives the platform's VPC.
-#: Read rather than pinned, so a redeploy that moves an id moves the lane with it.
-PLATFORM_NETWORK_NAME: Final = "sbsandbox-intern-edullm-batch"
-
 #: How often the agent is asked whether it has registered. Five seconds against a wait measured
 #: in minutes, which is often enough that the answer arrives promptly and rare enough that the
 #: waiting costs a handful of calls rather than hundreds.
@@ -1407,6 +1412,11 @@ def _lane_session(
         settings=settings,
         expiry=expiry.value,
         spot=bool(arguments.spot),
+        # WHETHER THE PERSON CHOSE THIS SHAPE, WHICH ONLY THE ALL-ZONES-OUT REFUSAL READS. A
+        # defaulted shape that cannot start is worse than a typed one: the researcher did not
+        # pick it, so "pass --compute for a different one" is advice they cannot act on until
+        # somebody tells them they never passed it in the first place.
+        defaulted=defaulted is not None,
         runner=runner,
         environment=environment,
         err=err,
@@ -1429,15 +1439,32 @@ def _start_a_machine(
     settings: WorkingTierSettings,
     expiry: str,
     spot: bool,
+    defaulted: bool,
     runner: CommandRunner,
     environment: dict[str, str],
     err: TextIO,
 ) -> str | int:
-    """Launch one, and wait until Systems Manager has heard from it.
+    """Launch one in whichever zone will have it, and wait until Systems Manager answers.
 
-    The image, the subnet and the security group are all resolved rather than pinned. An AMI id
+    The image, the subnets and the security group are all resolved rather than pinned. An AMI id
     ages out, a subnet id is a fact about a stack somebody may redeploy, and a hard-coded security
     group is the one that stops having zero ingress rules without anybody noticing.
+
+    **IT TAKES THE FIRST ZONE THAT WILL SELL ONE RATHER THAN THE FIRST SUBNET EC2 LISTS, WHICH
+    IS WHAT THIS FUNCTION SHIPPED DOING.** ``describe-subnets`` came back as a bare list of ids
+    and this took ``[0]`` of it, which for this account is ``us-east-1f`` every time. At 09:52
+    UTC on 2026-08-06 that zone had no ``g6.xlarge`` and three attempts in a row were refused by
+    it, because there was no way for a second attempt to be anywhere else. ``g6.xlarge`` is the
+    shape ``default_compute_profile`` picks when nobody passes ``--compute``, so one zone
+    running short is every first command failing at once.
+
+    **THE LOOP STOPS ON ANYTHING IT DOES NOT RECOGNISE, AND THAT IS THE EXPENSIVE HALF TO GET
+    WRONG.** ``another_zone_may_answer`` is what decides, and :data:`~edullm_platform.cli.lane.
+    ZONE_SHAPED_REFUSALS` carries the argument: a refusal that allocated nothing may be asked
+    again somewhere else, and a call whose outcome could not be read may not, because a second
+    ``RunInstances`` after an unreadable first is how one command leaves two machines billing.
+    An authorization denial and a vCPU quota both stop here on the first zone and are reported
+    exactly as they always were.
     """
     image = runner(
         (
@@ -1453,20 +1480,7 @@ def _start_a_machine(
         ),
         env=environment,
     )
-    subnets = runner(
-        (
-            "aws",
-            "ec2",
-            "describe-subnets",
-            "--filters",
-            f"Name=tag:Name,Values={PLATFORM_NETWORK_NAME}-*",
-            "--query",
-            "Subnets[].SubnetId",
-            "--output",
-            "json",
-        ),
-        env=environment,
-    )
+    subnets = runner(find_subnets_argv(), env=environment)
     groups = runner(
         (
             "aws",
@@ -1481,32 +1495,66 @@ def _start_a_machine(
         ),
         env=environment,
     )
-    subnet_ids = json.loads(subnets.stdout or "[]")
+    declared = lane_subnets(subnets.stdout)
     group_ids = json.loads(groups.stdout or "[]")
-    if not image.ok or not subnet_ids or not group_ids:
+    if not image.ok or not declared or not group_ids:
         print(_no_network_for_the_lane(), end="", file=err)
         return EXIT_UNREACHABLE
 
     instance_type = instance_type_for(configuration, request.compute_profile)
     # Already refused where it is None, and mypy has no way to know that.
     assert instance_type is not None
-    launched = runner(
-        run_instances_argv(
-            request=request,
-            instance_type=instance_type,
-            image_id=image.text,
-            subnet_id=subnet_ids[0],
-            security_group_id=group_ids[0],
-            expires_at_value=expiry,
-            settings=settings,
-            spot=spot,
-        ),
-        env=environment,
+    # ASKED AFTER THE SUBNETS AND BEFORE THE LAUNCH, BECAUSE IT NARROWS A LIST RATHER THAN
+    # GATING ONE. The us-east-1e subnet is declared for p5 and nothing else, so a g6 sent there
+    # is one refusal spent on a zone that can never answer; a call that fails here leaves every
+    # subnet a candidate, which costs at most that one refusal back.
+    offerings = runner(zones_offering_argv(instance_type), env=environment)
+    candidates = subnets_to_try(
+        declared, offered_in=zones_offering(offerings.stdout) if offerings.ok else frozenset()
     )
-    if not launched.ok:
-        print(_launch_refused(launched.stderr), end="", file=err)
+
+    attempts: list[ZoneAttempt] = []
+    # None rather than "" for the found machine, because an empty id is a launch that answered
+    # nothing and is not the same thing as every zone having refused -- collapsing them would
+    # print a refusal naming no zones at all.
+    machine: str | None = None
+    for candidate in candidates:
+        launched = runner(
+            run_instances_argv(
+                request=request,
+                instance_type=instance_type,
+                image_id=image.text,
+                subnet_id=candidate.subnet,
+                security_group_id=group_ids[0],
+                expires_at_value=expiry,
+                settings=settings,
+                spot=spot,
+            ),
+            env=environment,
+        )
+        if launched.ok:
+            machine = launched.text
+            break
+        if not another_zone_may_answer(launched.stderr):
+            print(_launch_refused(launched.stderr), end="", file=err)
+            return EXIT_UNREACHABLE
+        attempts.append(ZoneAttempt(zone=candidate.zone, said=launched.stderr))
+        print(f"no {instance_type} in {candidate.zone}, trying another zone", file=err)
+    if machine is None:
+        # ``attempts`` cannot be empty here: ``declared`` was checked above and
+        # ``subnets_to_try`` falls through rather than emptying the list, so every candidate
+        # either produced a machine or produced a refusal that was recorded.
+        print(
+            _no_zone_had_it(
+                instance_type=instance_type,
+                profile=request.compute_profile,
+                attempts=attempts,
+                defaulted=defaulted,
+            ),
+            end="",
+            file=err,
+        )
         return EXIT_UNREACHABLE
-    machine = launched.text
     print(f"starting {machine}, waiting for it to answer", file=err)
     deadline = time.monotonic() + settings.boot_wait_seconds
     while time.monotonic() < deadline:
@@ -1574,12 +1622,45 @@ def _no_network_for_the_lane() -> str:
 
 
 def _launch_refused(said: str) -> str:
+    """What EC2 said, verbatim, for every refusal a second zone could not answer.
+
+    Still the right message for those. An authorization denial, a malformed parameter and a
+    vCPU quota are all the same in every zone, so quoting AWS once and stopping is both the
+    fastest answer and the only honest one -- the loop above is what makes sure this is not
+    also reached for the one refusal that is about a zone rather than about the request.
+    """
     return "\n".join(
         [
             "",
             *_wrapped(
                 "EC2 would not start the machine, and nothing is billing. What it said: "
                 f"{said.strip()}",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+def _no_zone_had_it(
+    *, instance_type: str, profile: str, attempts: Sequence[ZoneAttempt], defaulted: bool
+) -> str:
+    """Every zone refused, wrapped for a terminal.
+
+    The sentence is ``cli/lane.py``'s, for the reason that module composes every other line
+    that quotes a decision it made: what was tried, in what order, and whether the shape was
+    chosen by the person are all facts the launch holds and this file would have to be handed.
+    """
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                no_zone_had_this_shape(
+                    instance_type=instance_type,
+                    profile=profile,
+                    attempts=attempts,
+                    defaulted=defaulted,
+                ),
                 indent="",
             ),
             "",
