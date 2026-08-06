@@ -663,7 +663,7 @@ def test_an_unregistered_workload_profile_is_refused_and_the_catalog_is_quoted()
         compile_payload(cpu_payload(workload_profile="olmo-core-trian"))
 
     message = str(exc_info.value)
-    assert "unregistered workload profile 'olmo-core-trian'" in message
+    assert "carries no workload profile 'olmo-core-trian'" in message
     assert OLMO_WORKLOAD in message
     assert CPU_WORKLOAD in message
     assert "config/workload-catalog.yaml" in message
@@ -741,6 +741,13 @@ def test_the_unregistered_repository_refusal_names_the_registry_and_what_adding_
     in this repository, that an entry is a pull request, and that the entry is not the whole
     of the work -- an ECR repository and a place on the publisher role go with it, and a
     registration without either is inert in a way that fails at AssumeRole later.
+
+    THE VERB IS ASSERTED BESIDE THEM BECAUSE NAMING THE WORK WITHOUT NAMING THE VERB IS WHAT
+    THIS REFUSAL DID UNTIL 2026-08-06. It described a pull request across the registry, an
+    ECR repository and the publisher role, and left the reader to open it by hand, which is
+    the same defect #314 took out of the CLI's copy of this refusal. ``edullm add
+    repository`` opens it, and ``test_the_repository_kind_is_self_service_so_this_advice_
+    cannot_go_stale`` below holds the fact the advice rests on.
     """
     with pytest.raises(SubmissionRefusedError) as exc_info:
         require_registered_repository("dolma", repositories=load_repository_registry())
@@ -749,6 +756,21 @@ def test_the_unregistered_repository_refusal_names_the_registry_and_what_adding_
     assert "config/repositories.yaml" in message
     assert "pull request" in message
     assert "publisher role" in message
+    assert "edullm add repository" in message
+
+
+def test_the_repository_kind_is_self_service_so_this_advice_cannot_go_stale() -> None:
+    """The fact the refusal above rests on, held where a change to it goes red.
+
+    The refusal tells a reader to run ``edullm add repository``. That is only true while
+    ``repository`` is in ``SELF_SERVICE_KINDS``; drop it and the refusal is routing somebody
+    at a verb that refuses them, which is the failure #314 found in the CLI's own copy and
+    fixed by naming the verb. This is the assertion that keeps the two from drifting apart
+    again.
+    """
+    from edullm_platform.cli.intake import SELF_SERVICE_KINDS
+
+    assert "repository" in SELF_SERVICE_KINDS
 
 
 def test_the_unregistered_repository_refusal_says_admission_would_refuse_it_anyway() -> None:
@@ -925,8 +947,9 @@ def test_an_unregistered_compute_profile_is_refused_because_it_cannot_be_priced(
         compile_payload(olmo_payload(compute_profile=UNREGISTERED_COMPUTE_PROFILE))
 
     message = str(exc_info.value)
-    assert f"unregistered compute profile '{UNREGISTERED_COMPUTE_PROFILE}'" in message
-    assert "no rate" in message
+    assert f"'{UNREGISTERED_COMPUTE_PROFILE}' has no rate" in message
+    assert "config/workload-catalog.yaml" in message
+    assert "denies it outright" in message
 
 
 def test_a_refusal_that_policy_would_only_have_classified_still_happens_at_compile_time() -> None:

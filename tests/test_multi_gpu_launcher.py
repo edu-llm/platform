@@ -36,6 +36,8 @@ import pytest
 from test_phase2_submission import compile_payload, olmo_payload, render
 
 from edullm_platform.checkpoint_commands import CHECKPOINT_CHECK_WAIVER
+from edullm_platform.cli.preflight import Refusal
+from edullm_platform.cli.presentation import render_refusals
 from edullm_platform.errors import SubmissionRefusedError
 from edullm_platform.execution import CONTAINER_SHAPES
 from edullm_platform.launchers import (
@@ -139,6 +141,34 @@ def test_the_corrected_command_the_refusal_prints_is_one_this_guard_accepts() ->
 
         assert corrected is not None
         allow(tuple(shlex.split(corrected)), compute_profile=compute_profile)
+
+
+def test_the_corrected_command_is_the_last_thing_the_printed_refusal_says() -> None:
+    """Mutation: move the correction back into the middle with blank lines around it.
+
+    That is what this refusal did until 2026-08-06, and the blank lines did nothing.
+    ``presentation.render_refusals`` wraps every detail with ``textwrap.wrap``, which
+    replaces each newline with a space, so the corrected command ran straight into the
+    sentence listing the other launchers and a reader copying it took six more words with
+    it. Last is the only position in a wrapped paragraph where a command has a visible end.
+
+    ASSERTED ON THE PRINTED BLOCK RATHER THAN ON THE RAW STRING, because the raw string is
+    where this looked correct. Whitespace is collapsed on both sides for the reason the
+    neighbouring refusal tests collapse it: the command wraps to the terminal and where it
+    breaks depends on how much prose precedes it.
+    """
+    printed = render_refusals(
+        [
+            Refusal(
+                code="process_per_device",
+                detail=refuse(WRAPPED, compute_profile=FOUR_GPUS),
+            )
+        ]
+    )
+    corrected = corrected_command(WRAPPED, devices=CONTAINER_SHAPES[FOUR_GPUS].gpus)
+
+    assert corrected is not None
+    assert " ".join(printed.split()).endswith(" ".join(corrected.split()))
 
 
 def test_the_correction_for_a_module_command_runs_the_module_rather_than_two_of_them() -> None:

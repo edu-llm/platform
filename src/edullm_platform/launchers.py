@@ -539,12 +539,12 @@ def require_a_tensor_parallel_flag_vllm_reads(command: Sequence[str]) -> None:
             continue
         value = word[len(TENSOR_PARALLEL_SHORT_FORM) + 1 :]
         raise TensorParallelFlagIgnoredError(
-            f"{word!r} is accepted by the harness and then silently ignored: ProviderConfig "
-            "has no tensor_parallel_size field and ProviderConfig.from_dict drops keys it does "
-            "not know, so this run would boot one device and be billed for every card on the "
-            f"node. Write {TENSOR_PARALLEL_OPTION}={value} instead, and keep it in the "
-            "--harness group: -o binds to the preceding --harness or -t and the two take "
-            "disjoint keys."
+            f"write {TENSOR_PARALLEL_OPTION}={value} instead, in the --harness group. "
+            f"{word!r} is accepted by the harness and then silently ignored, because "
+            "ProviderConfig has no tensor_parallel_size field and ProviderConfig.from_dict "
+            "drops keys it does not know, so this run would boot one device and be billed "
+            "for every card on the node. -o binds to the preceding --harness or -t, and the "
+            "two take disjoint keys."
         )
 
 
@@ -599,26 +599,34 @@ def _no_launcher_refusal(
     devices: int,
     compute_profile: str,
 ) -> str:
+    """The corrected command goes last, because everything here arrives as one paragraph.
+
+    ``presentation._wrap`` is ``textwrap.wrap``, which replaces every newline with a space,
+    so the blank lines this used to put around the corrected command did nothing and the
+    command ran straight into the sentence after it. A reader copying it out took the next
+    six words with it. Last is the only position in a wrapped paragraph where a command has
+    a visible end, so that is where it goes.
+    """
     corrected = corrected_command(command, devices=devices)
     correction = (
-        f"Run it under a launcher:\n\n    {corrected}\n\n"
+        f" The same command with a launcher spliced in: {corrected}"
         if corrected is not None
         else (
-            "Put a launcher in front of the program that trains -- "
-            f"python -m torch.distributed.run --nproc-per-node={devices} --standalone, "
-            "or torchrun with the same flag.\n\n"
+            " Put a launcher in front of the program that trains, either "
+            f"python -m torch.distributed.run --nproc-per-node={devices} --standalone or "
+            "torchrun with the same flag."
         )
     )
     return (
-        f"compute profile {compute_profile!r} has {devices} GPUs and this command starts one "
-        f"process, so {devices - 1} of them would be billed and left idle. A training program "
-        "can handle being one rank of several and still not start the others, and the command "
-        f"is exec'd exactly as typed, so nothing else will. {correction}"
-        "torchrun, torch.distributed.launch, accelerate launch, deepspeed, mpirun and srun "
-        "are recognised as well. If one process on this machine is deliberate -- a benchmark, "
-        "a memory profile, an inference sweep that places its own devices -- write "
-        f"{LAUNCH_CHECK_WAIVER} into the command, which records the decision on the run "
-        "rather than leaving it to be read off a profile nobody can explain."
+        f"run this under a launcher that starts {devices} processes. Compute profile "
+        f"{compute_profile!r} has {devices} GPUs and this command starts one, so "
+        f"{devices - 1} of them would be billed and left idle. The command is exec'd exactly "
+        "as typed, and a training program that can be one rank of several still does not "
+        "start the others, so nothing will. torchrun, torch.distributed.launch, accelerate "
+        "launch, deepspeed, mpirun and srun are all recognised. If one process here is "
+        f"deliberate, a benchmark say, write {LAUNCH_CHECK_WAIVER} into the command, which "
+        f"records that on the run rather than leaving it to be read off a profile nobody can "
+        f"explain.{correction}"
     )
 
 
@@ -626,6 +634,7 @@ def _rank_count_refusal(*, compute_profile: str, devices: int, plan: LaunchPlan)
     processes = plan.processes
     assert processes is not None  # the caller returns on an unreadable count
     if processes < devices:
+        remedy = f"set --nproc-per-node={devices}"
         consequence = (
             f"so {devices - processes} of them would be billed and left idle, which is the "
             "same waste as running no launcher at all and costs the same per hour"
@@ -638,26 +647,26 @@ def _rank_count_refusal(*, compute_profile: str, devices: int, plan: LaunchPlan)
             if processes == 1
             else ""
         )
-        remedy = f"{default} Set --nproc-per-node={devices}."
     else:
-        consequence = (
-            f"so {processes - devices} of them have no device to take: those ranks either "
-            "stop with an invalid device ordinal or contend for a card another rank is "
-            "already using, which is slower than one process and reports nothing"
-        )
         # Naming the other profile only in this direction, because it exists in this
         # direction. Going the other way there is frequently no shape with the smaller count
         # -- nothing has two devices -- and pointing at one that is not there reads as a
         # dropdown that lost an option.
         remedy = (
-            f" Set --nproc-per-node={devices}, or pick a compute profile with "
-            f"{processes} devices."
+            f"set --nproc-per-node={devices}, or pick a compute profile with "
+            f"{processes} devices"
         )
+        consequence = (
+            f"so {processes - devices} of them have no device to take. Those ranks either "
+            "stop with an invalid device ordinal or contend for a card another rank is "
+            "already using, which is slower than one process and reports nothing"
+        )
+        default = ""
     return (
-        f"compute profile {compute_profile!r} has {_devices_said(devices)} and "
+        f"{remedy}. Compute profile {compute_profile!r} has {_devices_said(devices)} and "
         f"{plan.launcher} on this command starts {_processes_said(processes)}, "
-        f"{consequence}.{remedy} A count this platform cannot read -- auto, gpu, or a shell "
-        f"variable -- is not refused. If the mismatch is deliberate, write "
+        f"{consequence}.{default} A count this platform cannot read is not refused, so "
+        "auto, gpu and a shell variable all pass. If the mismatch is deliberate, write "
         f"{LAUNCH_CHECK_WAIVER} into the command."
     )
 
