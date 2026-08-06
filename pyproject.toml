@@ -17,8 +17,8 @@ name = "edullm-platform"
 #
 # 0.2.0 rather than 0.1.1 because 0.1.0 was never released and nothing was ever installed
 # from a tag; the first tag this repository has should not look like the second.
-# WHY THIS IS A MINOR RATHER THAN A PATCH. a submission pinned with --commit is now checked on the commit it pins, so a pinned commit that is unpushed or not in this clone is refused before a dispatch instead of after one
-version = "3.6.0"
+# WHY THIS IS A MINOR RATHER THAN A PATCH. edullm submit waits for the run id the compile job mints, so it prints the id and which gate holds the run instead of returning in eight seconds with neither, and --no-wait now has an effect
+version = "3.7.0"
 requires-python = ">=3.12"
 dependencies = [
   "pydantic>=2,<3",
@@ -67,7 +67,7 @@ reader = [
 # needs on day one -- `docs-frank/reference/system-overview.md` counts twelve of the
 # fourteen surfaces that reach a researcher as this one command:
 #
-#   uv tool install --force git+https://github.com/edu-llm/platform@v3.6.0
+#   uv tool install --force git+https://github.com/edu-llm/platform@v3.7.0
 #
 # THAT LINE IS TESTED RATHER THAN PROOFREAD, by tests/test_cli_install_command.py, which
 # holds it to the one in `edullm_platform.cli.release`. What used to be written here was

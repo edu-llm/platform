@@ -65,6 +65,7 @@ __all__ = [
     "SUBMIT_WORKFLOW",
     "Admitted",
     "AmbiguousRunIdError",
+    "CompileOutcome",
     "GithubUnreachableError",
     "PlatformActions",
     "RunFacts",
@@ -73,6 +74,7 @@ __all__ = [
     "elapsed_said",
     "read_run_facts",
     "report_ceiling_seconds",
+    "submit_ceiling_seconds",
 ]
 
 #: What a poll loop calls between attempts, handed the seconds spent so far. The loop knows
@@ -127,6 +129,13 @@ NEW_RUN_INTERVAL: Final = 3.0
 COMPLETION_ATTEMPTS: Final = 100
 COMPLETION_INTERVAL: Final = 6.0
 
+#: How long ``submit`` waits for the compile job to publish a run id. That job took a little
+#: over two minutes on the dispatches measured on 2026-08-06, so the ceiling is set well
+#: above it rather than at it: overshooting costs a submitter who was going to wait anyway,
+#: and undershooting hands back "still compiling" on a submission that was about to be named.
+COMPILE_ATTEMPTS: Final = 40
+COMPILE_INTERVAL: Final = 6.0
+
 
 def report_ceiling_seconds() -> float:
     """The longest a dispatch-and-read can take before it gives up, in seconds.
@@ -139,6 +148,30 @@ def report_ceiling_seconds() -> float:
     return (NEW_RUN_ATTEMPTS - 1) * NEW_RUN_INTERVAL + (
         COMPLETION_ATTEMPTS - 1
     ) * COMPLETION_INTERVAL
+
+
+def submit_ceiling_seconds() -> float:
+    """The longest ``submit`` waits before handing back a submission with no run id yet.
+
+    Derived from both loops it runs for the reason :func:`report_ceiling_seconds` is derived
+    from its two, and separate from it because these are different waits with different
+    ceilings and one number describing both would be wrong about each.
+    """
+    return (NEW_RUN_ATTEMPTS - 1) * NEW_RUN_INTERVAL + (COMPILE_ATTEMPTS - 1) * COMPILE_INTERVAL
+
+
+@dataclass(frozen=True)
+class CompileOutcome:
+    """Where a wait for the compile job ended, which is three places and not two.
+
+    ``compiled is None`` covers two of them and they need different sentences: a run that
+    finished without publishing, where waiting longer is pointless, and a ceiling reached on
+    a job still running, where ``edullm status`` will carry the answer shortly.
+    """
+
+    compiled: dict[str, Any] | None
+    #: The workflow run reached a conclusion and no submission was published under it.
+    published_nothing: bool
 
 
 class GithubUnreachableError(RuntimeError):
@@ -231,12 +264,16 @@ class PlatformActions:
         runner: CommandRunner,
         *,
         repository: str = PLATFORM_REPOSITORY,
-        sleep: Any = time.sleep,
+        sleep: Any = None,
         dispatched: list[str] | None = None,
     ) -> None:
         self._runner = runner
         self._repository = repository
-        self._sleep = sleep
+        # LOOKED UP WHEN IT IS CALLED RATHER THAN BOUND AS A DEFAULT ARGUMENT. A default is
+        # evaluated once, at class definition, so ``time.sleep`` written there is the real
+        # one for the life of the process and no test can neutralise it by patching the
+        # module. A case about a poll that runs four times then paid four real intervals.
+        self._sleep = sleep if sleep is not None else lambda seconds: time.sleep(seconds)
         # A LIST THE CALLER MAY OWN, BECAUSE THE CALLER IS WHAT ANSWERS FOR AN INTERRUPT.
         # ``main`` catches Ctrl-C for the whole binary and has to say whether a workflow is
         # still running with nobody watching it, which is a fact only this class learns and
@@ -394,6 +431,42 @@ class PlatformActions:
                 if created is not None and created >= after:
                     return run
         return None
+
+    def wait_for_the_compiled_submission(
+        self,
+        workflow_run_id: int,
+        *,
+        attempts: int = COMPILE_ATTEMPTS,
+        interval: float = COMPILE_INTERVAL,
+        waiting: Waiting | None = None,
+        elapsed_already: float = 0.0,
+    ) -> CompileOutcome:
+        """Poll for the run id the compile job mints, rather than asking once and giving up.
+
+        ``submit --help`` promised this wait and there was none: :meth:`compiled_submission`
+        was asked once, a few seconds after the dispatch, against a job that takes a little
+        over two minutes. So the answer was always "compiling", ``--no-wait`` was a flag with
+        no effect, and the submitter learned neither the run id nor which gate held their run.
+
+        **THE ARTIFACT ALONE CANNOT SAY WHEN TO STOP, WHICH IS WHY THE RUN'S STATUS IS READ
+        TOO.** :meth:`compiled_submission` answers ``None`` while the job is running and
+        ``None`` where it refused, so a poll on the artifact would spend its whole ceiling on
+        a submission that was turned away in twenty seconds and then report it as still
+        compiling. The artifact is published by a job inside this run, so a run that has
+        reached ``completed`` without one is never going to have one -- and that is reported
+        as what is known rather than as a refusal, because a cancelled run arrives here too.
+        """
+        for attempt in range(attempts):
+            if attempt:
+                self._said_waiting(waiting, elapsed_already + attempt * interval)
+                self._sleep(interval)
+            compiled = self.compiled_submission(workflow_run_id)
+            if compiled is not None:
+                return CompileOutcome(compiled=compiled, published_nothing=False)
+            run = self._api(f"repos/{self._repository}/actions/runs/{workflow_run_id}")
+            if run.get("status") == "completed":
+                return CompileOutcome(compiled=None, published_nothing=True)
+        return CompileOutcome(compiled=None, published_nothing=False)
 
     def compiled_submission(self, workflow_run_id: int) -> dict[str, Any] | None:
         """What the compile job recorded, read out of the artifact it uploaded.
