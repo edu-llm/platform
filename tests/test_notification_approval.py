@@ -94,7 +94,7 @@ def test_one_run_over_the_bound_reads_as_five_lines(catalogs: Catalogs) -> None:
         "is 24 times that.\n"
         "routine, run-approval-lead, because $781.82 is not under the $500.00 nobody "
         "releases. Team pre-training routes to alsy7009. Any team lead may release it.\n"
-        "Release or decline at https://github.com/edu-llm/platform/actions/runs/00000000001."
+        "Release or decline at https://github.com/edu-llm/platform/actions/runs/31080677880."
         " A decline takes a reason, and that reason is what "
         "`edullm status run_019fd4f0-cf95` prints back to whoever submitted this."
     )

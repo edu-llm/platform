@@ -1,9 +1,9 @@
 {
   "version": "0",
-  "id": "00000000-0000-0000-0000-000000000002",
+  "id": "1b9a6d31-6d40-4d1f-8e2b-7c4f3a90e522",
   "detail-type": "Run Approval Requested",
   "source": "edullm.platform",
-  "account": "000000000000",
+  "account": "<aws-account-id>",
   "time": "2026-08-06T02:34:00Z",
   "region": "us-east-1",
   "resources": [],
@@ -35,9 +35,9 @@
         "index_parameter": "seed"
       }
     },
-    "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "manifest_sha256": "1f0e9d8c7b6a5948372615043f2e1d0c9b8a7960514233221100ffeeddccbbaa",
     "run_id": "run_019fd382-2f9c-7024-ac0e-e8e18e6829cf",
     "submitter": "cd1313",
-    "url": "https://github.com/edu-llm/platform/actions/runs/00000000002"
+    "url": "https://github.com/edu-llm/platform/actions/runs/31080616470"
   }
 }
