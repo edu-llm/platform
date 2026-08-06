@@ -210,6 +210,25 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
     # Scheduler verbs. This registry is keyed by role, and the drift a capture reports is the
     # sum of both, so splitting it into two records would describe an account state that
     # never exists. Applying the deployer stack once clears all of it.
+    #
+    # A THIRD PLAN JOINED THE SAME RECORD ON 2026-08-05 AND THE ARGUMENT DID NOT CHANGE.
+    # The working tier's bucket is granted to the deployer by its exact name, so the same
+    # one application of the deployer stack clears this alongside the other two. Joining
+    # rather than adding a fourth record is not a preference: `explains` compares the
+    # findings for equality, so two records for one role would each describe a difference
+    # the account never has on its own, and whichever was read first would decide which
+    # half counted as expected.
+    #
+    # WHY THE NEW FINDING IS A WHOLE STATEMENT RATHER THAN A WIDER RESOURCE LIST, WHICH IS
+    # THE PART WORTH READING BEFORE THE NEXT S3 GRANT IS WRITTEN. Adding the bucket to the
+    # existing prefix-scoped S3 statement would have been three fewer lines, and it would
+    # have granted the deployer s3:DeleteBucket and s3:PutBucketPolicy over the working
+    # tier as well. Splitting that statement instead -- sharing its read half between the
+    # prefix and the exact name -- was measured and refused for a mechanical reason: a
+    # deployed statement that becomes two template statements pairs against the larger of
+    # them and reports the actions left behind as WIDER, and __post_init__ refuses a
+    # finding that is not NARROWER. A record cannot describe that window at all, which is
+    # the registry saying that the account should never be behind a template in that shape.
     amendments: tuple[PendingAmendment, ...] = (
         PendingAmendment(
             role_name="sbsandbox-intern-edullm-ecr-publisher",
@@ -365,6 +384,18 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
                 "iam:PassRole on sbsandbox-intern-edullm-notifier-lambda for the same "
                 "CreateFunction reason. All of it is committed and the account has not caught "
                 "up, because this stack is applied from a laptop."
+                "\n\n"
+                "A third stack joined them. infra/scratch-bucket.yaml creates edullm-scratch, and "
+                "every S3 grant this role held was scoped to arn:aws:s3:::sbsandbox-intern-"
+                "edullm-*, which that name does not match, so the working tier was a stack "
+                "only a laptop could apply. It is granted by its exact name now rather than "
+                "by widening that scope to edullm-*, because a wildcard there would bring "
+                "edullm-data and edullm-landing inside a pipeline's reach and this role holds "
+                "s3:PutBucketPolicy. The actions are read off what that template actually "
+                "sets: CreateBucket, PutLifecycleConfiguration, PutBucketPublicAccessBlock "
+                "and PutEncryptionConfiguration, with the configuration reads the "
+                "AWS::S3::Bucket handler makes on every Read, and no s3:DeleteBucket because "
+                "the template retains the bucket on delete and on replace."
             ),
             cleared_by=(
                 "Applying sbsandbox-intern-edullm-notifier-iam and then "
@@ -373,7 +404,12 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
                 "notifier', and re-taking the Phase 1 role capture. Until it is applied the "
                 "CI deploys of sbsandbox-intern-edullm-janitor and "
                 "sbsandbox-intern-edullm-notifier are refused on CreateFunction, and the "
-                "refusal reads like a broken template rather than a missing grant."
+                "refusal reads like a broken template rather than a missing grant; the CI "
+                "deploy of sbsandbox-intern-edullm-scratch is refused on CreateBucket, which "
+                "reads the same way. That apply needs --s3-bucket "
+                "sbsandbox-intern-edullm-artifacts --s3-prefix "
+                "cloudformation-templates/checksummed, because this template is past the "
+                "51200-byte limit on a template submitted inline."
             ),
             findings=(
                 RoleDriftFinding(
@@ -383,6 +419,17 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
                         "the template declares resources the deployed role does not: "
                         "arn:<partition>:iam::<account>:role/sbsandbox-intern-edullm-janitor-lambda, "
                         "arn:<partition>:iam::<account>:role/sbsandbox-intern-edullm-janitor-schedule"
+                    ),
+                ),
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'deploy-phase2-admission-stacks'",
+                    detail=(
+                        "the template declares a statement the deployed role does not: Allow "
+                        "Action [s3:CreateBucket, s3:Get*, s3:ListBucket, "
+                        "s3:PutBucketPublicAccessBlock, s3:PutEncryptionConfiguration, "
+                        "s3:PutLifecycleConfiguration] Resource "
+                        "[arn:<partition>:s3:::edullm-scratch]"
                     ),
                 ),
                 RoleDriftFinding(

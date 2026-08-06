@@ -836,7 +836,17 @@ def test_deployer_phase2_grants_are_scoped_past_the_shared_intern_prefix() -> No
     assert all(arn.startswith("arn:${AWS::Partition}:") for arn in scoped)
     assert not [arn for arn in scoped if "sbsandbox-intern-*" in arn]
     assert not [arn for arn in scoped if arn.endswith(":*") or arn == "*"]
-    assert all("sbsandbox-intern-edullm-" in arn for arn in scoped)
+    # One exception, named rather than admitted by loosening the rule. The working tier is
+    # granted by its whole name because the bucket carries no project prefix: a person types
+    # edullm-scratch. Widening the S3 scope above to arn:${AWS::Partition}:s3:::edullm-* would
+    # have satisfied this assertion and put the sealed bucket inside CI's reach, which is
+    # the trade this exception exists to refuse. tests/test_phase1_deployer_role.py checks
+    # what these scopes actually match rather than how they are spelled.
+    assert all(
+        "sbsandbox-intern-edullm-" in arn
+        for arn in scoped
+        if arn != "arn:${AWS::Partition}:s3:::edullm-scratch"
+    )
 
 
 def test_deployer_cannot_run_the_admission_machine_it_deploys() -> None:

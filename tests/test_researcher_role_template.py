@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from edullm_platform.cli.lane import SCRATCH_BUCKET
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.researcher_lane import (
@@ -31,10 +32,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_PATH = INFRA_ROOT / "iam" / "researcher-role.yaml"
 POLICY_NAME = "lane"
 
-#: The working tier's bucket, written out here because nothing in the tree declares it yet. The
-#: exploration route's src/edullm_platform/cli/lane.py declares WORK_BUCKET for the same string
-#: when it lands, and the two have to agree. The name is system-overview.md's and decisions.md's.
-WORKING_BUCKET = "edullm-work"
+#: The working tier's bucket, read from the one module that declares it rather than written out
+#: again. It was a literal here while the exploration route was unmerged and nothing in the tree
+#: named the bucket; that route landed in #258, so a second literal would now be a second answer
+#: to what the bucket is called. test_every_place_that_names_the_working_tier_agrees is what holds
+#: the remaining four places together.
+WORKING_BUCKET = SCRATCH_BUCKET
 
 
 def role() -> dict[str, object]:
@@ -258,7 +261,7 @@ def test_the_indirect_launch_paths_that_skip_the_instance_conditions_are_denied(
 
 def test_the_seventh_property_names_the_working_tier_and_fences_it_by_source_identity() -> None:
     """THE TRIPWIRE FOR THE ONE PROPERTY ANOTHER PLAN READS BEFORE IT STARTS.
-    Mutation: drop the statement. Mutation: except edullm-work/* rather than one person's
+    Mutation: drop the statement. Mutation: except edullm-scratch/* rather than one person's
     prefix. Mutation: replace ${aws:SourceIdentity} with a literal name.
 
     The exploration route builds the working tier on the interface contract that this role
@@ -266,7 +269,7 @@ def test_the_seventh_property_names_the_working_tier_and_fences_it_by_source_ide
     side. So it asserts that the bucket is named in a statement rather than in a comment, and
     that the exception is one person's segment rather than the whole tier.
 
-    The second mutation is the one to think about. Excepting edullm-work/* passes any check that
+    The second mutation is the one to think about. Excepting edullm-scratch/* passes any check that
     only looks for the bucket name and it fences nobody, so every researcher could overwrite
     every other researcher's working files, which is the one thing the layout in
     system-overview.md's "Where data lives" exists to prevent. The third pins the fence to one
@@ -274,7 +277,7 @@ def test_the_seventh_property_names_the_working_tier_and_fences_it_by_source_ide
     role deployed that way reports no error at all.
 
     A FOURTH MUTATION IS WHY THE WORKING-TIER EXCEPTIONS ARE COMPARED AS A SET AND NOT SEARCHED
-    FOR. Adding arn:aws:s3:::edullm-work/* beside the fenced prefix rather than in place of it
+    FOR. Adding arn:aws:s3:::edullm-scratch/* beside the fenced prefix rather than in place of it
     survives every membership assertion, because the narrow entry is still there to find. It is
     also the end of the fence: NotResource excuses a request that matches any one entry, so the
     wide one alone permits the whole tier and the narrow one becomes decoration. That is the

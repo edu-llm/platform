@@ -273,6 +273,12 @@ def test_the_deployer_projection_keeps_the_narrowed_wildcards_it_was_given(
         # fetch a versioned code object. Named rather than folded into the prefix-wide
         # entry above so version enumeration stops short of the lineage store.
         bucket_arn % "sbsandbox-intern-edullm-artifacts",
+        # The working tier, by its whole name. It is the one scope here outside the project
+        # prefix, and it is outside it because the bucket is: infra/scratch-bucket.yaml names
+        # edullm-scratch, which a person types. Granted exactly rather than by widening the
+        # prefix entry above to edullm-*, which would put the sealed bucket and the airlock
+        # inside the reach of a role holding s3:PutBucketPolicy.
+        bucket_arn % "edullm-scratch",
         role_arn % "sbsandbox-intern-edullm-admission-states",
         role_arn % "sbsandbox-intern-edullm-admission-lambda",
         "*",

@@ -10,11 +10,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from edullm_platform.cli.lane import WORK_BUCKET, load_working_tier_settings
+from edullm_platform.cli.lane import SCRATCH_BUCKET, load_working_tier_settings
 from tests.infrastructure_support import INFRA_ROOT, load_template
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-TEMPLATE_PATH = INFRA_ROOT / "work-bucket.yaml"
+TEMPLATE_PATH = INFRA_ROOT / "scratch-bucket.yaml"
 SETTINGS = load_working_tier_settings(PROJECT_ROOT / "config" / "reports" / "working-tier.yaml")
 
 
@@ -38,12 +38,47 @@ def rules() -> list[dict[str, object]]:
 def test_the_bucket_is_the_one_the_overview_names() -> None:
     """Mutation: give it the sbsandbox-intern-edullm- prefix every other stack's bucket has.
 
-    system-overview.md and decisions.md both name it edullm-work, and a person types it. The
-    prefix would also be a lie about who owns it: the deployer role's S3 scope keys on that
-    prefix, and a prefixed name would put a bucket CI can rewrite under the one tier whose whole
-    property is that it is a person's own.
+    system-overview.md and decisions.md both name it edullm-scratch, and a person types it. The
+    prefix would also be a lie about who owns it: it is the deployer role's wildcard, so a name
+    under it says CI may rewrite this bucket freely, and this is the one tier whose whole property
+    is that it is a person's own. CI can still create it, by the exact-name grant in
+    infra/iam/infra-deployer-role.yaml, which is a narrower thing than the prefix would say.
     """
-    assert bucket()["BucketName"] == WORK_BUCKET
+    assert bucket()["BucketName"] == SCRATCH_BUCKET
+
+
+def test_every_place_that_names_the_working_tier_agrees() -> None:
+    """THE TEST THAT MAKES A HALF-APPLIED RENAME OF THIS BUCKET IMPOSSIBLE.
+    Mutation: rename the bucket in any one of the four files and leave the other three.
+
+    Five things have to say the same name and only two of them fail loudly when they disagree.
+    A wrong grant in the lane instance role fails at the sync with a message naming the bucket,
+    and a wrong BucketName fails at CreateBucket. The researcher role's seventh statement is the
+    one that does not: its NotResource fences a lane write to one person's prefix, and a name
+    that matches no bucket fences nothing while a name that matches the wrong bucket denies every
+    write in the real one with no message a researcher can act on. That statement merged in #243
+    and has not deployed, so nothing in the account would surface the mistake either.
+
+    Held against the module constant rather than a literal written here, because a literal in a
+    test is a fifth answer to the question and this test exists to establish there is one.
+    """
+    deployer = (INFRA_ROOT / "iam" / "infra-deployer-role.yaml").read_text(encoding="utf-8")
+    instance = (INFRA_ROOT / "iam" / "lane-instance-role.yaml").read_text(encoding="utf-8")
+    researcher = (INFRA_ROOT / "iam" / "researcher-role.yaml").read_text(encoding="utf-8")
+
+    assert bucket()["BucketName"] == SCRATCH_BUCKET
+    assert f"arn:${{AWS::Partition}}:s3:::{SCRATCH_BUCKET}\n" in deployer, (
+        "The deployer's exact-name grant does not name this bucket, so CI is refused at "
+        "CreateBucket and the refusal reads like a broken template rather than a missing grant."
+    )
+    assert f"- arn:aws:s3:::{SCRATCH_BUCKET}\n" in instance
+    assert f"- arn:aws:s3:::{SCRATCH_BUCKET}/*\n" in instance, (
+        "A lane machine cannot reach the objects it syncs, which fails loudly at the sync."
+    )
+    assert f"- arn:aws:s3:::{SCRATCH_BUCKET}/*/${{aws:SourceIdentity}}/*\n" in researcher, (
+        "The researcher role fences writes into a bucket by this name and no such bucket "
+        "exists, which denies every lane write and says nothing about why."
+    )
 
 
 def test_objects_expire_on_the_schedule_configuration_names() -> None:
@@ -126,6 +161,6 @@ def test_the_stack_is_one_the_audit_knows_about() -> None:
     """
     from tools.verify_deployed_stacks import STACKS
 
-    assert any(stack.name == "sbsandbox-intern-edullm-work" for stack in STACKS.values()), [
+    assert any(stack.name == "sbsandbox-intern-edullm-scratch" for stack in STACKS.values()), [
         stack.name for stack in STACKS.values()
     ]

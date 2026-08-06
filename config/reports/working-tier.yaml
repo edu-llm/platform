@@ -15,14 +15,14 @@
 # below is one where that lag is harmless. A number where it would not be belongs in config/.
 schema_version: 1
 
-# How long an object in edullm-work survives. Ninety days is a term: it outlasts the longest
+# How long an object in edullm-scratch survives. Ninety days is a term: it outlasts the longest
 # thing anybody does in one sitting and it is short enough that a bucket nobody prunes does not
 # become a bill nobody can explain. The working tier is the one place in the design where the
 # rule is "yours until you promote it", and a promotion is a copy into landing, so nothing here
 # is the only copy of anything that matters.
 #
-# infra/work-bucket.yaml carries this same number as an ExpirationInDays and
-# tests/test_work_bucket_template.py holds the two equal, which is what stops the file and the
+# infra/scratch-bucket.yaml carries this same number as an ExpirationInDays and
+# tests/test_scratch_bucket_template.py holds the two equal, which is what stops the file and the
 # deployed rule disagreeing.
 object_expiry_days: 90
 
@@ -31,7 +31,7 @@ object_expiry_days: 90
 # docs-frank/superpowers/specs/2026-08-04-platform-buildout-design.md records three pre-training
 # arms killed by P-family instances booting on 30 GiB against a 37.2 GiB corpus, and the Batch
 # environment now boots on 500 GiB. Two hundred is the lane's share of that argument. It is a
-# gp3 volume, it is deleted with the instance, and anything worth keeping is in edullm-work.
+# gp3 volume, it is deleted with the instance, and anything worth keeping is in edullm-scratch.
 root_volume_gib: 200
 
 # How long a verb waits for a new machine to answer Systems Manager before giving up on it. Ten

@@ -223,7 +223,7 @@ def test_the_source_identity_is_the_string_the_working_tier_deny_fences_on() -> 
     Mutation: pass the caller ARN, or the session name, as the source identity.
 
     The researcher role's seventh statement denies writes outside
-    edullm-work/*/${aws:SourceIdentity}/*, and working_prefix builds the path from the same
+    edullm-scratch/*/${aws:SourceIdentity}/*, and working_prefix builds the path from the same
     person. If these two ever disagree the machine starts, the session opens, and every sync
     fails with AccessDenied naming no cause. Asserted as one equality rather than as two facts
     about two functions, because agreement is the property and either alone is not.

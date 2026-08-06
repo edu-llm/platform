@@ -14,7 +14,7 @@ import pytest
 from pydantic import ValidationError
 
 from edullm_platform.cli.lane import (
-    WORK_BUCKET,
+    SCRATCH_BUCKET,
     WorkingTierSettings,
     load_working_tier_settings,
     person_from_caller_arn,
@@ -50,7 +50,7 @@ def test_the_uri_names_the_bucket_the_overview_names() -> None:
     of its own and is discoverable by nobody, and both of those are properties this slice needs.
     """
     assert working_uri(team="memory-split", person="caiiris", project="mixlaw") == (
-        f"s3://{WORK_BUCKET}/memory-split/caiiris/mixlaw/"
+        f"s3://{SCRATCH_BUCKET}/memory-split/caiiris/mixlaw/"
     )
 
 

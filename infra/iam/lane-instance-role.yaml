@@ -70,8 +70,8 @@ Resources:
                   - s3:DeleteObject
                   - s3:ListBucket
                 Resource:
-                  - arn:aws:s3:::edullm-work
-                  - arn:aws:s3:::edullm-work/*
+                  - arn:aws:s3:::edullm-scratch
+                  - arn:aws:s3:::edullm-scratch/*
 
   LaneInstanceProfile:
     Type: AWS::IAM::InstanceProfile
