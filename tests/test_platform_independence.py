@@ -1,9 +1,11 @@
-"""Two defaults that mean different things on different machines, and are named here instead.
+"""Three defaults that mean different things on different machines, and are named here instead.
 
-**BOTH OF THESE ARE CORRECT BY ACCIDENT ON THE MACHINE EVERY CONTRIBUTOR USES.** A test that
-ran the code and compared the answer would pass on macOS and on the Ubuntu runner whichever way
-the code went, which is why neither is asserted by running it. What is asserted is that the
-argument deciding the behaviour is written down, because writing it down is the whole fix.
+**ALL THREE ARE CORRECT BY ACCIDENT ON THE MACHINE EVERY CONTRIBUTOR USES.** A test that ran the
+code and compared the answer would pass on macOS and on the Ubuntu runner whichever way the code
+went, which is why the first two are not asserted by running them. What is asserted is that the
+argument deciding the behaviour is written down, because writing it down is the whole fix. The
+third is different and can be run here, by handing the code the stream Windows would have handed
+it; the cases say so where they do it.
 
 ``subprocess.run(text=True)`` with no ``encoding`` decodes with the locale's codec. That is
 UTF-8 on macOS and Linux and the ANSI code page on Windows, usually cp1252, against a ``gh``
@@ -21,17 +23,30 @@ own records the incident it was written for, a 32-line change that arrived as 1,
 Nothing fails, which is the problem -- ``check`` reads with ``newline=None`` and folds it back,
 so a Windows researcher produces a file that differs from everybody else's before they have
 typed anything.
+
+``sys.stdout`` is UTF-16 on a Windows console and the ANSI code page on a Windows pipe, so
+``edullm logs`` is fine on screen and raises ``UnicodeEncodeError`` the moment it is redirected
+into a file. That is the opposite direction from the ``subprocess`` fault above and shares no
+code with it: one is what we decode coming in from ``gh``, the other is what we encode going
+out. The suite could not see this one at all before these cases, because ``cli_support.invoke``
+hands the CLI a ``StringIO``, which holds any character there is and never raises.
 """
 
 from __future__ import annotations
 
 import ast
+import importlib
+import io
+import json
+import sys
 from pathlib import Path
 from typing import Any, Final
 
 import pytest
 
+import edullm_platform.cli
 from edullm_platform.cli.configuration import load_reviewed_configuration
+from edullm_platform.cli.machine import emit
 from edullm_platform.cli.scaffold import scaffold_spec
 from tests.cli_support import CONFIG_DIR
 
@@ -189,3 +204,181 @@ def test_the_scaffold_writes_lf_whatever_it_is_running_on(
     )
     assert written.get("encoding") == "utf-8"
     assert b"\r\n" not in path.read_bytes()
+
+
+# ---------------------------------------------------------------------------------------
+# the stream this program prints on
+# ---------------------------------------------------------------------------------------
+
+
+#: What a training log holds that an ANSI code page does not. The accented name is in the list
+#: on purpose and cp1252 survives it -- cp1252 carries Latin-1 -- so a case that used only an
+#: accent would pass on Windows for the wrong reason and prove nothing. The arrow and the block
+#: are what actually kill a redirect, and they are in every progress bar OLMo-core prints.
+BEYOND_THE_CODE_PAGE: Final = "step 200 \u2192 400  train \u2588\u2588\u2588\u2591\u2591 62%  ren\u00e9e"
+
+
+def a_windows_pipe() -> io.TextIOWrapper:
+    """The stream Python hands a program on Windows when stdout is redirected, not a console.
+
+    Built here rather than mocked, because the fault is entirely in the codec: this is a real
+    ``TextIOWrapper`` with the encoding a Windows ``locale.getpreferredencoding()`` returns,
+    and it raises for exactly the characters the real one raises for. PEP 528 gave the console
+    UTF-16 and left this case alone, which is why the bug only appears under a redirect.
+    """
+    return io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+
+
+def test_the_stream_windows_supplies_cannot_carry_a_training_log() -> None:
+    """The fault itself, so that everything below is answering something real.
+
+    Mutation: none available -- this asserts the platform rather than our code. It is here
+    because the three cases after it are worth nothing if cp1252 turns out to be able to hold
+    what ``logs`` prints, and because the suite's own ``StringIO`` can hold anything and so
+    quietly disagrees with every researcher's stdout.
+    """
+    with pytest.raises(UnicodeEncodeError):
+        print(BEYOND_THE_CODE_PAGE, file=a_windows_pipe())
+
+    # And the half that makes the bug hard to see from here: the accent alone gets through, so
+    # a Windows researcher hits this on a progress bar rather than on a model name.
+    print("ren\u00e9e", file=a_windows_pipe())
+
+
+def test_importing_the_package_leaves_the_process_streams_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: reconfigure at import time, which is the obvious place and the wrong one.
+
+    Every consumer of the package inherits an import, this suite included: pytest's capture
+    would be reconfigured out from under it and the bytes these cases compare would stop being
+    the bytes anything else produces. The entry point is a narrower place to put it and
+    :func:`test_the_console_entry_point_makes_the_streams_carry_utf_8` holds it there.
+
+    **A cp1252 STREAM IS PUT IN PLACE FIRST, AND WITHOUT IT THIS CASE ASSERTS NOTHING.** The
+    stdout pytest supplies is already UTF-8, so an import-time reconfigure would change it to
+    what it already was and pass. Measured: the mutation survived this case until the stream
+    below was installed, and was caught only by the two after it.
+    """
+    monkeypatch.delenv("PYTHONIOENCODING", raising=False)
+    pipe = a_windows_pipe()
+    monkeypatch.setattr(sys, "stdout", pipe)
+    monkeypatch.setattr(sys, "stderr", a_windows_pipe())
+
+    importlib.reload(edullm_platform.cli)
+
+    assert sys.stdout is pipe
+    assert sys.stdout.encoding == "cp1252", (
+        "importing the package changed the encoding of a stream it was only imported into, "
+        "which reaches every consumer of it including this suite's own capture"
+    )
+
+
+def test_the_console_entry_point_makes_the_streams_carry_utf_8(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: drop the two calls, or make only ``stdout`` of them.
+
+    ``stderr`` matters as much as ``stdout`` and for a worse reason: it carries every refusal,
+    and it is where Python prints a traceback. A traceback raised while printing a log line,
+    landing on a stream that cannot print it either, is a crash with nothing on the screen.
+
+    ``argv=[]`` because the orientation text costs no configuration read and no network, and
+    what is being measured is what the entry point did to the streams before it dispatched
+    anything at all.
+    """
+    monkeypatch.delenv("PYTHONIOENCODING", raising=False)
+    monkeypatch.setattr(sys, "stdout", a_windows_pipe())
+    monkeypatch.setattr(sys, "stderr", a_windows_pipe())
+
+    edullm_platform.cli.main([])
+
+    assert sys.stdout.encoding == "utf-8"
+    assert sys.stderr.encoding == "utf-8"
+    print(BEYOND_THE_CODE_PAGE, file=sys.stdout)
+    print(BEYOND_THE_CODE_PAGE, file=sys.stderr)
+
+
+def test_the_streams_are_reconfigured_and_not_replaced(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mutation: wrap ``sys.stdout.buffer`` in a second ``TextIOWrapper`` instead.
+
+    It reads as the tidier fix and it puts two buffers on one descriptor. Argparse writes
+    ``--help`` and every usage error straight to ``sys.stdout`` and ``sys.stderr``, so the
+    wrapper would not catch them and what a researcher saw would be ordered by whichever
+    buffer flushed first. Asserting identity is what stops that arriving as a tidy-up.
+    """
+    monkeypatch.delenv("PYTHONIOENCODING", raising=False)
+    stdout, stderr = a_windows_pipe(), a_windows_pipe()
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", stderr)
+
+    edullm_platform.cli.main([])
+
+    assert sys.stdout is stdout
+    assert sys.stderr is stderr
+    # A lone surrogate is the one string UTF-8 will not encode under strict, and os.fsdecode
+    # puts one in a path when Windows hands back UTF-16 that is not valid. This function exists
+    # because printing raised, so printing must not raise.
+    print("a path with \udcff in it", file=sys.stdout)
+
+
+def test_an_encoding_the_researcher_asked_for_is_not_overruled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: reconfigure unconditionally.
+
+    ``PYTHONIOENCODING`` is the documented way to say which codec you want, and the bug being
+    fixed is the codec nobody chose -- the one the interpreter read off the locale. Overruling
+    a stated intent is a different bug wearing the same fix, and it would make this binary the
+    one program on the machine that ignores the variable.
+    """
+    monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
+    monkeypatch.setattr(sys, "stdout", a_windows_pipe())
+    monkeypatch.setattr(sys, "stderr", a_windows_pipe())
+
+    edullm_platform.cli.main([])
+
+    assert sys.stdout.encoding == "cp1252"
+
+
+def test_a_machine_readable_document_is_ascii_whatever_is_in_it() -> None:
+    """Mutation: ``ensure_ascii=False`` in ``emit``, which reads better and is smaller.
+
+    This is the half that matters more, and it is the half that was never broken -- ``--json``
+    came out ASCII because of a default nobody had written down, so the fix here was to write
+    it down. A crash on prose costs a person a retry; a truncated document costs a script its
+    answer, and what the script reports is whatever it makes of half a file.
+
+    Held over the bytes rather than over the call, because unlike the two defaults at the top
+    of this file this one can be run: the escaping happens the same way on every platform, so
+    a document that is ASCII here is ASCII on Windows.
+    """
+    document = {
+        "run": "run_019fcf3c-9878",
+        "detail": BEYOND_THE_CODE_PAGE,
+        "checkpoint": "step 400 \u2192 s3://bucket/ren\u00e9e",
+    }
+    out = io.StringIO()
+
+    emit(document, out=out)
+
+    assert out.getvalue().isascii(), (
+        "a --json document carries characters outside ASCII, so redirecting it on Windows "
+        "truncates it at the first one and the caller parses half a document"
+    )
+    out.getvalue().encode("cp1252")
+    assert json.loads(out.getvalue()) == document, "the escaping has to be lossless"
+
+
+def test_the_document_survives_the_stream_that_kills_the_prose() -> None:
+    """The two halves side by side, which is the only way the difference is visible.
+
+    Mutation: none -- this is the comparison the case above is asserting, written out. The
+    same characters, the same cp1252 stream, and a crash on one side and not on the other.
+    """
+    document = {"detail": BEYOND_THE_CODE_PAGE}
+
+    with pytest.raises(UnicodeEncodeError):
+        print(BEYOND_THE_CODE_PAGE, file=a_windows_pipe())
+
+    emit(document, out=a_windows_pipe())
