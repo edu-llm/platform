@@ -40,7 +40,7 @@ from pathlib import Path
 
 import pytest
 
-from edullm_platform.cli.lane import SESSION_PLUGIN, WorkingTierSettings
+from edullm_platform.cli.lane import AWS_BROKER, SESSION_PLUGIN, WorkingTierSettings
 from edullm_platform.cli.main import (
     EXIT_OK,
     EXIT_UNREACHABLE,
@@ -54,7 +54,14 @@ from edullm_platform.reviewed_configuration import (
     ConfigFile,
     load_config_file,
 )
-from tests.cli_support import FakeRunner, failed, git_answers, lane_answers, write_spec
+from tests.cli_support import (
+    ONE_BROKER_PROFILE,
+    FakeRunner,
+    failed,
+    git_answers,
+    lane_answers,
+    write_spec,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -104,10 +111,20 @@ def installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Installed:
     monkeypatch.setenv("EDULLM_GITHUB_LOGIN", "caiiris")
     tools = tmp_path / "_tools"
     tools.mkdir()
-    plugin = tools / SESSION_PLUGIN
-    plugin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    plugin.chmod(0o755)
+    # BOTH LOCAL PREREQUISITES, because the lane checks for both before it makes a call and this
+    # fixture is about what an install outside a checkout resolves rather than about either wall.
+    for name in (SESSION_PLUGIN, AWS_BROKER):
+        stub = tools / name
+        stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{tools}{os.pathsep}{os.environ['PATH']}")
+    # POINTED AT THIS DIRECTORY FOR THE REASON ``cli_support.invoke`` DOES IT: unset, the profile
+    # resolution reads the developer's own ``~/.aws/config``, and whether these cases pass would
+    # depend on whether that laptop has run the broker's second step.
+    aws_config = tmp_path / "_aws-config"
+    aws_config.write_text(ONE_BROKER_PROFILE, encoding="utf-8")
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(aws_config))
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
 
     return Installed(configuration=configuration, working=working)
 

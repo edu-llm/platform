@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import shlex
 import shutil
@@ -115,7 +116,9 @@ from edullm_platform.cli.intake import (
     routed_to_ask,
 )
 from edullm_platform.cli.lane import (
+    AWS_BROKER,
     AWS_LOGIN_COMMAND,
+    AWS_PROFILE_VARIABLE,
     GPU_AMI_PARAMETER,
     PLATFORM_NETWORK_NAME,
     SESSION_PLUGIN,
@@ -126,6 +129,7 @@ from edullm_platform.cli.lane import (
     agent_online_argv,
     another_zone_may_answer,
     assume_lane_argv,
+    aws_config_path,
     carry_back_script,
     command_line,
     command_not_found_said,
@@ -142,6 +146,7 @@ from edullm_platform.cli.lane import (
     load_working_tier_settings,
     machine_already_running,
     machine_for_project,
+    missing_broker_refusal,
     missing_plugin_refusal,
     no_machine_to_stop,
     no_zone_had_this_shape,
@@ -151,9 +156,11 @@ from edullm_platform.cli.lane import (
     placement_verdict,
     placement_warning,
     priced_as,
+    read_aws_config,
     refusal_code,
     remote_command_argv,
     remote_script,
+    resolve_aws_profile,
     run_instances_argv,
     shell_session_argv,
     ssh_proxy_command,
@@ -1375,13 +1382,45 @@ def _lane_session(
     module could answer with no account at all was the last thing it did. Both reads are pure
     local file reads off ``configuration.directory``, so putting them first costs nothing and
     makes an installation that cannot find its own numbers say so immediately.
+
+    **THREE LOCAL WALLS BEFORE THE FIRST CALL, IN THE ORDER A NEWCOMER FAILS THEM.** The broker
+    binary, then the session plugin, then a profile to run under. The broker is first because it
+    precedes the other two rather than sitting beside them: the AWS session the third one selects
+    is minted by the first, so a laptop without it fails every later step for a reason none of
+    them names. Until 2026-08-06 nothing checked for it at all and the fifteen people who have
+    never been able to get it fell through to a shell "command not found" out of
+    ``credential_process`` -- not a refusal, no code, nothing to search for, and no route to the
+    queue that could actually help them.
     """
     settings = load_working_tier_settings(configuration.directory)
     hours = arguments.hours or load_lane_settings(configuration.directory).default_lifetime_hours
+    if shutil.which(AWS_BROKER) is None:
+        print(render_refusals((missing_broker_refusal(),)), end="", file=err)
+        return EXIT_UNUSABLE
     if shutil.which(SESSION_PLUGIN) is None:
         print(render_refusals((missing_plugin_refusal(),)), end="", file=err)
         return EXIT_UNUSABLE
-    identity = runner(("aws", "sts", "get-caller-identity", "--output", "json"))
+    # THE PROFILE IS RESOLVED HERE AND HANDED TO THE TWO CALLS BELOW RATHER THAN EXPORTED. Both
+    # take the ambient environment overlaid with what they are given, so a profile in `env` is
+    # the same thing to `aws` as one in the shell -- and this process does not mutate an
+    # environment it shares with whatever started it. Past `assume-role` there is nothing to
+    # carry: `credentials_environment` puts the lane's own keys in `env` for every later call,
+    # and AWS_PROFILE beside them would be a second answer to a question already answered.
+    aws_config = aws_config_path(os.environ, home=Path.home())
+    resolved = resolve_aws_profile(
+        read_aws_config(aws_config),
+        declared=os.environ.get(AWS_PROFILE_VARIABLE),
+        path=aws_config,
+    )
+    if resolved.refusal is not None:
+        print(render_refusals((resolved.refusal,)), end="", file=err)
+        return EXIT_UNUSABLE
+    if resolved.said is not None:
+        print(resolved.said, file=err)
+    # ``None`` and not an empty mapping where nothing was chosen, so that a person who set
+    # AWS_PROFILE themselves gets the call this made before any of this existed.
+    profile = None if resolved.profile is None else {AWS_PROFILE_VARIABLE: resolved.profile}
+    identity = runner(("aws", "sts", "get-caller-identity", "--output", "json"), env=profile)
     if not identity.ok:
         print(_no_aws_session(identity.stderr), end="", file=err)
         return EXIT_UNREACHABLE
@@ -1415,13 +1454,18 @@ def _lane_session(
     if warning is not None:
         print("\n".join(_wrapped(warning, indent="")), file=err)
 
+    # THE SAME PROFILE THIS RESOLVED, BECAUSE THIS IS THE LAST CALL MADE AS THE PERSON. It is
+    # the one that turns their credential into the lane's, and a resolution that reached
+    # GetCallerIdentity and not this would prove an identity and then assume from a different
+    # one -- or from none, which is the failure it exists to remove.
     assumed = runner(
         assume_lane_argv(
             account=str(facts["Account"]),
             project=request.project,
             person=request.person,
             lifetime_hours=hours,
-        )
+        ),
+        env=profile,
     )
     if not assumed.ok:
         print(_cannot_enter_the_lane(assumed.stderr), end="", file=err)
