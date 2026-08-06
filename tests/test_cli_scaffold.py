@@ -473,6 +473,16 @@ def test_an_untracked_directory_holding_more_than_the_spec_still_counts(
     Mutation: drop any dirty entry that is a parent of the spec. It passes the loop test,
     because there the only thing under ``.edullm/`` is the spec, and it silently stops
     reporting the file that decides whether an image can be built at all.
+
+    **THE CODE IS ``untracked_file_the_run_needs`` AND WAS ``uncommitted_changes``, WHICH IS
+    THIS CASE SURVIVING A NARROWING RATHER THAN A RENAME.** Untracked files no longer refuse
+    on their own: the image is built from the commit, so a scratch file on a laptop cannot
+    make the container run something else, and refusing for one taught a first-week
+    researcher that the gate is noise. What still refuses is an untracked path the run would
+    go looking for, and the registered ``dockerfile_path`` is the first of the two. So the
+    argument in the paragraph above is now the *whole* reason this entry is reported, rather
+    than a consequence of reporting every untracked entry, and the mutation it names is
+    caught by the same assertion.
     """
     (tmp_path / ".edullm").mkdir()
     (tmp_path / ".edullm" / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
@@ -481,7 +491,7 @@ def test_an_untracked_directory_holding_more_than_the_spec_still_counts(
     code, out, _ = invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
 
     assert code == EXIT_REFUSED, out
-    assert "refused  uncommitted_changes" in out
+    assert "refused  untracked_file_the_run_needs" in out
     assert ".edullm/" in out
 
 

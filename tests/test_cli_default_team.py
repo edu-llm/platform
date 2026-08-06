@@ -184,11 +184,16 @@ def test_a_default_you_are_not_on_produces_the_same_bytes_as_typing_it(
     on, so the run would land in a group's total without anybody choosing that at the moment
     of submitting.
 
-    Asserted as byte equality of the whole output rather than as the presence of a code,
-    because the claim is stronger than "it is also refused": the two runs are the same run.
-    The refusal path prints the configuration line and the refusals and no manifest, so there
-    is no origin line to differ, which is the same for a typed team and is why the comparison
-    is meaningful rather than accidental.
+    Asserted as byte equality of the refusal section rather than as the presence of a code,
+    because the claim is stronger than "it is also refused": the two runs reach the same
+    refusal, in the same words, and neither buys anything the other does not.
+
+    **THE ONE LINE THAT DIFFERS IS THE ONE THAT SHOULD, AND IT IS ASSERTED RATHER THAN
+    EXCLUDED.** This compared the whole of stdout while a refused check printed no manifest.
+    It prints one now, so the team row carries where the value came from, and that row is the
+    difference: a reader who is being refused for a team they did not type this time needs to
+    be told which file typed it for them. A default that produced the *same* origin line as a
+    keystroke would be the tool concealing where a claim came from.
     """
     typed_root, typed_runner = checkout(tmp_path / "typed")
     typed = invoke(
@@ -204,11 +209,14 @@ def test_a_default_you_are_not_on_produces_the_same_bytes_as_typing_it(
 
     assert typed[0] == EXIT_REFUSED
     assert "refused  submitter_not_in_claimed_team" in typed[1]
-    # The configuration line names the directory and both runs read the same one, so the
-    # whole of stdout is comparable and the checkout paths do not appear in it.
+    # Split rather than sliced, so this reads the refusal section whatever precedes it.
+    marker = "1 refusal. Nothing was dispatched."
     assert defaulted[0] == typed[0]
-    assert defaulted[1] == typed[1]
+    assert defaulted[1].split(marker)[1] == typed[1].split(marker)[1]
     assert defaulted[2] == typed[2]
+    # And the row that says where the claim came from, which is what the two do not share.
+    assert f"team              {NOT_MY_TEAM}         named on the command line" in typed[1]
+    assert "your default, in " in defaulted[1]
 
 
 def test_the_claim_a_default_makes_is_authorized_exactly_as_a_typed_one_is() -> None:

@@ -120,6 +120,47 @@ def test_a_refused_check_still_emits_one_document_and_still_exits_one(
     assert all({"code", "detail"} == set(refusal) for refusal in document["refusals"])
 
 
+def test_a_half_described_run_still_carries_its_price_and_the_tree_it_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The paragraph defect, one layer down, where an agent rather than a person reads it.
+
+    ``cost`` was ``null`` and ``manifest`` was ``null`` for every check that had not been
+    told a team, an experiment or a dataset, so a caller pricing a submission before it named
+    one got nothing and no key saying why. None of those three fields is a factor in the
+    price, and a skill that has to fill in a form is exactly the caller who wants the figure
+    before the form is complete.
+
+    Mutation: leave the three tree fields inside ``manifest`` only. That key is ``null`` on
+    this path by design -- there is no manifest to serialize -- which makes it the one path
+    where a caller cannot tell which checkout answered. ``experiment`` and ``team`` are
+    already published beside it for the same reason.
+    """
+    write_spec(tmp_path, compute="gpu-1xa10g")
+    runner = FakeRunner(git_answers(tmp_path, untracked=("notes.docx",)))
+
+    code, out, err = invoke(
+        ["check", "--json"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_REFUSED, out + err
+    document = only_document(out)
+    assert document["manifest"] is None, "there is no manifest on this path, by design"
+    assert document["cost"]["maximum_compute_cost_usd"] == "48.29"
+    assert document["history"]["said"]
+    assert document["repository"] == "OLMo-core"
+    assert document["branch"] == "edullm/an-arm"
+    assert document["commit_sha"] is not None
+    # No gate is guessed at from a request this incomplete, and the key is present saying so.
+    assert document["approval_class"] is None
+    # And the untracked file nothing refused for is published as a path rather than as prose.
+    assert document["untracked"] == ["notes.docx"]
+    assert "notes.docx" not in json.dumps(document["refusals"])
+
+
 def test_the_placeholder_digest_is_nowhere_in_the_document(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -288,7 +329,8 @@ def test_check_without_the_flag_still_prints_the_paragraphs(
     )
 
     assert code == EXIT_OK, out + err
-    assert out.startswith("checked against ")
+    assert out.startswith("manifest\n")
+    assert "checked against " in out
     assert "no refusals. edullm submit will dispatch this." in out
 
 

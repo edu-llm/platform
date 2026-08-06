@@ -168,9 +168,16 @@ def git_answers(
     repository: str = "OLMo-core",
     commit: str = COMMIT,
     dirty: Iterable[str] = (),
+    untracked: Iterable[str] = (),
     pushed: bool = True,
 ) -> dict[tuple[str, ...], CommandResult]:
-    """What ``read_git_facts`` asks git, answered as a clean pushed checkout by default."""
+    """What ``read_git_facts`` asks git, answered as a clean pushed checkout by default.
+
+    ``dirty`` is tracked files somebody has changed and ``untracked`` is files in no commit,
+    and they are two arguments because the tool now answers them differently: the first is a
+    gap between the laptop and the image and the second cannot be. One argument spelling both
+    as ``M`` is what let a refusal written for the first arrive at the second.
+    """
     return {
         ("git", "rev-parse", "--show-toplevel"): ok(f"{root}\n"),
         ("git", "rev-parse", "HEAD"): ok(f"{commit}\n"),
@@ -180,6 +187,7 @@ def git_answers(
         ),
         ("git", "status", "--porcelain"): ok(
             "".join(f" M {path}\n" for path in dirty)
+            + "".join(f"?? {path}\n" for path in untracked)
         ),
         ("git", "branch", "--remotes", "--contains"): ok(
             "  origin/edullm/an-arm\n" if pushed else ""

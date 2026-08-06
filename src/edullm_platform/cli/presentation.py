@@ -33,7 +33,18 @@ AND ONE LINE HERE IS ABOUT THE FILES RATHER THAN THEIR CONTENTS. ``check`` resol
 configuration by four routes with the packaged copy beating a checkout's ``config/``, and
 until :func:`config_source_said` existed nothing printed said which had answered. Two runs
 against two configurations were byte-identical, which made the precedence rule invisible to
-the one reader placed to notice it had drifted.
+the one reader placed to notice it had drifted. It is the last line rather than the first
+now. What it catches is real and rare, and it was the opening ninety characters of the first
+thing a new researcher ever read from this tool: a path to a ``site-packages`` directory,
+above the price they came for and above the problem they had. The maintainer chasing a stale
+validator finds it wherever it is, because he is the reader who knows to look for it.
+
+REFUSALS GO UNDER WHAT WAS ESTABLISHED RATHER THAN INSTEAD OF IT. Every block above them is
+a reading -- the tree that was resolved, the ceiling, what runs of this shape have taken --
+and a reading does not stop being true because something else was refused. The verb's own
+help says it prices a submission, and it printed no price at all on the first invocation a
+researcher makes, because a single early return here replaced the whole report with the
+refusal list.
 """
 
 from __future__ import annotations
@@ -41,6 +52,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from decimal import Decimal
 from pathlib import Path
+from typing import Final
 
 from edullm_platform.cli.actions import ADMITTED, RunFacts, elapsed_said
 from edullm_platform.cli.configuration import PACKAGED_CONFIG_DIRECTORY, ReviewedConfiguration
@@ -85,17 +97,23 @@ def render_preflight(preflight: Preflight, *, configuration: ReviewedConfigurati
     # wrapped form puts "checked against" alone on the first line and helps nobody. A
     # terminal soft-wraps it and a pipe keeps it one line, which is what a reader greps.
     source = config_source_said(configuration.directory)
-    if preflight.refused:
-        return f"{source}\n\n{render_refusals(preflight.refusals)}"
     blocks = [
         _manifest_block(preflight),
         _cost_block(preflight),
         _history_block(preflight),
         _approval_block(preflight, configuration.policy, configuration.inventory),
-        _deferred_block(),
-        "no refusals. edullm submit will dispatch this.",
+        (
+            render_refusals(preflight.refusals).rstrip("\n")
+            if preflight.refused
+            # The deferred pair is what a clean check has to say before somebody reads it as
+            # a promise. A refused one has already said nothing was dispatched, and two more
+            # codes under a heading about the registry are two more things to read past.
+            else _deferred_block()
+        ),
+        "" if preflight.refused else "no refusals. edullm submit will dispatch this.",
+        source,
     ]
-    return f"{source}\n\n" + "\n\n".join(block for block in blocks if block) + "\n"
+    return "\n\n".join(block for block in blocks if block) + "\n"
 
 
 def config_source_said(directory: Path) -> str:
@@ -112,6 +130,11 @@ def config_source_said(directory: Path) -> str:
     stale validator's damage is a refusal that is wrong -- a profile it has not been told was
     promoted, a dataset registered last week -- and a reader deciding whether to believe a
     refusal is exactly the reader who needs to know which files produced it.
+
+    LAST RATHER THAN FIRST, AND THAT IS THE ONLY THING THAT HAS CHANGED ABOUT IT. It led
+    every ``check`` for a while, so the first thing a researcher read on their first morning
+    was ninety characters of somebody else's install path. The information is worth keeping
+    and worth nobody's opening line: the reader it is for is looking for it.
 
     A path and no colour, like everything else here, so a piped run and a terminal run stay
     the same bytes.
@@ -184,20 +207,71 @@ def approvers_said(inventory: OrganizationInventory, environment: ApprovalEnviro
     )
 
 
-def render_refusals(refusals: Sequence[Refusal]) -> str:
+def render_refusals(refusals: Sequence[Refusal], *, verb: str = "check") -> str:
     """The refusal form: how many, that nothing moved, then one block each.
 
     "Nothing was dispatched" is on the first line rather than the last, because a reader
     seeing a wall of red needs to know the run did not start before they need to know why.
+
+    **THE FIELDS NOBODY HAS FILLED IN ARE ONE BLOCK, BECAUSE THEY ARE ONE QUESTION.** A
+    first invocation in a registered checkout refuses for the team, the experiment and the
+    dataset at once, and three stanzas under three codes read as three things being wrong
+    with a checkout that is fine. What is true is that the tool has not been told what the
+    run is. They are gathered under one heading with one line that answers all of them, and
+    every explanation is printed underneath unchanged: those sentences are the part worth
+    keeping, and "absent and none are different answers" is not a thing a reader works out
+    from a usage string.
     """
     count = len(refusals)
     noun = "refusal" if count == 1 else "refusals"
-    lines = [f"{count} {noun}. Nothing was dispatched.", ""]
+    asked = [refusal for refusal in refusals if refusal.asks_for]
+    # A COUNT OF REFUSALS IS THE WRONG FIRST LINE WHERE ALL OF THEM ARE ONE QUESTION. "3
+    # refusals" above "3 fields, one question" is the arithmetic the block below exists to
+    # undo, so where nothing else was refused the count is left to the block and the line
+    # says only the thing every refused run has to say first.
+    lines = (
+        ["Nothing was dispatched.", ""]
+        if asked and len(asked) == count
+        else [f"{count} {noun}. Nothing was dispatched.", ""]
+    )
+    if asked:
+        lines.extend(_fields_block(asked, verb=verb))
+        lines.append("")
     for refusal in refusals:
+        if refusal.asks_for:
+            continue
         lines.append(f"refused  {refusal.code}")
         lines.extend(f"  {line}" for line in _wrap(refusal.detail))
         lines.append("")
     return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def _fields_block(asked: Sequence[Refusal], *, verb: str) -> list[str]:
+    """The one-question block: a heading, a line to copy, then each field's own reasons.
+
+    The copyable line comes before the explanations rather than after them. A reader who
+    already knows what a team is wants the line and nothing else; one who does not reads
+    on. Putting it last would make the second reader's need decide the first reader's
+    scroll.
+
+    The examples in it are placeholders that happen to be runnable, and none of them is a
+    choice the tool is making on somebody's behalf: a group the roster already puts them
+    on, a name that registers nothing, and ``none`` for the dataset, which is the answer
+    that says this run reads no corpus.
+    """
+    count = len(asked)
+    fields = "field" if count == 1 else "fields"
+    heading = (
+        f"{count} {fields} nothing has answered. They are one question, what is this run, "
+        "and one line answers all of them:"
+    )
+    typed = " ".join(f"{refusal.asks_for} {refusal.example}" for refusal in asked)
+    lines = [*_wrap(heading), "", f"  edullm {verb} {typed}", ""]
+    for refusal in asked:
+        lines.append(f"refused  {refusal.code}")
+        lines.extend(f"  {line}" for line in _wrap(refusal.detail))
+        lines.append("")
+    return lines[:-1]
 
 
 def render_run_facts(facts: RunFacts) -> str:
@@ -317,13 +391,40 @@ def _where_github_stops(listed: Sequence[tuple[str, str, str, str]]) -> list[str
     ]
 
 
+#: What a row says where nothing filled it in. One wording, so that a reader learns once
+#: that the tool is reporting an absence rather than having found an empty value.
+NOT_GIVEN: Final = "not given"
+
+#: Why a priced run can still have no gate named. The ceiling above it is arithmetic over
+#: the machine and the runtime; which gate releases it is a ruling over the whole request,
+#: and the fields the refusals below ask for are inputs to that ruling.
+_UNDECIDED_APPROVAL: Final = (
+    "not decided here. The ceiling above is the machine and the runtime, which are known. "
+    "Which gate releases a run is decided from the whole request, and the fields refused "
+    "below are part of it. Fill them in and check again."
+)
+
+
 def _manifest_block(preflight: Preflight) -> str:
+    """What this invocation resolved, whether or not the rest of it was refused.
+
+    **THE BRANCH AND THE COMMIT ARE HERE SO A READER CAN TELL THIS READ THEIR TREE.** A
+    check that names neither is a check somebody has to trust; the walkthroughs that find
+    defects in this verb happen on a branch rather than on ``main``, and "did it even look
+    at what I am standing in" is the first question a refusal raises.
+
+    Every row is printed even where the value is absent, and an absent one says
+    :data:`NOT_GIVEN`. A row that vanished would leave a reader counting fields to work out
+    which one the tool never got, which is the same argument ``_history_block`` makes about
+    a shape with no history.
+    """
     request = preflight.request
     rows: list[tuple[str, str]] = [
-        ("repository", request.repository),
+        ("repository", request.repository or NOT_GIVEN),
+        ("branch", preflight.branch or NOT_GIVEN),
         # Twelve characters, which is what the image tag carries and what every transcript
         # and every approver page prints. The full forty go to the workflow.
-        ("commit", request.commit_sha[:12]),
+        ("commit", request.commit_sha[:12] or NOT_GIVEN),
         (
             "image",
             "resolved at submit, from the commit above",
@@ -344,9 +445,22 @@ def _manifest_block(preflight: Preflight) -> str:
                 ),
             )
         )
-    rows.append(("team", _two_columns(request.team, preflight.team_source)))
-    rows.append(("experiment", request.experiment))
-    rows.append(("wandb project", request.wandb_project))
+    rows.append(("team", _two_columns(request.team or NOT_GIVEN, preflight.team_source)))
+    rows.append(("experiment", request.experiment or NOT_GIVEN))
+    rows.append(("wandb project", request.wandb_project or NOT_GIVEN))
+    if preflight.untracked:
+        # SAID BECAUSE THE READER CAN SEE THEM AND THIS NO LONGER REFUSES FOR THEM. A tree
+        # with four untracked files that is called clean is a tool that either did not look
+        # or is not saying, and both send somebody to read the source. One line, and it is
+        # the reason rather than a warning: they are in no commit, and the commit is what
+        # becomes the image.
+        count = len(preflight.untracked)
+        said = (
+            "1 file in no commit, so it does not reach the image"
+            if count == 1
+            else f"{count} files in no commit, so none of them reach the image"
+        )
+        rows.append(("untracked", said))
     return "manifest\n" + "\n".join(f"  {label:<{LABEL_WIDTH}}{value}" for label, value in rows)
 
 
@@ -412,8 +526,17 @@ def _approval_block(
 ) -> str:
     approval_class = preflight.approval_class
     cost = preflight.cost
-    if approval_class is None or cost is None or preflight.approving_environment is None:
+    if cost is None:
+        # Nothing was priced, so there is no figure for a gate to be about. The refusals
+        # below say what stopped it.
         return ""
+    if approval_class is None or preflight.approving_environment is None:
+        # SAID RATHER THAN LEFT OUT, WHICH IS THE HALF A PRICE ON ITS OWN GETS WRONG. A
+        # reader handed a ceiling and no gate has been shown the expensive number with the
+        # question of who has to agree to it quietly dropped. Which gate a run reaches is
+        # decided from facts a half-described request has not supplied, so this names the
+        # gap rather than guessing at the answer.
+        return "\n".join(["approval", *(f"  {line}" for line in _wrap(_UNDECIDED_APPROVAL))])
     limits = policy.thresholds
     lines = ["approval"]
     if approval_class is ApprovalClass.AUTOMATIC:
@@ -533,6 +656,8 @@ def _compute_said(compute: ComputeProfile) -> str:
 def _dataset_said(preflight: Preflight) -> str:
     named = preflight.request.dataset_release
     reference = preflight.dataset
+    if not named:
+        return NOT_GIVEN
     if reference is None:
         return named
     return _two_columns(named, f"{reference.dataset_id} {reference.version}")

@@ -188,9 +188,11 @@ from edullm_platform.cli.preflight import (
     Refusal,
     SubmissionRequest,
     first_validation_message,
+    price_what_is_known,
     resolve_team,
     run_preflight,
     said_once,
+    untracked_the_image_will_not_see,
     working_tree_refusals,
 )
 from edullm_platform.cli.presentation import (
@@ -227,6 +229,7 @@ from edullm_platform.cli.workspace import (
 )
 from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.contracts.identity import RUN_ID_REGEX
+from edullm_platform.contracts.repository_registry import UnknownRepositoryError
 from edullm_platform.researcher_lane import load_lane_settings
 
 __all__ = [
@@ -2508,7 +2511,10 @@ def _submit(
     )
 
     if preflight.refused and not arguments.force:
-        print(render_refusals(preflight.refusals), end="", file=err)
+        # THE VERB, SO THE LINE A READER COPIES IS THE COMMAND THEY RAN. The fields block
+        # composes one invocation carrying every flag nothing has answered, and offering
+        # ``edullm check`` to somebody who typed ``submit`` would make them edit it first.
+        print(render_refusals(preflight.refusals, verb="submit"), end="", file=err)
         print(
             "Nothing was dispatched. Every one of these is a refusal admission makes too, "
             "so submitting anyway costs a queue wait and reaches the same answer.",
@@ -3526,7 +3532,19 @@ def _preflight(
     would therefore have kept refusing exactly what ``check`` had just cleared, which is a
     worse defect than the one being fixed.
     """
-    refusals: list[Refusal] = working_tree_refusals(facts, spec_path=spec_path)
+    # WHAT THE BUILD READS AND WHAT THE COMMAND NAMES, SO THE TREE CHECK CAN TELL AN
+    # UNTRACKED FILE THAT MATTERS FROM ONE THAT CANNOT. Both come out of files this verb has
+    # already opened: the Dockerfile path is the registry's, and the command is the spec's.
+    # Neither is spelled here, because a repository may register another path and a
+    # hardcoded one would refuse the wrong file.
+    dockerfile_path = _registered_dockerfile_path(arguments, facts, configuration)
+    command = spec.argv if spec is not None else ()
+    refusals: list[Refusal] = working_tree_refusals(
+        facts, spec_path=spec_path, dockerfile_path=dockerfile_path, command=command
+    )
+    untracked = untracked_the_image_will_not_see(
+        facts, spec_path=spec_path, dockerfile_path=dockerfile_path, command=command
+    )
     if unscaffoldable is not None:
         refusals.append(unscaffoldable)
     elif spec is None:
@@ -3553,10 +3571,25 @@ def _preflight(
     # ``submitted_commit`` rather than ``commit_sha``, because that is the one the request
     # below is built from. Where no ``--commit`` was given the two are the same value.
     if spec is None or team is None or missing or facts.submitted_commit is None:
+        # PRICED ANYWAY, WHICH IS THE WHOLE OF WHY THIS BRANCH IS NOT A BARE RETURN. Every
+        # field that stops the request being built here -- the team, the experiment, the
+        # dataset -- is a field the price does not read, so a verb whose own help says it
+        # prices a submission was printing three refusals and no number on the first
+        # invocation a researcher makes. What it can answer it answers; what it cannot it
+        # leaves ``None`` and the terminal says which.
+        partial = _partial_request(arguments, spec, facts, team)
+        shape = price_what_is_known(partial, configuration)
         return Preflight(
-            request=_partial_request(arguments, spec, facts, team),
+            request=partial,
             refusals=said_once(refusals),
             team_source=team_source,
+            branch=facts.branch,
+            workload=shape.workload,
+            compute=shape.compute,
+            dataset=configuration.datasets.reference_for(partial.dataset_release),
+            cost=shape.cost,
+            history=shape.history,
+            untracked=untracked,
         )
 
     request = SubmissionRequest(
@@ -3595,6 +3628,7 @@ def _preflight(
         request=preflight.request,
         refusals=said_once((*refusals, *preflight.refusals)),
         team_source=preflight.team_source,
+        branch=facts.branch,
         workload=preflight.workload,
         compute=preflight.compute,
         dataset=preflight.dataset,
@@ -3603,6 +3637,7 @@ def _preflight(
         approval_class=preflight.approval_class,
         approving_environment=preflight.approving_environment,
         history=preflight.history,
+        untracked=untracked,
     )
 
 
@@ -3629,6 +3664,8 @@ def _missing_required(
                     "neighbours. It registers nothing, so any lower-case hyphenated name "
                     "will do."
                 ),
+                asks_for="--experiment",
+                example="a-first-run",
             )
         )
     if not arguments.dataset:
@@ -3640,6 +3677,11 @@ def _missing_required(
                     "it reads nothing. Absent and none are different answers and only one "
                     "of them is a statement."
                 ),
+                asks_for="--dataset",
+                # ``none`` and not a release, because the copyable line has to be one a
+                # reader may run unchanged, and naming a corpus for somebody is the guess
+                # the detail above says the tool must not make.
+                example="none",
             )
         )
     if spec is not None and not (arguments.compute or spec.suggested_compute):
@@ -3674,13 +3716,45 @@ def _rate_span(configuration: ReviewedConfiguration) -> str:
     return f"${plain_decimal(min(rates))} to ${plain_decimal(max(rates))} an hour"
 
 
+def _registered_dockerfile_path(
+    arguments: argparse.Namespace,
+    facts: GitFacts,
+    configuration: ReviewedConfiguration,
+) -> str | None:
+    """Where this repository's build recipe lives, or ``None`` where nothing says.
+
+    Read from ``config/repositories.yaml`` rather than written here. Every registered
+    repository happens to name ``.edullm/Dockerfile`` today and the field exists so that one
+    of them can name something else, so a constant would refuse a file that is not the
+    recipe and clear the one that is.
+
+    ``None`` for a directory nothing registers, which is a repository already refused by
+    ``unregistered_repository``. Nothing is known about what its build would read, so the
+    untracked question falls back to what the command names.
+    """
+    named = arguments.repository or facts.repository
+    if not named:
+        return None
+    try:
+        return configuration.repositories.repository_by_name(named).dockerfile_path
+    except UnknownRepositoryError:
+        return None
+
+
 def _partial_request(
     arguments: argparse.Namespace,
     spec: RunSpec | None,
     facts: GitFacts,
     team: str | None,
 ) -> SubmissionRequest:
-    """Whatever is known, so a refusal can still say what it was refusing."""
+    """Whatever is known, so a refusal can still say what it was refusing.
+
+    **THE FOUR BOUNDS ARE HERE BECAUSE THEY ARE FOUR OF THE FIVE FACTORS IN THE PRICE.**
+    They were dropped, which was harmless while this request was only ever printed back at
+    a reader, and stopped being harmless when ``price_what_is_known`` began reading it: a
+    ``--hours 2`` run would have been priced at the profile's twenty-four and a fan-out at
+    one cell, so the number would have been wrong rather than absent.
+    """
     return SubmissionRequest(
         repository=arguments.repository or facts.repository or "",
         commit_sha=facts.submitted_commit or "",
@@ -3691,6 +3765,16 @@ def _partial_request(
         experiment=arguments.experiment or "",
         wandb_project=arguments.wandb_project or team or "",
         command=spec.argv if spec else (),
+        maximum_runtime_hours=_decimal_hours(arguments.hours),
+        maximum_attempts=arguments.attempts,
+        fanout_size=arguments.fanout_size
+        or (spec.fanout.size if spec is not None and spec.fanout is not None else None),
+        fanout_index_parameter=arguments.fanout_index_parameter
+        or (
+            spec.fanout.index_parameter
+            if spec is not None and spec.fanout is not None
+            else None
+        ),
     )
 
 

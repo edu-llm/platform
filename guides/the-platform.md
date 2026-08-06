@@ -236,11 +236,12 @@ edullm check --experiment onboarding --dataset none --team scratch
 
 **`check` is the half that happens on your laptop, and it is the one to lean on.** It writes a first `.edullm/run.yaml` if the repository has none, then prices what you are about to submit and lists every refusal. They are the same refusals admission makes, decided against the reviewed configuration your install carries. It opens no connection and answers in about a fifth of a second, so it is a thing to run while you are still editing rather than once at the end. It works on a login node with no egress.
 
-This is what it printed from a clone of OLMo-core on 2026-08-06, with the first line naming the configuration directory cut.
+This is what it printed from a clone of OLMo-core on 2026-08-06, with the last line naming the configuration directory cut.
 
 ```
 manifest
   repository        OLMo-core
+  branch            edullm/an-arm
   commit            9ea6d144f89c
   image             resolved at submit, from the commit above
   workload          olmo-core-check      1h ceiling, 1 attempt, no checkpoint contract
