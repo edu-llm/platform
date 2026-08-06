@@ -1,18 +1,26 @@
-"""What an install says it is, whether it is current, and the Windows failure that is silent.
+"""What an install says it is, whether it is current, and the Windows failures that are silent.
 
-THE THREE THINGS UNDER TEST HERE ALL FAIL QUIETLY, which is why each gets a file's worth of
+THE FOUR THINGS UNDER TEST HERE ALL FAIL QUIETLY, which is why each gets a file's worth of
 attention rather than a line. A version that never moves reports success. A staleness probe
-that raises where it should warn takes the platform away from anybody offline. And a
-Windows ``gh`` on WSL's inherited PATH makes ``check`` and ``submit`` disagree about who you
-are while both exit zero.
+that raises where it should warn takes the platform away from anybody offline. A Windows
+``gh`` on WSL's inherited PATH makes ``check`` and ``submit`` disagree about who you are
+while both exit zero. And on native Windows the same disagreement arrived by a different
+route, from a lookup that knew only the Unix places ``gh`` keeps ``hosts.yml``, with no
+warning at all because the WSL detector correctly answered no.
+
+The last two are tested together and belong together. They are one symptom reached two ways,
+and a reader who finds either should find the other in the same file.
 
 Nothing here reaches a network. The probe is driven through a runner that answers what a
-test declared, the same arrangement ``tests/cli_support.py`` argues for.
+test declared, the same arrangement ``tests/cli_support.py`` argues for, and the platform
+every configuration lookup is asked about is injected rather than read off the machine
+running the suite.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -25,7 +33,12 @@ from edullm_platform.cli.release import (
     probe_failed_said,
     staleness_said,
 )
-from edullm_platform.cli.workspace import SubprocessRunner, github_interop_diagnostic
+from edullm_platform.cli.workspace import (
+    SubprocessRunner,
+    gh_config_directory,
+    github_interop_diagnostic,
+    github_login,
+)
 from tests.cli_support import FakeRunner, failed, ok
 
 NOW = datetime(2026, 8, 14, 9, 0, tzinfo=UTC)
@@ -354,3 +367,227 @@ def test_a_windows_git_is_named_beside_the_gh() -> None:
     )
 
     assert said is not None and "gh is" in said and "git is" in said
+
+
+# ---------------------------------------------------------------------------------------
+# where gh keeps its configuration, per platform
+# ---------------------------------------------------------------------------------------
+#
+# ``gh_config_directory`` is a pure function of an environment mapping, a platform name and a
+# home directory, which is what lets every branch below be exercised from a Mac. The rule it
+# implements is not this project's: it is ``ConfigDir`` in ``go-gh``'s
+# ``pkg/config/config.go``, which is what the ``gh`` binary calls, and it is what
+# ``gh help environment`` prints under ``GH_CONFIG_DIR``.
+
+#: A home directory spelled the way a Unix one is, for the cases that must not move.
+UNIX_HOME = Path("/home/amy")
+
+#: ``%AppData%`` as Windows actually spells it, backslashes included. Written with real
+#: backslashes rather than forward ones deliberately: this is the string a Windows
+#: ``os.environ`` hands over, and a test that quietly straightened it would be testing a
+#: value no machine produces.
+APP_DATA = r"C:\Users\amy\AppData\Roaming"
+
+#: What ``gh auth login`` on native Windows leaves behind, and the whole of what was missed.
+WINDOWS_GH_DIRECTORY = PureWindowsPath(r"C:\Users\amy\AppData\Roaming\GitHub CLI")
+
+EVERY_PLATFORM = ("Windows", "Darwin", "Linux")
+
+
+def resolved(
+    variables: dict[str, str], *, system: str, home: Path | None = UNIX_HOME
+) -> PureWindowsPath | None:
+    """The answer as Windows would spell it, so one assertion reads on either flavour.
+
+    ``gh_config_directory`` joins and never parses, so it is correct under ``PosixPath`` and
+    under ``WindowsPath`` alike -- but the two spell the result differently, and a test
+    comparing raw strings would pass on a Mac and fail on the machine it is about. Rendering
+    through :class:`PureWindowsPath` normalises the separator on both, which is the one thing
+    that differs and the one thing this function does not decide.
+    """
+    answer = gh_config_directory(variables, system=system, home=home)
+    return None if answer is None else PureWindowsPath(str(answer))
+
+
+@pytest.mark.parametrize("system", EVERY_PLATFORM)
+def test_a_declared_config_dir_overrides_every_other_rule(system: str) -> None:
+    """``GH_CONFIG_DIR`` first on every platform, which is ``gh``'s order and the suite's floor.
+
+    ``tests/cli_support.invoke`` points this at an empty directory on every path, so that a
+    maintainer who has run ``gh auth login`` does not have their own login answer the cases
+    about nobody being logged in. That only works while a declared directory beats everything
+    below it, including the platform branch added for Windows.
+
+    Mutation: check ``XDG_CONFIG_HOME`` first, or let the Windows branch run before this one.
+    Both make a declared and empty directory mean "look somewhere else", and the whole suite
+    starts reading whoever ran it.
+    """
+    answer = resolved(
+        {
+            "GH_CONFIG_DIR": "/tmp/declared",
+            "XDG_CONFIG_HOME": "/tmp/xdg",
+            "AppData": APP_DATA,
+        },
+        system=system,
+    )
+
+    assert answer == PureWindowsPath("/tmp/declared")
+
+
+@pytest.mark.parametrize("system", EVERY_PLATFORM)
+def test_a_declared_config_dir_that_is_empty_means_nobody_is_logged_in(
+    system: str, tmp_path: Path
+) -> None:
+    """The directory is answered as declared even when there is no ``hosts.yml`` under it.
+
+    This is the property the hermetic suite rests on, asserted at the level that decides it
+    rather than inferred from a green run elsewhere.
+    """
+    answer = gh_config_directory({"GH_CONFIG_DIR": str(tmp_path)}, system=system, home=UNIX_HOME)
+
+    assert answer == tmp_path
+    assert not (tmp_path / "hosts.yml").exists()
+
+
+@pytest.mark.parametrize("system", EVERY_PLATFORM)
+def test_xdg_is_honoured_on_every_platform_including_windows(system: str) -> None:
+    """``go-gh`` guards the ``AppData`` branch on the operating system and does not guard this one.
+
+    Mutation: make ``XDG_CONFIG_HOME`` Unix-only, which is what ``gh help environment``'s
+    older wording suggests and what the source does not do. A Windows researcher carrying the
+    variable in a dotfiles repository has a ``gh`` reading from it, and this would then look
+    under ``%AppData%`` at a directory ``gh`` never wrote.
+    """
+    answer = resolved({"XDG_CONFIG_HOME": "/tmp/xdg", "AppData": APP_DATA}, system=system)
+
+    assert answer == PureWindowsPath("/tmp/xdg/gh")
+
+
+def test_native_windows_reads_the_directory_gh_writes_under_appdata() -> None:
+    """**THE DEFECT. Nothing below the ``AppData`` branch could ever have found this file.**
+
+    A researcher on Windows installs the tool, runs ``gh auth login``, and ``gh`` writes
+    ``hosts.yml`` under ``%AppData%\\GitHub CLI``. The lookup knew ``GH_CONFIG_DIR``,
+    ``XDG_CONFIG_HOME`` and ``~/.config/gh``, so it concluded nobody was logged in: ``check``
+    refused on the roster, and ``submit``, which may ask the network, answered with that same
+    person's login. Two verbs disagreeing about who you are, and no warning, because the WSL
+    detector correctly says this is not WSL.
+
+    Mutation: drop the ``AppData`` branch, which restores the bug exactly. Or rename the
+    directory to ``gh``, which is what every other tool would call it and is not what ``gh``
+    calls it.
+    """
+    answer = resolved({"AppData": APP_DATA}, system="Windows", home=Path("C:/Users/amy"))
+
+    assert answer == WINDOWS_GH_DIRECTORY
+
+
+def test_appdata_is_found_under_the_upper_case_spelling_windows_actually_hands_over() -> None:
+    """**THE MUTATION THAT WOULD HAVE SHIPPED GREEN AND STILL BROKEN WINDOWS.**
+
+    ``go-gh`` asks for ``AppData`` and Go's ``os.Getenv`` is case-insensitive on Windows, so
+    that is the spelling worth writing down. Python's ``os.environ`` upper-cases every key it
+    holds on Windows, so the mapping this is really handed there carries ``APPDATA`` -- while
+    a dictionary a test writes carries whatever the test typed. Reading one spelling passes
+    every fixture in this file and finds nothing on the machine it is about, which is the
+    same shape of failure as the bug being fixed.
+
+    Mutation: read ``AppData`` alone. This case goes red and no other does.
+    """
+    answer = resolved({"APPDATA": APP_DATA}, system="Windows", home=Path("C:/Users/amy"))
+
+    assert answer == WINDOWS_GH_DIRECTORY
+
+
+@pytest.mark.parametrize("system", ("Darwin", "Linux"))
+def test_appdata_is_ignored_off_windows(system: str) -> None:
+    """The three platforms that work today do not move, and this is the branch that could move them.
+
+    Mutation: drop the ``system`` guard. ``AppData`` is set in a Wine prefix, on a
+    cross-compiling runner and in any shell that inherited one, and a macOS laptop would then
+    look for a login inside a Windows path that does not exist -- turning the whole roster
+    off, which is the failure this change exists to end, aimed at the people it works for.
+    """
+    answer = resolved({"AppData": APP_DATA}, system=system)
+
+    assert answer == PureWindowsPath("/home/amy/.config/gh")
+
+
+@pytest.mark.parametrize("system", EVERY_PLATFORM)
+def test_the_home_directory_answers_when_nothing_is_declared(system: str) -> None:
+    """``~/.config/gh`` last on every platform, Windows included, exactly as ``go-gh`` ends.
+
+    Windows reaches here whenever ``%AppData%`` is unset, which is rare and is not a case to
+    invent a different answer for.
+    """
+    answer = resolved({}, system=system)
+
+    assert answer == PureWindowsPath("/home/amy/.config/gh")
+
+
+@pytest.mark.parametrize("variable", ("GH_CONFIG_DIR", "XDG_CONFIG_HOME", "AppData"))
+def test_a_variable_set_to_whitespace_reads_as_unset(variable: str) -> None:
+    """A blank value is a variable somebody exported and never filled in, not a directory named "".
+
+    Mutation: drop the ``strip``. ``Path("") / "gh"`` is the relative path ``gh``, and a
+    lookup relative to the working directory would answer differently depending on where the
+    researcher happened to be standing.
+    """
+    answer = resolved({variable: "   "}, system="Windows")
+
+    assert answer == PureWindowsPath("/home/amy/.config/gh")
+
+
+def test_no_home_directory_answers_nothing_rather_than_raising() -> None:
+    """A container with no passwd entry and no ``HOME`` has nowhere ``gh`` could have written.
+
+    Mutation: return ``Path(".config/gh")``, or let :meth:`Path.home` raise through. The
+    first invents a login file in the working directory; the second turns "nobody is logged
+    in" into a traceback out of a verb that promised to answer in under a second.
+    """
+    assert gh_config_directory({}, system="Linux", home=None) is None
+
+
+def test_a_windows_login_is_read_for_free_the_way_a_unix_one_is(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The end of the defect: ``check`` finds the login without asking anybody.
+
+    The runner answers nothing at all, so a call to ``gh api user`` raises rather than
+    quietly rescuing this -- which is the difference between the two verbs agreeing and the
+    two verbs agreeing by accident because both reached the network.
+
+    Mutation: revert the resolver. The login is not found, ``allow_network=False`` answers
+    ``None``, and this case names the person the file does.
+    """
+    monkeypatch.setattr("platform.system", lambda: "Windows")
+    hosts = tmp_path / "GitHub CLI" / "hosts.yml"
+    hosts.parent.mkdir(parents=True)
+    hosts.write_text(
+        "github.com:\n    users:\n        amy-on-windows:\n    user: amy-on-windows\n",
+        encoding="utf-8",
+    )
+    runner = FakeRunner({})
+
+    answered = github_login(runner, environ={"AppData": str(tmp_path)}, allow_network=False)
+
+    assert answered == "amy-on-windows"
+    assert runner.calls == []
+
+
+def test_a_login_declared_in_the_environment_still_wins_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``EDULLM_GITHUB_LOGIN`` is above all of this and the new branch must not have got in front."""
+    monkeypatch.setattr("platform.system", lambda: "Windows")
+    hosts = tmp_path / "GitHub CLI" / "hosts.yml"
+    hosts.parent.mkdir(parents=True)
+    hosts.write_text("github.com:\n    user: amy-on-windows\n", encoding="utf-8")
+
+    answered = github_login(
+        FakeRunner({}),
+        environ={"AppData": str(tmp_path), "EDULLM_GITHUB_LOGIN": "somebody-else"},
+        allow_network=False,
+    )
+
+    assert answered == "somebody-else"
