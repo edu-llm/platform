@@ -1,17 +1,23 @@
 {
-  "attached_managed_policies": [],
+  "attached_managed_policies": [
+    {
+      "policy_name": "AmazonSSMManagedInstanceCore",
+      "scope": "aws"
+    }
+  ],
   "environment": "sandbox",
   "inline_policies": [
     {
-      "policy_name": "write-own-log-group",
+      "policy_name": "working-tier",
       "policy_version": "2012-10-17",
       "statements": [
         {
           "action_match": {
             "actions": [
-              "logs:CreateLogGroup",
-              "logs:CreateLogStream",
-              "logs:PutLogEvents"
+              "s3:GetObject",
+              "s3:PutObject",
+              "s3:DeleteObject",
+              "s3:ListBucket"
             ],
             "element": "Action"
           },
@@ -20,18 +26,19 @@
           "resource_match": {
             "element": "Resource",
             "resources": [
-              "arn:aws:logs:us-east-1:<aws-account-id>:log-group:/aws/lambda/sbsandbox-intern-edullm-admission-validator:*"
+              "arn:aws:s3:::edullm-scratch",
+              "arn:aws:s3:::edullm-scratch/*"
             ]
           },
-          "sid": null
+          "sid": "TheWorkingTierAndNothingElse"
         }
       ]
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-08-06T02:05:07Z",
+  "observed_at": "2026-08-06T02:05:32Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
-  "role_name": "sbsandbox-intern-edullm-admission-lambda",
+  "role_name": "edullm-lane-instance",
   "source": "aws",
   "status": "ok",
   "trust_policy_version": "2012-10-17",
@@ -49,7 +56,7 @@
         "element": "Principal",
         "principals": [
           {
-            "identifier": "lambda.amazonaws.com",
+            "identifier": "ec2.amazonaws.com",
             "principal_type": "Service"
           }
         ]

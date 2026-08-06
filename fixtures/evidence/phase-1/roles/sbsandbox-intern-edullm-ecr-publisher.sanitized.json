@@ -47,7 +47,8 @@
               "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-data",
               "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-olmo-eval-full",
               "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-alt-cl",
-              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-open-instruct-scored-rewards"
+              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-open-instruct-scored-rewards",
+              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-p1"
             ]
           },
           "sid": null
@@ -56,7 +57,7 @@
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-08-04T22:11:51Z",
+  "observed_at": "2026-08-06T02:04:14Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "sbsandbox-intern-edullm-ecr-publisher",
   "source": "aws",
@@ -93,7 +94,8 @@
             "1315813778",
             "1310135166",
             "1319807085",
-            "1320907953"
+            "1320907953",
+            "1314176548"
           ]
         },
         {
@@ -111,7 +113,8 @@
             "repo:edu-llm@306859726/edullm-data@1315813778:ref:refs/heads/*",
             "repo:edu-llm@306859726/olmo-eval-full@1310135166:ref:refs/heads/*",
             "repo:edu-llm@306859726/edullm-alt-cl@1319807085:ref:refs/heads/*",
-            "repo:edu-llm@306859726/open-instruct-scored-rewards@1320907953:ref:refs/heads/*"
+            "repo:edu-llm@306859726/open-instruct-scored-rewards@1320907953:ref:refs/heads/*",
+            "repo:edu-llm@306859726/edullm-p1@1314176548:ref:refs/heads/*"
           ]
         }
       ],
