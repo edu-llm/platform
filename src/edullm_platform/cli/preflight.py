@@ -304,6 +304,8 @@ def run_preflight(
     refusals.extend(_check_team(request, configuration, submitter))
     refusals.extend(_check_experiment(request))
     refusals.extend(_check_fanout(request))
+    if workload is not None:
+        refusals.extend(_check_runtime_against_the_profile(request, workload))
 
     if workload is None or compute is None:
         return Preflight(
@@ -880,6 +882,58 @@ def _check_experiment(request: SubmissionRequest) -> list[Refusal]:
                 "digits, with single hyphens between words and none at either end, like "
                 "context-length-sweep. It registers nothing, so any name of that shape "
                 "will do."
+            ),
+        )
+    ]
+
+
+def _check_runtime_against_the_profile(
+    request: SubmissionRequest, workload: WorkloadProfile
+) -> list[Refusal]:
+    """``--hours`` above what the profile declares, which nothing bounded.
+
+    **THIS IS THE LAST RUNTIME BOUND IN THE TREE AND IT WAS NOT BEING APPLIED.**
+    ``config/policy.yaml`` retired ``routine_maximum_runtime_hours`` at v5 and recorded why
+    that was safe in the file itself: "the workload profiles in
+    config/workload-catalog.yaml still declare their own runtime ceilings and those are
+    what a submission is bounded by". They were not bounding anything. Measured on
+    2026-08-06: ``--hours 10000`` against ``olmo-core-train``'s twenty-four was accepted
+    with no refusal and no warning, priced at $10,520, and routed to a team lead as
+    routine, who reads a figure with nothing beside it saying the profile said 24.
+
+    **A REFUSAL RATHER THAN A SENTENCE, WHICH IS THE OTHER WAY THIS COULD HAVE GONE.** The
+    argument for a sentence is that a profile is advice and the submitter is the one paying.
+    That is true of ``suggested_compute``, which the overview calls a suggestion in version
+    control and a decision at submit time, and it is not true of this field: the policy file
+    calls the profile's ceiling the thing a submission is bounded by, and used that to
+    justify removing the only other ceiling there was. A sentence would leave a mistyped
+    flag with nothing in front of it.
+
+    **AND IT COSTS NO DOCUMENTED USE OF THE FLAG.** ``--hours`` exists to lower a runtime --
+    the cost block says lowering it is what moves a run under the automatic bound -- and
+    everything at or below the profile is untouched. Only above is refused, and the remedy
+    names both ways out, because a ceiling is a line in a reviewed file and moving it is a
+    pull request rather than an argument with a binary.
+
+    **WHAT THIS DOES NOT DO.** ``tools/compile_submission.py`` compares these two numbers
+    nowhere, so the bound holds on a laptop and not inside AWS: ``submit --force`` and the
+    Actions form still walk past it. Closing that is a change to the compile step and to the
+    admission validator's released zip, which is a deployment rather than an edit.
+    """
+    asked = request.maximum_runtime_hours
+    if asked is None or asked <= workload.maximum_runtime_hours:
+        return []
+    return [
+        Refusal(
+            code="runtime_above_the_workload_bound",
+            detail=(
+                f"lower --hours: this asks for {asked}h against the "
+                f"{workload.maximum_runtime_hours}h {workload.name!r} declares. A workload "
+                "profile fixes the runtime bound for one codebase and it is the only bound "
+                "on runtime this platform has, so an override above it is priced and "
+                "approved against a ceiling nothing agreed to. Raising it for everybody is "
+                "an edit to config/workload-catalog.yaml and a pull request against the "
+                "platform."
             ),
         )
     ]
