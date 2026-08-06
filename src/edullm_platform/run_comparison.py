@@ -26,6 +26,22 @@ patterns, and :func:`required_field_coverage` reports a name neither record carr
 UNVERIFIED rather than as agreement or as a difference: nothing was compared, and neither
 of the other two words is true of nothing.
 
+**The manifest half of that list is derived from the models now, because a hand-maintained
+list of a schema's fields is a second copy of the schema and it went stale.** It named
+``intent.manifest.dataset_release``, which :class:`~...manifest.RunManifestV2` replaced with
+``inputs``, and named nothing for what replaced it. So a stored v2 record would have been
+compared against a field it cannot carry, and ``inputs[].role`` and ``inputs[].reference``
+-- which are the whole of what a run says it read -- would have been compared by nothing.
+:func:`required_manifest_fields` reads the fields off the model instead, and refuses rather
+than skips a field it has no rule for.
+
+**Which version's names a pair is held to is the pair's own answer, and the union is only
+over the versions in play.** Holding two v2 records to a v1 field would report it unverified
+on every comparison forever, which is a check that can never pass -- the same defect as one
+that can never fail, wearing the other face. Holding a v1 record against a v2 one to both
+sets is what makes the fields a version bump moved show up as present on one side and absent
+from the other, rather than dropping out of the comparison unremarked.
+
 **Three records and one integer.** ``intent/``, ``decision/`` and ``result/`` are what the
 platform writes about a run and are walked leaf by leaf. ``attempt/{run_id}/{attempt_id}.json``
 is per-attempt and keyed by an id Batch mints, so every leaf of it is an id or a time; walking
@@ -74,16 +90,18 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Final, Literal, Self
+from typing import Annotated, Final, Literal, Self, TypeGuard, get_args, get_origin
 
-from pydantic import BeforeValidator, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, Field, model_validator
+from pydantic.fields import FieldInfo
 
 from edullm_platform.contracts.base import ContractModel, require_ordered_sequence
 from edullm_platform.contracts.identity import RunId
+from edullm_platform.contracts.manifest import AnyRunManifest
 from edullm_platform.contracts.results import PayloadDigestOutcome
 from edullm_platform.evidence import (
     DigestBearingStr,
@@ -95,9 +113,13 @@ from edullm_platform.evidence import (
 __all__ = [
     "CHECKPOINT_URI",
     "IDENTICAL_FIELDS",
+    "MANIFEST_MODELS",
+    "MANIFEST_PREFIX",
+    "MANIFEST_VERSION_FIELD",
     "RECORD_PREFIXES",
     "REQUIRED_FIELDS",
     "REQUIRED_FIELD_FAMILIES",
+    "REQUIRED_MANIFEST_FIELDS",
     "UNPARSED_DIRECTORY",
     "VARIANCE_CAUSES",
     "CheckpointCoverage",
@@ -106,7 +128,9 @@ __all__ = [
     "FieldDifference",
     "RecordField",
     "RecordedRun",
+    "RequiredFamily",
     "RequiredFieldCoverage",
+    "RequiredManifestFields",
     "TwoRunComparison",
     "TwoRunEvidence",
     "UnattestedPayload",
@@ -117,8 +141,11 @@ __all__ = [
     "checkpoint_coverage",
     "compare_runs",
     "flatten",
+    "manifest_version",
     "read_run",
     "required_field_coverage",
+    "required_manifest_fields",
+    "required_of",
     "unexplained",
 ]
 
@@ -388,27 +415,193 @@ VARIANCE_CAUSES: Final[tuple[VarianceCause, ...]] = (
     ),
 )
 
-#: Every required leaf whose path is known before a record is read. Written out one path per
-#: line rather than folded into alternations, because a name here is a name this comparison
-#: can look for in a record that does not carry it -- and that is the only reading under
-#: which "both records dropped the field" is a sentence the tool can say. Held as strings
-#: rather than patterns for the same reason: a pattern can be asked whether a path it was
-#: given matches, and cannot be asked what it wanted.
-REQUIRED_FIELDS: Final[tuple[str, ...]] = (
+@dataclass(frozen=True)
+class RequiredFamily:
+    """One required leaf set whose member paths the record decides, not the schema.
+
+    ``label`` is what a report prints when the family has no members at all and one was
+    required. It is not a path and cannot be: the whole reason a family is a family is
+    that its members carry an index nobody can name in advance. ``intent.manifest.inputs[]``
+    is a set that should not be empty, said in the one form that is honest about not
+    knowing how many should be in it.
+    """
+
+    label: str
+    pattern: re.Pattern[str]
+    #: Whether a record that carries no member of this family is malformed. True where the
+    #: model cannot produce a record without one -- a required field, and for a sequence a
+    #: ``min_length`` of at least one. THIS IS WHAT GIVES A FAMILY TEETH, and without it a
+    #: family is only ever checked against members some record happened to carry, so two
+    #: records that both dropped the whole block are compared on nothing and report nothing.
+    must_have_a_member: bool
+
+
+@dataclass(frozen=True)
+class RequiredManifestFields:
+    """What one manifest version requires of a record written against it."""
+
+    names: tuple[str, ...]
+    families: tuple[RequiredFamily, ...]
+
+
+#: Where a run manifest sits inside a flattened intent record.
+MANIFEST_PREFIX: Final = "intent.manifest"
+
+#: The field that says which model a stored manifest was written against. Excluded from the
+#: required set on purpose and it is the only exclusion here: it is what selects that set, so
+#: requiring it of itself is circular. Nothing is lost by the exclusion. Two records at two
+#: versions differ at this leaf, no cause in :data:`VARIANCE_CAUSES` matches it, and an
+#: unexplained difference is the loudest answer this module has -- louder than the required
+#: set would have been.
+MANIFEST_VERSION_FIELD: Final = "schema_version"
+
+
+def _optional_member(annotation: object) -> object | None:
+    """The one thing beside ``None`` in a nullable annotation, or ``None`` for anything else.
+
+    ``tuple[str, ...]`` reads as two arguments and neither is ``NoneType``, so a sequence
+    does not answer here and is asked about separately.
+    """
+    arguments: tuple[object, ...] = get_args(annotation)
+    beside_none = [one for one in arguments if one is not type(None)]
+    if len(beside_none) == len(arguments):
+        return None
+    if len(beside_none) != 1:
+        raise ValueError(f"{annotation!r} is a union this comparison has no rule for")
+    return beside_none[0]
+
+
+def _sequence_member(annotation: object) -> object | None:
+    """The element type of a homogeneous tuple annotation, or ``None`` for anything else."""
+    if get_origin(annotation) is not tuple:
+        return None
+    arguments: tuple[object, ...] = get_args(annotation)
+    return arguments[0]
+
+
+def _is_model(annotation: object) -> TypeGuard[type[BaseModel]]:
+    return isinstance(annotation, type) and issubclass(annotation, BaseModel)
+
+
+def _minimum_members(field: FieldInfo) -> int:
+    lengths = [
+        one.min_length
+        for one in field.metadata
+        if isinstance(getattr(one, "min_length", None), int)
+    ]
+    return max(lengths, default=0)
+
+
+def _scalar_leaves(model: type[BaseModel], under: str) -> tuple[str, ...]:
+    """Every leaf name of a nested model, refusing one this deriver cannot flatten.
+
+    REFUSED RATHER THAN SKIPPED, which is the whole point. A nested field the rules below
+    have no case for is a field that would silently leave the required set, and a required
+    set that quietly shrank is the defect this module was written to remove. Import fails
+    instead, so the day somebody puts a list inside :class:`~...manifest.RunInput` the suite
+    goes red rather than the comparison going quiet.
+    """
+    leaves: list[str] = []
+    for name, field in model.model_fields.items():
+        annotation = field.annotation
+        if (
+            _sequence_member(annotation) is not None
+            or _is_model(annotation)
+            or _is_model(_optional_member(annotation))
+        ):
+            raise ValueError(
+                f"{under} holds {name!r}, which is not a scalar leaf; the required-field "
+                "deriver in run_comparison.py needs a rule for it before it can be compared"
+            )
+        leaves.append(name)
+    return tuple(sorted(leaves))
+
+
+def required_manifest_fields(model: type[ContractModel]) -> RequiredManifestFields:
+    """What a record written against one manifest model must carry, read off the model.
+
+    **HAND-MAINTAINED UNTIL 2026-08-06, AND THE HAND WAS BEHIND THE SCHEMA.** The list named
+    ``intent.manifest.dataset_release``, which :class:`~...manifest.RunManifestV2` does not
+    carry, and named nothing at all for the ``inputs`` block that replaced it. So the first
+    v2 record stored would have been compared against a field it cannot have, and the two
+    leaves that say what a run actually read would have been compared by nothing -- which is
+    worse than the red test, because a comparison that silently checks less still passes.
+
+    Four rules, and every field of the model falls under exactly one of them. A field that
+    falls under none raises, for the reason :func:`_scalar_leaves` refuses one.
+
+    - A scalar is a name. Its path is fixed by the schema, so the comparison can look for it
+      in a record that does not carry it, which is the only reading under which "both records
+      dropped this" is a sentence the tool can say.
+    - A sequence is a family, because its members carry an index the data chooses.
+    - A sequence of models is a family over that model's own leaves, so
+      ``inputs[].role`` and ``inputs[].reference`` are each required rather than the block
+      being required to merely exist.
+    - A nullable model is a family too, because a null flattens to one leaf and a value
+      flattens to several: the leaf set is data-dependent, which is what a family is for.
+    """
+    names: list[str] = []
+    families: list[RequiredFamily] = []
+    for name, field in model.model_fields.items():
+        if name == MANIFEST_VERSION_FIELD:
+            continue
+        path = f"{MANIFEST_PREFIX}.{name}"
+        member = _sequence_member(field.annotation)
+        if member is not None:
+            leaves = "|".join(_scalar_leaves(member, path)) if _is_model(member) else ""
+            families.append(
+                RequiredFamily(
+                    label=f"{path}[]",
+                    pattern=re.compile(
+                        rf"^{re.escape(path)}\[\d+\]\.({leaves})$"
+                        if leaves
+                        else rf"^{re.escape(path)}\[\d+\]$"
+                    ),
+                    must_have_a_member=field.is_required() and _minimum_members(field) >= 1,
+                )
+            )
+            continue
+        nullable = _optional_member(field.annotation)
+        if nullable is not None and _is_model(nullable):
+            families.append(
+                RequiredFamily(
+                    label=path,
+                    pattern=re.compile(rf"^{re.escape(path)}(\..+)?$"),
+                    # A null is still a leaf, so a required nullable model always leaves
+                    # something behind and a record carrying nothing under this name is a
+                    # record the model could not have written.
+                    must_have_a_member=field.is_required(),
+                )
+            )
+            continue
+        names.append(path)
+    return RequiredManifestFields(names=tuple(names), families=tuple(families))
+
+
+#: Every manifest model a stored record may have been written against, by the version it
+#: declares. Read out of ``AnyRunManifest`` rather than listed here, so a third version
+#: added to ``contracts/manifest.py`` is one this comparison requires fields of on the day it
+#: lands rather than on the day somebody remembers this file.
+MANIFEST_MODELS: Final[Mapping[int, type[ContractModel]]] = {
+    get_args(model.model_fields[MANIFEST_VERSION_FIELD].annotation)[0]: model
+    for model in get_args(AnyRunManifest)
+}
+
+#: What each of those versions requires, derived once at import.
+REQUIRED_MANIFEST_FIELDS: Final[Mapping[int, RequiredManifestFields]] = {
+    version: required_manifest_fields(model) for version, model in MANIFEST_MODELS.items()
+}
+
+#: The required leaves outside the manifest, which no model in this repository describes as
+#: one shape: an intent record is a manifest plus a header, and the decision and result
+#: records are walked as documents rather than parsed. Hand-maintained, deliberately, and
+#: kept apart from the derived block above so that "which of these is a list somebody has to
+#: remember to edit" has an answer.
+_HEADER_FIELDS: Final[tuple[str, ...]] = (
     "attempt_count",
     "intent.manifest_sha256",
     "intent.submitter",
     "intent.approving_environment",
-    "intent.manifest.repository",
-    "intent.manifest.commit_sha",
-    "intent.manifest.image_digest",
-    "intent.manifest.workload_profile",
-    "intent.manifest.compute_profile",
-    "intent.manifest.dataset_release",
-    "intent.manifest.team",
-    "intent.manifest.wandb_project",
-    "intent.manifest.maximum_runtime_hours",
-    "intent.manifest.maximum_attempts",
     "intent.workflow_run.run_repository",
     "intent.workflow_run.workflow_repository",
     "intent.workflow_run.workflow_path",
@@ -430,6 +623,25 @@ REQUIRED_FIELDS: Final[tuple[str, ...]] = (
     "result.checkpoint_survey.objects_seen",
 )
 
+#: Every required leaf whose path is known before a record is read, across every manifest
+#: version. Held as strings rather than patterns because a pattern can be asked whether a
+#: path it was handed matches and cannot be asked what it wanted.
+#:
+#: THE UNION AND NOT THE INTERSECTION. A name one version requires and the other does not
+#: know -- ``dataset_release`` today -- stays here rather than being dropped for not being
+#: universal, because dropping it is how a field stops being compared without anybody
+#: deciding that it should. Which of these names a given pair is actually held to is
+#: :func:`required_field_coverage`'s answer and it is narrower: a record says which version
+#: it was written against, and requiring a v2 record to carry a v1 field would be a check
+#: that can never pass, which is the same defect as one that can never fail wearing the
+#: other face.
+REQUIRED_FIELDS: Final[tuple[str, ...]] = (
+    *_HEADER_FIELDS,
+    *dict.fromkeys(
+        name for required in REQUIRED_MANIFEST_FIELDS.values() for name in required.names
+    ),
+)
+
 #: The required leaves whose paths the data decides: a list index, or a key set the record
 #: chooses. These cannot be enumerated in advance and so cannot be reported as absent from
 #: both records. Every member a record does carry is still required to be present on the
@@ -443,9 +655,14 @@ REQUIRED_FIELDS: Final[tuple[str, ...]] = (
 #: nothing. ``checkpoint_survey`` is what separates the two, and
 #: :func:`checkpoint_coverage` is what asks it, so the silence here is now only the silence
 #: of a run that genuinely saved nothing.
-
-REQUIRED_FIELD_FAMILIES: Final[tuple[re.Pattern[str], ...]] = (
-    re.compile(r"^intent\.manifest\.command\[\d+\]$"),
+#:
+#: The manifest's families answer the same question a different way, because a manifest
+#: model can say that a block is never empty. ``command`` and ``inputs`` both declare
+#: ``min_length=1``, so a record carrying no member of either is malformed rather than
+#: sparse, and :class:`RequiredFamily` carries that as ``must_have_a_member``. There is no
+#: such statement available about ``result.checkpoints[]`` and there should not be: a run
+#: that saved nothing is ordinary.
+_RECORD_FAMILIES: Final[tuple[re.Pattern[str], ...]] = (
     re.compile(r"^decision\.(cost|authorization)\.[a-z_]+$"),
     re.compile(r"^result\.checkpoints\[\d+\]\.(step|epoch|size_bytes)$"),
     # The payload reading, minus the digest. ``outcome`` is here because a CRC32C and an
@@ -456,6 +673,15 @@ REQUIRED_FIELD_FAMILIES: Final[tuple[re.Pattern[str], ...]] = (
     # digest's cause deliberately does not excuse.
     re.compile(r"^result\.checkpoints\[\d+\]\.payload\.outcome$"),
     re.compile(r"^result\.checkpoints\[\d+\]\.payload\.objects\[\d+\]\.(name|size_bytes)$"),
+)
+
+REQUIRED_FIELD_FAMILIES: Final[tuple[re.Pattern[str], ...]] = (
+    *{
+        family.pattern.pattern: family.pattern
+        for required in REQUIRED_MANIFEST_FIELDS.values()
+        for family in required.families
+    }.values(),
+    *_RECORD_FAMILIES,
 )
 
 #: The leaves that must be present on both sides and equal, as one set of patterns to ask a
@@ -807,6 +1033,57 @@ def _is_read_outcome(encoded: str) -> bool:
     return encoded.strip('"') in _READ_PAYLOAD_OUTCOMES
 
 
+def manifest_version(run: RecordedRun) -> int | None:
+    """Which manifest model this record says it was written against, or None.
+
+    None is both "the leaf is not there" and "the leaf holds something no model declares",
+    and the caller treats them alike because the safe answer to both is the same: require
+    everything either version names, and report what is absent.
+    """
+    encoded = run.field_map().get(f"{MANIFEST_PREFIX}.{MANIFEST_VERSION_FIELD}")
+    if encoded is None:
+        return None
+    try:
+        declared = json.loads(encoded)
+    except json.JSONDecodeError:
+        return None
+    return declared if declared in MANIFEST_MODELS else None
+
+
+def required_of(left: RecordedRun, right: RecordedRun) -> RequiredManifestFields:
+    """What the manifest half of the required set is for this pair, by their own versions.
+
+    **THE UNION OF THE VERSIONS IN PLAY, AND NOT THE UNION OF EVERY VERSION.** A pair of v2
+    records held to ``dataset_release`` would report it unverified on every comparison
+    forever, which is a check that can never pass and would spend the meaning of the
+    unverified answer on a permanent false alarm. A v1 record against a v2 one is held to
+    both sets, so the fields the version change moved appear as present on one side and
+    absent from the other rather than dropping out of the comparison -- which is the whole
+    difference between a version bump being visible and being silent.
+
+    A record whose version this cannot read is held to everything either version names. It
+    is malformed -- both models require the field -- and requiring more of it is the
+    direction that reports rather than the direction that shrugs.
+    """
+    declared = [manifest_version(run) for run in (left, right)]
+    selected = (
+        sorted(MANIFEST_MODELS)
+        if None in declared
+        else sorted({one for one in declared if one is not None})
+    )
+    required = [REQUIRED_MANIFEST_FIELDS[version] for version in selected]
+    return RequiredManifestFields(
+        names=tuple(dict.fromkeys(name for one in required for name in one.names)),
+        families=tuple(
+            {
+                family.pattern.pattern: family
+                for one in required
+                for family in one.families
+            }.values()
+        ),
+    )
+
+
 def required_field_coverage(left: RecordedRun, right: RecordedRun) -> RequiredFieldCoverage:
     """How much of the required set these two records actually let a comparison check.
 
@@ -816,19 +1093,30 @@ def required_field_coverage(left: RecordedRun, right: RecordedRun) -> RequiredFi
     """
     left_paths = set(left.field_map())
     right_paths = set(right.field_map())
-    families = {
-        path
-        for path in left_paths | right_paths
-        if any(one.fullmatch(path) for one in REQUIRED_FIELD_FAMILIES)
+    manifest = required_of(left, right)
+    patterns = (*(family.pattern for family in manifest.families), *_RECORD_FAMILIES)
+    members = {
+        path for path in left_paths | right_paths if any(one.fullmatch(path) for one in patterns)
     }
-    required = set(REQUIRED_FIELDS) | families
+    names = set(_HEADER_FIELDS) | set(manifest.names)
+    # A family the model says is never empty, and which neither record put anything in.
+    # Reported by label because there is no path to report: the member that should have
+    # been there is the one nobody wrote. Without this a family is only ever checked
+    # against members some record happened to carry, so two v2 records that both dropped
+    # `inputs` would be compared on nothing at all and the report would say nothing at all.
+    empty = {
+        family.label
+        for family in manifest.families
+        if family.must_have_a_member
+        and not any(family.pattern.fullmatch(path) for path in left_paths | right_paths)
+    }
     return RequiredFieldCoverage(
-        missing=tuple(sorted(required & (left_paths ^ right_paths))),
-        # Only a named path can reach this. A family's members are gathered from the two
-        # records, so a family neither record populates contributes nothing to `required`
-        # and cannot be reported absent from here. That is the honest answer for a list
-        # index and it is not the whole answer for checkpoints, because an empty checkpoint
-        # family has one ordinary cause and one that is a defect. checkpoint_coverage is
-        # what separates them, and it reads a field this function does not.
-        unverified=tuple(sorted(set(REQUIRED_FIELDS) - left_paths - right_paths)),
+        missing=tuple(sorted((names | members) & (left_paths ^ right_paths))),
+        # A named path and a family the model requires a member of. A family that may
+        # legitimately be empty cannot reach this: its members are gathered from the two
+        # records, so one neither record populates contributes nothing. That is the honest
+        # answer for `result.checkpoints[]`, where an empty family has one ordinary cause
+        # and one that is a defect -- checkpoint_coverage is what separates those, and it
+        # reads a field this function does not.
+        unverified=tuple(sorted((names - left_paths - right_paths) | empty)),
     )

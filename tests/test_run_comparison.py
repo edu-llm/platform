@@ -3,23 +3,33 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
+from edullm_platform.contracts.base import ContractModel
 from edullm_platform.lifecycle_projection import described_listing_checksum
 from edullm_platform.run_comparison import (
     IDENTICAL_FIELDS,
+    MANIFEST_MODELS,
+    MANIFEST_PREFIX,
+    MANIFEST_VERSION_FIELD,
     REQUIRED_FIELD_FAMILIES,
     REQUIRED_FIELDS,
+    REQUIRED_MANIFEST_FIELDS,
     RecordedRun,
     RecordField,
     cause_for,
     checkpoint_coverage,
     compare_runs,
     flatten,
+    manifest_version,
     read_run,
     required_field_coverage,
+    required_manifest_fields,
+    required_of,
     unexplained,
 )
 
@@ -198,6 +208,23 @@ def written(root: Path, run_id: str, **kwargs: object) -> None:
     attempt = root / "attempt" / run_id / f"att_{run_id[4:]}.json"
     attempt.parent.mkdir(parents=True, exist_ok=True)
     attempt.write_text("{}", encoding="utf-8")
+
+
+def at_version_two(root: Path, run_id: str, *, reference: str = "regmix-10b-v1") -> None:
+    """One already-written run's intent record rewritten as a schema-version-two manifest.
+
+    Exactly the edit ``RunManifestV2`` is: the version moves, ``dataset_release`` leaves and
+    ``inputs`` arrives carrying the same address under a role. Nothing else changes, so a
+    comparison of two of these differs from a comparison of two v1 records in the fields the
+    version bump actually moved and in nothing incidental.
+    """
+    record = root / "intent" / f"{run_id}.json"
+    document = json.loads(record.read_text(encoding="utf-8"))
+    manifest = document["manifest"]
+    manifest["schema_version"] = 2
+    del manifest["dataset_release"]
+    manifest["inputs"] = [{"role": "corpus", "reference": reference}]
+    record.write_text(json.dumps(document), encoding="utf-8")
 
 
 def test_two_runs_of_one_submission_differ_only_in_named_causes(tmp_path: Path) -> None:
@@ -423,6 +450,233 @@ def test_every_required_field_is_named_or_belongs_to_a_family_and_never_both() -
         assert any(one.fullmatch(path) for one in IDENTICAL_FIELDS), path
         assert not any(one.fullmatch(path) for one in REQUIRED_FIELD_FAMILIES), path
     assert len(set(REQUIRED_FIELDS)) == len(REQUIRED_FIELDS)
+
+
+# ----------------------------------------------------------------------------------------
+# The required set, read off the manifest models rather than written out by hand
+# ----------------------------------------------------------------------------------------
+
+
+def test_every_field_of_every_manifest_version_is_required_by_a_name_or_by_a_family() -> None:
+    """THE ONE THAT MATTERS. Mutation: write the manifest's required names out by hand.
+
+    That is what shipped and it went stale the day ``RunManifestV2`` landed. The literal
+    named ``intent.manifest.dataset_release``, which a v2 manifest does not carry, and named
+    nothing for the ``inputs`` block that replaced it -- so ``inputs[].role`` and
+    ``inputs[].reference`` were compared by nothing at all, which passes.
+
+    A count would not catch it and neither would a spot check of the two names that moved.
+    What catches it is the exhaustive claim: every field of every version reaches the
+    required set through exactly one of the two doors, so a field added to either model is
+    required on the day it lands rather than on the day somebody remembers this file.
+    ``schema_version`` is the one exclusion and it is checked separately below.
+    """
+    for version, model in MANIFEST_MODELS.items():
+        required = REQUIRED_MANIFEST_FIELDS[version]
+        for name in model.model_fields:
+            if name == MANIFEST_VERSION_FIELD:
+                continue
+            path = f"{MANIFEST_PREFIX}.{name}"
+            named = path in required.names
+            familied = [one for one in required.families if one.pattern.pattern.startswith(
+                f"^{re.escape(path)}"
+            )]
+            assert named != bool(familied), f"v{version} {path} is required by neither or both"
+    assert {"intent.manifest.dataset_release"} <= set(REQUIRED_MANIFEST_FIELDS[1].names)
+    assert "intent.manifest.dataset_release" not in REQUIRED_MANIFEST_FIELDS[2].names
+    assert any(
+        one.pattern.fullmatch("intent.manifest.inputs[0].role")
+        for one in REQUIRED_MANIFEST_FIELDS[2].families
+    )
+
+
+def test_the_version_that_selects_the_required_set_is_not_in_it() -> None:
+    """Mutation: require ``intent.manifest.schema_version`` like any other scalar.
+
+    It is what chooses the set, so requiring it of itself is circular. Nothing is lost:
+    two records at two versions differ at this leaf, no cause matches it, and an unexplained
+    difference is exit 1 -- louder than the required set would have been. The second
+    assertion is what makes that claim rather than assuming it.
+    """
+    version = f"{MANIFEST_PREFIX}.{MANIFEST_VERSION_FIELD}"
+
+    assert version not in REQUIRED_FIELDS
+    assert not any(one.fullmatch(version) for one in REQUIRED_FIELD_FAMILIES)
+    assert cause_for(version) is None
+
+
+def test_a_manifest_field_the_deriver_has_no_rule_for_is_refused_rather_than_skipped() -> None:
+    """Mutation: skip a nested field there is no rule for.
+
+    Skipping is the defect wearing its ordinary clothes: the field leaves the required set,
+    nothing goes red, and the comparison quietly covers less. Refusing at import means the
+    day somebody puts a list inside ``RunInput`` the suite says so.
+    """
+
+    class Nested(ContractModel):
+        schema_version: Literal[1]
+        parts: tuple[str, ...]
+
+    class Outer(ContractModel):
+        schema_version: Literal[1]
+        entries: tuple[Nested, ...]
+
+    with pytest.raises(ValueError, match="needs a rule for it"):
+        required_manifest_fields(Outer)
+
+
+def test_two_v2_records_are_not_held_to_a_field_only_v1_has(tmp_path: Path) -> None:
+    """Mutation: require the union of every version of every pair.
+
+    A v2 pair held to ``dataset_release`` reports it unverified on every comparison forever.
+    That is a check that can never pass, which is the same defect as one that can never
+    fail wearing the other face -- and it spends the meaning of the unverified answer,
+    which is supposed to be rare enough that somebody reads it.
+    """
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT)
+    for run_id in (LEFT, RIGHT):
+        at_version_two(tmp_path, run_id)
+
+    coverage = required_field_coverage(read_run(tmp_path, LEFT), read_run(tmp_path, RIGHT))
+
+    assert coverage.unverified == ()
+    assert coverage.missing == ()
+    assert "intent.manifest.dataset_release" in REQUIRED_FIELDS
+
+
+def test_two_v2_records_that_both_carry_no_inputs_are_unverified_and_not_agreeing(
+    tmp_path: Path,
+) -> None:
+    """THE ONE THAT MATTERS HERE. Mutation: read an empty manifest family as an empty block.
+
+    That is the reading ``result.checkpoints[]`` gets and it is right there, because a run
+    that saved nothing is ordinary. It is wrong here and the model says so: ``inputs``
+    declares ``min_length=1``, so a record carrying no member of it is malformed rather than
+    sparse. Without ``must_have_a_member`` a family is only ever checked against members
+    some record happened to carry, so two records that both dropped the whole block produce
+    no difference row, no missing line and no non-zero exit -- which reads exactly like two
+    runs agreeing about what they read.
+    """
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT)
+    for run_id in (LEFT, RIGHT):
+        at_version_two(tmp_path, run_id)
+        record = tmp_path / "intent" / f"{run_id}.json"
+        document = json.loads(record.read_text(encoding="utf-8"))
+        del document["manifest"]["inputs"]
+        record.write_text(json.dumps(document), encoding="utf-8")
+
+    left, right = read_run(tmp_path, LEFT), read_run(tmp_path, RIGHT)
+    coverage = required_field_coverage(left, right)
+
+    assert coverage.unverified == ("intent.manifest.inputs[]",)
+    # And the table says nothing, which is what makes the line above the only signal there is.
+    assert compare_runs(left, right) == compare_runs(left, right)
+    assert not [one for one in compare_runs(left, right) if "inputs" in one.path]
+
+
+def test_the_inputs_family_is_over_the_leaves_and_not_over_the_block(tmp_path: Path) -> None:
+    """Mutation: require the inputs block to exist and not its leaves.
+
+    A family written as ``inputs[N]`` rather than ``inputs[N].role|reference`` asks only
+    whether a block is there. What a run read is the ``reference`` under a ``role``, so a
+    run that read a second corpus the other did not is the case that has to land in
+    ``missing``, and it lands there only if the family names the leaves.
+    """
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT)
+    at_version_two(tmp_path, LEFT)
+    at_version_two(tmp_path, RIGHT, reference="somewhere-else")
+    record = tmp_path / "intent" / f"{RIGHT}.json"
+    document = json.loads(record.read_text(encoding="utf-8"))
+    document["manifest"]["inputs"].append({"role": "weights", "reference": "run_019fc8e7"})
+    record.write_text(json.dumps(document), encoding="utf-8")
+    left, right = read_run(tmp_path, LEFT), read_run(tmp_path, RIGHT)
+
+    assert "intent.manifest.inputs[0].reference" in unexplained(compare_runs(left, right))
+    assert required_field_coverage(left, right).missing == (
+        "intent.manifest.inputs[1].reference",
+        "intent.manifest.inputs[1].role",
+    )
+    assert any(one.fullmatch("intent.manifest.inputs[0].reference") for one in IDENTICAL_FIELDS)
+
+
+def test_a_v1_record_and_a_v2_record_compare_and_the_version_change_is_visible(
+    tmp_path: Path,
+) -> None:
+    """Mutation: hold a mixed pair only to the names both versions share.
+
+    The intersection is the obvious deriver and it is the trap: ``dataset_release`` and
+    ``inputs`` are exactly the fields the version bump moved, they are exactly the fields
+    the intersection drops, and dropping them makes the one comparison where the version
+    matters the one comparison that says nothing about it. Every name either version
+    requires is required of a mixed pair, so what moved appears on one side against
+    ``<absent>``.
+    """
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT)
+    at_version_two(tmp_path, RIGHT)
+    left, right = read_run(tmp_path, LEFT), read_run(tmp_path, RIGHT)
+
+    coverage = required_field_coverage(left, right)
+
+    assert coverage.missing == (
+        "intent.manifest.dataset_release",
+        "intent.manifest.inputs[0].reference",
+        "intent.manifest.inputs[0].role",
+    )
+    assert coverage.unverified == ()
+    assert f"{MANIFEST_PREFIX}.{MANIFEST_VERSION_FIELD}" in unexplained(compare_runs(left, right))
+
+
+def test_a_manifest_version_nothing_declares_is_held_to_every_version(tmp_path: Path) -> None:
+    """Mutation: fall back to version one when the version cannot be read.
+
+    A record with no readable ``schema_version`` is malformed -- both models require the
+    field -- and guessing the older version would hold it to the smaller set, so the fields
+    the newer version added would go unmentioned on exactly the record nobody can vouch for.
+    Requiring everything is the direction that reports.
+    """
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT)
+    for run_id in (LEFT, RIGHT):
+        record = tmp_path / "intent" / f"{run_id}.json"
+        document = json.loads(record.read_text(encoding="utf-8"))
+        document["manifest"]["schema_version"] = 99
+        record.write_text(json.dumps(document), encoding="utf-8")
+
+    left, right = read_run(tmp_path, LEFT), read_run(tmp_path, RIGHT)
+
+    assert manifest_version(left) is None
+    assert set(required_of(left, right).names) == {
+        name for one in REQUIRED_MANIFEST_FIELDS.values() for name in one.names
+    }
+    assert "intent.manifest.inputs[]" in required_field_coverage(left, right).unverified
+
+
+def test_a_field_one_version_requires_and_neither_record_carries_is_unverified(
+    tmp_path: Path,
+) -> None:
+    """Mutation: gather the required manifest names from the records.
+
+    The same defect the module docstring is about, at the one place a derived list could
+    reintroduce it. Two v1 records that both dropped ``dataset_release`` produce no
+    difference and no missing line, and a deriver that took its names from what the records
+    held would never have looked.
+    """
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT)
+    for run_id in (LEFT, RIGHT):
+        record = tmp_path / "intent" / f"{run_id}.json"
+        document = json.loads(record.read_text(encoding="utf-8"))
+        del document["manifest"]["dataset_release"]
+        record.write_text(json.dumps(document), encoding="utf-8")
+
+    coverage = required_field_coverage(read_run(tmp_path, LEFT), read_run(tmp_path, RIGHT))
+
+    assert coverage.unverified == ("intent.manifest.dataset_release",)
+    assert coverage.missing == ()
 
 
 def test_a_second_attempt_is_a_difference_even_though_attempt_records_are_not_walked(
