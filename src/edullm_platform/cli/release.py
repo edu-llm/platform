@@ -8,13 +8,21 @@ install request (``edullm``)" -- and by the time anybody ran it, it had been cop
 two transcripts. :func:`install_command` is the one place it is spelled, and
 ``tests/test_cli_install_command.py`` holds every other copy to it.
 
-``uv tool upgrade`` MUST NEVER BE SUGGESTED, AND IT IS THE COMMAND EVERYBODY WILL TRY.
-Verified on uv 0.9.17 against an install from this repository: ``uv tool upgrade
-edullm-platform`` answers ``Nothing to upgrade``, and so does the same command with
-``--reinstall``. It is not that the answer is unhelpful -- it is that the answer is wrong,
-so a researcher who types the obvious thing is told they are current when they are months
-behind. The install line with ``--force`` is the upgrade, which is why there is only one
-line here rather than two.
+``uv tool upgrade`` IS STILL NOT THE SECOND COMMAND, AND IT IS THE ONE EVERYBODY WILL TRY.
+What it does depends on how the install was made, because it follows the git ref the install
+named. From the bare URL :func:`install_command` builds it re-resolves the default branch and
+does upgrade. From a release note's line, which pins that release's tag, it answers ``Nothing
+to upgrade`` and exits 0 however far behind that install is, and ``--reinstall`` rebuilds the
+same commit rather than changing it.
+
+**THE OBSERVATION THIS PARAGRAPH USED TO GENERALISE FROM WAS THE PINNED CASE ONLY.** uv
+0.9.17, ``Nothing to upgrade`` against an install from this repository: true, reproduced, and
+read as the whole of uv's behaviour for a git install for as long as the sentence stood --
+which was long enough for eleven other files to copy it and five test files to hold all twelve
+in agreement, none of them able to see that the claim was false. So the answer is right for
+one install in the field and wrong for the other, and a researcher cannot be expected to
+remember which one they have. The install line with ``--force`` is the upgrade for both, which
+is why there is only one line here rather than two.
 
 **HOW AN INSTALL KNOWS WHAT IT IS.** ``project.version`` alone cannot say: it is a literal,
 it moves only when a release is cut, and two installs from different commits between two
@@ -73,10 +81,12 @@ TAG_PATTERN: Final = re.compile(r"^v(?P<version>\d+\.\d+\.\d+)$")
 def install_command(*, repository: str, tag: str | None = None) -> str:
     """The one line that installs this, upgrades it, and repairs a broken install.
 
-    ``--force`` rather than a separate upgrade command, because uv has no working upgrade
-    for a git-installed tool and because one idempotent line is one thing to remember. It
-    prints both versions when it replaces one, which is the confirmation an upgrade would
-    have given.
+    ``--force`` rather than a separate upgrade command, because this is the one line that is
+    right whichever way the tool arrived and because one idempotent line is one thing to
+    remember. ``uv tool upgrade`` is neither: it follows the ref an install named, so it
+    upgrades one made from the bare form below and will not move one made from the pinned
+    form, which is what every release note hands out. This prints both versions when it
+    replaces one, which is the confirmation an upgrade would have given.
 
     No ``--from``. The bare URL installs the distribution the repository declares and puts
     its console script on the path; ``--from`` exists for naming a *different* distribution

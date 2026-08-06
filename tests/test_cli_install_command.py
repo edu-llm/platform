@@ -29,20 +29,37 @@ and still cannot tell you anything about uv;
 :func:`test_uv_upgrades_an_unpinned_git_install_and_leaves_a_pinned_one_alone` is the only
 thing in this file that installs anything and runs the command.
 
-THREE RULES ARE READ OVER THE TRACKED TREE, AND THE THIRD IS THE ONE THAT WAS MISSING. No
-file may recommend the upgrade command, no file may name the wrong install line, and no
-file may carry the right install line without saying that re-running it is the upgrade.
-The third was the gap: a file that mentions ``uv tool upgrade`` nowhere passes the first
-rule by saying nothing, which is exactly what ``README.md`` did while carrying the install
-line on the front page. The corpus is ``git ls-files`` rather than a walk of the checkout,
-because the walk read whatever a working directory happened to hold and failed on one
-laptop over a gitignored document, which is a failure nobody in CI can see and therefore
-nobody owns.
+FOUR RULES ARE READ OVER THE TRACKED TREE, AND EACH WAS ADDED AFTER THE THING IT CATCHES GOT
+THROUGH. No file may recommend the upgrade command; no file may name the wrong install line;
+no file may carry the right install line without saying that re-running it is the upgrade;
+and no file may give uv's answer without saying what it is the answer to.
+
+The third closed a file that mentions ``uv tool upgrade`` nowhere and so passes the first rule
+by saying nothing, which is exactly what ``README.md`` did while carrying the install line on
+its front page. **The fourth closed the twelve copies, and it is the only one of the four with
+a demonstrated catch.** The first three ask whether a file carries ``Nothing to upgrade``
+anywhere in it, and all twelve did -- inside the false sentence, which gave that answer for
+every git install rather than for a pinned one -- so the rules were satisfied by the defect
+they were meant to find. Re-run over the tree as it stood before the twelve were fixed, the
+fourth rule reports all thirteen files and the file-wide form of it reports six.
+``release.py`` is among the seven the loose form misses, which matters because it is the
+module the other eleven copies were supposed to be checked against.
+
+The fourth rule costs something and this paragraph is the proof: it fires on prose *about* the
+phrase as readily as on prose making the claim, and the sentence above was rewritten to name
+the condition before it would pass. That is the shape of every false positive it can produce,
+the remedy is a few words, and the failure message says so.
+
+The corpus is ``git ls-files`` rather than a walk of the checkout, because the walk read
+whatever a working directory happened to hold and failed on one laptop over a gitignored
+document, which is a failure nobody in CI can see and therefore nobody owns.
 """
 
 from __future__ import annotations
 
+import ast
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -76,6 +93,37 @@ UPGRADE_COMMAND = "uv tool upgrade"
 #: false for an unpinned install, every rule below was green on it, and the rule that would
 #: have caught it is the one that installs the tool and runs the command.
 UPGRADE_REFUTATION = "Nothing to upgrade"
+
+#: The ways this repository names the condition under which uv answers
+#: :data:`UPGRADE_REFUTATION`. A statement of the answer that names none of them is the false
+#: sentence again, because the falsehood was never the phrase -- it was the phrase asserted
+#: unconditionally, of every git install rather than of a pinned one.
+#:
+#: **A HAND-KEPT VOCABULARY, WHICH IS THE PRICE OF THE RULE BELOW BEING ABLE TO FAIL AT ALL.**
+#: A new way of saying "pinned" reads as an offence until it is added here, which is a false
+#: positive whose fix is one line and is visible in the failure message. The alternative was
+#: measured: a rule that asks only whether the *file* carries the phrase somewhere held twelve
+#: copies of a false sentence green, and re-run over the tree as it was before those copies
+#: were fixed it catches six of thirteen. This one catches all thirteen.
+UPGRADE_CONDITIONS = (
+    "pinned",
+    "pinned at",
+    "pins ",
+    "release tag",
+    "release note",
+    "at a tag",
+    "that tag",
+    "this tag",
+    "tag on the end",
+    "a tag that never moves",
+    "@v",
+)
+
+#: How many sentences either side of the phrase may carry the condition. One, measured rather
+#: than chosen: at zero the release note template fails, because it pins the tag in the
+#: sentence before the one that gives uv's answer, and at two the rule stops seeing one of the
+#: thirteen stale copies.
+CONDITION_RADIUS = 1
 
 #: The console script written where a distribution belongs. Both wrong install lines this
 #: project has evidence of start here: ``uv tool install edullm --from git+...``, which sat
@@ -152,6 +200,60 @@ def flattened(path: Path) -> str:
     rely on, so the comparison is made against text with its line breaks collapsed.
     """
     return " ".join(path.read_text(encoding="utf-8", errors="replace").split())
+
+
+def prose_of(path: Path) -> str:
+    """What a file tells a reader, which in a ``.py`` file is docstrings and comments.
+
+    THE DISTINCTION IS NOT FUSSINESS, IT IS WHAT MAKES THE RULE BELOW ADOPTABLE.
+    ``tests/test_release_tag_workflow.py`` contains ``assert "Nothing to upgrade" in notes``,
+    which asserts the phrase reaches the release note and claims nothing to anybody. Reading
+    it as a claim is a false positive that cannot be fixed by rewording, because there is no
+    prose there to reword, and an unfixable false positive is how a rule gets deleted.
+    """
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if path.suffix != ".py":
+        return text
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return text
+    documented = [
+        document
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+        if (document := ast.get_docstring(node))
+    ]
+    commented = [
+        line.partition("#")[2] for line in text.splitlines() if line.lstrip().startswith("#")
+    ]
+    return "\n".join([*documented, *commented])
+
+
+def statements_of_the_refutation(text: str) -> list[str]:
+    """Every place ``text`` gives uv's answer, with the sentences around it that may qualify it.
+
+    Line breaks collapsed first, for the reason :func:`flattened` gives, and then split on
+    sentence ends -- so what is examined is roughly what a reader takes in around the claim
+    rather than the whole file, which is the granularity the old rule had and the granularity
+    at which a false sentence is invisible.
+    """
+    flat = " ".join(text.split())
+    sentences = re.split(r"(?<=[.!?]) ", flat)
+    return [
+        " ".join(sentences[max(0, index - CONDITION_RADIUS) : index + CONDITION_RADIUS + 1])
+        for index, sentence in enumerate(sentences)
+        if UPGRADE_REFUTATION in sentence
+    ]
+
+
+def unconditional_statements(path: Path) -> list[str]:
+    """The places ``path`` gives uv's answer without naming what it is the answer to."""
+    return [
+        statement
+        for statement in statements_of_the_refutation(prose_of(path))
+        if not any(condition in statement.lower() for condition in UPGRADE_CONDITIONS)
+    ]
 
 
 def test_the_command_in_pyproject_is_the_one_the_code_spells() -> None:
@@ -525,6 +627,125 @@ def test_every_file_that_says_how_to_install_says_how_to_upgrade() -> None:
         "for an install pinned at a release tag and that re-running the line is how you "
         "upgrade whichever install you have."
     )
+
+
+def test_nothing_states_uvs_answer_without_saying_what_it_answers_to() -> None:
+    """**THE RULE THAT WOULD HAVE CAUGHT THE TWELVE, AND THE ONE THAT WAS NOT THERE.**
+
+    The three rules above ask whether a file carries :data:`UPGRADE_REFUTATION` *somewhere*.
+    Every one of the twelve stale copies did -- inside the false sentence -- so co-occurrence
+    was satisfied by the defect itself, and the tighter a file's agreement with the other
+    eleven, the greener the suite. ``src/edullm_platform/cli/release.py`` was the worst case
+    and the clearest: the module whose own docstring claims to be the single authority on this
+    command carried the false claim in two places, was read by all three rules, and passed
+    all three.
+
+    What separates the false sentence from the true one is not the phrase, it is whether the
+    condition is stated. ``Nothing to upgrade`` "however far behind you are" is false;
+    ``Nothing to upgrade`` "for an install pinned at a release tag" is what uv does. So the
+    rule is that the answer may not be given unconditionally, checked in the sentence that
+    gives it and the one either side rather than anywhere in the file.
+
+    Mutation: delete "pinned at a release tag" from any of the sentences this holds, leaving
+    the phrase. That is the edit that produced the twelve, and it is now red.
+
+    **THIS IS STILL PROSE MATCHING AND STILL PROVES NOTHING ABOUT UV.** It narrows what can
+    be written without being noticed; it cannot tell whether what is written is true. Only
+    :func:`test_uv_upgrades_an_unpinned_git_install_and_leaves_a_pinned_one_alone` can, and it
+    is the one that installs the tool twice and runs the command.
+    """
+    offenders = [
+        f"{path.relative_to(PROJECT_ROOT)}: {statement[:160]}"
+        for path in readable_files()
+        for statement in unconditional_statements(path)
+    ]
+
+    assert not offenders, (
+        f"these state that uv answers {UPGRADE_REFUTATION!r} without saying that it is the "
+        "answer for an install pinned at a release tag, which is the sentence that stood in "
+        "twelve places and was false for every install made from the documented line:\n  "
+        + "\n  ".join(offenders)
+        + "\nName the condition beside the answer, or add the wording you used to "
+        "UPGRADE_CONDITIONS if it names one already."
+    )
+
+
+def test_that_rule_catches_the_sentence_that_stood_in_twelve_places() -> None:
+    """**THE HALF THAT STOPS THE RULE ABOVE JOINING THE ONES IT WAS WRITTEN TO FIX.**
+
+    It finds nothing in the tree today, which is indistinguishable from a rule that never
+    could. So it is run here against the sentences as they actually stood, copied from the
+    commit before they were fixed, and against their replacements, which must read as clean.
+    """
+    false_sentences = (
+        (
+            "Do not reach for `uv tool upgrade`, which answers `Nothing to upgrade` however "
+            "far behind a git-installed tool is."
+        ),
+        "However old the install is, it answers `Nothing to upgrade`.",
+        (
+            "For a tool installed from git it answers `Nothing to upgrade` whatever state "
+            "your install is in, and `--reinstall` does not change that."
+        ),
+        (
+            "Verified on uv 0.9.17 against an install from this repository: `uv tool upgrade "
+            "edullm-platform` answers `Nothing to upgrade`, and so does the same command "
+            "with `--reinstall`."
+        ),
+    )
+    true_sentences = (
+        (
+            "`uv tool upgrade` follows the ref the install named, so it upgrades one made "
+            "from the bare URL above and answers `Nothing to upgrade` to one pinned at a "
+            "release tag, however far behind that one is."
+        ),
+        (
+            "The line pins this tag, and `uv tool upgrade` follows the ref an install named. "
+            "It answers `Nothing to upgrade` and exits 0 however far behind that install "
+            "falls."
+        ),
+    )
+
+    unqualified = [
+        statement
+        for sentence in false_sentences
+        for statement in statements_of_the_refutation(sentence)
+        if not any(condition in statement.lower() for condition in UPGRADE_CONDITIONS)
+    ]
+    assert len(unqualified) == len(false_sentences), (
+        "the rule no longer recognises the sentence it was written for, so it is passing "
+        "over the tree because it can no longer see anything"
+    )
+
+    survivors = [
+        statement
+        for sentence in true_sentences
+        for statement in statements_of_the_refutation(sentence)
+        if not any(condition in statement.lower() for condition in UPGRADE_CONDITIONS)
+    ]
+    assert survivors == [], (
+        "the rule reports the corrected wording, so it is a rule whose only remedy is to "
+        f"stop explaining what uv does:\n  {survivors}"
+    )
+
+
+def test_the_prose_of_a_test_file_excludes_what_it_merely_asserts() -> None:
+    """Mutation: read ``.py`` files whole rather than reading their docstrings and comments.
+
+    ``tests/test_release_tag_workflow.py`` asserts the phrase reaches the generated release
+    note. That is a check, not a claim, and there is no wording there to qualify -- so a rule
+    reading it as prose produces a failure whose only fix is to weaken the rule. Held here
+    because the distinction is invisible until somebody widens the reader.
+    """
+    workflow_test = PROJECT_ROOT / "tests" / "test_release_tag_workflow.py"
+    whole = workflow_test.read_text(encoding="utf-8")
+
+    assert f'"{UPGRADE_REFUTATION}"' in whole, (
+        "this test no longer describes that file, so the false positive it guards against "
+        "may have moved somewhere it is not being watched"
+    )
+    assert UPGRADE_REFUTATION not in prose_of(workflow_test)
+    assert unconditional_statements(workflow_test) == []
 
 
 def test_the_rules_above_read_the_repository_and_not_somebody_s_working_directory() -> None:
