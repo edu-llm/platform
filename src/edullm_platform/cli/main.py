@@ -866,11 +866,17 @@ def _add_submission_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_lane_arguments(parser: argparse.ArgumentParser) -> None:
-    """The four things a lane ask needs, and the one that changes how the machine is bought.
+    """The three things a lane ask needs, and the one that changes how the machine is bought.
 
     Deliberately not :func:`_add_submission_arguments`. A submission names a dataset, an
     experiment, a workload profile and a W&B project because a record names them; a lane ask
     names a machine and a place to put files. Sharing the flag set would be sharing the meaning.
+
+    **NO ``--team``, WHICH THIS CARRIED UNTIL 2026-08-05.** It set the first segment of the
+    working prefix and nothing else, and the prefix is ``<person>/<project>/`` now. A flag that
+    stayed on for compatibility would be one a researcher could type, watch be accepted, and
+    then not find in the path, which is worse than the error argparse gives for a flag that is
+    gone. ``edullm submit`` keeps its own ``--team``: a run is charged to a group.
 
     **NO ``--json`` HERE, WHICH IS A DECISION RATHER THAN AN OMISSION.**
     ``cli/machine.py``'s own header gives the rule: a document is published where a structure
@@ -881,7 +887,6 @@ def _add_lane_arguments(parser: argparse.ArgumentParser) -> None:
     """
     parser.add_argument("--project", required=True, help="what this machine is for")
     parser.add_argument("--compute", required=True, help="the machine, from the catalog")
-    parser.add_argument("--team", help="the group this is charged to; defaults from the roster")
     parser.add_argument(
         "--hours",
         type=_whole_hours,
@@ -1226,25 +1231,18 @@ def _lane_session(
         return EXIT_UNREACHABLE
     facts = json.loads(identity.stdout)
     person = person_from_caller_arn(str(facts["Arn"])) or ""
-    if arguments.team:
-        team: str | None = arguments.team
-        team_refusal: Refusal | None = None
-    else:
-        team, _, team_refusal = resolve_team(
-            configuration,
-            submitter=github_login(runner, allow_network=False),
-            default=read_default_team(),
-        )
     request = LaneRequest(
         project=arguments.project or "",
-        team=team or "",
         person=person,
         compute_profile=arguments.compute or "",
     )
-    refusals = (
-        *((team_refusal,) if team_refusal is not None else ()),
-        *lane_refusals(request, configuration=configuration),
-    )
+    # NO ``resolve_team`` CALL, AND ITS REMOVAL ON 2026-08-05 IS THE POINT RATHER THAN A
+    # SIMPLIFICATION. The working tier is laid out ``<person>/<project>/`` now, so there is no
+    # group anywhere in what this verb decides. Resolving one anyway would put
+    # ``team_is_ambiguous`` in front of the seven people who sit on two groups and the owner who
+    # sits on two, every time they asked for a machine, to settle a segment that is not in the
+    # path. The submission path still resolves a team, because a run is charged to one.
+    refusals = lane_refusals(request, configuration=configuration)
     if refusals:
         print(render_refusals(refusals), end="", file=err)
         return EXIT_REFUSED
@@ -1502,11 +1500,7 @@ def _run(
     if isinstance(session, int):
         return session
 
-    uri = working_uri(
-        team=session.request.team,
-        person=session.request.person,
-        project=session.request.project,
-    )
+    uri = working_uri(person=session.request.person, project=session.request.project)
     print(f"{session.machine} expires {session.expires_at}", file=out)
     print(
         "\n".join(
@@ -1632,11 +1626,7 @@ def _shell(
         return session
 
     settings = load_working_tier_settings()
-    uri = working_uri(
-        team=session.request.team,
-        person=session.request.person,
-        project=session.request.project,
-    )
+    uri = working_uri(person=session.request.person, project=session.request.project)
     print(f"{session.machine} expires {session.expires_at}", file=out)
     print(
         "\n".join(

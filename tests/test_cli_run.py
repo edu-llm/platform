@@ -92,7 +92,7 @@ def test_the_tree_goes_up_before_the_command_runs(
     started = runner.ran("aws", "ssm", "start-session")
 
     assert synced, runner.calls
-    assert "s3://edullm-scratch/memory-split/caiiris/mixlaw/" in " ".join(synced[0])
+    assert "s3://edullm-scratch/caiiris/mixlaw/" in " ".join(synced[0])
     assert runner.calls.index(synced[0]) < runner.calls.index(started[0])
 
 

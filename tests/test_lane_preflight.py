@@ -1,4 +1,4 @@
-"""The four things the lane refuses, and the reason each survives an ungated route.
+"""The three things the lane refuses, and the reason each survives an ungated route.
 
 THE STANDING DIRECTION THIS FILE IS WRITTEN AGAINST. The owner's position is that the lane is
 ungated by design and that a gate leaking into it is a defect rather than a trade-off. So the
@@ -39,7 +39,6 @@ def configuration() -> ReviewedConfiguration:
 def request(**overrides: str) -> LaneRequest:
     fields = {
         "project": "mixlaw",
-        "team": "memory-split",
         "person": "caiiris",
         "compute_profile": "gpu-1xt4",
     }
@@ -158,19 +157,32 @@ def test_a_capacity_file_that_will_not_parse_is_an_unusable_install_and_not_a_tr
         placement_warning(load_reviewed_configuration(directory), "gpu-1xh100")
 
 
-def test_a_team_the_roster_does_not_declare_is_refused() -> None:
-    """Mutation: accept whatever was typed.
+def test_the_lane_asks_for_no_team_and_so_refuses_nothing_about_one() -> None:
+    """**THE REFUSAL THAT LEFT, HELD OUT SO IT CANNOT COME BACK BY HABIT.**
+    Mutation: give LaneRequest a team field again and refuse one the roster does not declare.
 
-    Team is the first segment of the working prefix. A team nothing declares creates a prefix no
-    listing of any group's work will ever include, so the files are not lost and are unfindable,
-    which is worse. This is a spelling check on a destination rather than a permission: nobody is
-    being told they may not have a machine.
+    unknown_team was here until 2026-08-05 and it was defensible while the tier was laid out
+    <team>/<person>/: a team nothing declared was a misspelled destination. The tier is
+    <person>/<project>/ now, so a group named on a lane verb would decide nothing at all, and a
+    refusal about a value that reaches no path is not a spelling check on a destination. It is a
+    permission, which is the one thing this route may not grow. The submission path keeps its
+    own team resolution, because a run is charged to a group.
+
+    Asserted against the constructor rather than against a string, because the field's absence
+    is the property and a request carrying one would not be refused, it would be a TypeError.
     """
-    assert codes(team="memroy-split") == ["unknown_team"]
+    with pytest.raises(TypeError):
+        LaneRequest(  # type: ignore[call-arg]
+            project="mixlaw",
+            team="memory-split",
+            person="caiiris",
+            compute_profile="gpu-1xt4",
+        )
+    assert codes() == []
 
 
 def test_a_project_that_is_empty_is_refused() -> None:
-    """Mutation: default it to the team, or to "default".
+    """Mutation: default it to the person, or to "default".
 
     The project names the working prefix's last segment, tags the instance and the volume, and is
     the value the researcher role's condition holds the launch tag equal to. A default would put
@@ -203,26 +215,29 @@ def test_every_refusal_carries_a_remedy_and_not_only_a_code() -> None:
     """
     every = [
         *lane_refusals(request(compute_profile="gpu-9000"), configuration=configuration()),
-        *lane_refusals(request(team="memroy-split"), configuration=configuration()),
         *lane_refusals(request(project=""), configuration=configuration()),
         *lane_refusals(request(person=""), configuration=configuration()),
     ]
 
-    assert len(every) == 4
+    assert len(every) == 3
     for refusal in every:
         assert len(refusal.detail.split()) > 15
 
 
-def test_the_lane_refuses_four_things_and_the_list_is_closed() -> None:
-    """**THE ASSERTION THAT MAKES A FIFTH REFUSAL A DELIBERATE ACT.**
+def test_the_lane_refuses_three_things_and_the_list_is_closed() -> None:
+    """**THE ASSERTION THAT MAKES A FOURTH REFUSAL A DELIBERATE ACT.**
     Mutation: add a refusal for anything at all.
 
     Every gate that ever leaked into an ungated route did so one reasonable-looking refusal at a
     time, and each one was defensible on its own. Pinning the set is what makes the next one
     arrive as a failing test with tests/test_lane_verdicts.py's ruling beside it, rather than as
     a line in a diff nobody weighed against "is this a permission".
+
+    It was four until 2026-08-05. unknown_team went with the team segment of the working tier's
+    layout, and the list shrinking is the rarer direction: this set is meant to be hard to grow
+    and it should be no easier to shrink by accident, which is what the equality does.
     """
-    everything_wrong = LaneRequest(project="", team="", person="", compute_profile="")
+    everything_wrong = LaneRequest(project="", person="", compute_profile="")
 
     refused = {
         refusal.code for refusal in lane_refusals(everything_wrong, configuration=configuration())
@@ -231,7 +246,6 @@ def test_the_lane_refuses_four_things_and_the_list_is_closed() -> None:
     assert refused == {
         "cannot_tell_who_you_are",
         "no_project",
-        "unknown_team",
         "unknown_machine",
     }
 

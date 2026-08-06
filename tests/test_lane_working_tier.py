@@ -1,7 +1,7 @@
 """Where a lane's files go, and the four numbers the lane reads rather than carries.
 
 The layout is docs-frank/reference/system-overview.md's, under "Where data lives": the working
-tier is a bucket of its own laid out <team>/<person>/, and the lane defaults its output there.
+tier is a bucket of its own laid out <person>/<project>/, and the lane defaults its output there.
 Every assertion below is about that shape rather than about a string, because the shape is what
 a person navigating the bucket relies on and what the role's write fence is written against.
 """
@@ -31,15 +31,20 @@ SETTINGS_PATH = PROJECT_ROOT / "config" / "reports" / "working-tier.yaml"
 EXAMPLE_ACCOUNT = "123456789012"
 
 
-def test_the_prefix_is_team_then_person_and_ends_with_a_separator() -> None:
-    """Mutation: reverse the two segments. Mutation: drop the trailing slash.
+def test_the_prefix_is_the_person_alone_and_ends_with_a_separator() -> None:
+    """Mutation: put a team segment back above it. Mutation: drop the trailing slash.
 
-    The order is the overview's and it is not arbitrary: a team's whole working set is one
-    listing under one prefix, where person-then-team would scatter a team across the bucket.
+    The tier was <team>/<person>/ until 2026-08-05 and decisions.md records why it is not: the
+    role's fence excepted edullm-scratch/*/${aws:SourceIdentity}/*, so the team was a wildcard and
+    enforced nothing; seven people sit on two groups, so a lane would have had to resolve a team
+    to know where to sync; and organization.yaml defines this tier as the work costed to nobody,
+    which is the one thing a team segment would organise it by. A segment added back here also
+    stops matching the role's excepted path, and every lane write is then denied naming nothing.
+
     The trailing slash is what makes an s3 prefix a directory to every tool that lists one, and
-    without it "memory-split/cai" also matches "memory-split/caiiris".
+    without it "cai" also matches "caiiris".
     """
-    assert working_prefix(team="memory-split", person="caiiris") == "memory-split/caiiris/"
+    assert working_prefix(person="caiiris") == "caiiris/"
 
 
 def test_the_uri_names_the_bucket_the_overview_names() -> None:
@@ -48,9 +53,13 @@ def test_the_uri_names_the_bucket_the_overview_names() -> None:
     decisions.md, under the working-tier entry, reverses an earlier position that working "does
     not need a bucket of its own". A prefix inside the outputs bucket carries no lifecycle rule
     of its own and is discoverable by nobody, and both of those are properties this slice needs.
+
+    The outputs bucket is also the one place teams/<team>/ is right, which is why pointing here
+    at it would be two mistakes rather than one. A run is charged to a group, grouped in Weights
+    and Biases by it and routed to that group's lead; this tier is charged to nobody.
     """
-    assert working_uri(team="memory-split", person="caiiris", project="mixlaw") == (
-        f"s3://{SCRATCH_BUCKET}/memory-split/caiiris/mixlaw/"
+    assert working_uri(person="caiiris", project="mixlaw") == (
+        f"s3://{SCRATCH_BUCKET}/caiiris/mixlaw/"
     )
 
 

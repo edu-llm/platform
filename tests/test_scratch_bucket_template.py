@@ -61,6 +61,13 @@ def test_every_place_that_names_the_working_tier_agrees() -> None:
 
     Held against the module constant rather than a literal written here, because a literal in a
     test is a fifth answer to the question and this test exists to establish there is one.
+
+    THE RESEARCHER ROLE'S ENTRY CARRIES THE LAYOUT AS WELL AS THE NAME, WHICH IS WHY IT IS THE
+    ONE SPELT OUT IN FULL. The other three name the bucket and stop. That one names the bucket
+    and then the path inside it, and the path lost its <team>/ segment on 2026-08-05, so the two
+    edits land on one line and either half being stale is the same silent denial. The exact
+    string is asserted rather than a bucket-name search, so the three-segment spelling coming
+    back fails here as well as in tests/test_researcher_role_template.py's tripwire.
     """
     deployer = (INFRA_ROOT / "iam" / "infra-deployer-role.yaml").read_text(encoding="utf-8")
     instance = (INFRA_ROOT / "iam" / "lane-instance-role.yaml").read_text(encoding="utf-8")
@@ -75,9 +82,11 @@ def test_every_place_that_names_the_working_tier_agrees() -> None:
     assert f"- arn:aws:s3:::{SCRATCH_BUCKET}/*\n" in instance, (
         "A lane machine cannot reach the objects it syncs, which fails loudly at the sync."
     )
-    assert f"- arn:aws:s3:::{SCRATCH_BUCKET}/*/${{aws:SourceIdentity}}/*\n" in researcher, (
+    assert f"- arn:aws:s3:::{SCRATCH_BUCKET}/${{aws:SourceIdentity}}/*\n" in researcher, (
         "The researcher role fences writes into a bucket by this name and no such bucket "
-        "exists, which denies every lane write and says nothing about why."
+        "exists, or into a path shaped unlike the one the lane writes. Either denies every lane "
+        "write and says nothing about why. The layout is <person>/<project>/, so the excepted "
+        "path carries exactly one segment above the objects."
     )
 
 

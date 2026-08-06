@@ -34,9 +34,7 @@ from edullm_platform.researcher_lane import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SETTINGS = load_working_tier_settings(PROJECT_ROOT / "config" / "reports" / "working-tier.yaml")
-REQUEST = LaneRequest(
-    project="mixlaw", team="memory-split", person="caiiris", compute_profile="gpu-1xt4"
-)
+REQUEST = LaneRequest(project="mixlaw", person="caiiris", compute_profile="gpu-1xt4")
 
 #: The account id AWS reserves for documentation. Twelve zeroes would be rejected by
 #: tests/test_evidence.py, which scans the tracked tree for anything shaped like a real one.
@@ -223,10 +221,15 @@ def test_the_source_identity_is_the_string_the_working_tier_deny_fences_on() -> 
     Mutation: pass the caller ARN, or the session name, as the source identity.
 
     The researcher role's seventh statement denies writes outside
-    edullm-scratch/*/${aws:SourceIdentity}/*, and working_prefix builds the path from the same
+    edullm-scratch/${aws:SourceIdentity}/*, and working_prefix builds the path from the same
     person. If these two ever disagree the machine starts, the session opens, and every sync
     fails with AccessDenied naming no cause. Asserted as one equality rather than as two facts
     about two functions, because agreement is the property and either alone is not.
+
+    The equality is now the whole prefix rather than its tail, and that is what the layout
+    change on 2026-08-05 bought. While the tier was <team>/<person>/ this could only ask that
+    the prefix ended in the declared identity, which a team segment spelt anything at all still
+    satisfied. With <person>/ there is nothing above the identity to be lenient about.
     """
     from edullm_platform.cli.lane import person_from_caller_arn, working_prefix
 
@@ -240,7 +243,7 @@ def test_the_source_identity_is_the_string_the_working_tier_deny_fences_on() -> 
     )
     declared = argv[argv.index("--source-identity") + 1]
 
-    assert working_prefix(team="memory-split", person=person).endswith(f"/{declared}/")
+    assert working_prefix(person=person) == f"{declared}/"
 
 
 def test_the_assumed_credentials_become_an_environment_and_not_a_file() -> None:

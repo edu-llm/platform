@@ -83,10 +83,10 @@ def test_the_remote_script_syncs_the_tree_down_before_it_runs_anything() -> None
     run's tree and on a new one is nothing.
     """
     script = remote_script(
-        uri="s3://edullm-scratch/memory-split/caiiris/mixlaw/", project="mixlaw", command="pytest"
+        uri="s3://edullm-scratch/caiiris/mixlaw/", project="mixlaw", command="pytest"
     )
 
-    assert "aws s3 sync s3://edullm-scratch/memory-split/caiiris/mixlaw/" in script
+    assert "aws s3 sync s3://edullm-scratch/caiiris/mixlaw/" in script
     assert script.index("s3 sync") < script.index("pytest")
 
 

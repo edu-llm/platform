@@ -19,11 +19,20 @@ Description: The working tier. Where the exploration route puts a person's files
 # infra/iam/researcher-role.yaml makes about edullm-researcher carrying no prefix, and it has the
 # same consequence: no pipeline here can touch it, which is correct.
 #
-# WHAT LIVES HERE AND WHAT DOES NOT. Whatever a researcher puts under <team>/<person>/, and what
-# the lane syncs there. Not the checkpoints of a recorded run, which go to the outputs bucket
+# WHAT LIVES HERE AND WHAT DOES NOT. Whatever a researcher puts under <person>/<project>/, and
+# what the lane syncs there. Not the checkpoints of a recorded run, which go to the outputs bucket
 # under teams/<team>/runs/<run_id>/. Not a corpus asking to be sealed, which goes to
 # edullm-landing and is judged there. system-overview.md, "Where data lives", draws all three and
 # the arrows between them.
+#
+# THE TWO BUCKETS ORGANISE BY DIFFERENT THINGS AND THAT IS NOT AN INCONSISTENCY TO TIDY. This one
+# lost its <team>/ segment on 2026-08-05 and the outputs bucket kept teams/<team>/ on purpose. A
+# run is charged to a research group, grouped in Weights and Biases by it, and routed to that
+# group's lead for approval, so the group is the thing a reader of that bucket is looking for.
+# organization.yaml defines this tier as work costed to nobody: every one of the thirty-five sits
+# in scratch so a first run is not refused, and there is no group here to organise by.
+# decisions.md, "The working tier is laid out by person and the outputs bucket is not", is the
+# ruling, written down because the obvious edit is to make one match the other.
 
 Resources:
   ScratchBucket:
