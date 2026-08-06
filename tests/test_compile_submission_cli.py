@@ -18,6 +18,7 @@ maintained list.
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ import pytest
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.errors import RetiredDatasetReleaseError
+from edullm_platform.run_history import NO_HISTORY_PACKAGED, NOTHING_LIKE_THIS_YET
 from edullm_platform.submission import require_a_dataset_release_that_is_current
 from tools.compile_submission import EXIT_OK, EXIT_REFUSED, EXIT_UNUSABLE, main
 
@@ -594,6 +596,160 @@ def test_an_override_the_declared_commit_did_publish_is_honoured(tmp_path: Path)
 
     assert exit_code == EXIT_OK
     assert compiled["manifest"]["image_digest"] == PUBLISHED_DIGEST
+
+
+# ---------------------------------------------------------------------------------------
+# What the approver is told the shape has taken
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_approver_reads_the_measurement_the_submitter_was_already_shown(
+    tmp_path: Path,
+) -> None:
+    """THE GAP THIS CLOSED. Mutation: drop ``run_history`` from the render call again.
+
+    ``config/run-history.json`` has been in the checkout this job reads since it was first
+    committed, and every approval page rendered before this said no reading was packaged,
+    because the argument carrying it was the one keyword this call did not pass. The same
+    ``history_for`` on the same shape was meanwhile printing a figure to the submitter
+    through ``cli/preflight.py``, so the person spending nothing read what runs like this
+    take and the lead spending it read that nobody had measured.
+
+    Asserted on the sentence rather than on the argument, because the argument is what
+    could be passed and still reach a renderer that ignored it. The shape below is the one
+    the form defaults to and the committed reading holds a cohort for it, so a page missing
+    the figure is this bug and not a thin sample.
+    """
+    exit_code, _compiled = compile_form(tmp_path)
+
+    assert exit_code == EXIT_OK
+    summary = approver_context(tmp_path)
+    assert "## What runs of this shape have taken" in summary
+    assert NO_HISTORY_PACKAGED not in summary
+    assert "succeeded runs of this workload, on this machine, on this dataset" in summary
+    assert "took a median of" in summary
+    # The date the reading was taken travels with it, so a lead reading a page in a month
+    # can discount a measurement of a platform that no longer exists.
+    assert "Measured on" in summary
+
+
+def test_a_shape_the_reading_has_never_seen_says_so_rather_than_borrowing_a_figure(
+    tmp_path: Path,
+) -> None:
+    """Mutation: word an unmeasured shape the same way an unpackaged reading is worded.
+
+    ``olmo-eval-check`` has never run here and every other workload on ``olmo-eval-full``
+    has, so no rung of the ladder answers for it. The page has to say that in its own
+    words: "nothing of this shape has run" is a fact about the platform and "no reading is
+    packaged" is a fact about the install, and a lead who reads the second where the first
+    is true concludes the tool is broken rather than that they are the first to try this.
+    Before the argument was passed, every page said the second one.
+    """
+    exit_code, _compiled = compile_form(
+        tmp_path,
+        payload=form(
+            repository="olmo-eval-full",
+            workload_profile="olmo-eval-check",
+            wandb_project="olmo-eval",
+        ),
+    )
+
+    assert exit_code == EXIT_OK
+    summary = approver_context(tmp_path)
+    assert NOTHING_LIKE_THIS_YET in summary
+    assert NO_HISTORY_PACKAGED not in summary
+
+
+def test_a_reading_this_tree_cannot_parse_stops_the_job_rather_than_reading_as_absent(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mutation: catch the parse error and carry on with no reading.
+
+    Absent and unreadable are different findings and only one of them is about the
+    install. Degrading a corrupt reading to "no run history is packaged" would put a
+    sentence about an ordinary editable checkout on the page of a job running from a
+    checkout of ``main``, where that sentence is false and the real problem is invisible.
+    ``edullm check`` already refuses this locally through the same loader, so the two sides
+    agree about what a broken file means.
+    """
+    config = tmp_path / "config"
+    shutil.copytree(CONFIG_DIR, config)
+    (config / "run-history.json").write_text("{not json", encoding="utf-8")
+
+    inputs = tmp_path / "submission-form.json"
+    inputs.write_text(json.dumps(form()), encoding="utf-8")
+    published = tmp_path / "published-image.json"
+    published.write_text(json.dumps(resolved()), encoding="utf-8")
+
+    exit_code = main(
+        [
+            "--inputs",
+            str(inputs),
+            "--config-dir",
+            str(config),
+            "--published-images",
+            str(published),
+            "--submitter",
+            SUBMITTER,
+            "--repository-url",
+            REPOSITORY_URL,
+            "--output",
+            str(tmp_path / "compiled-submission.json"),
+            "--summary",
+            str(tmp_path / "approver-context.md"),
+            "--run-id",
+            RUN_ID,
+        ]
+    )
+
+    assert exit_code == EXIT_UNUSABLE
+    assert "run-history.json" in capsys.readouterr().err
+
+
+def test_a_checkout_carrying_no_reading_compiles_and_says_nothing_was_measured(
+    tmp_path: Path,
+) -> None:
+    """Mutation: make the reading required the way the six rules are.
+
+    An install from before the first reading was committed, an editable checkout and a
+    directory a test built all carry no ``run-history.json``, and none of them is a broken
+    platform. A measurement is the one file here whose absence is a thing to say out loud
+    rather than a reason to refuse a submission nobody would otherwise decline.
+    """
+    config = tmp_path / "config"
+    shutil.copytree(CONFIG_DIR, config)
+    (config / "run-history.json").unlink()
+
+    inputs = tmp_path / "submission-form.json"
+    inputs.write_text(json.dumps(form()), encoding="utf-8")
+    published = tmp_path / "published-image.json"
+    published.write_text(json.dumps(resolved()), encoding="utf-8")
+    summary = tmp_path / "approver-context.md"
+
+    exit_code = main(
+        [
+            "--inputs",
+            str(inputs),
+            "--config-dir",
+            str(config),
+            "--published-images",
+            str(published),
+            "--submitter",
+            SUBMITTER,
+            "--repository-url",
+            REPOSITORY_URL,
+            "--output",
+            str(tmp_path / "compiled-submission.json"),
+            "--summary",
+            str(summary),
+            "--run-id",
+            RUN_ID,
+        ]
+    )
+
+    assert exit_code == EXIT_OK
+    assert NO_HISTORY_PACKAGED in summary.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------------------
