@@ -308,6 +308,40 @@ def test_result_manifest_rejects_an_attempt_id_where_a_run_id_belongs() -> None:
     )
 
 
+def test_a_result_may_name_no_attempt_because_the_run_never_got_one() -> None:
+    """Mutation: require an attempt id.
+
+    That is what shipped, and it meant a job Batch never placed had no result record at
+    all -- so ``MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT``, which is the whole account of
+    why such a run never started, was written down nowhere. The field is nullable and not
+    defaulted: every record already in the store carries the key, and a default would let a
+    result be written that simply forgot to say which attempt it was about.
+    """
+    result = ResultManifest.model_validate(
+        result_payload(attempt_id=None, outcome="failed", output_prefixes=[])
+    )
+
+    assert result.attempt_id is None
+    assert result.outcome is AttemptTerminalState.FAILED
+
+
+def test_a_result_that_names_an_attempt_is_still_held_to_the_attempt_id_shape() -> None:
+    """Mutation: widen the field to ``str | None`` rather than ``AttemptId | None``.
+
+    Nullable is not untyped. A result that does name an attempt has to name one the
+    ``attempt/`` prefix could hold, or the join every reader makes resolves to nothing and
+    the record looks joined.
+    """
+    payload = result_payload()
+    del payload["attempt_id"]
+    with pytest.raises(ValidationError) as absent:
+        ResultManifest.model_validate(payload)
+    assert_validation_error(absent.value, error_type="missing", loc=("attempt_id",))
+
+    with pytest.raises(ValidationError):
+        ResultManifest.model_validate(result_payload(attempt_id="att_not-a-uuid"))
+
+
 def test_result_manifest_rejects_a_run_id_where_an_attempt_id_belongs() -> None:
     with pytest.raises(ValidationError) as exc_info:
         ResultManifest.model_validate(result_payload(attempt_id=STABLE_RUN_ID))

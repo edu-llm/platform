@@ -398,7 +398,27 @@ class EvalMetrics(ContractModel):
 class ResultManifest(ContractModel):
     schema_version: Literal[1]
     run_id: RunId
-    attempt_id: AttemptId
+    #: The attempt this outcome belongs to, or None because the run never got one.
+    #:
+    #: NULLABLE SO THAT A JOB WHICH NEVER STARTED HAS A RESULT AT ALL, WHICH IS THE ONLY
+    #: WAY A RESEARCHER LEARNS WHY. Batch decides
+    #: ``MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT`` statically: it never places the job,
+    #: so there is no attempt, no start instant and nothing to name here. While this field
+    #: was required the projection could build no result for such a run, so the one string
+    #: saying what was wrong went to the dead letter of the event and the run's own record
+    #: said nothing. The same held for a job cancelled out of the queue, where the reason
+    #: the submitter typed is on the job and nowhere else.
+    #:
+    #: None is a fact and not a gap, on the argument ``exit_code`` below makes: there was
+    #: no attempt, so there is no attempt id, and inventing one would put an attempt that
+    #: never happened into the store that cannot be corrected. A run with an attempt
+    #: carries it exactly as before, and every record already written has one.
+    #:
+    #: A reader joining a result to its attempt has to handle None, and the join is worth
+    #: keeping honest: an attempt record exists for every non-null value here and for no
+    #: null one, which is the same statement the lifecycle writer makes in
+    #: ``lifecycle_handler.lineage_writes``.
+    attempt_id: AttemptId | None
     outcome: AttemptTerminalStateValue
     output_prefixes: Annotated[
         tuple[SandboxS3Prefix, ...], BeforeValidator(require_ordered_sequence)

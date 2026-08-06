@@ -541,17 +541,120 @@ def test_a_failed_run_records_the_failure_rather_than_the_nearest_success() -> N
     assert projected.result.outcome is AttemptTerminalState.FAILED
 
 
-def test_a_job_stopped_before_any_attempt_began_still_records_that_it_stopped() -> None:
+def test_a_job_stopped_before_any_attempt_began_describes_no_attempt_window() -> None:
     """There is no window to describe, and inventing one would be worse than omitting it.
 
     Mutation: fall back to the job's ``createdAt`` as the attempt start, which puts a
     duration in an immutable record that nothing measured.
+
+    The job below carries no ``stoppedAt`` either, so there is also no instant to date a
+    result to and none is written. The test under this one is the same job with the instant
+    Batch really sends, and it does get a result.
     """
     projected = project("FAILED", attempts=[], statusReason=CANCELLATION_REASON)
 
     assert projected.event.state is RunState.CANCELLED
     assert projected.attempt is None
     assert projected.result is None
+
+
+# ---------------------------------------------------------------------------------------
+# A job that never got an attempt, which used to leave no record of why
+# ---------------------------------------------------------------------------------------
+
+#: What Batch answers a job whose resource request no compute environment can satisfy. It
+#: decides this statically, so the job never places, there is never an attempt, and this
+#: string is on the job from the moment it is decided until Batch stops listing it.
+MISCONFIGURATION = "MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT"
+
+
+def test_a_job_batch_never_placed_records_why_it_never_started() -> None:
+    """THE ONE THAT MATTERS. Mutation: build a result only where there was an attempt.
+
+    That is what shipped, and the cost is the whole record. Batch decides
+    ``MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT`` before placing anything, so ``attempts``
+    is empty, so the projection built no ``ResultManifest`` -- and the one string saying
+    what was wrong with the submission went into a lifecycle event that carries a state and
+    nothing else. Fourteen runs in this account never placed. A researcher asking why got
+    an empty ``result/`` prefix.
+
+    The outcome belongs to the run and not to the attempt: the run stopped, and Batch said
+    why on the job itself. Everything an attempt would have contributed is None here and
+    each None is a fact -- nothing ran, so nothing exited and no container failed.
+    """
+    projected = project(
+        "FAILED",
+        attempts=[],
+        statusReason=MISCONFIGURATION,
+        stoppedAt=STOPPED_AT_MS,
+    )
+
+    assert projected.attempt is None
+    assert projected.result is not None
+    assert projected.result.attempt_id is None
+    assert projected.result.outcome is AttemptTerminalState.FAILED
+    assert projected.result.status_reason == MISCONFIGURATION
+    assert projected.result.exit_code is None
+    assert projected.result.container_reason is None
+    assert projected.result.completed_at == datetime(2026, 7, 27, 20, 11, tzinfo=UTC)
+
+
+def test_a_run_cancelled_out_of_the_queue_records_the_reason_somebody_typed() -> None:
+    """Mutation: keep writing nothing for a terminal job with no attempt.
+
+    ``edullm cancel`` takes a reason and puts it on the job, and until now a job cancelled
+    before it placed dropped that reason on the floor -- the one case where the reason is
+    not a machine's account of a failure but a person's account of a decision.
+    """
+    projected = project(
+        "FAILED",
+        attempts=[],
+        statusReason=CANCELLATION_REASON,
+        stoppedAt=STOPPED_AT_MS,
+    )
+
+    assert projected.event.state is RunState.CANCELLED
+    assert projected.result is not None
+    assert projected.result.attempt_id is None
+    assert projected.result.outcome is AttemptTerminalState.CANCELLED
+    assert projected.result.status_reason == CANCELLATION_REASON
+
+
+def test_a_terminal_job_with_no_stop_instant_anywhere_still_writes_nothing() -> None:
+    """Mutation: date the record from the envelope's own time.
+
+    The delivery instant is a real instant and it is not this job's. It is when
+    EventBridge got round to telling us, which on a redelivery is a different number for
+    one stop. ``completed_at`` is required, so the honest answer to having no instant is
+    the record this platform does not write, and the assertion pairs with the one above:
+    the only difference between them is the field Batch actually sends.
+    """
+    projected = project("FAILED", attempts=[], statusReason=MISCONFIGURATION)
+
+    assert projected.event.occurred_at == OCCURRED_AT_INSTANT
+    assert projected.result is None
+
+
+def test_a_run_that_never_placed_writes_a_result_and_no_attempt_record() -> None:
+    """Mutation: write an attempt record for a run that never got an attempt.
+
+    A result with a null ``attempt_id`` and no attempt object beside it is the honest pair.
+    An attempt record here would be an attempt window nothing measured, in the one store
+    that cannot be corrected, and the join every reader makes would then resolve to it.
+    """
+    store = RecordingStore()
+
+    handler(
+        sqs_batch(
+            envelope("FAILED", attempts=[], statusReason=MISCONFIGURATION, stoppedAt=STOPPED_AT_MS)
+        ),
+        store=store,
+    )
+
+    assert store.keys == [
+        f"events/{RUN_ID}/evt_{EVENTBRIDGE_EVENT_ID}.json",
+        f"result/{RUN_ID}.json",
+    ]
 
 
 # ---------------------------------------------------------------------------------------

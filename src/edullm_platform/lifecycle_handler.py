@@ -184,9 +184,13 @@ def lineage_writes(projection: LifecycleProjection) -> tuple[tuple[str, Contract
     """Which keys this projection puts, in the order they must be written.
 
     The event first, then the attempt, then the result. That ordering is what makes a
-    partial write readable: a result present with no attempt beside it would be an outcome
-    attributed to an attempt nobody recorded, where an attempt with no result yet is just a
-    write that has not finished.
+    partial write readable: a result whose ``attempt_id`` names an attempt with no record
+    beside it would be an outcome attributed to an attempt nobody wrote down, where an
+    attempt with no result yet is just a write that has not finished.
+
+    A result whose ``attempt_id`` is ``None`` is the other case and is not a partial write.
+    The run never got an attempt, so there is no attempt record to be missing, and the
+    result is the only thing the store will ever hold about why it stopped.
     """
     writes: list[tuple[str, ContractModel]] = [
         (event_key(projection.event.run_id, projection.event.event_id), projection.event)
