@@ -1056,16 +1056,46 @@ def read_report_sections(log: str, headings: Sequence[str]) -> str:
 
     Section rather than whole log because the workflow writes four reports into one job and
     the verbs want different ones -- ``status`` the description, ``logs`` the tail.
+
+    **A SECTION ENDS WHERE THE STEP THAT WROTE IT ENDS, AND NOT ONLY AT THE NEXT HEADING.**
+    The next heading alone is no boundary at all for the last block anything writes, which is
+    the tail for ``logs`` and the description for a ``status`` on a run that never reached the
+    log step. Those two verbs printed their answer and then the runner's housekeeping under
+    it -- ``Post job cleanup``, ``git config --global --add safe.directory``, ``Cleaning up
+    orphan processes``, about seventy lines of it -- with the thing the reader came for at the
+    top of a wall of noise.
+
+    The step name is the second of the three columns ``gh run view --log`` prefixes, so the
+    boundary needed no new parsing and no list of the runner's phrases. A denylist would have
+    been the other candidate and it loses on the obvious ground: it can only name the noise
+    somebody has already seen, and the runner's output is not this repository's to freeze.
     """
-    keeping = False
+    wrote_the_section: str | None = None
     kept: list[str] = []
     for raw in log.splitlines():
-        line = _unprefixed(raw)
+        step, line = _step_and_line(raw)
+        # Tracked rather than compared against the previous line, so a step that writes no
+        # heading between two report blocks cannot end the one above it early.
+        if wrote_the_section is not None and step != wrote_the_section:
+            wrote_the_section = None
         if line.startswith(("## ", "### ")):
-            keeping = any(heading.lower() in line.lower() for heading in headings)
-        if keeping:
+            matched = any(heading.lower() in line.lower() for heading in headings)
+            wrote_the_section = step if matched else None
+        if wrote_the_section is not None:
             kept.append(line)
     return "\n".join(kept).strip()
+
+
+def _step_and_line(line: str) -> tuple[str | None, str]:
+    """``job\tstep\t2026-08-04T12:00:00.0000000Z message`` split into the step and the message.
+
+    The step is ``None`` for a line carrying no prefix, which keeps a log that arrived
+    unprefixed -- a fixture, or a ``gh`` that stopped adding the columns -- reading as one
+    step rather than as a step boundary on every line.
+    """
+    parts = line.split("\t")
+    step = parts[-2] if len(parts) > 1 else None
+    return step, _unprefixed(line)
 
 
 def _unprefixed(line: str) -> str:
