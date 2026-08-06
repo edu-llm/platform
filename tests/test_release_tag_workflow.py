@@ -66,6 +66,7 @@ from workflow_support import (
 from edullm_platform.cli import configuration as cli_configuration
 from edullm_platform.cli.actions import PLATFORM_REPOSITORY
 from edullm_platform.cli.release import install_command
+from edullm_platform.reviewed_configuration import ConfigFile
 from edullm_platform.run_history import HISTORY_FILENAME
 
 sys.path.insert(0, str(PROJECT_ROOT / "tools"))
@@ -202,17 +203,24 @@ def configuration_files(monkeypatch: pytest.MonkeyPatch) -> tuple[str, ...]:
     Watched rather than listed for the same reason as before. Whatever
     ``load_reviewed_configuration`` opens is the answer, and a loader added later is caught
     here rather than remembered.
+
+    THAT LOADER AND NOT EVERY READ THE CLI MAKES, WHICH IS THE SAME LINE ``capacity.yaml``
+    HAS ALWAYS SAT ON THE FAR SIDE OF. ``cli/lane.py`` reads the capacity table and the two
+    files under ``config/reports/``, and none of the three is on this trigger: they are
+    operational limits rather than the control plane, which is what putting them outside the
+    six bought, and ``v0.2.1`` is the record of what happens when a table like that moves
+    ``releases/latest``.
     """
     opened: list[str] = []
 
-    def record_yaml(path: Path, model: object) -> object:
-        opened.append(Path(path).name)
+    def record_config_file(file: ConfigFile, model: object, *, directory: Path) -> object:
+        opened.append(file.value)
         return object()
 
     def record_history(directory: Path) -> None:
         opened.append(HISTORY_FILENAME)
 
-    monkeypatch.setattr(cli_configuration, "load_yaml", record_yaml)
+    monkeypatch.setattr(cli_configuration, "load_config_file", record_config_file)
     monkeypatch.setattr(cli_configuration, "load_run_history", record_history)
     cli_configuration.load_reviewed_configuration(PROJECT_ROOT / "config")
     return tuple(opened)

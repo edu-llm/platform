@@ -90,7 +90,7 @@ def test_the_shipped_settings_load() -> None:
     Both the janitor's schedule and the helper's default lifetime are read from this file, so
     an absent one is a Lambda that cannot decide anything and a helper with no default.
     """
-    settings = load_lane_settings(PROJECT_ROOT / "config" / "reports" / "researcher-lane.yaml")
+    settings = load_lane_settings(PROJECT_ROOT / "config")
 
     assert settings.warning_lead_minutes > settings.sweep_minutes
     assert settings.default_lifetime_hours > 0

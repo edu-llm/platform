@@ -34,7 +34,6 @@ from edullm_platform.cli.configuration import (
     ReviewedConfiguration,
 )
 from edullm_platform.cli.preflight import Refusal
-from edullm_platform.config import load_yaml
 from edullm_platform.contracts.base import ContractModel
 from edullm_platform.placement import (
     CAPACITY_FILENAME,
@@ -49,14 +48,15 @@ from edullm_platform.researcher_lane import (
     PROJECT_TAG_KEY,
     RESEARCHER_ROLE_NAME,
 )
+from edullm_platform.reviewed_configuration import ConfigFile, load_config_file
 
 __all__ = [
+    "AWS_LOGIN_COMMAND",
     "GPU_AMI_PARAMETER",
     "LANE_INSTANCE_PROFILE",
     "LANE_TAG_KEY",
     "SCRATCH_BUCKET",
     "SESSION_PLUGIN",
-    "WORKING_TIER_SETTINGS_PATH",
     "LaneRequest",
     "WorkingTierSettings",
     "agent_online_argv",
@@ -98,8 +98,6 @@ SCRATCH_BUCKET: Final = "edullm-scratch"
 #: and the launch passes it as ``--iam-instance-profile Name=<this>``. A rename on either side is
 #: a launch that fails after a machine has already been priced.
 LANE_INSTANCE_PROFILE: Final = "edullm-lane-instance"
-
-WORKING_TIER_SETTINGS_PATH: Final = "config/reports/working-tier.yaml"
 
 #: Where the lane's image comes from, resolved at launch rather than pinned. The parameter is
 #: Amazon's and it moves; on 2026-08-05 it answered ami-0326665395a428ccf, which is the image the
@@ -144,10 +142,18 @@ class WorkingTierSettings(ContractModel):
     notebook_port: int = Field(gt=1024, lt=65536)
 
 
-def load_working_tier_settings(
-    path: Path | str = WORKING_TIER_SETTINGS_PATH,
-) -> WorkingTierSettings:
-    return load_yaml(path, WorkingTierSettings)
+def load_working_tier_settings(directory: Path | None = None) -> WorkingTierSettings:
+    """The four numbers a machine is launched with, from a directory somebody resolved.
+
+    **THIS IS THE FUNCTION THE TWO VERBS SHIPPED BROKEN ON.** It defaulted to
+    ``"config/reports/working-tier.yaml"``, which is a path against the working directory, so
+    ``edullm run`` and ``edullm shell`` raised ``FileNotFoundError`` for everybody outside a
+    platform checkout -- which is every person either verb was written for. The file was in
+    the wheel the whole time, at ``edullm_platform/_config/reports/working-tier.yaml``.
+    ``edullm_platform.reviewed_configuration`` carries the rule that replaced it, and the
+    three things that now hold it.
+    """
+    return load_config_file(ConfigFile.WORKING_TIER, WorkingTierSettings, directory=directory)
 
 
 def working_prefix(*, person: str) -> str:
@@ -545,6 +551,18 @@ def run_instances_argv(
 #: The one thing that has to be on a researcher's laptop beyond the AWS CLI. It is a separate
 #: install and it is not optional: every session below goes through it.
 SESSION_PLUGIN: Final = "session-manager-plugin"
+
+#: How a person in this organization gets an AWS session, spelled out rather than alluded to.
+#:
+#: There is one way and no second one. The sandbox issues no long-lived keys and refuses the
+#: calls that would create one, so every human credential that has ever reached this account
+#: came from the broker. A refusal saying "log in the way you normally do" is therefore
+#: addressed to somebody who has already done it, and useless to the person meeting it for
+#: the first time -- who is exactly the person a first `edullm run` puts in front of it.
+#:
+#: Held to ``guides/the-platform.md`` by ``tests/test_guides.py``, so the guide and the
+#: refusal cannot name two different commands.
+AWS_LOGIN_COMMAND: Final = "sb-aws-creds login"
 
 
 def shell_session_argv(instance_id: str) -> tuple[str, ...]:

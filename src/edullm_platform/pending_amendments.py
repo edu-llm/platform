@@ -803,7 +803,41 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # infra/notifications.yaml. So the digest worth reading is the one Lambda answers with
     # after that, and tools/verify_deployed_lambdas.py is what reads it. A workflow log saying
     # the upload succeeded is not the same claim.
-    releases: tuple[PendingRelease, ...] = ()
+    #
+    # A TENTH, AND IT IS THE FIRST ONE HERE WHERE THE FUNCTION IS A BYSTANDER TO ITS OWN
+    # ENTRY. The janitor's zip carries researcher_lane.py for two tag keys and a role name,
+    # and researcher_lane.py is where `load_lane_settings` lives. That function defaulted to
+    # `"config/reports/researcher-lane.yaml"`, a path against the working directory, which is
+    # the defect that made `edullm run` and `edullm shell` unusable outside a platform
+    # checkout; fixing it changes the module and therefore the bytes of a zip that never
+    # calls it. The janitor reads its three numbers from the environment -- see
+    # tools/build_janitor_lambda.py's header for why it carries no configuration at all --
+    # so nothing this function does can differ before and after the release, and the window
+    # this record covers has no observable behaviour in it at all.
+    #
+    # Recorded rather than released here for one reason worth writing down: a second branch
+    # is in flight over the same zip, reworking the handler so that one unreachable machine
+    # cannot end a sweep. Two releases of one function from two branches is the arrangement
+    # that produced the "released twice in the space of an hour" paragraph above, and this
+    # one is avoidable by waiting. Whichever lands second cuts the release, and this record
+    # is deleted in that commit.
+    releases: tuple[PendingRelease, ...] = (
+        PendingRelease(
+            function="janitor",
+            reason=(
+                "researcher_lane.py stopped naming config/reports/researcher-lane.yaml by a "
+                "path against the working directory, which is what made edullm run and "
+                "edullm shell raise FileNotFoundError for anybody outside a platform "
+                "checkout. The janitor carries that module for its tag keys and reads its "
+                "own three numbers from the environment, so its behaviour is unchanged and "
+                "only the packaged bytes moved."
+            ),
+            cleared_by="uv run python tools/release_lambda.py --function janitor",
+            builds_to="50922d41d3750af154e3b2342cfe634c4105b398ed2895a2de585b48579b98d9",
+            released="10f94f8a70828c7b6d4c70ab99319ac0e6de037f4710e9ae105df31f0806aace",
+            recorded_on=date(2026, 8, 6),
+        ),
+    )
     return one_record_per_function(releases)
 
 

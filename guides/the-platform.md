@@ -184,7 +184,15 @@ The same loop without the Actions UI. One binary:
 uv tool install --force git+https://github.com/edu-llm/platform
 ```
 
-You need [uv](https://docs.astral.sh/uv/) and a `gh` that is logged in with `gh auth login`. Nothing else. `edullm` drives `git` and `gh` rather than holding a credential of its own, so it can do what you can do and nothing more, and there is still no AWS account anywhere in this.
+You need [uv](https://docs.astral.sh/uv/) and a `gh` that is logged in with `gh auth login`. That is the whole of it for the five verbs below: `edullm` drives `git` and `gh` rather than holding a credential of its own, so it can do what you can do and nothing more, and there is no AWS account anywhere in this.
+
+**Two verbs are not like that and this is the one place that is said.** `edullm run` and `edullm shell` start a machine of your own, which means they need an AWS session on your laptop as well, and the [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html) beside the AWS CLI. The session comes from the broker and from nowhere else:
+
+```
+sb-aws-creds login
+```
+
+There are no long-lived AWS keys in this account and creating one is refused, so that command, followed by the approval it opens in your browser, is the way. Without it both verbs stop before they start anything and say the same thing. The two are also the exploration route rather than the submission path: nothing they do is checked, priced, approved or recorded as citable, so reach for `check` and `submit` for anything that is meant to count.
 
 Then, from a checkout of the repository you work in:
 
@@ -213,6 +221,8 @@ no refusals. edullm submit will dispatch this.
 | `edullm status` | Your recent runs. Give it a run id for one of them |
 | `edullm logs <run-id>` | The last lines that run printed |
 | `edullm cancel <run-id> --reason ...` | Stops it. The reason is required, and is recorded |
+| `edullm run --project p --compute c -- <command>` | A machine of your own, this directory on it, output streamed back. Needs an AWS session |
+| `edullm shell --project p --compute c` | A terminal on that same machine, or a notebook with `--notebook`. Needs an AWS session |
 
 The flags are the fields the form asks for, and `check` and `submit` take the same ones. The command, the workload profile and a suggested machine are properties of the code, so they live in `.edullm/run.yaml` and travel with it in git; what a run costs today is typed on the command line, because one commit run by two people belongs to two teams.
 

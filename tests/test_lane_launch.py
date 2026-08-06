@@ -33,7 +33,7 @@ from edullm_platform.researcher_lane import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SETTINGS = load_working_tier_settings(PROJECT_ROOT / "config" / "reports" / "working-tier.yaml")
+SETTINGS = load_working_tier_settings(PROJECT_ROOT / "config")
 REQUEST = LaneRequest(project="mixlaw", person="caiiris", compute_profile="gpu-1xt4")
 
 #: The account id AWS reserves for documentation. Twelve zeroes would be rejected by

@@ -11,7 +11,21 @@ business holding a cloud credential.
 The reviewed configuration is the real ``config/`` in this repository rather than a fixture
 copy, for the reason ``tests/test_compile_submission_cli.py`` gives about the same choice:
 the values that decide a submission's fate are in those files, and a fixture copy would be
-a second answer to every question they settle.
+a second answer to every question they settle. It is reached by ``--config-dir``, which is an
+absolute path, and never by the process finding it.
+
+**AND THE PROCESS IS PUT IN THE TEMPORARY DIRECTORY IT IS TOLD ABOUT, WHICH IT WAS NOT UNTIL
+2026-08-06.** ``invoke`` handed ``main`` a ``cwd`` and left the interpreter's own working
+directory where pytest started it, which is the root of this repository. So every relative
+path the CLI resolved -- ``config/reports/working-tier.yaml`` among them -- found a platform
+checkout under it, in the suite and only in the suite. ``edullm run`` and ``edullm shell``
+shipped and had never worked anywhere else, with 207 test modules green behind them, because
+the one condition that would have shown it was the condition the suite could not produce.
+
+:func:`invoke` now chdirs, so a verb that reads a file relative to the working directory
+reads it out of an empty temporary directory here exactly as it would on a researcher's
+laptop. Nothing was moved to make that safe: every fixture in this suite is reached through
+``PROJECT_ROOT``, which is absolute and computed from ``__file__``.
 """
 
 from __future__ import annotations
@@ -278,6 +292,11 @@ def invoke(
     the runner is a fake and the ``git`` this suite does not shell out to is still wanted by
     anything that looks.
     """
+    # THE PROCESS GOES WHERE THE CALLER SAYS THE PERSON IS STANDING. The header says what one
+    # line of this bought and what its absence cost. It is deliberately not conditional: a
+    # case that wanted the repository under its feet would be a case testing the CLI in a
+    # condition no researcher is ever in.
+    monkeypatch.chdir(cwd)
     monkeypatch.setenv("GH_CONFIG_DIR", str(cwd / "_no-gh-config"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home(cwd)))
     tools = cwd / "_tools"
