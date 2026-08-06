@@ -40,10 +40,18 @@ def usage_of(verb: str) -> str:
 def test_a_shell_hands_over_a_terminal_on_a_machine(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Mutation: run one command instead.
+    """**THE ACCOUNT'S DEFAULT SESSION IS NOT A SHELL ANYBODY WOULD CHOOSE, AND THIS NAMED IT.**
+    Mutation: drop the document and take the account's preference again, which is what shipped.
 
-    A session with no document is the account's own shell preference, which is what somebody
-    asking for a shell means. Naming a document would run something and exit.
+    Measured through this verb against this account on 2026-08-06: the default preference runs
+    ``sh``, not a login shell, on the bare default ``PATH`` with ``LD_LIBRARY_PATH`` unset and no
+    ``nvcc``, standing in ``/var/snap/amazon-ssm-agent/13349``. ``edullm run`` puts the tree in
+    ``/work/<project>``, so the researcher who debugged at that prompt and then scripted the
+    same thing had a different shell, a different environment and none of their files.
+
+    The objection this replaces -- that naming a document "would run one command and exit" -- is
+    answered by which command: the script ends in ``exec bash -i``, so the one command is the
+    shell itself.
     """
     runner = a_laptop(tmp_path)
 
@@ -55,10 +63,13 @@ def test_a_shell_hands_over_a_terminal_on_a_machine(
     )
 
     assert code == EXIT_OK, out + err
-    started = runner.ran("aws", "ssm", "start-session")
+    opened = runner.ran("aws", "ssm", "start-session")[0]
+    command = json.loads(opened[-1])["command"][0]
 
-    assert started
-    assert "--document-name" not in started[0]
+    assert "AWS-StartInteractiveCommand" in opened
+    assert command.startswith("bash -lc ")
+    assert "cd /work/mixlaw" in command
+    assert command.rstrip("'").endswith("exec bash -i")
 
 
 def test_a_shell_keeps_the_researcher_s_own_stdin_and_is_not_handed_a_pipe(
@@ -73,6 +84,11 @@ def test_a_shell_keeps_the_researcher_s_own_stdin_and_is_not_handed_a_pipe(
     file. This verb is the opposite case: it is a person at a keyboard, and a pipe in place of
     their terminal would swallow every character they type into a shell that then does nothing.
     The line is whether the session asks the researcher for anything.
+
+    Two sessions are opened now and only the first is the person's: the second carries the work
+    directory back once they have left, reads no keystrokes, and needs exactly the standard
+    input ``run`` needs for the same reason. So the property is per-session rather than a
+    property of the verb, and the pair is asserted in order.
     """
     runner = a_laptop(tmp_path)
 
@@ -83,7 +99,7 @@ def test_a_shell_keeps_the_researcher_s_own_stdin_and_is_not_handed_a_pipe(
         monkeypatch=monkeypatch,
     )
 
-    assert runner.held_stdin_open_for("aws", "ssm", "start-session") == [False]
+    assert runner.held_stdin_open_for("aws", "ssm", "start-session") == [False, True]
 
 
 def test_a_shell_hands_the_person_their_own_terminal_rather_than_a_transcript(
@@ -99,6 +115,10 @@ def test_a_shell_hands_the_person_their_own_terminal_rather_than_a_transcript(
 
     Nothing is printed from the result either, and the empty stdout below is why: a captured
     stream that is also echoed puts every line on the screen twice.
+
+    The second session in the pair is the carry-back, which runs after the person has gone and
+    is captured like every other question this binary asks. Handing it the terminal too would
+    put an ``aws s3 sync`` on the screen of somebody who has already left.
     """
     runner = a_laptop(tmp_path)
 
@@ -109,7 +129,7 @@ def test_a_shell_hands_the_person_their_own_terminal_rather_than_a_transcript(
         monkeypatch=monkeypatch,
     )
 
-    assert runner.handed_over_the_terminal_for("aws", "ssm", "start-session") == [True]
+    assert runner.handed_over_the_terminal_for("aws", "ssm", "start-session") == [True, False]
     assert "hello from the machine" not in out
 
 

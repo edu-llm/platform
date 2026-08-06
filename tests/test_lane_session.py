@@ -23,6 +23,7 @@ from edullm_platform.cli.lane import (
     SESSION_PLUGIN,
     agent_online_argv,
     command_line,
+    interactive_script,
     load_working_tier_settings,
     missing_plugin_refusal,
     notebook_forward_argv,
@@ -39,20 +40,27 @@ SETTINGS = load_working_tier_settings(PROJECT_ROOT / "config")
 INSTANCE = "i-0000000000000aaaa"
 
 
-def test_a_shell_is_a_session_and_carries_no_document() -> None:
-    """Mutation: name a document.
+def test_a_shell_stands_in_the_work_directory_with_the_machine_s_own_environment() -> None:
+    """**THE ACCOUNT'S DEFAULT SESSION PREFERENCE IS NOT A SHELL ANYBODY WOULD CHOOSE.**
+    Mutation: go back to no document, which is what shipped.
 
-    The default session document is the account's shell preference, which is what a person
-    expects from "give me a shell". Naming AWS-StartInteractiveCommand instead would run one
-    command and exit, which is the other verb.
+    Measured through ``edullm shell`` against this account on 2026-08-06. The preference runs
+    ``sh``; ``shopt`` is not a command in it; it is not a login shell, so ``PATH`` carries no
+    CUDA and ``LD_LIBRARY_PATH`` is unset; and it stands the researcher in
+    ``/var/snap/amazon-ssm-agent/13349``, which is the agent's own directory and holds none of
+    their files. ``edullm run`` puts the tree in ``/work/<project>`` and runs there.
+
+    The reason recorded against naming a document -- that it "would run one command and exit,
+    which is the other verb" -- is answered by what the command is. It ends in ``exec bash -i``,
+    so the one command is the shell, and the session is attached to it rather than to a wrapper.
     """
-    assert shell_session_argv(INSTANCE) == (
-        "aws",
-        "ssm",
-        "start-session",
-        "--target",
-        INSTANCE,
-    )
+    argv = shell_session_argv(INSTANCE, uri="s3://a/b/", project="p")
+    command = json.loads(argv[-1])["command"][0]
+
+    assert argv[:5] == ("aws", "ssm", "start-session", "--target", INSTANCE)
+    assert "AWS-StartInteractiveCommand" in argv
+    assert shlex.split(command)[:2] == ["bash", "-lc"]
+    assert shlex.split(command)[2] == interactive_script(uri="s3://a/b/", project="p")
 
 
 def test_a_notebook_is_a_port_forward_and_opens_nothing_on_the_instance() -> None:
@@ -83,7 +91,7 @@ def test_a_remote_command_streams_rather_than_returning_at_the_end() -> None:
     argv = remote_command_argv(INSTANCE, command="echo hello")
 
     assert "AWS-StartNonInteractiveCommand" in argv
-    assert json.loads(argv[-1]) == {"command": ["bash -c 'echo hello'"]}
+    assert json.loads(argv[-1]) == {"command": ["bash -lc 'echo hello'"]}
 
 
 def test_the_parameters_document_is_serialised_rather_than_interpolated() -> None:
@@ -144,10 +152,10 @@ def test_a_command_is_wrapped_for_a_shell_because_the_document_runs_none() -> No
     closes the wrapper early and the tail of their command is then read as shell of its own,
     which ``git commit -m 'don't'`` produces.
     """
-    assert under_a_shell("echo a; echo b") == "bash -c 'echo a; echo b'"
+    assert under_a_shell("echo a; echo b") == "bash -lc 'echo a; echo b'"
 
     wrapped = under_a_shell("""echo "it's" quoted""")
-    assert shlex.split(wrapped)[:2] == ["bash", "-c"]
+    assert shlex.split(wrapped)[:2] == ["bash", "-lc"]
     assert shlex.split(wrapped)[2] == """echo "it's" quoted"""
 
 
@@ -321,7 +329,7 @@ def test_nothing_the_lane_runs_needs_a_key_or_an_open_port() -> None:
     goes through start-session.
     """
     every = (
-        shell_session_argv(INSTANCE),
+        shell_session_argv(INSTANCE, uri="s3://a/b/", project="p"),
         notebook_forward_argv(INSTANCE, settings=SETTINGS, local_port=8890),
         remote_command_argv(INSTANCE, command="true"),
         agent_online_argv(INSTANCE),
