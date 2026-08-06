@@ -296,6 +296,12 @@ jobs:
               if line
           ]
 
+          # THE ROWS THIS DROPS ARE COUNTED, BECAUSE A LIST OFFERED AS "YOUR RUNS" HAS TO BE
+          # ABLE TO SAY IT IS NOT ALL OF THEM. Leaving an untagged job out is the right
+          # call -- see the step comment -- but it is a job Batch listed and this did not
+          # show, which is indistinguishable from a job nobody looked for unless the
+          # difference is written down.
+          unattributed = 0
           mine = []
           for start in range(0, len(ids), 100):
               batch = ids[start : start + 100]
@@ -306,10 +312,17 @@ jobs:
                   text=True,
               )
               for job in json.loads(described.stdout)["jobs"]:
-                  if (job.get("tags") or {}).get("edullm:submitter") == actor:
+                  submitter = (job.get("tags") or {}).get("edullm:submitter")
+                  if submitter == actor:
                       mine.append(job)
+                  elif submitter is None:
+                      unattributed += 1
 
           mine.sort(key=lambda job: job.get("createdAt", 0), reverse=True)
+
+          #: How many rows the table carries. A summary nobody scrolls is its own kind of
+          #: wrong answer, so the cap stays and what it hides is declared under the table.
+          SHOWN = 20
 
           # BEFORE THE ANSWER, BECAUSE IT CHANGES WHAT THE ANSWER MEANS. A list of runs that
           # is missing the queues Batch refused to search is not a list of your runs, and the
@@ -319,6 +332,19 @@ jobs:
                   f"> **The search was incomplete.** {len(unsearched)} of the queue searches "
                   "were refused, most likely throttled, so any run of yours on those queues "
                   "is missing from what follows. Dispatching again re-runs the search."
+              )
+              print()
+
+          # THE SAME SENTENCE THE SEARCH-REFUSED CASE GETS, FOR THE OTHER WAY A ROW GOES
+          # MISSING. "No runs found" spoken over jobs that were listed and could not be
+          # attributed is the confident wrong answer twice over, because this is the branch
+          # a person reaches when they already suspect something is wrong.
+          if unattributed:
+              print(
+                  f"> **{unattributed} listed job(s) carry no submitter tag** and are left "
+                  "out of what follows rather than shown as yours. A run admitted before "
+                  "that tag existed is one of them. Naming its run id searches for that one "
+                  "job regardless of whose it is."
               )
               print()
 
@@ -336,10 +362,25 @@ jobs:
           print()
           print("| Run | Status | Queue |")
           print("| --- | --- | --- |")
-          for job in mine[:20]:
+          for job in mine[:SHOWN]:
               queue = job.get("jobQueue", "").rsplit("/", 1)[-1]
               print(f"| `{job['jobName']}` | {job.get('status')} | {queue} |")
           print()
+          # UNDER THE TABLE RATHER THAN OVER IT, AND ONLY WHEN IT IS TRUE. The rows above
+          # are the newest by creation, and a run still going after several hours sorts
+          # below everything submitted since -- including the ones that have already
+          # finished, which this searches for too. So the row a person dispatching a blank
+          # listing is most often looking for is the row the cap drops first, and it was
+          # dropped in silence: `run_019fd602-4e05` was RUNNING, three hours and twenty
+          # minutes in, and absent from a table the named search answered immediately.
+          if len(mine) > SHOWN:
+              print(
+                  f"> **This is the {SHOWN} newest of {len(mine)} and not all of them.** "
+                  f"{len(mine) - SHOWN} more are yours and are not above, newest first, so "
+                  "a run that has been going for hours sits below anything submitted since. "
+                  "Naming its run id searches every queue and every state for that one job."
+              )
+              print()
           print("Reporting on the newest below. To act on another, dispatch again naming it.")
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as handle:
