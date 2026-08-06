@@ -15,12 +15,24 @@ than the refusal you were trying to get around.
 Install and version.
 
 ```bash
+uv tool uninstall edullm-platform
 uv tool install --force git+https://github.com/edu-llm/platform
 edullm --version
 ```
 
 Unpinned on purpose. That line is true after every release and re-running it is the upgrade,
 where a tag written here would be a version this file has to be edited for.
+
+The first line is a one-time repair for an install made before v4.2.2, and only for that. The
+distribution used to be called `edullm-platform` while the command was `edullm`, so `uv tool
+list` printed a word nobody types and `uv tool uninstall edullm` answered `not installed` to
+somebody holding the binary. It is `edullm` now, and the two names agree. **Run it before the
+install and not after.** Both entries own the same `edullm` executable, and uv deletes that
+file when it removes the old entry without noticing the new install still needs it, so the
+wrong order leaves `uv tool list` reporting a healthy `edullm` and nothing on the path. If you
+have already done it that way round, re-run the install line. On a machine that never had the
+old name it prints ``error: `edullm-platform` is not installed`` and exits 2, which is the
+expected answer and costs nothing.
 
 `uv tool upgrade` follows the ref the install named, so what it does depends on how the tool got
 here. From the bare URL above it re-resolves the default branch and upgrades. From a release

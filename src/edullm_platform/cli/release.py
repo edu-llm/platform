@@ -3,10 +3,36 @@
 ONE STRING SAYS HOW TO INSTALL THIS AND NOTHING ELSE IS ALLOWED TO SAY IT. The command in
 ``pyproject.toml``'s comment was wrong for as long as it existed -- ``uv tool install
 edullm --from git+...`` names the console script where ``--from`` wants the distribution,
-and uv answers "Package name (``edullm-platform``) provided with ``--from`` does not match
-install request (``edullm``)" -- and by the time anybody ran it, it had been copied into
-two transcripts. :func:`install_command` is the one place it is spelled, and
+and back then those were two different words, so uv answered "Package name
+(``edullm-platform``) provided with ``--from`` does not match install request (``edullm``)"
+-- and by the time anybody ran it, it had been copied into two transcripts.
+:func:`install_command` is the one place it is spelled, and
 ``tests/test_cli_install_command.py`` holds every other copy to it.
+
+**THE DISTRIBUTION IS THE CONSOLE SCRIPT NOW, AND IT WAS NOT FOR FOUR MAJORS.** The
+mismatch outlived the ``--from`` line it produced, and the half that hurt was not the
+install. ``uv tool list`` printed ``edullm-platform``, a word nobody had typed, and
+``uv tool uninstall edullm`` answered "``edullm`` is not installed" to somebody looking
+straight at the binary. That is a wrong answer rather than a packaging detail, and it was
+about to be given to thirty-five people who only ever see the command name.
+
+**THE ONE-TIME COST, AND THE ORDER OF THE TWO COMMANDS IS THE WHOLE OF IT.** Reproduced on
+uv 0.9.17 with a throwaway package that renames itself the way this one did. An install
+made before the rename is filed under ``edullm-platform``, and an install of ``edullm``
+does not replace it: uv keeps both entries and ``uv tool list`` prints two.
+
+Uninstalling the old name *after* installing the new one is the trap. Both entries own an
+executable called ``edullm``, uv removes the file when it removes the entry, and it does
+not check that another install is still pointing at it. So ``uv tool uninstall
+edullm-platform`` in that state prints ``Uninstalled 1 executable: edullm``, leaves
+``uv tool list`` reporting a healthy ``edullm``, and leaves the bin directory empty --
+``command not found`` from an install uv says is fine. Re-running the install line repairs
+it.
+
+Uninstall first and none of that happens, which is why every copy of the instruction in
+this repository is written in that order. ``uv tool uninstall`` on a name that was never
+installed prints ``error: `edullm-platform` is not installed`` and exits 2, which is
+harmless and has to be said, because most readers of the line are in exactly that state.
 
 ``uv tool upgrade`` IS STILL NOT THE SECOND COMMAND, AND IT IS THE ONE EVERYBODY WILL TRY.
 What it does depends on how the install was made, because it follows the git ref the install
@@ -53,8 +79,10 @@ from edullm_platform.cli.workspace import CommandRunner
 
 __all__ = [
     "DISTRIBUTION",
+    "FORMER_DISTRIBUTION",
     "InstalledVersion",
     "LatestRelease",
+    "former_install_removal_command",
     "install_command",
     "installed_version",
     "latest_release",
@@ -62,9 +90,17 @@ __all__ = [
     "staleness_said",
 ]
 
-#: The distribution, which is not the console script. Getting these two the wrong way round
-#: is the whole of the bug this module's docstring opens with.
-DISTRIBUTION: Final = "edullm-platform"
+#: The distribution, which is also the console script, and the two are held equal by
+#: ``tests/test_cli_install_command.py``. This is the name ``uv tool list`` prints, the name
+#: ``uv tool uninstall`` takes, and the name :func:`installed_version` asks
+#: ``importlib.metadata`` for, so a value here that is not ``project.name`` makes
+#: ``edullm --version`` answer "not installed" from inside a working install.
+DISTRIBUTION: Final = "edullm"
+
+#: What this was called until the rename, kept because it is the argument to the one command
+#: an install from before it needs. Nothing installs under this name any more; it exists so
+#: that the sentence telling somebody how to clear the stale entry has one spelling.
+FORMER_DISTRIBUTION: Final = "edullm-platform"
 
 #: How long the version probe may take before ``submit`` gives up on it and dispatches
 #: anyway. Short because the probe is a courtesy and the dispatch is the job: a researcher
@@ -95,6 +131,17 @@ def install_command(*, repository: str, tag: str | None = None) -> str:
     """
     pinned = f"@{tag}" if tag else ""
     return f"uv tool install --force git+https://github.com/{repository}{pinned}"
+
+
+def former_install_removal_command() -> str:
+    """The one command an install from before the rename needs, spelled once.
+
+    Same bargain as :func:`install_command`. This line has to appear beside every install
+    line in the tree, thirty-five people are going to run it, and a second copy of it is how
+    the install line spent two transcripts being wrong. ``tests/test_cli_install_command.py``
+    holds every copy to this one and holds it to run *before* the install rather than after.
+    """
+    return f"uv tool uninstall {FORMER_DISTRIBUTION}"
 
 
 @dataclass(frozen=True)

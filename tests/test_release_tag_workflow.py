@@ -701,7 +701,7 @@ def declaring(version: str, *, why: str | None = None, size: str = "minor") -> s
     it, rather than agreeing with itself.
     """
     reason = f"# WHY THIS IS A {size.upper()} RATHER THAN A PATCH. {why}\n" if why else ""
-    return f'[project]\nname = "edullm-platform"\n{reason}version = "{version}"\n'
+    return f'[project]\nname = "edullm"\n{reason}version = "{version}"\n'
 
 
 def install_real_tooling(

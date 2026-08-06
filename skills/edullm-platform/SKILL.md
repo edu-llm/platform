@@ -31,17 +31,34 @@ and run the line above again. Do not reach for `pip` or `pipx` instead.
 
 Two near misses that both look like they ought to work.
 
-- `uv tool install edullm` answers `not found in the package registry`. `edullm` is the
-  executable, `edullm-platform` is the distribution, and neither is published to an index,
-  so there is nothing at either name to resolve. The line above installs from git.
+- `uv tool install edullm` answers `not found in the package registry`. The distribution and
+  the executable are both called `edullm` now, but neither this project nor anything else at
+  that name is published to an index, so there is nothing to resolve. The line above
+  installs from git.
 - `uv tool upgrade` does something different depending on how the tool was installed, which
-  is why it is not the instruction here. `uv tool upgrade edullm` errors whatever you have,
-  because `edullm` is the executable rather than the installed tool. `uv tool upgrade
-  edullm-platform` follows the git ref the install named: from the bare URL above it
-  re-resolves the default branch and does upgrade, but from a release note's line, which
-  pins that release's tag, it prints `Nothing to upgrade` and exits 0 however far behind the
-  install is. **Re-running the install line above is the upgrade for either, so run that
-  rather than working out which install this is.**
+  is why it is not the instruction here. `uv tool upgrade edullm` follows the git ref the
+  install named: from the bare URL above it re-resolves the default branch and does upgrade,
+  but from a release note's line, which pins that release's tag, it prints `Nothing to
+  upgrade` and exits 0 however far behind the install is. **Re-running the install line
+  above is the upgrade for either, so run that rather than working out which install this
+  is.**
+
+**One-time, and only for an install made before v4.2.2.** Until then the distribution was
+called `edullm-platform` while the command was `edullm`, so `uv tool list` named something
+nobody types and `uv tool uninstall edullm` answered `not installed` to somebody holding the
+binary. An install of `edullm` does not replace an `edullm-platform` one, so clear the old
+name **before** installing:
+
+```bash
+uv tool uninstall edullm-platform
+uv tool install --force git+https://github.com/edu-llm/platform
+```
+
+That order and not the other one. Both entries own the same `edullm` executable and uv
+deletes the file with the entry, so uninstalling afterwards leaves `uv tool list` reporting a
+healthy `edullm` and nothing on the path. Re-run the install line if that has already
+happened. Where the old name was never installed the uninstall exits 2 with ``error:
+`edullm-platform` is not installed``, which is the expected answer.
 
 Re-install before you trust an answer that matters. The tool carries its own copy of the
 reviewed configuration, frozen at the release it was built from, and prices against that
