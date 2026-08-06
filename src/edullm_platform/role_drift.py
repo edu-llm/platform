@@ -31,6 +31,14 @@ and is therefore still visible to the comparison. A substitution the folding doe
 recognise raises :class:`PolicyNotComparableError` rather than being guessed at or
 compared literally.
 
+One kind of ``${...}`` is not a substitution at all and must survive: an IAM policy
+variable such as ``${aws:SourceIdentity}``, which CloudFormation passes through untouched
+and IAM resolves per request. Folding it would be inventing a value and refusing it would
+make the researcher role's working-tier fence — a ``NotResource`` built on that exact
+variable — the one statement in this repository that cannot be compared to anything.
+:data:`IAM_POLICY_VARIABLE` is how the two are told apart, and by grammar rather than by
+a list of names.
+
 The account is the one field that cannot be compared on its own terms, because the
 secret scan refuses a raw account ID and capture has to mask it before a record can hold
 it. A single mask would make a cross-account grant indistinguishable from a local one,
@@ -89,6 +97,7 @@ __all__ = [
     "DATASET_VALIDATOR_ROLE_TEMPLATES",
     "EVIDENCE_ONLY_ROLE_FIELDS",
     "FOREIGN_ACCOUNT_PLACEHOLDER",
+    "IAM_POLICY_VARIABLE",
     "INFRA_DEPLOYER_ROLE_NAME",
     "LANE_ROLE_CAPTURE_DIR",
     "LANE_ROLE_TEMPLATES",
@@ -269,6 +278,38 @@ SUBSTITUTION_CLOSE: Final = "}"
 ARN_FIELD_COUNT: Final = 6
 AWS_ACCOUNT_ID: Final = re.compile(r"^[0-9]{12}$")
 IAM_POLICY_RESOURCE: Final = re.compile(r"^policy/(?P<name>.+)$")
+
+#: An IAM policy variable, which is the one kind of ``${...}`` that is *meant* to survive
+#: into the deployed document. IAM evaluates it per request; CloudFormation never touches
+#: it. Both sides therefore carry the identical characters and the comparison wants them
+#: left exactly as written, where every other surviving ``${...}`` is a template bug.
+#:
+#: **Matched by grammar rather than by a list of prefixes, because the documented set has
+#: no end.** ``reference_policies_variables.html`` says "you can use any single-valued
+#: condition key as a variable", and every AWS service defines its own condition keys, so
+#: an allow-list would be a list of the ones somebody has hit so far. It would have held
+#: ``aws:`` and not ``saml:``, then both and not ``s3:``, and each addition would arrive as
+#: a capture failing on a role that was correct.
+#:
+#: The grammar separates the two cleanly, and this is the part worth checking rather than
+#: taking on trust. A condition key is always ``prefix:key``, with exactly one colon.
+#: Everything ``Fn::Sub`` resolves has either no colon at all -- a logical ID or a parameter
+#: name, which CloudFormation requires to be alphanumeric, optionally followed by
+#: ``.Attribute`` -- or two, as every pseudo-parameter is spelled ``AWS::Something``. So
+#: requiring one colon and forbidding a second in the key admits ``${aws:PrincipalTag/x}``
+#: and ``${saml:namequalifier}`` and ``${cognito-identity.amazonaws.com:sub}``, and refuses
+#: ``${AWS::Region}`` and ``${StackName}`` and ``${MyRole.Arn}``. The separation is a
+#: property of the two grammars and not a judgement about which names look plausible.
+#:
+#: ``[*?$]`` is the other documented form: the three predefined variables that stand for a
+#: literal asterisk, question mark and dollar sign, under "Special characters" on the same
+#: page. A default value, ``${aws:PrincipalTag/team, 'company-wide'}``, is admitted by the
+#: key half, which accepts anything that is not a colon or a brace.
+#:
+#: A ``Fn::Sub`` variable map could define a name of any shape at all, including one with a
+#: colon in it, which would defeat this. It cannot reach here: :func:`_template_string`
+#: accepts only a ``Fn::Sub`` whose argument is a plain string, for its own reasons.
+IAM_POLICY_VARIABLE: Final = re.compile(r"\$\{(?:[*?$]|[A-Za-z0-9._-]+:[^:{}]+)\}")
 
 
 class PolicyNotComparableError(ValueError):
@@ -467,8 +508,13 @@ def normalize_policy_string(value: str, *, partition: str, region: str) -> str:
     the field holds exactly one of the accepted values for its own position. A string
     that is not a six-field ARN is returned unchanged.
 
-    Raises :class:`PolicyNotComparableError` if a substitution survives, which means the
-    template used one this does not understand, or used one somewhere it is not folded.
+    An IAM policy variable is returned unchanged and is not a failure. It is not a
+    substitution that failed to resolve; it is a value IAM resolves at request time, which
+    both sides therefore spell identically. See :data:`IAM_POLICY_VARIABLE`.
+
+    Raises :class:`PolicyNotComparableError` if any other substitution survives, which
+    means the template used one this does not understand, or used one somewhere it is not
+    folded.
     """
     fields = split_arn_fields(value)
     if fields is not None:
@@ -491,7 +537,9 @@ def normalize_policy_string(value: str, *, partition: str, region: str) -> str:
             placeholder=ACCOUNT_PLACEHOLDER,
         )
         value = ":".join(fields)
-    if SUBSTITUTION_OPEN in value:
+    # Policy variables are removed only to ask the question, and the answer is about
+    # ``value``, which is returned with them still in it.
+    if SUBSTITUTION_OPEN in IAM_POLICY_VARIABLE.sub("", value):
         raise PolicyNotComparableError(
             f"a substitution this comparison does not understand survived normalisation: {value!r}"
         )

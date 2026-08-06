@@ -843,6 +843,100 @@ def test_a_substitution_the_normalisation_does_not_understand_is_refused() -> No
         )
 
 
+@pytest.mark.parametrize(
+    ("value", "what"),
+    [
+        (
+            "arn:aws:s3:::edullm-scratch/${aws:SourceIdentity}/*",
+            "the researcher role's working-tier fence, spelled exactly as it is committed",
+        ),
+        (
+            "${aws:PrincipalTag/project}",
+            "a tag variable used as a whole condition value",
+        ),
+        (
+            "arn:aws:sns:*:*:${aws:PrincipalTag/access-project}-${aws:PrincipalTag/x}-*",
+            "two in one string, which AWS's own documentation gives as an example",
+        ),
+        (
+            "arn:aws:s3:::a/${aws:PrincipalTag/team, 'company-wide'}/*",
+            "a default value, which puts a comma and quotes inside the braces",
+        ),
+        (
+            "arn:aws:s3:::a/${saml:namequalifier}/*",
+            "a prefix that is not aws:, which no allow-list built from what we hit would hold",
+        ),
+        (
+            "arn:aws:s3:::a/${cognito-identity.amazonaws.com:sub}/*",
+            "a federation provider key, whose prefix carries dots and a hyphen",
+        ),
+        (
+            "arn:aws:s3:::a/${*}/${?}/${$}",
+            "the three predefined variables that stand for literal punctuation",
+        ),
+    ],
+)
+def test_an_iam_policy_variable_survives_normalisation(value: str, what: str) -> None:
+    # An IAM policy variable is not a substitution that failed. CloudFormation passes it
+    # through untouched and IAM resolves it per request, so the template and the account
+    # hold the identical characters and the comparison's job is to leave them alone.
+    # Refusing here is what stopped the researcher role from ever being captured.
+    folded = normalize_policy_string(value, partition=PARTITION, region=REGION)
+
+    assert "${" in folded, what
+    # Identical on both sides means folding twice has to reach the same place, which is
+    # the property the comparison actually relies on.
+    assert normalize_policy_string(folded, partition=PARTITION, region=REGION) == folded
+
+
+def test_a_policy_variable_is_not_folded_into_agreement_with_a_different_one() -> None:
+    # The failure worth guarding against is not the refusal, it is the over-correction:
+    # a normalisation that blanked every ${...} would make a fence around your own prefix
+    # compare equal to a fence around your project's, and report nothing.
+    own_prefix = "arn:aws:s3:::edullm-scratch/${aws:SourceIdentity}/*"
+    project_prefix = "arn:aws:s3:::edullm-scratch/${aws:PrincipalTag/project}/*"
+
+    assert normalize_policy_string(
+        own_prefix, partition=PARTITION, region=REGION
+    ) != normalize_policy_string(project_prefix, partition=PARTITION, region=REGION)
+
+
+@pytest.mark.parametrize(
+    ("value", "what"),
+    [
+        (
+            "arn:${AWS::Partition}:s3:::${AWS::StackName}-artifacts/*",
+            "a pseudo-parameter, which is spelled with two colons and never one",
+        ),
+        (
+            "arn:aws:s3:::${BucketNameParameter}/*",
+            "a parameter reference, which carries no colon at all",
+        ),
+        (
+            "arn:aws:s3:::${ArtifactsBucket.Arn}/*",
+            "a GetAtt, whose dot does not make it a condition key",
+        ),
+        (
+            "arn:aws:s3:::a/${!aws:SourceIdentity}/*",
+            "an escaped substitution, which is not the same string the account would hold",
+        ),
+        (
+            "arn:aws:s3:::a/${unclosed/*",
+            "an opening brace with no close, which is a template typo either way",
+        ),
+    ],
+)
+def test_a_substitution_that_is_not_a_policy_variable_is_still_refused(
+    value: str, what: str
+) -> None:
+    # The whole value of admitting policy variables depends on this half still holding.
+    # Each of these is something CloudFormation was supposed to resolve and did not, and
+    # comparing it as a literal would report drift that is not there or hide drift that is.
+    with pytest.raises(PolicyNotComparableError):
+        normalize_policy_string(value, partition=PARTITION, region=REGION)
+    assert what  # named in the parametrisation so a failure says which form was read
+
+
 def test_a_resource_drift_that_only_a_faithful_normalisation_can_see(
     publisher_template: TemplateRole,
 ) -> None:
