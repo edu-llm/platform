@@ -86,6 +86,28 @@ def fenced_blocks(text: str) -> list[str]:
     return re.findall(r"^```\n(.*?)^```$", text, re.MULTILINE | re.DOTALL)
 
 
+def _in_words(count: int) -> str:
+    """A small count as the guides write it, because they write numbers as words.
+
+    Only as far as the catalogue can reach. A twenty-first profile should fail here rather
+    than pass with a digit the pages do not use.
+    """
+    words = {
+        11: "eleven",
+        12: "twelve",
+        13: "thirteen",
+        14: "fourteen",
+        15: "fifteen",
+        16: "sixteen",
+        17: "seventeen",
+        18: "eighteen",
+        19: "nineteen",
+        20: "twenty",
+    }
+    assert count in words, f"nothing here spells {count}; extend this or use a digit"
+    return words[count]
+
+
 def to_cents(rate: Decimal) -> str:
     """A catalogue rate as the guides write it, rounded the way money is rather than the
     way :func:`round` is. ``0.5260`` is ``0.53`` here and ``0.52`` under banker's rounding.
@@ -1102,14 +1124,29 @@ def test_the_platform_guide_quotes_the_priced_range_and_the_placeable_one() -> N
     assert len(section) == 2, "the platform guide has no 'Choosing a machine' section"
     body = section[1].split("\n## ", 1)[0]
 
-    for figure, what in (
-        (to_cents(cheapest), "the cheapest shape"),
-        (to_cents(priced), "the top of the priced range"),
-        (to_cents(placeable), "the top of the range that can be started"),
-    ):
-        assert f"${figure}" in body, (
-            f"'Choosing a machine' does not quote ${figure}, which is {what}. A reader "
-            "given one of these ranges and not the other plans against the wrong one"
+    # The priced range, as a range, rather than $55.04 appearing anywhere in the section.
+    # The H100 paragraph below quotes that figure too, so presence proves nothing about
+    # whether the range a reader budgets against carries it.
+    quoted = re.findall(r"from \$(\d+\.\d\d) an hour to \$(\d+\.\d\d)", body)
+    assert quoted == [(to_cents(cheapest), to_cents(priced))], (
+        f"'Choosing a machine' quotes {quoted} as the priced range, and the catalogue "
+        f"prices ${to_cents(cheapest)} to ${to_cents(priced)}. That is the range the "
+        "dropdown offers, and it is the one somebody reads before picking a shape they "
+        "cannot have"
+    )
+    stops = re.search(r"that range stops at \$(\d+\.\d\d)", body)
+    assert stops is not None and stops.group(1) == to_cents(placeable), (
+        f"'Choosing a machine' does not say the range that can be started stops at "
+        f"${to_cents(placeable)}. Without it the page quotes one range and a reader takes "
+        "the priced top for a machine they can book"
+    )
+
+    startable = sum(1 for profile in profiles if profile.provisioned)
+    for count, what in ((len(profiles), "priced"), (startable, "startable")):
+        assert f"{_in_words(count)} " in body.lower(), (
+            f"'Choosing a machine' never says how many shapes are {what}, and the "
+            f"catalogue says {count}. The two counts are what make two ranges read as two "
+            "ranges rather than as a contradiction"
         )
 
 
