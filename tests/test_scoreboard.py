@@ -502,16 +502,23 @@ def test_the_built_column_rests_on_the_working_tree_and_on_no_lookup_that_can_fa
     """Mutation: give a `built` row a rule that needs a network, or a fallback to fall to.
 
     `Built` is the column with the fewest excuses for being wrong, and the claim made for it
-    is that every cell is derived. Verified here rather than trusted: fifty-eight of the
-    ninety-six read the tree, thirty-eight are somebody's answer that a thing does not exist
+    is that every cell is derived. Verified here rather than trusted: sixty-one of the
+    ninety-five read the tree, thirty-four are somebody's answer that a thing does not exist
     or does not apply, and none of them reaches a network or declares an `or:`. That last part
     is what matters, because the silent downgrade to opinion that made `deployed` untrustworthy
     can only happen to a cell whose lookup can fail. None of these can.
 
-    What this does not claim is that `Built` is all measurement. Thirty-eight of the cells are
-    a person's answer, and twenty-five of those are a hand-written `no` sitting in the
+    What this does not claim is that `Built` is all measurement. Thirty-four of the cells are
+    a person's answer, and twenty-two of those are a hand-written `no` sitting in the
     denominator that nobody re-reads. They cannot move without somebody editing the manifest,
     which is a different failure from the one this test holds and is not a quiet one.
+
+    THE COUNT FELL BY FOUR ON 2026-08-06 AND EVERY ONE WAS A HAND-WRITTEN `no` OVER A BUILT
+    THING. Three rows in the unowned slice said `deferred` or `nothing computes it` about the
+    exploration route, the run-ended post and the median runtime, all three of which were in
+    the tree with tests. The fourth was a withdrawn row nobody could move. A hand-written cell
+    is the one kind this file cannot re-read for itself, so the number is held here to make
+    somebody look each time it changes.
     """
     manifest = read_manifest(SURFACES)
     surfaces = [surface for group in manifest["slices"] for surface in group["surfaces"]]
@@ -538,7 +545,7 @@ def test_the_built_column_rests_on_the_working_tree_and_on_no_lookup_that_can_fa
         for surface in surfaces
         if next(key for key in surface["built"] if key != "or") == "reached"
     ], "no built cell may be a person's yes, which is the claim the `*` on the column makes"
-    assert len(spoken) == 38, "the count of hand-written built cells moved; re-read them"
+    assert len(spoken) == 34, "the count of hand-written built cells moved; re-read them"
 
 
 def test_the_detail_view_is_behind_a_flag_and_the_summary_is_the_default() -> None:
