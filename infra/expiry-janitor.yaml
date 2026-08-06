@@ -90,7 +90,7 @@ Resources:
       Code:
         S3Bucket: sbsandbox-intern-edullm-artifacts
         S3Key: expiry-janitor/expiry-janitor.zip
-        S3ObjectVersion: VS.b59wWeTsluXKozm3pf0W475vVyDzp
+        S3ObjectVersion: rvDqHdvoX4UtGiW_rxkGlEh6pnZGmopg
       # THE THREE NUMBERS, FROM config/reports/researcher-lane.yaml AND NOT FROM ANYBODY'S
       # MEMORY. The zip carries no configuration, so this is how they reach the function, and
       # tests/test_janitor_infrastructure.py holds each one equal to that file. The handler
