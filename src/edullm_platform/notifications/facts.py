@@ -72,7 +72,11 @@ from ..contracts.execution import ExecutionTargetCatalog
 from ..contracts.identity import RUN_ID_REGEX
 from ..contracts.inventory import OrganizationInventory
 from ..contracts.results import CheckpointListingOutcome
-from ..contracts.workload import WorkloadCatalog
+from ..contracts.workload import (
+    ComputeProfile,
+    WorkloadCatalog,
+    compute_maximum_compute_cost_usd,
+)
 from ..lifecycle_projection import (
     CHECKPOINT_DIR_VARIABLE,
     EVENTBRIDGE_BATCH_DETAIL_TYPE,
@@ -263,12 +267,18 @@ def _profile_named_by(queue: str | None, targets: ExecutionTargetCatalog) -> str
     return None
 
 
-def _rate_for(profile: str | None, catalog: WorkloadCatalog) -> Decimal | None:
+def _priced_by(profile: str | None, catalog: WorkloadCatalog) -> ComputeProfile | None:
+    """The whole catalog entry, because the money needs two fields off it and not one.
+
+    This returned a bare rate until 2026-08-06 and the node count was dropped on the floor.
+    Every profile in ``config/workload-catalog.yaml`` is one machine today, so the two
+    products agreed with the rest of the platform by arithmetic accident.
+    """
     if profile is None:
         return None
     for entry in catalog.compute_profiles:
         if entry.name == profile:
-            return entry.hourly_rate_usd
+            return entry
     return None
 
 
@@ -406,22 +416,38 @@ def attempt_seconds(detail: Mapping[str, Any]) -> int:
     return total
 
 
-def _money(rate: Decimal | None, seconds: int) -> Decimal | None:
-    if rate is None:
+def _money(priced: ComputeProfile | None, seconds: int) -> Decimal | None:
+    """What a window actually cost, priced the way ``run_costs.py`` prices one.
+
+    ``rate x nodes x duration``, which is that module's own sentence for it. A two-node
+    profile burns two machines for the whole window and a per-machine rate is half of what
+    was spent.
+    """
+    if priced is None:
         return None
-    return (rate * Decimal(seconds) / SECONDS_AN_HOUR).quantize(CENTS, rounding=ROUND_HALF_UP)
+    product = priced.hourly_rate_usd * priced.nodes * Decimal(seconds) / SECONDS_AN_HOUR
+    return product.quantize(CENTS, rounding=ROUND_HALF_UP)
 
 
 def _authorised(
-    detail: Mapping[str, Any], rate: Decimal | None, cells: int | None
+    detail: Mapping[str, Any], priced: ComputeProfile | None, cells: int | None
 ) -> Decimal | None:
     """The ceiling the approval bought, which is what Batch was told to enforce.
 
     Every factor is read off the event rather than off the manifest, because the event is
     what the job was actually submitted with. A run whose bound was edited between the
     approval and the submission would be described by the manifest and priced by this.
+
+    THE PRODUCT ITSELF IS NOT WRITTEN HERE. ``compute_maximum_compute_cost_usd`` is what
+    ``CostInputs`` validates every decision record against, so it is what a lead reconciling
+    a message against the record it names will be comparing with. A second spelling of the
+    same five factors is a second thing to keep right, and the one that goes stale is the one
+    with no record beside it to disagree with. It carried four of the five until 2026-08-06.
+
+    It raises rather than returning on a product too wide to represent, and a notifier that
+    raises is a message nobody gets, so an unrepresentable ceiling is reported as no ceiling.
     """
-    if rate is None:
+    if priced is None:
         return None
     timeout = detail.get("timeout")
     seconds = timeout.get("attemptDurationSeconds") if isinstance(timeout, Mapping) else None
@@ -430,8 +456,16 @@ def _authorised(
     strategy = detail.get("retryStrategy")
     attempts = strategy.get("attempts") if isinstance(strategy, Mapping) else None
     tries = attempts if isinstance(attempts, int) and not isinstance(attempts, bool) else 1
-    total = rate * Decimal(seconds) / SECONDS_AN_HOUR * Decimal(max(tries, 1)) * Decimal(cells or 1)
-    return total.quantize(CENTS, rounding=ROUND_HALF_UP)
+    try:
+        return compute_maximum_compute_cost_usd(
+            priced.hourly_rate_usd,
+            priced.nodes,
+            Decimal(seconds) / SECONDS_AN_HOUR,
+            max(tries, 1),
+            max(cells or 1, 1),
+        )
+    except (ArithmeticError, ValueError):
+        return None
 
 
 def _outcome(detail: Mapping[str, Any]) -> Outcome | None:
@@ -555,12 +589,17 @@ def _cell_index(job_id: object) -> int | None:
 
 def _cells_spent(
     lister: CellLister | None, *, array_job_id: object
-) -> tuple[int, int, tuple[int, ...]] | None:
+) -> tuple[int, int, tuple[int, ...] | None] | None:
     """What an array's cells actually ran for, how many were read, and which ones failed.
 
     None where no listing happened, and None rather than a zero for every way it can fail.
     A sweep whose cells nobody read is not a sweep that cost nothing, and ``$0.00 spent`` is
-    the cheapest-looking wrong answer in the field's range.
+    the cheapest-looking wrong answer in the field's range. That sentence was here before the
+    listing that answers with nothing was, and the two exits at the bottom are what make it
+    true of a call that succeeded as well as of one that did not.
+
+    The third element is None rather than empty wherever this listing named no failed cell,
+    which is a separate unknown from the spend and is described where it is decided.
 
     Never raises, for the reason ``submitter_of`` never does. The cell counts are in the
     event and are worth posting on their own, so a refused listing costs the message a figure
@@ -610,7 +649,31 @@ def _cells_spent(
         # ways a listing can fail is open. Narrowed by what it does rather than by what it
         # catches, exactly as `checkpoints_under` is.
         return None
-    return seconds, measured, tuple(sorted(failed))
+    if measured == 0:
+        # THE WAY THIS FAILS WITHOUT FAILING, WHICH IS THE ONE NO GUARD ABOVE CATCHES.
+        #
+        # Every other exit here is a call that refused or a page count that ran out. This is
+        # a call that succeeded and answered with nothing, and it arrived at the sum as a
+        # complete reading of zero cells: `at least $0.00 spent over the 0 cells that were
+        # read`, which is this function's own docstring's cheapest-looking wrong answer,
+        # printed in the slot a measurement goes in.
+        #
+        # Zero terminal children under a terminal parent is never true of the account. Batch
+        # holds the parent until the last child moves, so at the instant this runs there is
+        # at least one. Reading none back is this side failing to see them, and the ordinary
+        # cause is mundane: Batch ages terminal job records out after about a day, so every
+        # redelivery, dead-letter replay and hand invocation older than that lands here, and
+        # the sweep being priced at nothing is by definition one that finished a while ago.
+        return None
+    # AN EMPTY SET OF INDEXES IS NOT THE SAME CLAIM AS AN EMPTY SWEEP, AND ONLY THE CALLER
+    # KNOWS WHICH THIS IS. The count of dead cells comes off the event and the indexes come
+    # off this listing, two services read seconds apart. Where the event reports a dead cell
+    # and this page named none, the honest answer is that the indexes were not read, and
+    # `read_run_ended` is where the two sources meet, so it decides. Handed an empty tuple it
+    # cannot tell that apart from a sweep that lost nothing, and the sentence it built for
+    # the difference was `Cells  failed.` with the numbers missing.
+    named = tuple(sorted(failed))
+    return seconds, measured, named if named else None
 
 
 def _checkpoint_state(
@@ -693,7 +756,7 @@ def read_run_ended(
 
     queue = queue_name_of(detail)
     profile = _profile_named_by(queue, catalogs.targets)
-    rate = _rate_for(profile, catalogs.catalog)
+    priced = _priced_by(profile, catalogs.catalog)
     seconds = attempt_seconds(detail)
 
     # WHICH SECONDS THE MONEY IS COMPUTED FROM, WHICH IS THE WHOLE OF THIS TASK. A single
@@ -718,10 +781,10 @@ def read_run_ended(
         experiment=container_variable(detail, WANDB_RUN_GROUP_VARIABLE),
         queue_name=queue,
         compute_profile=profile,
-        hourly_rate_usd=rate,
+        hourly_rate_usd=None if priced is None else priced.hourly_rate_usd,
         seconds_spent=seconds,
-        spent_usd=None if (cells is not None and spent is None) else _money(rate, seconds),
-        authorised_usd=_authorised(detail, rate, None if cells is None else cells[0]),
+        spent_usd=None if (cells is not None and spent is None) else _money(priced, seconds),
+        authorised_usd=_authorised(detail, priced, None if cells is None else cells[0]),
         exit_code=_exit_code(detail),
         output_prefix=container_variable(detail, OUTPUT_PREFIX_VARIABLE),
         cells_total=None if cells is None else cells[0],

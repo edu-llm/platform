@@ -119,7 +119,7 @@ Resources:
       Code:
         S3Bucket: sbsandbox-intern-edullm-artifacts
         S3Key: notifier/notifier.zip
-        S3ObjectVersion: 2vFjyN_x0o.227aRApYdrg9BbUyn8VLr
+        S3ObjectVersion: joH9ikshZSvQZ.zA5pS7ni0aK6MRptRn
       Environment:
         Variables:
           # A NAME AND NEVER A VALUE. A Slack incoming webhook carries its whole credential in
