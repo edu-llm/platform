@@ -18,8 +18,23 @@
 #   deployed   it is live: a stack the account holds in a status that means a template was
 #              applied, a GitHub environment, a release, a bucket, or a file on the default
 #              branch for the things that go live by merging. Needs AWS or `gh` for most rows.
-#   proven     something that can fail asserts it, or a real artifact demonstrates it. A row
-#              with no such thing says so. `proven` is never inferred from `built`.
+#   under_test something that can fail asserts it, or a real artifact demonstrates it. A row
+#              with no such thing says so. Never inferred from `built`.
+#
+#              THIS COLUMN WAS CALLED `proven` UNTIL 2026-08-06 AND THE RENAME IS THE POINT.
+#              Where the cell is a `tests:` lookup, and it is on fifty-one of the ninety-six
+#              rows, what is read is that the file exists, imports, and yielded at least one
+#              test to the collector. Collection is not execution, so that reading is
+#              compatible with every test in the file failing, and with every test in it being
+#              skipped. `proven` claimed something a board reading files and cloud APIs cannot
+#              establish at any budget. Do not rename it back, and do not write a `reached:`
+#              here meaning "I am confident" -- a person's answer belongs in this column only
+#              where a real artifact is being pointed at, which is why the ten that carry one
+#              name a run id, a count or a refusal that happened.
+#
+#              What would make it stronger, what is deliberately not being attempted, and why,
+#              is written in `_tests` in `src/edullm_platform/stages.py`. Read that before
+#              proposing either.
 #
 # HOW TO WRITE A STAGE. Each stage takes one of these. Every key is a lookup except the last
 # four, which are a person speaking and are printed with a `*` so a reader can tell.
@@ -69,12 +84,12 @@ checked: "2026-08-05"
 # EVERY PLACE ONE ROW'S CELL CANNOT BE RED WHILE ANOTHER ROW'S IS GREEN, WRITTEN DOWN BECAUSE A
 # TEST WILL NOT LET IT GO UNDECLARED.
 #
-# WHAT WENT WRONG THAT THIS PREVENTS. `morning-message` read `yes` on `built` and on `proven` for
+# WHAT WENT WRONG THAT THIS PREVENTS. `morning-message` read `yes` on `built` and on `under test` for
 # a surface that has never been written. Its two cells named
 # `src/edullm_platform/notifications/messages.py` and `tests/test_notification_messages.py`, and
 # both of those belong to the run-ended feed post -- a different surface, with its own row, under
 # "Owned by no slice". One built thing was counted twice and an unbuilt one was reported as built
-# and proven, for as long as anybody had been reading this board. `tests/test_stages.py` already
+# and under test, for as long as anybody had been reading this board. `tests/test_stages.py` already
 # refused a manifest naming a path that does not exist, and that guard cannot catch this, because
 # every path named was real. It was the wrong row's paths, and nothing looked at that. A person
 # reading the file found it.
@@ -109,7 +124,7 @@ checked: "2026-08-05"
 # and so is an entry whose implication has stopped existing -- so a fix has to delete its entry.
 #
 # WHAT IS OUT OF SCOPE, AND SAID HERE RATHER THAN LEFT TO BE INFERRED FROM THE TEST. Only
-# `built`, `deployed` and `proven` are checked. `designed` is a person's answer in every row by
+# `built`, `deployed` and `under test` are checked. `designed` is a person's answer in every row by
 # construction and `planned` is a claim about a plan, where two surfaces built by one task is the
 # ordinary case. `release: true` is not checked either: it names nothing, is one global fact about
 # the repository, and is shared by six rows because CLI features go live by being released. That
@@ -190,28 +205,28 @@ shared_readings:
     why: >
       Both rows are about one GitHub environment from two sides -- who the approvers are, and
       whether the roster and the team agree about them -- so the environment existing is the same
-      fact for each. What each row adds is in its `built` and `proven`, which differ in both.
-  - stage: proven
+      fact for each. What each row adds is in its `built` and `under test`, which differ in both.
+  - stage: under_test
     rows: [identity-table, preview-role-excluded]
     why: >
       One test file covering both, by instruction rather than by accident: the plan task that
       built the preview-role exclusion said to append to the identity table's existing test file.
       Splitting a test file so a board can tell two rows apart would be the measurement deforming
       the thing measured, which is worse than the limit it removes.
-  - stage: proven
+  - stage: under_test
     rows: [estimate-and-bound, priced-profiles]
     why: >
       The priced catalogue and the arithmetic performed over it are tested together because
       neither is meaningful alone -- a bound is computed from a profile's price, and a profile with
       no bound is not submittable. `estimate-and-bound` reads `no` on `built` regardless, so this
       shared cell is not currently holding a row green on its own.
-  - stage: proven
+  - stage: under_test
     rows: [registration-skill, skills-three-hosts]
     why: >
       The agent layer is two skills and the three host files that carry them, and the test that
       proves either proves it by reading the same set of files. Two test files here would
       duplicate the fixtures rather than assert anything new.
-  - stage: proven
+  - stage: under_test
     rows: [datasets-yaml, model-family]
     why: >
       `tests/test_published_dataset_reference.py` asserts the reference every published dataset
@@ -233,7 +248,7 @@ slices:
         # neither could go red alone. `role-to-assume:` is the credential, appears twice, and both
         # are the functional lines that hand a job its role -- no comment can satisfy it.
         deployed: {grep_on_main: [.github/workflows/submit-run.yml, "role-to-assume:"]}
-        proven: {tests: [tests/test_phase2_submit_run_workflow.py]}
+        under_test: {tests: [tests/test_phase2_submit_run_workflow.py]}
 
       - id: submission-manifest
         name: A submission is three decisions, and the manifest that records them
@@ -241,7 +256,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {exists: src/edullm_platform/contracts/manifest.py}
         deployed: {not_applicable: a contract model}
-        proven: {tests: [tests/test_manifest.py]}
+        under_test: {tests: [tests/test_manifest.py]}
 
       - id: approval-tiers
         name: Approval tiers and routing
@@ -250,7 +265,7 @@ slices:
         built: {exists: config/policy.yaml}
         deployed:
           {stack: sbsandbox-intern-edullm-phase2-admission, or: {reached: policy v5 released in 270}}
-        proven: {tests: [tests/test_policy.py]}
+        under_test: {tests: [tests/test_policy.py]}
 
       - id: nine-approvers
         name: The approvers, and the gate they hold
@@ -258,7 +273,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {exists: config/organization.yaml}
         deployed: {environment: run-approval-lead}
-        proven: {tests: [tests/test_phase5_run_evidence.py]}
+        under_test: {tests: [tests/test_phase5_run_evidence.py]}
 
       - id: approver-name
         name: The approver's name, asserted and carried
@@ -280,7 +295,7 @@ slices:
         # delete the assertion and keep the pattern.
         deployed:
           {grep_on_main: [.github/workflows/submit-run.yml, "select\\(\\.state == \"approved\"\\)"]}
-        proven: {tests: [tests/test_authorization.py, tests/test_phase2_admission.py]}
+        under_test: {tests: [tests/test_authorization.py, tests/test_phase2_admission.py]}
 
       - id: platform-tier
         name: The platform tier, a container on Batch on a digest-pinned image
@@ -288,7 +303,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {exists: infra/batch-compute.yaml}
         deployed: {stack: sbsandbox-intern-edullm-phase3-batch, or: {reached: queue ran a job}}
-        proven: {tests: [tests/test_phase3_infrastructure.py]}
+        under_test: {tests: [tests/test_phase3_infrastructure.py]}
 
       - id: priced-profiles
         name: The priced profiles, and what is actually submittable
@@ -296,7 +311,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {exists: config/execution-targets.yaml}
         deployed: {not_applicable: a priced catalogue}
-        proven: {tests: [tests/test_compute_profiles.py]}
+        under_test: {tests: [tests/test_compute_profiles.py]}
 
       - id: landing
         name: LANDING, and the fourteen-day expiry on it
@@ -304,7 +319,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {not_applicable: another repository}
         deployed: {bucket: edullm-landing, or: {reached: holds 125 GB expiring 2026-08-13}}
-        proven: {reached: 47 validation sentinels written by the airlock}
+        under_test: {reached: 47 validation sentinels written by the airlock}
 
       - id: sealed
         name: SEALED, and the delete latch over it
@@ -312,7 +327,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {not_applicable: another repository}
         deployed: {bucket: edullm-data, or: {reached: eight datasets sealed}}
-        proven: {reached: the latch refused a delete}
+        under_test: {reached: the latch refused a delete}
 
       - id: airlock
         name: The airlock validator, and _VALIDATED.json
@@ -320,7 +335,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {not_applicable: another repository}
         deployed: {reached: it runs on upload}
-        proven: {reached: sentinels exist for every sealed set}
+        under_test: {reached: sentinels exist for every sealed set}
 
       - id: datasets-yaml
         name: datasets.yaml, the act that makes a corpus real
@@ -328,7 +343,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {exists: config/datasets.yaml}
         deployed: {not_applicable: a config file}
-        proven: {tests: [tests/test_published_dataset_reference.py, tests/test_dataset.py]}
+        under_test: {tests: [tests/test_published_dataset_reference.py, tests/test_dataset.py]}
 
       - id: outputs
         name: OUTPUTS, one prefix per run
@@ -336,7 +351,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {exists: infra/outputs-bucket.yaml}
         deployed: {stack: sbsandbox-intern-edullm-phase3-outputs, or: {reached: runs wrote into it}}
-        proven: {reached: the probe's outputs are under it}
+        under_test: {reached: the probe's outputs are under it}
 
       - id: lineage
         name: The lineage store
@@ -344,7 +359,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {exists: infra/lineage-bucket.yaml}
         deployed: {stack: sbsandbox-intern-edullm-phase2-lineage, or: {reached: manifests are in it}}
-        proven: {reached: every admitted run left a manifest}
+        under_test: {reached: every admitted run left a manifest}
 
       - id: lifecycle-path
         name: The lifecycle path, EventBridge to SQS to the recorder
@@ -352,7 +367,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {exists: infra/batch-events.yaml}
         deployed: {stack: sbsandbox-intern-edullm-phase3-events, or: {reached: the recorder is live}}
-        proven: {tests: [tests/test_deployed_lambdas.py]}
+        under_test: {tests: [tests/test_deployed_lambdas.py]}
 
       - id: control-plane
         name: The eight configuration files as the control plane
@@ -369,7 +384,7 @@ slices:
             - config/repositories.yaml
             - config/workload-catalog.yaml
         deployed: {not_applicable: config files}
-        proven: {tests: [tests/test_config.py]}
+        under_test: {tests: [tests/test_config.py]}
 
       # THE PATTERN USED TO BE `AlarmActions|budgets:` AND IT STOPPED MEANING WHAT IT SAYS ON
       # 2026-08-06. It was a proxy: when it was written every alarm in the account had an empty
@@ -392,7 +407,7 @@ slices:
         planned: {not_applicable: "a property, not a build"}
         built: {not_applicable: an absence}
         deployed: {not_applicable: an absence}
-        proven:
+        under_test:
           {absent: [infra, "AWS::Budgets::|budgets:|arn:aws:automate:[a-z0-9-]+:(?:ec2|batch):(?:stop|terminate)"]}
 
       - id: checkpoints-bucket
@@ -401,7 +416,7 @@ slices:
         planned: {not_reached: no plan covers moving them}
         built: {not_applicable: predates this tree}
         deployed: {bucket: edullm-checkpoints, or: {reached: created 2026-07-25}}
-        proven: {not_reached: the arrow on the data-flow diagram does not exist}
+        under_test: {not_reached: the arrow on the data-flow diagram does not exist}
 
       - id: team-resolution
         name: Who supplies the team
@@ -409,7 +424,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {exists: src/edullm_platform/cli/preferences.py}
         deployed: {on_main: src/edullm_platform/cli/preferences.py}
-        proven: {not_reached: a mis-claimed team is recorded rather than refused}
+        under_test: {not_reached: a mis-claimed team is recorded rather than refused}
 
       - id: compile-refusals
         name: The seven compile-time refusals
@@ -417,7 +432,7 @@ slices:
         planned: {task: the-measurement/4}
         built: {not_reached: four of the seven exist}
         deployed: {not_applicable: a code path}
-        proven: {not_reached: "the four that exist have checks, three do not exist"}
+        under_test: {not_reached: "the four that exist have checks, three do not exist"}
 
       - id: refusal-codes
         name: Structured refusal codes, and the named failure modes
@@ -425,7 +440,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {exists: src/edullm_platform/contracts/admission.py}
         deployed: {on_main: src/edullm_platform/contracts/admission.py}
-        proven: {tests: [tests/test_refusal_codes.py]}
+        under_test: {tests: [tests/test_refusal_codes.py]}
 
       - id: estimate-and-bound
         name: The estimate and the bound
@@ -433,7 +448,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {not_reached: one figure where the design names two}
         deployed: {not_applicable: a code path}
-        proven: {tests: [tests/test_compute_profiles.py]}
+        under_test: {tests: [tests/test_compute_profiles.py]}
 
       - id: image-build
         name: The image build, and when it fires
@@ -441,7 +456,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {exists: .github/workflows/build-research-image.yml}
         deployed: {on_main: .github/workflows/build-research-image.yml}
-        proven: {tests: [tests/test_build_research_image_workflow.py]}
+        under_test: {tests: [tests/test_build_research_image_workflow.py]}
 
       - id: repository-pipeline
         name: The repository pipeline and registration
@@ -449,7 +464,7 @@ slices:
         planned: {task: the-population/12}
         built: {exists: config/repositories.yaml}
         deployed: {stack: sbsandbox-intern-edullm-phase1-ecr, or: {reached: images are in it}}
-        proven: {tests: [tests/test_repository_registry.py]}
+        under_test: {tests: [tests/test_repository_registry.py]}
 
       - id: capacity-yaml
         name: capacity.yaml, scarcity as information
@@ -457,7 +472,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {exists: config/capacity.yaml}
         deployed: {not_applicable: a config file}
-        proven: {tests: [tests/test_capacity.py, tests/test_placement_verdicts.py]}
+        under_test: {tests: [tests/test_capacity.py, tests/test_placement_verdicts.py]}
 
       # BOTH STAGES READ `?` UNTIL 2026-08-06 AND THE ANSWER WAS ONE READABLE CALL AWAY. The
       # question was sent to `aws organizations list-policies-for-target`, which this account
@@ -473,7 +488,7 @@ slices:
       # on the morning of 2026-08-06. A denied region would have been caught in a second.
       #
       # WHAT IS STILL UNSEEN is whether a service control policy above this says the same
-      # thing. It would not change what any principal here may do, and `proven` stays no until
+      # thing. It would not change what any principal here may do, and `under test` stays no until
       # somebody in the payer account can look.
       - id: region-lock
         name: The region lock
@@ -481,7 +496,7 @@ slices:
         planned: {not_reached: no plan reaches it}
         built: {not_applicable: another owner's policy}
         deployed: {reached: "a statement in the boundary, read 2026-08-06"}
-        proven: {not_reached: no committed capture of the boundary}
+        under_test: {not_reached: no committed capture of the boundary}
 
       - id: attribution
         name: Attribution, the W&B join on the result record
@@ -489,7 +504,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {grep: [src/edullm_platform/contracts/results.py, "wandb"]}
         deployed: {on_main: src/edullm_platform/lifecycle_projection.py}
-        proven: {not_reached: 28 of 42 references named a run W&B did not hold}
+        under_test: {not_reached: 28 of 42 references named a run W&B did not hold}
 
       - id: generated-artifacts
         name: The four generated artifacts
@@ -497,7 +512,7 @@ slices:
         planned: {task: the-population/1}
         built: {not_reached: one of the four is generated}
         deployed: {not_applicable: generators and files}
-        proven: {tests: [tests/test_schema_export.py, tests/test_submission_form_options.py]}
+        under_test: {tests: [tests/test_schema_export.py, tests/test_submission_form_options.py]}
 
       - id: checkpoint-markers
         name: Checkpoint success markers
@@ -505,7 +520,7 @@ slices:
         planned: {not_reached: no plan reaches it}
         built: {not_reached: nothing writes through the protocol}
         deployed: {not_applicable: a code path}
-        proven: {not_reached: 251 checkpoints and zero markers}
+        under_test: {not_reached: 251 checkpoints and zero markers}
 
       - id: bfloat16
         name: Refusing bfloat16 on a card without it
@@ -513,7 +528,7 @@ slices:
         planned: {task: the-spine-and-the-probe/S1}
         built: {exists: src/edullm_platform/precision.py}
         deployed: {on_main: src/edullm_platform/precision.py}
-        proven: {tests: [tests/test_bfloat16_guard.py]}
+        under_test: {tests: [tests/test_bfloat16_guard.py]}
 
       - id: synthetic-t4
         name: The synthetic workload on a T4, with a bits-per-byte figure
@@ -521,7 +536,7 @@ slices:
         planned: {task: the-spine-and-the-probe/S4}
         built: {exists: tools/build_gpu_training_submission.py}
         deployed: {not_applicable: a workload profile}
-        proven: {reached: "run_019fd2c9 on a Tesla T4, bpb 15.93 falling to 11.92"}
+        under_test: {reached: "run_019fd2c9 on a Tesla T4, bpb 15.93 falling to 11.92"}
 
       - id: two-runs
         name: Two runs identical but for time and run id
@@ -529,7 +544,7 @@ slices:
         planned: {task: the-spine-and-the-probe/S5}
         built: {evidence: fixtures/evidence/spine/two-runs.sanitized.json}
         deployed: {not_applicable: a captured answer}
-        proven: {tests: [tests/test_spine_two_runs.py]}
+        under_test: {tests: [tests/test_spine_two_runs.py]}
 
       - id: run-comparison
         name: The run-comparison tool
@@ -537,7 +552,7 @@ slices:
         planned: {task: the-spine-and-the-probe/S2}
         built: {exists: src/edullm_platform/run_comparison.py}
         deployed: {not_applicable: a local tool}
-        proven: {tests: [tests/test_run_comparison.py, tests/test_compare_two_runs_cli.py]}
+        under_test: {tests: [tests/test_run_comparison.py, tests/test_compare_two_runs_cli.py]}
 
       - id: placement-warning
         name: The placement warning at submission time
@@ -545,7 +560,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {exists: src/edullm_platform/placement.py}
         deployed: {on_main: src/edullm_platform/placement.py}
-        proven: {tests: [tests/test_placement_warning.py]}
+        under_test: {tests: [tests/test_placement_warning.py]}
 
   - name: The facade
     surfaces:
@@ -555,7 +570,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {exists: src/edullm_platform/cli/main.py}
         deployed: {release: true}
-        proven: {tests: [tests/test_cli_check.py, tests/test_cli_run_verbs.py]}
+        under_test: {tests: [tests/test_cli_check.py, tests/test_cli_run_verbs.py]}
 
       - id: cli-releases
         name: The installable CLI, and the releases that carry it
@@ -563,7 +578,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {exists: .github/workflows/release-tag.yml}
         deployed: {release: true}
-        proven: {tests: [tests/test_cli_release.py, tests/test_next_version.py]}
+        under_test: {tests: [tests/test_cli_release.py, tests/test_next_version.py]}
 
       - id: run-yaml
         name: The repository-side spec file
@@ -571,7 +586,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {exists: src/edullm_platform/cli/spec.py}
         deployed: {not_applicable: a file in someone else's repository}
-        proven: {tests: [tests/test_cli_scaffold.py]}
+        under_test: {tests: [tests/test_cli_scaffold.py]}
 
       - id: status-before-aws
         name: status answered from GitHub before AWS
@@ -579,7 +594,7 @@ slices:
         planned: {not_applicable: predates the plans}
         built: {exists: src/edullm_platform/cli/actions.py}
         deployed: {release: true}
-        proven: {tests: [tests/test_cli_actions.py]}
+        under_test: {tests: [tests/test_cli_actions.py]}
 
       - id: preview-gate
         name: The preview gate, a platform change tried on a branch
@@ -587,7 +602,7 @@ slices:
         planned: {not_reached: no plan reaches it}
         built: {exists: infra/iam/run-preview-role.yaml}
         deployed: {stack: sbsandbox-intern-edullm-run-preview-iam, or: {reached: applied by hand}}
-        proven: {not_reached: no dispatch through it is recorded}
+        under_test: {not_reached: no dispatch through it is recorded}
 
   - name: The measurement
     surfaces:
@@ -597,7 +612,7 @@ slices:
         planned: {task: the-measurement/4}
         built: {grep: [src/edullm_platform/contracts/manifest.py, "schema_version|RunManifestV2"]}
         deployed: {not_applicable: a contract model}
-        proven: {tests: [tests/test_run_manifest_v2.py, tests/test_input_roles.py]}
+        under_test: {tests: [tests/test_run_manifest_v2.py, tests/test_input_roles.py]}
 
       - id: model-family
         name: The model family in the register
@@ -605,7 +620,7 @@ slices:
         planned: {task: the-measurement/3}
         built: {grep: [src/edullm_platform/contracts/dataset_registry.py, "is_weights_a_run_may_start_from"]}
         deployed: {not_applicable: a register entry}
-        proven: {tests: [tests/test_published_dataset_reference.py]}
+        under_test: {tests: [tests/test_published_dataset_reference.py]}
 
       - id: weights-from-run
         name: Weights resolved from a prior run's id
@@ -613,7 +628,7 @@ slices:
         planned: {task: the-measurement/5}
         built: {grep: [src/edullm_platform/weights.py, "resolve_weights_from_run"]}
         deployed: {not_applicable: a local function}
-        proven: {tests: [tests/test_weights_resolution.py]}
+        under_test: {tests: [tests/test_weights_resolution.py]}
 
       - id: checkpoint-sweep
         name: A checkpoint sweep as a fan-out
@@ -621,7 +636,7 @@ slices:
         planned: {task: the-measurement/6}
         built: {exists: tools/plan_checkpoint_sweep.py}
         deployed: {not_applicable: a local tool}
-        proven: {tests: [tests/test_checkpoint_sweep.py]}
+        under_test: {tests: [tests/test_checkpoint_sweep.py]}
 
       - id: eval-metrics
         name: The result manifest carrying eval-harness metrics
@@ -629,7 +644,7 @@ slices:
         planned: {task: the-measurement/7}
         built: {exists: src/edullm_platform/eval_metrics.py}
         deployed: {stack: sbsandbox-intern-edullm-phase3-events, or: {reached: the recorder is live}}
-        proven: {not_reached: no evaluation has run against a real checkpoint}
+        under_test: {not_reached: no evaluation has run against a real checkpoint}
 
       - id: eval-sweep
         name: The eval sweep, registered and not run
@@ -637,7 +652,7 @@ slices:
         planned: {task: the-measurement/9}
         built: {grep: [config/workload-catalog.yaml, "eval"]}
         deployed: {not_applicable: a catalogue entry}
-        proven: {not_reached: the spend-money steps of the task are not done}
+        under_test: {not_reached: the spend-money steps of the task are not done}
 
   # READ THIS BEFORE READING `0 of 3` OFF THE ROLLUP, BECAUSE THE SLICE NAME AND THE ROWS UNDER
   # IT ARE NOT THE SAME CLAIM. Every row here was written against one specific probe: the
@@ -661,7 +676,7 @@ slices:
         planned: {task: the-spine-and-the-probe/P4}
         built: {not_reached: "four ranks ran on 2026-08-06; eight on gpu-8xa100 is undispatched"}
         deployed: {not_applicable: a dispatch}
-        proven: {not_reached: "no run has placed eight ranks, which is where all nine known timeouts happened"}
+        under_test: {not_reached: "no run has placed eight ranks, which is where all nine known timeouts happened"}
 
       # THE ONE ROW HERE WHOSE `no` IS A DESIGN FINDING RATHER THAN AN UNDONE TASK.
       # `RETRY_ONLY_WHAT_A_RETRY_FIXES` is three rules in order -- retry on `Host EC2*`, exit on
@@ -677,7 +692,7 @@ slices:
         planned: {task: the-spine-and-the-probe/P5}
         built: {not_reached: "the retry rule matches host faults only, so one attempt is all it gets"}
         deployed: {not_applicable: a dispatch}
-        proven: {not_reached: "no test can induce a second attempt, so the claim cannot be exercised as written"}
+        under_test: {not_reached: "no test can induce a second attempt, so the claim cannot be exercised as written"}
 
       - id: prior-art
         name: The comparison against the prior art, and the verdict
@@ -685,7 +700,7 @@ slices:
         planned: {task: the-spine-and-the-probe/P7}
         built: {not_reached: "the comparison run it scores has not been dispatched"}
         deployed: {not_applicable: a verdict}
-        proven: {not_reached: "no score exists at step 125 to set beside the prior art's 2.6683"}
+        under_test: {not_reached: "no score exists at step 125 to set beside the prior art's 2.6683"}
 
       # THE PROBE THAT ACTUALLY RAN, WHICH HAD NO ROW ANYWHERE UNTIL NOW. Three dispatches on
       # 2026-08-06, all exit 0: a 190M OLMo-core model trained 200 steps on one A10G against a
@@ -697,7 +712,7 @@ slices:
       # `built` IS `n/a` RATHER THAN A YES, AND NOT TO FLATTER THE COLUMN. The program is
       # `.edullm/train_on_corpus.py` in `edu-llm/OLMo-core`, which this tree does not hold, so
       # there is nothing here for a lookup to find -- the same reason `landing`, `sealed` and
-      # `airlock` carry `another repository`. `proven` is a person's answer for the reason
+      # `airlock` carry `another repository`. `under test` is a person's answer for the reason
       # `synthetic-t4` is: a run id and a measured figure are what happened, and this manifest
       # has no rule that can ask the lineage store. It is marked `*` and it should stay marked
       # until one exists.
@@ -707,7 +722,7 @@ slices:
         planned: {not_reached: "run in place of P4 when the eight-rank shape was not available"}
         built: {not_applicable: the program is in another repository}
         deployed: {not_applicable: a dispatch}
-        proven: {reached: "run_019fd5d8 200 steps, bpb 5.0568 to 2.0491; run_019fd5e1 four ranks, exit 0"}
+        under_test: {reached: "run_019fd5d8 200 steps, bpb 5.0568 to 2.0491; run_019fd5e1 four ranks, exit 0"}
 
   - name: The population
     surfaces:
@@ -717,7 +732,7 @@ slices:
         planned: {not_applicable: an account fact}
         built: {not_applicable: an account fact}
         deployed: {reached: the roles exist}
-        proven: {reached: counted from the account}
+        under_test: {reached: counted from the account}
 
       - id: boundary-cap
         name: The permission boundary as the cap
@@ -725,7 +740,7 @@ slices:
         planned: {not_applicable: another owner's policy}
         built: {not_applicable: another owner's policy}
         deployed: {reached: attached to the Intern roles}
-        proven: {reached: it refused an IAM call from CI}
+        under_test: {reached: it refused an IAM call from CI}
 
       - id: anomaly-monitor
         name: The cost anomaly monitor nothing here installed
@@ -733,14 +748,14 @@ slices:
         planned: {not_applicable: somebody else's}
         built: {not_applicable: somebody else's}
         deployed: {reached: it fires}
-        proven: {reached: it has fired}
+        under_test: {reached: it has fired}
 
       # `built` POINTED AT ONE OF THE TWO LISTS RATHER THAN AT THE THING THAT HOLDS THEM
       # TOGETHER. A roster existing says nothing about whether it agrees with the GitHub team
       # that gates `run-approval-lead`, and this row is about the agreeing. It points at the
       # comparison now.
       #
-      # `proven` SAID NOTHING FAILS WHEN THEY DRIFT AND SOMETHING DOES. 327 put the comparison
+      # `under test` SAID NOTHING FAILS WHEN THEY DRIFT AND SOMETHING DOES. 327 put the comparison
       # on the audit with a clock over it, so a hand capture going stale is red and a capture
       # inside the window that disagrees with the roster is red. The row went stale in the one
       # direction this file exists to catch, which is a built thing reading absent.
@@ -755,7 +770,7 @@ slices:
         planned: {not_reached: no plan reaches it}
         built: {exists: tools/report_who_can_open_the_lead_gate.py}
         deployed: {environment: run-approval-lead}
-        proven: {tests: [tests/test_lead_gate_report.py, tests/test_phase2_github_evidence.py]}
+        under_test: {tests: [tests/test_lead_gate_report.py, tests/test_phase2_github_evidence.py]}
 
       - id: researcher-role
         name: The researcher role
@@ -763,7 +778,7 @@ slices:
         planned: {task: the-population/3}
         built: {exists: infra/iam/researcher-role.yaml}
         deployed: {stack: sbsandbox-intern-edullm-researcher-iam}
-        proven: {not_reached: nobody has assumed it}
+        under_test: {not_reached: nobody has assumed it}
 
       - id: instance-allow-list
         name: The instance-type allow-list, derived rather than typed
@@ -771,7 +786,7 @@ slices:
         planned: {task: the-population/1}
         built: {grep: [src/edullm_platform/researcher_lane.py, "instance"]}
         deployed: {stack: sbsandbox-intern-edullm-researcher-iam}
-        proven: {tests: [tests/test_researcher_lane.py]}
+        under_test: {tests: [tests/test_researcher_lane.py]}
 
       - id: lane-and-janitor
         name: The lane helper, and the expiry janitor
@@ -791,7 +806,7 @@ slices:
         # so `tests/test_lane_drill_evidence.py` stopped skipping and started asserting against
         # the capture. Naming the test rather than the file is deliberate: a capture that exists
         # proves a file was written, and a test that passes over it proves what the file says.
-        proven: {tests: [tests/test_lane_drill_evidence.py]}
+        under_test: {tests: [tests/test_lane_drill_evidence.py]}
 
       - id: triage-form
         name: One triage form, and asks that count
@@ -799,7 +814,7 @@ slices:
         planned: {task: the-population/11}
         built: {exists: .github/ISSUE_TEMPLATE/ask.yml}
         deployed: {on_main: .github/ISSUE_TEMPLATE/ask.yml}
-        proven: {tests: [tests/test_triage_form.py]}
+        under_test: {tests: [tests/test_triage_form.py]}
 
       - id: escalation
         name: The escalation path, a lead then the owner
@@ -807,7 +822,7 @@ slices:
         planned: {task: the-population/10}
         built: {exists: .github/ISSUE_TEMPLATE/config.yml}
         deployed: {on_main: .github/ISSUE_TEMPLATE/config.yml}
-        proven: {not_reached: nothing measures whether an ask reaches anybody}
+        under_test: {not_reached: nothing measures whether an ask reaches anybody}
 
       - id: edullm-add
         name: edullm add, teaching the system a thing
@@ -815,7 +830,7 @@ slices:
         planned: {task: the-agent-layer/3}
         built: {exists: .github/workflows/register-repository.yml}
         deployed: {on_main: .github/workflows/register-repository.yml}
-        proven: {tests: [tests/test_register_repository.py]}
+        under_test: {tests: [tests/test_register_repository.py]}
 
       - id: edullm-ask
         name: edullm ask, a time-boxed grant for one person
@@ -823,7 +838,7 @@ slices:
         planned: {task: the-agent-layer/5}
         built: {exists: src/edullm_platform/cli/intake.py}
         deployed: {release: true}
-        proven: {not_reached: the verb files an ask and no grant is behind it}
+        under_test: {not_reached: the verb files an ask and no grant is behind it}
 
       # BOTH `no`s DESCRIBED A BRANCH THAT WAS MERGED HOURS LATER AND NOTHING RE-READ THEM.
       # `config/repositories.yaml` on `origin/main` carries `open-instruct-scored-rewards`, so
@@ -838,7 +853,7 @@ slices:
         planned: {task: the-population/12}
         built: {grep: [config/repositories.yaml, "open-instruct-scored-rewards"]}
         deployed: {not_reached: "the repository's own main holds no .edullm directory to build from"}
-        proven: {not_reached: no image has been built from it}
+        under_test: {not_reached: no image has been built from it}
 
       # THE EXEMPTION CANNOT BE WRITTEN WHERE PEOPLE KEEP LOOKING FOR IT. `NotPrincipal` is
       # only valid in a resource policy or a service control policy, and a permission boundary
@@ -853,7 +868,7 @@ slices:
         planned: {not_applicable: another owner's policy}
         built: {not_applicable: another owner's policy}
         deployed: {reached: the deny is in the boundary}
-        proven: {not_reached: "the deny is unconditional, so nobody is exempt"}
+        under_test: {not_reached: "the deny is unconditional, so nobody is exempt"}
 
       # THIS ONE IS STILL UNKNOWN AND THE REASON IS SHARPER THAN A MISSING GRANT. Every
       # `organizations` call from here returns AccessDenied, and adding a grant would not
@@ -866,7 +881,7 @@ slices:
         planned: {not_reached: no plan reaches it}
         built: {unknown: running the calls from the payer account}
         deployed: {unknown: the same calls}
-        proven: {not_reached: the boundary denies organizations to every principal here}
+        under_test: {not_reached: the boundary denies organizations to every principal here}
 
       - id: deployed-iam-matches
         name: Deployed IAM matching the tree
@@ -881,7 +896,7 @@ slices:
         # should move to this rule too.
         deployed:
           {grep_on_main: [.github/workflows/audit.yml, "tools/verify_deployed_stacks\\.py"]}
-        proven: {tests: [tests/test_deployed_stacks.py]}
+        under_test: {tests: [tests/test_deployed_stacks.py]}
 
   - name: The instruments
     surfaces:
@@ -894,7 +909,7 @@ slices:
         # and this cell goes red on the next push rather than staying green because the workflow
         # file it lived in is still there.
         deployed: {grep_on_main: [.github/workflows/audit.yml, "tools/visibility_board\\.py"]}
-        proven: {tests: [tests/test_visibility_board.py]}
+        under_test: {tests: [tests/test_visibility_board.py]}
 
       # `no workflow runs the reader` WAS WRITTEN BEFORE THE AUDIT GREW THE JOB THAT RUNS IT AND
       # NOTHING MADE IT FALSE AGAIN. `.github/workflows/audit.yml` carries `substrate-capture`,
@@ -910,7 +925,7 @@ slices:
         planned: {task: the-instruments/1}
         built: {exists: src/edullm_platform/substrate.py}
         deployed: {grep: [.github/workflows/audit.yml, "machine/substrate"]}
-        proven: {tests: [tests/test_substrate.py]}
+        under_test: {tests: [tests/test_substrate.py]}
 
       - id: identity-table
         name: The AWS identity table
@@ -918,7 +933,7 @@ slices:
         planned: {task: the-instruments/2}
         built: {exists: src/edullm_platform/contracts/bindings.py}
         deployed: {not_applicable: a contract model}
-        proven: {tests: [tests/test_aws_identities.py]}
+        under_test: {tests: [tests/test_aws_identities.py]}
 
       # THE MISMATCH GOES LIVE THROUGH THE ACTIVITY PAGE RATHER THAN THROUGH A JOB OF ITS OWN,
       # WHICH IS WHY `no workflow runs it` READ FALSE FOR A THING THAT RUNS EVERY MORNING. The
@@ -932,7 +947,7 @@ slices:
         planned: {task: the-instruments/3}
         built: {exists: src/edullm_platform/mismatch.py}
         deployed: {grep: [tools/report_activity.py, "from edullm_platform.mismatch import"]}
-        proven: {tests: [tests/test_mismatch.py]}
+        under_test: {tests: [tests/test_mismatch.py]}
 
       - id: preview-role-excluded
         name: The preview role, excluded by name and counted
@@ -940,7 +955,7 @@ slices:
         planned: {task: the-instruments/4}
         built: {grep: [src/edullm_platform/contracts/bindings.py, "Excluded"]}
         deployed: {not_applicable: a contract model}
-        proven: {tests: [tests/test_aws_identities.py]}
+        under_test: {tests: [tests/test_aws_identities.py]}
 
       - id: launch-events
         name: Launch events out of CloudTrail
@@ -948,7 +963,7 @@ slices:
         planned: {task: the-instruments/5}
         built: {exists: tools/read_launch_events.py}
         deployed: {not_reached: the feed exceeds the page ceiling and the reader refuses a short read}
-        proven: {tests: [tests/test_launch_events.py]}
+        under_test: {tests: [tests/test_launch_events.py]}
 
       - id: instrument-grants
         name: The grants the instruments need
@@ -956,7 +971,7 @@ slices:
         planned: {task: the-instruments/6}
         built: {exists: infra/iam/audit-reader-role.yaml}
         deployed: {stack: sbsandbox-intern-edullm-audit-reader-iam, or: {reached: applied by hand}}
-        proven: {tests: [tests/test_audit_reader_grants.py]}
+        under_test: {tests: [tests/test_audit_reader_grants.py]}
 
       # `nothing collects` ON ALL THREE STAGES WAS THE LARGEST SINGLE FALSEHOOD ON THIS BOARD.
       # `tools/read_substrate.py` is the collector this row names -- its own first line is
@@ -972,7 +987,7 @@ slices:
         planned: {task: the-instruments/7}
         built: {exists: tools/read_substrate.py}
         deployed: {grep: [.github/workflows/audit.yml, "tools/read_substrate\\.py"]}
-        proven: {tests: [tests/test_read_substrate.py]}
+        under_test: {tests: [tests/test_read_substrate.py]}
 
       # `it waits on the collector` WAS TRUE AND THEN THE COLLECTOR LANDED. #305 put
       # `src/edullm_platform/activity.py` in the tree, `tools/report_activity.py` renders the
@@ -986,7 +1001,7 @@ slices:
         planned: {task: the-instruments/8}
         built: {exists: [src/edullm_platform/activity.py, tools/report_activity.py]}
         deployed: {grep: [.github/workflows/audit.yml, "tools/report_activity\\.py"]}
-        proven: {tests: [tests/test_activity.py, tests/test_report_activity.py]}
+        under_test: {tests: [tests/test_activity.py, tests/test_report_activity.py]}
 
       # SAME SHAPE AS THE MISMATCH: THE BUDGET LINE TRAVELS ON THE ACTIVITY PAGE. The audit runs
       # `tools/report_activity.py`, which imports `spend_section` out of `tools/report_spend.py`
@@ -998,16 +1013,16 @@ slices:
         planned: {task: the-instruments/9}
         built: {exists: src/edullm_platform/spend.py}
         deployed: {grep: [tools/report_activity.py, "from report_spend import"]}
-        proven: {tests: [tests/test_spend.py]}
+        under_test: {tests: [tests/test_spend.py]}
 
       # THIS ROW READ `yes` TWICE FOR A SURFACE THAT DOES NOT EXIST, WHICH IS THE FALSE NEGATIVE
-      # INVERTED AND IS WORSE. `built` pointed at `notifications/messages.py` and `proven` at
+      # INVERTED AND IS WORSE. `built` pointed at `notifications/messages.py` and `under test` at
       # `tests/test_notification_messages.py`, and both of those are the run-ended post, which
       # is a different surface with its own row under "Owned by no slice". That file holds
       # `render_run_ended` and nothing else. The plan that specifies this row names
       # `src/edullm_platform/morning_message.py` and `tests/test_morning_message.py`, and
       # neither has been written, so the board was counting one built thing twice and calling an
-      # unbuilt surface built and proven. Correcting it took two off the board, which is the
+      # unbuilt surface built and under test. Correcting it took two off the board, which is the
       # direction this correction had to go.
       #
       # BOTH CELLS ARE A HAND-WRITTEN `no` AND NOT A LOOKUP AT THE TWO FILES THAT ARE OWED,
@@ -1022,7 +1037,7 @@ slices:
         planned: {task: the-instruments/10}
         built: {not_reached: "morning_message.py is unwritten; messages.py is the run-ended post"}
         deployed: {not_reached: the audit runs several jobs and none is a message}
-        proven: {not_reached: "test_morning_message.py is unwritten; the neighbouring test proves the run-ended post"}
+        under_test: {not_reached: "test_morning_message.py is unwritten; the neighbouring test proves the run-ended post"}
 
       - id: delivery
         name: Delivery, and the addressed events
@@ -1031,15 +1046,15 @@ slices:
         built: {exists: src/edullm_platform/notifications/delivery.py}
         deployed:
           {stack: sbsandbox-intern-edullm-notifications, or: {not_reached: the deployer lacks the grants}}
-        proven: {not_reached: nothing has been delivered to a person}
+        under_test: {not_reached: nothing has been delivered to a person}
 
   - name: The waves
     surfaces:
-      # ONE FACT WAS SITTING IN TWO DENOMINATORS. `built` and `proven` carried the same sentence
+      # ONE FACT WAS SITTING IN TWO DENOMINATORS. `built` and `under test` carried the same sentence
       # word for word, and `designed` and `deployed` were already `a rollout`, so this row said
       # "a rollout" about three of its stages and then asked a fourth what had been built. There
       # is nothing to build: onboarding a group is an act performed against GitHub and the
-      # account, and no file appears when it happens. `proven` is the cell that asks the real
+      # account, and no file appears when it happens. `under test` is the cell that asks the real
       # question and it is the one kept. This is not a deletion -- the row stays, reads `no`,
       # and is about to be answerable.
       - id: wave-onboarding
@@ -1048,7 +1063,7 @@ slices:
         planned: {not_reached: deferred until one group works}
         built: {not_applicable: a rollout}
         deployed: {not_applicable: a rollout}
-        proven: {not_reached: no group has been onboarded}
+        under_test: {not_reached: no group has been onboarded}
 
       - id: quota-ceiling
         name: The account quota ceiling the waves are sized against
@@ -1056,7 +1071,7 @@ slices:
         planned: {not_reached: no plan reaches it}
         built: {not_reached: nothing computes simultaneous demand against the quota}
         deployed: {not_applicable: an account limit}
-        proven: {not_reached: the arithmetic does not exist}
+        under_test: {not_reached: the arithmetic does not exist}
 
   - name: The agent layer
     surfaces:
@@ -1066,7 +1081,7 @@ slices:
         planned: {task: the-agent-layer/7}
         built: {exists: [.cursor/skills/submitting-a-run/SKILL.md, AGENTS.md]}
         deployed: {on_main: AGENTS.md}
-        proven: {tests: [tests/test_agent_layer.py]}
+        under_test: {tests: [tests/test_agent_layer.py]}
 
       - id: registration-skill
         name: The registration skill
@@ -1074,7 +1089,7 @@ slices:
         planned: {task: the-agent-layer/8}
         built: {exists: .cursor/skills/registering-a-repository/SKILL.md}
         deployed: {on_main: .cursor/skills/registering-a-repository/SKILL.md}
-        proven: {tests: [tests/test_agent_layer.py]}
+        under_test: {tests: [tests/test_agent_layer.py]}
 
   - name: Owned by no slice
     surfaces:
@@ -1090,7 +1105,7 @@ slices:
         planned: {not_reached: built with no plan naming it}
         built: {exists: [src/edullm_platform/cli/lane.py, src/edullm_platform/cli/machine.py]}
         deployed: {release: true}
-        proven: {tests: [tests/test_cli_shell.py, tests/test_cli_run_verbs.py]}
+        under_test: {tests: [tests/test_cli_shell.py, tests/test_cli_run_verbs.py]}
 
       - id: scratch-bucket
         name: The scratch bucket
@@ -1098,7 +1113,7 @@ slices:
         planned: {not_reached: no plan names it}
         built: {exists: infra/scratch-bucket.yaml}
         deployed: {stack: sbsandbox-intern-edullm-scratch, or: {not_reached: never applied}}
-        proven: {tests: [tests/test_scratch_bucket_template.py]}
+        under_test: {tests: [tests/test_scratch_bucket_template.py]}
 
       - id: multi-node
         name: Multi-node, everything above 13B, and the Capacity Block protocol
@@ -1106,7 +1121,7 @@ slices:
         planned: {not_reached: deferred until single-node works}
         built: {not_reached: deferred}
         deployed: {not_applicable: deferred}
-        proven: {not_reached: deferred}
+        under_test: {not_reached: deferred}
 
       - id: image-exceptions
         name: image-exceptions.yaml, and the review behind it
@@ -1114,7 +1129,7 @@ slices:
         planned: {not_reached: deferred}
         built: {exists: config/image-exceptions.yaml}
         deployed: {not_applicable: a config file}
-        proven: {not_reached: there is no review process behind it}
+        under_test: {not_reached: there is no review process behind it}
 
       - id: wandb-alarm
         name: The W&B mid-run metric alarm
@@ -1122,7 +1137,7 @@ slices:
         planned: {not_reached: deferred}
         built: {not_reached: deferred}
         deployed: {not_applicable: deferred}
-        proven: {not_reached: deferred}
+        under_test: {not_reached: deferred}
 
       # ALSO READ `deferred` WHILE BUILT. `render_run_ended` writes one line per ended run into
       # the runs channel and the notifier posts it, which is this row. The grep names the
@@ -1135,7 +1150,7 @@ slices:
         built: {grep: [src/edullm_platform/notifications/messages.py, "def render_run_ended"]}
         deployed:
           {stack: sbsandbox-intern-edullm-notifications, or: {not_reached: the deployer lacks the grants}}
-        proven: {tests: [tests/test_notification_messages.py, tests/test_notifier_handler.py]}
+        under_test: {tests: [tests/test_notification_messages.py, tests/test_notifier_handler.py]}
 
       - id: promotion-to-landing
         name: Promotion of run outputs back to landing
@@ -1143,7 +1158,7 @@ slices:
         planned: {not_reached: deferred}
         built: {not_reached: deferred}
         deployed: {not_applicable: deferred}
-        proven: {not_reached: deferred}
+        under_test: {not_reached: deferred}
 
       # THE SECOND FALSE POSITIVE THE COLLISION TEST FOUND, AND IT HAD BEEN HERE SINCE #274 WROTE
       # THIS FILE. `built` was `exists: src/edullm_platform/cli/main.py`, which is character for
@@ -1154,12 +1169,12 @@ slices:
       # `LANE_VERBS` is a two-element tuple `main.py` branches on, not a reconciliation -- and
       # `cli-binary` already holds the claim that the nine verbs are there.
       #
-      # `proven` WENT THE SAME WAY, AND THE TEST IS WHY I STOPPED HEDGING ABOUT IT. It read
+      # `under test` WENT THE SAME WAY, AND THE TEST IS WHY I STOPPED HEDGING ABOUT IT. It read
       # `tests: [tests/test_cli_run_verbs.py]`, which `cli-binary` and `exploration-route` each
       # name inside a larger set, so either of them being green forced this green too. That file
       # proves the verbs behave; the closest it comes to this row is
       # `test_the_id_the_listing_prints_is_an_id_the_verbs_take`. A row with nothing built cannot
-      # have something proven, and the whole point of `proven` never being inferred from `built`
+      # have something proven, and the whole point of this column never being inferred from `built`
       # cuts this way as well.
       - id: verb-reconciliation
         name: The verb reconciliation
@@ -1167,7 +1182,7 @@ slices:
         planned: {not_reached: settled and not built}
         built: {not_reached: "nothing reconciles the verb list; cli-binary holds that the verbs exist"}
         deployed: {release: true}
-        proven: {not_reached: "no test asserts the verb list against anything; test_cli_run_verbs proves the verbs behave"}
+        under_test: {not_reached: "no test asserts the verb list against anything; test_cli_run_verbs proves the verbs behave"}
 
       - id: size-to-node
         name: The size-to-node arithmetic, and the model-fit refusal
@@ -1175,7 +1190,7 @@ slices:
         planned: {not_reached: no plan reaches it}
         built: {not_reached: the arithmetic does not exist}
         deployed: {not_applicable: a refusal that does not exist}
-        proven: {not_reached: the arithmetic does not exist}
+        under_test: {not_reached: the arithmetic does not exist}
 
       - id: widening-timer
         name: The forty-five-minute widening of the reviewer set
@@ -1183,7 +1198,7 @@ slices:
         planned: {not_reached: no plan reaches it}
         built: {not_reached: a wait timer delays a job and does not widen a reviewer set}
         deployed: {not_applicable: a mechanism that does not exist}
-        proven: {not_reached: the mechanism does not exist}
+        under_test: {not_reached: the mechanism does not exist}
 
       # THE THIRD ROW THAT READ ABSENT WHILE PRESENT. `run_history.summarise` keys a cohort on
       # repository, workload profile, compute profile and dataset, drops a rung at a time until
@@ -1196,7 +1211,7 @@ slices:
         planned: {not_reached: built with no plan naming it}
         built: {exists: src/edullm_platform/run_history.py}
         deployed: {on_main: config/run-history.json}
-        proven: {tests: [tests/test_run_history.py, tests/test_build_run_history.py]}
+        under_test: {tests: [tests/test_run_history.py, tests/test_build_run_history.py]}
 
       - id: queue-readout
         name: The queue-state readout for approvers
@@ -1204,7 +1219,7 @@ slices:
         planned: {not_reached: no plan reaches it}
         built: {not_reached: the approver context never calls Batch}
         deployed: {not_applicable: a readout that does not exist}
-        proven: {not_reached: the readout does not exist}
+        under_test: {not_reached: the readout does not exist}
 
       # A ROW FOR A CONSUMER OF A THING capacity.yaml DOES NOT OFFER was deleted here on
       # 2026-08-06. It was `not_applicable: withdrawn` on all five stages, so it entered no
@@ -1220,7 +1235,7 @@ slices:
         planned: {not_reached: no plan reaches it}
         built: {not_reached: nothing checks it}
         deployed: {not_applicable: a check that does not exist}
-        proven: {not_reached: nothing checks it}
+        under_test: {not_reached: nothing checks it}
 
       # THE GENERATOR EXISTS AND NO PAGE READS IT YET, WHICH IS WHY DEPLOYED IS A `no` RATHER
       # THAN AN `n/a`. `tools/render_profile_table.py` writes the profiles out of the reviewed
@@ -1240,7 +1255,7 @@ slices:
         planned: {not_reached: no plan reaches it}
         built: {exists: tools/render_profile_table.py}
         deployed: {not_reached: no guide carries its output}
-        proven: {tests: [tests/test_render_profile_table.py]}
+        under_test: {tests: [tests/test_render_profile_table.py]}
 
       - id: boundary-principal-deny
         name: A boundary deny conditioned on the principal
@@ -1248,7 +1263,7 @@ slices:
         planned: {not_reached: only the boundary owner can write one}
         built: {not_reached: only the boundary owner can write one}
         deployed: {not_applicable: another owner's policy}
-        proven: {not_reached: it does not exist}
+        under_test: {not_reached: it does not exist}
 
       - id: effective-grants-check
         name: A check that fails when the account and the tree disagree both ways
@@ -1256,7 +1271,7 @@ slices:
         planned: {not_reached: no plan reaches it}
         built: {not_reached: a role's effective grants have no verifier}
         deployed: {not_applicable: a check that does not exist}
-        proven: {not_reached: the check does not exist}
+        under_test: {not_reached: the check does not exist}
 
       - id: landing-expiry-every-family
         name: Landing's expiry covering every family
@@ -1264,4 +1279,4 @@ slices:
         planned: {not_reached: no plan reaches it}
         built: {not_applicable: another repository}
         deployed: {not_reached: at least one prefix is in no rule}
-        proven: {not_reached: nothing enumerates the prefixes against the rules}
+        under_test: {not_reached: nothing enumerates the prefixes against the rules}

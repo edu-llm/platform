@@ -44,6 +44,7 @@ from edullm_platform.stages import (
     Mark,
     Slice,
     Sources,
+    Surface,
     count_reached,
     paths_grepped_on_main,
     read_manifest,
@@ -578,7 +579,7 @@ def _merged_since(repository: str, since: str) -> str | None:
 #: person's answer on every row, and `planned` says whether a task exists rather than whether
 #: anything happened. Both are still in the detail view, which is where a question about them
 #: gets asked.
-ROLLED_UP: Final = ("built", "deployed", "proven")
+ROLLED_UP: Final = ("built", "deployed", "under_test")
 
 
 def fraction(group: Slice, stage: str) -> str:
@@ -671,7 +672,7 @@ def render_slice_rollup(
         read_at,
         *warning,
         "",
-        "| Slice | Built | Deployed | Proven |",
+        "| Slice | Built | Deployed | Under test |",
         "| --- | --- | --- | --- |",
     ]
     lines.extend(
@@ -862,7 +863,7 @@ def _hand_applied_row() -> Row:
 def _run_collector() -> str | None:
     """pytest's collection, run once and read twice.
 
-    Both the suite size and every `proven` cell backed by a test come out of this, so running
+    Both the suite size and every `under test` cell backed by a test come out of this, so running
     the collector twice would double the slowest part of the board for no new information.
     """
     try:
@@ -972,6 +973,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
+def _stage_cells(surface: Surface) -> dict[str, Any]:
+    """Every stage of one surface, plus one deprecated key nobody has been found to need.
+
+    WHY `proven` IS STILL EMITTED WHEN NOTHING IN THIS REPOSITORY READS IT. Searched before the
+    rename rather than after: no workflow, tool, guide, skill or test invokes this script, and the
+    only mentions of it anywhere are three sentences of prose pointing at it. `--json` exists for
+    callers outside the tree, and the absence of an in-repo consumer is not evidence that there is
+    no consumer -- it is evidence that this repository cannot tell. Dropping the key on that basis
+    is breaking somebody's script to save four lines, and the person it breaks finds out from a
+    dashboard that has quietly gone blank rather than from an error.
+
+    So the alias is a duplicate of `under_test` and a script reading `proven.mark` keeps working.
+    It comes out when somebody can say who reads this, which is a smaller question than it looks:
+    one grep of whatever consumes it, or a month of nobody complaining, and `format_version` is
+    there so that the removal is a number a reader can branch on rather than a surprise.
+    """
+    cells: dict[str, Any] = {
+        stage: {
+            "mark": surface.cells[stage].mark.value,
+            "derived": surface.cells[stage].derived,
+            "note": surface.cells[stage].note,
+        }
+        for stage in STAGES
+    }
+    cells["proven"] = dict(cells["under_test"])
+    return cells
+
+
 def _document(
     board: Sequence[Slice],
     counted: Sequence[Row],
@@ -980,6 +1009,13 @@ def _document(
     reading: Reading,
 ) -> dict[str, Any]:
     return {
+        # THE FIRST VERSION OF THIS DOCUMENT TO CARRY A NUMBER, WHICH IS WHY IT IS 2 AND NOT 1.
+        # Every shape before this one was unversioned, so 1 is what a consumer that has never
+        # seen this field is holding, and there is no way to ask an unversioned copy which one it
+        # is. The number exists now because the rename below is the first change here that could
+        # break a reader, and a document that only grows a version at the moment it breaks
+        # somebody has given them nothing to branch on.
+        "format_version": 2,
         "read_at": moment.isoformat(),
         "manually_checked": str(manifest["checked"]),
         "region": reading.region,
@@ -987,19 +1023,16 @@ def _document(
         # carries, and needs it as a list rather than as a sentence, because the whole point
         # of the JSON is that nobody has to parse the prose.
         "sources_not_read": list(reading.blind),
+        # WHAT MOVED IN 2, STATED IN THE DOCUMENT RATHER THAN ONLY IN A COMMIT MESSAGE. A reader
+        # holding a broken script needs the old name and the new one in front of them, and the
+        # place they are looking is the output.
+        "renamed_keys": {"proven": "under_test"},
         "surfaces": [
             {
                 "slice": group.name,
                 "id": surface.id,
                 "name": surface.name,
-                **{
-                    stage: {
-                        "mark": surface.cells[stage].mark.value,
-                        "derived": surface.cells[stage].derived,
-                        "note": surface.cells[stage].note,
-                    }
-                    for stage in STAGES
-                },
+                **_stage_cells(surface),
             }
             for group in board
             for surface in group.surfaces
