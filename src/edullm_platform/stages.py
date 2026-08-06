@@ -38,6 +38,7 @@ __all__ = [
     "Sources",
     "Surface",
     "count_reached",
+    "paths_grepped_on_main",
     "read_manifest",
     "render_stage_table",
     "resolve",
@@ -141,6 +142,14 @@ class Sources:
 
     tree: Path
     on_main: frozenset[str] | None = None
+
+    #: What the default branch holds *inside* the files a `grep_on_main` rule names, keyed by
+    #: path. Only those paths, because this costs one `git show` each where :attr:`on_main` costs
+    #: one `git ls-tree` for every row at once. A path missing from here while present in
+    #: :attr:`on_main` is a read that failed rather than a pattern that was absent, and reads as
+    #: not read.
+    main_contents: Mapping[str, str] | None = None
+
     collected_tests: frozenset[str] | None = None
     healthy_stacks: frozenset[str] | None = None
     buckets: frozenset[str] | None = None
@@ -172,6 +181,55 @@ def _grep(tree: Path, path: str, pattern: str) -> Cell:
         return Cell(Mark.NOT_REACHED, note=f"{path} does not exist")
     found = re.search(pattern, target.read_text(encoding="utf-8"))
     return Cell(Mark.REACHED if found else Mark.NOT_REACHED)
+
+
+def _grep_on_main(sources: Sources, path: str, pattern: str) -> Cell:
+    """Reached when the copy of the file on the default branch carries the pattern.
+
+    WHY THIS RULE EXISTS RATHER THAN A SECOND USE OF `on_main`. A feature that goes live by being
+    merged into a file somebody else's row already owns cannot be read by asking whether that file
+    is on the branch, because the answer is yes as soon as the file is there and stays yes when the
+    feature is taken out of it. `approver-name` sat in exactly that state: revert the lines in
+    `submit-run.yml` that read the approver's login, push, and the row went on reading deployed,
+    in the one file the admission role pins its trust to. `deployed-iam-matches` and
+    `visibility-board` sat in it too, one job each inside `audit.yml`.
+
+    Mutation this is written against: answer off `sources.tree` when the branch cannot be read.
+    That is the same mistake `_paths_on_default_branch` refuses and it arrives here by a shorter
+    road, because the tree is already in `Sources` and reading it takes no extra field. A patterned
+    branch read that quietly becomes a patterned tree read is a `deployed` cell answering out of
+    the `built` column, which is worse than the collision this rule was written to remove: it
+    reads green on a laptop, on a branch, before anything is pushed.
+
+    The three failures are told apart on purpose. An unread branch and an unread blob are both
+    `not read`, because nobody looked. A path the branch does not hold is `not reached`, because
+    somebody looked and it was not there.
+    """
+    if sources.on_main is None:
+        return Cell(Mark.NOT_READ, note="the default branch was not read")
+    if path not in sources.on_main:
+        return Cell(Mark.NOT_REACHED, note=f"{path} is not on the default branch")
+    if sources.main_contents is None or path not in sources.main_contents:
+        return Cell(Mark.NOT_READ, note=f"{path} on the default branch could not be read")
+    found = re.search(pattern, sources.main_contents[path])
+    return Cell(Mark.REACHED) if found else Cell(Mark.NOT_REACHED, note=f"{path} on main lacks it")
+
+
+def paths_grepped_on_main(manifest: Mapping[str, Any]) -> frozenset[str]:
+    """The paths a caller has to read off the default branch before resolving this manifest.
+
+    Kept here beside the rule rather than in the tool, so that adding a `grep_on_main` row is one
+    edit to the manifest and nothing else. A caller that does not call this gets `not read` on
+    those cells, which is the honest answer for a source nobody gathered, and never a green one.
+    """
+    return frozenset(
+        str(stage["grep_on_main"][0])
+        for group in manifest["slices"]
+        for surface in group["surfaces"]
+        for name in STAGES
+        for stage in [surface[name]]
+        if "grep_on_main" in stage
+    )
 
 
 def _absent(tree: Path, directory: str, pattern: str) -> Cell:
@@ -285,6 +343,8 @@ def _lookup(name: str, value: Any, sources: Sources) -> Cell:
             return Cell(Mark.NOT_REACHED, note=absent[0]) if absent else Cell(Mark.REACHED)
         case "grep":
             return _grep(sources.tree, *value)
+        case "grep_on_main":
+            return _grep_on_main(sources, *value)
         case "absent":
             return _absent(sources.tree, *value)
         case "tests":

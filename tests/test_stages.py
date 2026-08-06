@@ -27,6 +27,7 @@ from edullm_platform.stages import (
     Sources,
     Surface,
     count_reached,
+    paths_grepped_on_main,
     read_manifest,
     render_stage_table,
     resolve,
@@ -45,6 +46,7 @@ KNOWN_RULES = {
     "evidence",
     "exists",
     "grep",
+    "grep_on_main",
     "not_applicable",
     "not_reached",
     "on_main",
@@ -208,6 +210,84 @@ def test_a_thing_in_the_tree_and_not_on_the_branch_is_built_and_not_deployed(
 
     assert resolve({"exists": "w.yml"}, sources).mark is Mark.REACHED
     assert resolve({"on_main": "w.yml"}, sources).mark is Mark.NOT_REACHED
+
+
+def test_a_feature_taken_out_of_a_file_still_on_the_branch_is_not_deployed(tmp_path: Path) -> None:
+    """Mutation: read the pattern out of `sources.tree` instead of off the branch.
+
+    This is the rule's whole reason for existing and the mutation is the regression it was written
+    to catch. `approver-name` used to read `on_main: .github/workflows/submit-run.yml`: revert the
+    lines that read the approver's login, push, and the row went on reading deployed, because the
+    workflow file was still on the branch. Here the tree carries the pattern and the branch does
+    not, which is the state a laptop is in before a push and the state `main` is in after a
+    revert. A patterned read that falls back to the tree returns reached for both and is a
+    `deployed` cell answering out of the `built` column.
+    """
+    (tmp_path / "w.yml").write_text("reads: the approver\n", encoding="utf-8")
+    reverted = Sources(
+        tree=tmp_path,
+        on_main=frozenset({"w.yml"}),
+        main_contents={"w.yml": "reads: nobody\n"},
+    )
+
+    assert resolve({"grep": ["w.yml", "the approver"]}, reverted).mark is Mark.REACHED
+    assert resolve({"grep_on_main": ["w.yml", "the approver"]}, reverted).mark is Mark.NOT_REACHED
+
+    carried = Sources(
+        tree=tmp_path,
+        on_main=frozenset({"w.yml"}),
+        main_contents={"w.yml": "reads: the approver\n"},
+    )
+    assert resolve({"grep_on_main": ["w.yml", "the approver"]}, carried).mark is Mark.REACHED
+
+
+def test_a_branch_or_a_blob_nobody_read_is_unread_and_a_missing_path_is_not_reached() -> None:
+    """Mutation: return not-reached when the branch or the blob could not be read.
+
+    Three failures reach this rule and only one of them is news. A branch nobody could read and a
+    file that would not come out of it are both `not read`, because nobody looked -- and reporting
+    either as `not reached` would put a false red in the denominator on every run without a
+    network, which is most runs. A path the branch genuinely does not hold is `not reached`,
+    because somebody looked and it was absent. Collapsing the three is how a board becomes
+    unreadable offline, which is the same failure the `or:` fallback used to cause in reverse.
+    """
+    rule = {"grep_on_main": ["w.yml", "anything"]}
+    tree = Path("/nonexistent")
+
+    assert resolve(rule, Sources(tree=tree, on_main=None)).mark is Mark.NOT_READ
+    unlisted = Sources(tree=tree, on_main=frozenset(), main_contents={})
+    assert resolve(rule, unlisted).mark is Mark.NOT_REACHED
+    ungathered = Sources(tree=tree, on_main=frozenset({"w.yml"}), main_contents=None)
+    assert resolve(rule, ungathered).mark is Mark.NOT_READ
+    refused = Sources(tree=tree, on_main=frozenset({"w.yml"}), main_contents={})
+    assert resolve(rule, refused).mark is Mark.NOT_READ
+
+
+def test_the_paths_a_caller_must_read_off_the_branch_come_out_of_the_manifest(
+    manifest: Any,
+) -> None:
+    """Mutation: hard-code the list of paths the gatherer reads off the default branch.
+
+    `gather` cannot read every file on the branch -- that is the four hundred subprocesses the
+    whole `Sources` design exists to avoid -- so it reads the ones a `grep_on_main` rule names and
+    no others. A hard-coded list in the tool means adding a row to the manifest silently produces
+    a cell that reads `not read` forever, which is the quietest possible way for a row to stop
+    working: it never goes red, it just stops answering. Deriving the list from the manifest is
+    what makes one edit enough.
+    """
+    wanted = paths_grepped_on_main(manifest)
+    named = {
+        surface[stage]["grep_on_main"][0]
+        for group in manifest["slices"]
+        for surface in group["surfaces"]
+        for stage in STAGES
+        if "grep_on_main" in surface[stage]
+    }
+
+    assert wanted == named
+    assert wanted, "no row uses the rule, so nothing here is being exercised against the manifest"
+    for path in wanted:
+        assert (PROJECT_ROOT / path).is_file(), path
 
 
 def test_a_stage_is_never_inferred_from_the_one_before_it(manifest: Any) -> None:
@@ -393,8 +473,10 @@ def test_every_path_the_manifest_names_is_a_path_that_exists(
             value = spec[key]
             for path in [value] if isinstance(value, str) else value:
                 assert (PROJECT_ROOT / path).exists(), f"{surface_id} {stage} names {path}"
-        if "grep" in spec:
-            path, _ = spec["grep"]
+        for key in ("grep", "grep_on_main"):
+            if key not in spec:
+                continue
+            path, _ = spec[key]
             assert (PROJECT_ROOT / path).is_file(), f"{surface_id} {stage} names {path}"
         if "tests" in spec:
             for path in spec["tests"]:
@@ -417,6 +499,7 @@ _CLAIM_KINDS = {
     "evidence": "in the tree",
     "grep": "in the tree",
     "on_main": "on the default branch",
+    "grep_on_main": "on the default branch",
     "tests": "collected by pytest",
     "stack": "a stack",
     "bucket": "a bucket",
@@ -431,7 +514,7 @@ def _claim(spec: Mapping[str, Any]) -> tuple[str, frozenset[str], str | None] | 
         if rule not in spec:
             continue
         value = spec[rule]
-        if rule in ("grep", "absent"):
+        if rule in ("grep", "grep_on_main", "absent"):
             return (kind, frozenset([str(value[0])]), str(value[1]))
         named = [value] if isinstance(value, str) else list(value)
         return (kind, frozenset(str(item) for item in named), None)

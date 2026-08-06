@@ -45,6 +45,7 @@ from edullm_platform.stages import (
     Slice,
     Sources,
     count_reached,
+    paths_grepped_on_main,
     read_manifest,
     render_stage_table,
     resolve_manifest,
@@ -288,6 +289,30 @@ def _paths_on_default_branch() -> frozenset[str] | None:
     return None if listed is None else frozenset(listed.splitlines())
 
 
+def _contents_on_default_branch(paths: frozenset[str]) -> tuple[dict[str, str], list[str]]:
+    """What the default branch holds inside each of these files, and which ones would not read.
+
+    One `git show` per path, which is why the caller passes only the paths a `grep_on_main` rule
+    names rather than everything `on_main` covers. Four `git show`s is not the four hundred and
+    eighty subprocesses `gather` exists to avoid; four hundred would be.
+
+    Mutation this is written against: return the empty mapping for a path that would not read and
+    let the cell fall through to whatever it makes of a missing key. It already makes `not read`
+    of it, so the cell is right either way -- but the run would say it read everything, and a
+    board that lists its blind spots above the table and then omits one is worse than a board
+    that lists none, because the omission is the thing a reader has stopped checking for.
+    """
+    found: dict[str, str] = {}
+    refused: list[str] = []
+    for path in sorted(paths):
+        blob = _git("show", f"origin/main:{path}")
+        if blob is None:
+            refused.append(path)
+        else:
+            found[path] = blob
+    return found, refused
+
+
 def _git(*arguments: str) -> str | None:
     try:
         completed = subprocess.run(
@@ -432,7 +457,12 @@ def tasks_in_plans(directory: Path, glob: str) -> frozenset[str]:
     return frozenset(found)
 
 
-def gather(arguments: argparse.Namespace, *, collector_output: str | None) -> Reading:
+def gather(
+    arguments: argparse.Namespace,
+    *,
+    collector_output: str | None,
+    wanted_from_main: frozenset[str] = frozenset(),
+) -> Reading:
     """Every source the board needs, read once each, and a note for every one that refused.
 
     Ninety-six rows over five stages is four hundred and eighty lookups, and performing them
@@ -466,6 +496,12 @@ def gather(arguments: argparse.Namespace, *, collector_output: str | None) -> Re
     on_main = _paths_on_default_branch()
     if on_main is None:
         blind.append("the default branch: `git ls-tree origin/main` did not answer")
+    main_contents, unread_on_main = _contents_on_default_branch(wanted_from_main)
+    if unread_on_main:
+        blind.append(
+            "files on the default branch: `git show origin/main:` did not answer for "
+            + ", ".join(unread_on_main)
+        )
     buckets = _buckets()
     if buckets is None:
         blind.append("S3: `aws s3api list-buckets` did not answer")
@@ -482,6 +518,7 @@ def gather(arguments: argparse.Namespace, *, collector_output: str | None) -> Re
         sources=Sources(
             tree=PROJECT_ROOT,
             on_main=on_main,
+            main_contents=main_contents,
             collected_tests=(
                 None if collector_output is None else collected_test_files(collector_output)
             ),
@@ -901,7 +938,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     collector_output = _run_collector()
     manifest = read_manifest(Path(arguments.surfaces))
-    reading = gather(arguments, collector_output=collector_output)
+    reading = gather(
+        arguments,
+        collector_output=collector_output,
+        wanted_from_main=paths_grepped_on_main(manifest),
+    )
     board = resolve_manifest(manifest, reading.sources)
     counted = (
         []

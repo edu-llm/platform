@@ -28,6 +28,13 @@
 #   {on_main: <path>}           the path is on the default branch, which is what "live" means
 #                               for a workflow, a skill or an issue template
 #   {grep: [<path>, <regex>]}   the file contains the pattern
+#   {grep_on_main: [<path>, <regex>]}
+#                               the copy of the file on the default branch contains the pattern.
+#                               Use this rather than `on_main` wherever a row is a feature inside
+#                               a file another row owns: `on_main` answers yes as soon as the file
+#                               is there and goes on saying yes when the feature is taken out of
+#                               it. Costs one `git show` per path named, so `on_main` stays the
+#                               rule for a row that is the whole file.
 #   {absent: [<dir>, <regex>]}  the pattern appears nowhere under the directory
 #   {tests: [<path>, ...]}      each test file exists and pytest collects it today
 #   {evidence: <path>}          a committed capture of something that actually ran
@@ -148,24 +155,17 @@ shared_readings:
     why: >
       `config/repositories.yaml` existing is the pipeline's claim; registering one particular
       codebase in it is a grep for that codebase's id, which goes red if the entry is removed.
-  - stage: deployed
-    rows: [approver-name, submission-workflow]
-    why: >
-      Mutual and not reducible with the rules this file has. Both cells are `on_main` over
-      `submit-run.yml`, and for a workflow that genuinely is what deployed means. The cost is
-      real and worth naming: revert the approver lines, push, and this cell still reads yes. What
-      catches that is `approver-name`'s own `built`, which greps the pattern, so the row cannot go
-      quietly green in both places. Closing it properly needs `on_main` to take a pattern the way
-      `grep` does, which is a change to the reader in `stages.py`.
-  - stage: deployed
-    rows: [deployed-iam-matches, visibility-board]
-    why: >
-      Both are jobs inside the audit workflow, and deployed for a workflow means the file is on
-      the default branch. Three neighbours -- `collector`, `days-activity` and
-      `per-run-substrate` -- grep this file for the job that runs each of them, which can
-      disagree and is the better shape, but is weaker in another direction, because `grep` reads
-      the working tree while `on_main` reads what was pushed. Neither form is right and the fix
-      for both is a patterned `on_main`.
+  # TWO ENTRIES USED TO SIT HERE AND THEY ARE GONE BECAUSE THE THING THEY EXCUSED IS FIXED.
+  # `approver-name` against `submission-workflow`, and `deployed-iam-matches` against
+  # `visibility-board`, were the only two entries in this block that named a cost instead of
+  # excusing one: all four cells were a bare `on_main` over a file another row owns, so each pair
+  # was mutually implied and neither cell could go red on its own. The cost was live in the worst
+  # possible file -- revert the lines in `submit-run.yml` that read the approver's login, push,
+  # and `approver-name` went on reading deployed, in the file the admission role pins its trust
+  # to. `grep_on_main` is the rule that closes it, all four cells now name what they are actually
+  # about, no implication remains between them, and the entries had to go rather than be reworded,
+  # because `test_a_shared_reading_declaration_that_stopped_being_true_is_deleted` refuses an
+  # entry whose implication has stopped existing.
   - stage: deployed
     rows: [delivery, run-ended-post]
     why: >
@@ -227,7 +227,12 @@ slices:
         designed: {reached: overview draws it}
         planned: {not_applicable: predates the plans}
         built: {exists: .github/workflows/submit-run.yml}
-        deployed: {on_main: .github/workflows/submit-run.yml}
+        # THE CREDENTIAL IS HALF THIS ROW'S NAME, SO IT IS WHAT THE DEPLOYED CELL LOOKS FOR. A
+        # bare `on_main` over this file answered yes for the file's presence, which the row above
+        # `built` already says, and it left this cell and `approver-name`'s mutually implied so
+        # neither could go red alone. `role-to-assume:` is the credential, appears twice, and both
+        # are the functional lines that hand a job its role -- no comment can satisfy it.
+        deployed: {grep_on_main: [.github/workflows/submit-run.yml, "role-to-assume:"]}
         proven: {tests: [tests/test_phase2_submit_run_workflow.py]}
 
       - id: submission-manifest
@@ -260,7 +265,21 @@ slices:
         designed: {reached: overview draws it}
         planned: {not_applicable: predates the plans}
         built: {grep: [.github/workflows/submit-run.yml, "approv"]}
-        deployed: {on_main: .github/workflows/submit-run.yml}
+        # THE REGRESSION THIS CLOSES WAS LIVE AND IT WAS IN THE WORST FILE TO HAVE ONE IN. This
+        # cell was `on_main: .github/workflows/submit-run.yml`, which is true whenever that file is
+        # on the branch. Revert the lines that read the approver's login, push, and the row went on
+        # reading deployed -- in the file `InternSandboxBoundary` pins the admission role's trust
+        # to. It was also mutually implied by `submission-workflow`'s identical cell, so neither
+        # could go red on its own.
+        #
+        # THE PATTERN IS THE jq THAT READS THE APPROVER RATHER THAN THE WORD `approv`. The word
+        # appears in nine comments in this workflow and `built` uses it, which is loose enough that
+        # a comment satisfies it; that is a separate weakness and it is named in the pull request
+        # rather than fixed here. `select(.state == "approved")` occurs once, on the line that
+        # actually pulls the approving login out of the approvals API, and there is no way to
+        # delete the assertion and keep the pattern.
+        deployed:
+          {grep_on_main: [.github/workflows/submit-run.yml, "select\\(\\.state == \"approved\"\\)"]}
         proven: {tests: [tests/test_authorization.py, tests/test_phase2_admission.py]}
 
       - id: platform-tier
@@ -854,7 +873,14 @@ slices:
         designed: {not_applicable: an operational property}
         planned: {not_applicable: predates the plans}
         built: {exists: tools/verify_deployed_stacks.py}
-        deployed: {on_main: .github/workflows/audit.yml}
+        # NAMES THE JOB THAT RUNS IT RATHER THAN THE FILE THE JOB IS IN. A bare `on_main` over
+        # `audit.yml` was true of every job in that workflow at once, so this cell and
+        # `visibility-board`'s were mutually implied and deleting either job would have moved
+        # neither. `grep_on_main` keeps the reading on the pushed branch, which is what deployed
+        # has to mean, and the three neighbours that grep the working tree for their own job
+        # should move to this rule too.
+        deployed:
+          {grep_on_main: [.github/workflows/audit.yml, "tools/verify_deployed_stacks\\.py"]}
         proven: {tests: [tests/test_deployed_stacks.py]}
 
   - name: The instruments
@@ -864,7 +890,10 @@ slices:
         designed: {not_applicable: the overview does not draw it}
         planned: {not_applicable: predates the plans}
         built: {exists: tools/visibility_board.py}
-        deployed: {on_main: .github/workflows/audit.yml}
+        # Same fix as the row above, and the same job-name pattern: delete this job from the audit
+        # and this cell goes red on the next push rather than staying green because the workflow
+        # file it lived in is still there.
+        deployed: {grep_on_main: [.github/workflows/audit.yml, "tools/visibility_board\\.py"]}
         proven: {tests: [tests/test_visibility_board.py]}
 
       # `no workflow runs the reader` WAS WRITTEN BEFORE THE AUDIT GREW THE JOB THAT RUNS IT AND
