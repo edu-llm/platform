@@ -18,7 +18,7 @@ If the shell cannot find `edullm` afterwards, compare `uv tool dir --bin` agains
 
 Sixteen of the thirty-five of us hold no AWS role, and none of us needs one to submit a run. `check`, `submit`, `status`, `logs` and `cancel` drive `git` and `gh` and hold no cloud credential. All five were run with a deliberately broken AWS environment on 2026-08-06 and all five answered normally.
 
-What you do need is `gh auth login`. That is the whole of it.
+What you do need is `gh auth login`. That is the whole of it. If `check` refuses with `submitter_unknown`, it could not read who you are and that is the command that fixes it.
 
 Two verbs are the exception and they are not the submission path. `edullm run` and `edullm shell` start a machine of your own, and those assume an AWS identity. If you want one, file `edullm ask --kind access-request`. Nothing else here waits on that.
 
@@ -49,7 +49,20 @@ edullm status run_019fd5d7-915f     # one run, in full
 edullm logs run_019fd5d7-915f       # the last lines it printed
 ```
 
-`status` with no argument answers from GitHub in about ten seconds. `status` on one run and `logs` reach AWS, which they do by dispatching a workflow and waiting for a runner, so give them up to three minutes. A job sitting at `RUNNABLE` is waiting for a machine and is billing nothing. Do not cancel and resubmit it, because that puts it at the back of the queue.
+`status` with no argument answers from GitHub in about ten seconds. `status` on one run and `logs` reach AWS, which they do by dispatching a workflow and waiting for a runner, so give them one to three minutes. A job sitting at `RUNNABLE` is waiting for a machine and is billing nothing. Do not cancel and resubmit it, because that puts it at the back of the queue.
+
+This is what came back on 2026-08-06. Two minutes from `submit` to admitted, five waiting for a card, six seconds running.
+
+```
+card          Tesla T4
+shape         batch 8, 12 heads of 64
+median of     20 timed iterations after 3 warm-up
+   seq   forward ms   backward ms   total ms       tok/s
+   512        1.014         2.799      3.813   1,074,177
+  1024        2.402         7.491      9.893     828,074
+  2048        6.636        21.583     28.219     580,609
+  4096       20.074        69.255     89.329     366,824
+```
 
 ## The notification, and why you will not get one
 
@@ -78,8 +91,9 @@ Two checks are deferred to submit time and `check` names both, because they need
 
 | Wall | The way round |
 | --- | --- |
-| A Windows install can fail with `Filename too long` if your username is longer than eight characters, because a tracked path here reaches 174 characters and Git for Windows stops at 260 | [#291](https://github.com/edu-llm/platform/pull/291) fixes it and is open with green checks. Until it merges, set `UV_CACHE_DIR` to something short such as `C:\uv` before installing |
+| No Windows machine has ever finished this. The install used to fail with `Filename too long` for any username over eight characters, and [#291](https://github.com/edu-llm/platform/pull/291) fixed that on 2026-08-06 along with the `gh` lookup, the spec's line endings and redirected output. All of it is untested on real Windows | Follow it anyway and say where it stopped. If the install still fails on a path, point `UV_CACHE_DIR` at something short such as `C:\uv` and try again |
 | No notification is delivered | Poll `edullm status`, as above |
+| `edullm status <run-id>` prints `Container said` `nothing` for a run that printed plenty. Measured on the run above, which had nine lines waiting | `edullm logs <run-id>` reads the same stream and does show them. Believe that one |
 | The eval image carries no torch and no vLLM, so only the `mock` provider runs | Nothing yet. GPU evaluation through the platform is not available. eval-inference owns the choice |
 | `gh` in a clone that has an `upstream` remote answers about the wrong repository, with no warning. In OLMo-core it reported no image build for a branch whose build had succeeded | Use `edullm`, which reads `origin`. Where you must use `gh`, pass `--repo edu-llm/<name>` |
 | Roughly half of all runs fail, and about half of those failures print no cause | Nothing yet. Your first failure is probably not your fault. Bring the run id to an issue |
