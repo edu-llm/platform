@@ -17,6 +17,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
+
 from edullm_platform.cli.lane import (
     SESSION_PLUGIN,
     agent_online_argv,
@@ -248,11 +250,49 @@ def test_the_ssh_line_is_printed_rather_than_written_into_anybody_s_config() -> 
     Writing into somebody's ssh config is a change to a file the CLI does not own, on a machine
     where it may be managed by something else, to save one paste.
     """
-    line = ssh_proxy_command(INSTANCE)
+    line = ssh_proxy_command(INSTANCE, system="Darwin")
 
     assert line.startswith("ProxyCommand sh -c ")
     assert "AWS-StartSSHSession" in line
     assert INSTANCE in line
+
+
+def test_the_ssh_line_a_windows_researcher_is_given_names_no_program_windows_lacks() -> None:
+    """**A LINE THAT CANNOT RUN IS WORSE THAN NO LINE, AND THIS ONE COULD NOT RUN.**
+    Mutation: print the ``sh -c`` form on every platform, which is what shipped.
+
+    Native Windows has no ``sh``. Not in ``System32``, not from the OpenSSH client Windows ships,
+    and not from anything installing the AWS CLI puts there. So the one line this verb offers a
+    Windows researcher failed inside whatever editor read their ssh config, saying that ``sh``
+    was not found -- which sends somebody to debug an SSH configuration for a program nothing
+    ever told them they needed.
+
+    Both spellings are AWS's own, from *Step 8: Allow and control permissions for SSH connections
+    through Session Manager* in the Systems Manager user guide. Asserted on the absence of ``sh``
+    rather than only on the presence of the interpreter, because the interpreter could be added
+    in front of the old line and the old line is the part that breaks.
+    """
+    line = ssh_proxy_command(INSTANCE, system="Windows")
+
+    assert "sh -c" not in line
+    assert "powershell.exe" in line
+    assert "AWS-StartSSHSession" in line
+    assert INSTANCE in line
+
+
+def test_wsl_is_a_linux_laptop_and_gets_the_line_its_own_ssh_can_run() -> None:
+    """Mutation: key the Windows form on anything that smells of Windows.
+
+    A researcher under WSL is a Linux process writing a Linux ``~/.ssh/config`` that a Linux
+    ``ssh`` will read, and that ``ssh`` has ``sh``. ``platform.system`` answers ``Linux`` for
+    them, and handing them ``powershell.exe`` because the machine underneath is a Windows one
+    would break the case that currently works. The separate hazard of a Windows ``gh`` on a WSL
+    PATH is diagnosed by ``github_interop_diagnostic`` and is not this line's business.
+    """
+    assert ssh_proxy_command(INSTANCE, system="Linux") == ssh_proxy_command(
+        INSTANCE, system="Darwin"
+    )
+    assert "sh -c" in ssh_proxy_command(INSTANCE, system="Linux")
 
 
 def test_a_missing_plugin_is_an_installation_and_says_so() -> None:
@@ -290,7 +330,8 @@ def test_nothing_the_lane_runs_needs_a_key_or_an_open_port() -> None:
     for argv in every:
         assert argv[0] == "aws"
         assert "--key-name" not in argv
-    assert "aws ssm start-session" in ssh_proxy_command(INSTANCE)
+    for system in ("Darwin", "Linux", "Windows"):
+        assert "aws ssm start-session" in ssh_proxy_command(INSTANCE, system=system)
 
 
 # ---------------------------------------------------------------------------------------
@@ -352,3 +393,69 @@ def test_a_session_the_researcher_types_nothing_into_still_gets_a_stdin_that_sta
 
     assert inherited.text == "eof", "the fixture has to reproduce the failure it is about"
     assert held.text == "open"
+
+
+# ---------------------------------------------------------------------------------------
+# who owns descriptors 1 and 2, which is the difference between a terminal and a transcript
+# ---------------------------------------------------------------------------------------
+
+
+@contextmanager
+def _stdout_going_to(path: Path) -> Iterator[None]:
+    """This process's own file descriptor 1, pointed at a file, for as long as the block runs.
+
+    The counterpart to :func:`_stdin_at_end_of_file` and descriptor-level for the same reason: a
+    child inherits the descriptor and never sees :data:`sys.stdout`, so a fixture that replaced
+    the object would prove nothing about what the child writes to.
+    """
+    saved = os.dup(1)
+    with open(path, "wb") as destination:
+        os.dup2(destination.fileno(), 1)
+    try:
+        yield
+    finally:
+        os.dup2(saved, 1)
+        os.close(saved)
+
+
+def test_a_session_the_researcher_watches_writes_to_their_terminal_as_it_goes(
+    tmp_path: Path,
+) -> None:
+    """**THE DEFECT THAT MADE ``edullm shell`` LOOK HUNG TO EVERY PERSON WHO EVER RAN IT.**
+    Mutation: drop ``hands_over_the_terminal`` at the call, which is what shipped.
+
+    The runner captures both streams for every other call it makes, and rightly: those are
+    questions this binary asks and reads the answers to. A shell is not one. Capture puts a pipe
+    on descriptors 1 and 2 that nothing drains until the child exits, so the researcher saw an
+    empty screen for as long as they sat there, typed into it blind, and met the whole session
+    played back at them at the end -- by which time they had reasonably concluded the verb hung.
+
+    Asserted from the far side of the descriptor rather than on the keyword, because the keyword
+    is what a caller passes and this is what a person sees. The captured half is asserted in the
+    same breath so that a runner which wrote to both would fail: printing the result *as well*
+    would put every line on the screen twice.
+    """
+    argv = (sys.executable, "-c", "print('the machine said this')")
+    landed = tmp_path / "what-the-terminal-got"
+
+    with _stdout_going_to(landed):
+        handed = SubprocessRunner()(argv, hands_over_the_terminal=True)
+    captured = SubprocessRunner()(argv)
+
+    assert landed.read_text(encoding="utf-8").strip() == "the machine said this"
+    assert handed.stdout == ""
+    assert handed.ok
+    assert captured.text == "the machine said this", "the other calls must still be captured"
+
+
+def test_a_session_cannot_be_both_typed_into_and_handed_a_pipe() -> None:
+    """Mutation: let the two keywords compose, with either one winning.
+
+    They are two answers to one question -- whether a person is at the other end of descriptor 0
+    -- so a caller asking for both has not decided which session it is opening. Resolved by
+    precedence in either direction, one of them silently becomes the bug the other exists to
+    prevent: a pipe swallowing every keystroke typed into a shell, or a session hanging up on end
+    of file before a byte comes back.
+    """
+    with pytest.raises(ValueError, match="cannot both"):
+        SubprocessRunner()(("true",), stdin_stays_open=True, hands_over_the_terminal=True)

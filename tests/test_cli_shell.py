@@ -86,6 +86,84 @@ def test_a_shell_keeps_the_researcher_s_own_stdin_and_is_not_handed_a_pipe(
     assert runner.held_stdin_open_for("aws", "ssm", "start-session") == [False]
 
 
+def test_a_shell_hands_the_person_their_own_terminal_rather_than_a_transcript(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**THE DEFECT THAT MEANT NOBODY HAD EVER RUN THIS VERB THROUGH TO A USABLE PROMPT.**
+    Mutation: capture the session and print it afterwards, which is what shipped.
+
+    The runner captures both streams by default, which is right for every question this binary
+    asks and wrong for the one session it steps out of the way of. Captured, the researcher saw
+    nothing for as long as they sat there, typed blind, and got the whole session at the end.
+    What ``tests/test_lane_session.py`` proves about the descriptor, this proves about the verb.
+
+    Nothing is printed from the result either, and the empty stdout below is why: a captured
+    stream that is also echoed puts every line on the screen twice.
+    """
+    runner = a_laptop(tmp_path)
+
+    _, out, _ = invoke(
+        ["shell", "--project", "mixlaw", "--compute", "gpu-1xt4"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert runner.handed_over_the_terminal_for("aws", "ssm", "start-session") == [True]
+    assert "hello from the machine" not in out
+
+
+def test_a_forwarded_notebook_says_it_is_up_while_it_is_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: hand over the terminal for a shell and capture the forward.
+
+    This is the branch capture hurt most. A port forward never exits on its own, so the plugin's
+    own line saying the tunnel is open -- the one that makes the address printed above worth
+    opening a browser at -- was held behind a pipe until Ctrl-C and then printed as the person
+    walked away. The address is useless without it.
+    """
+    runner = a_laptop(tmp_path)
+
+    invoke(
+        ["shell", "--project", "mixlaw", "--compute", "gpu-1xt4", "--notebook"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert runner.handed_over_the_terminal_for("aws", "ssm", "start-session") == [True]
+
+
+def test_the_run_verb_still_reads_its_session_rather_than_handing_it_over(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**THE BOUNDARY IN THE OTHER DIRECTION, GUARDING WHAT #384 MEASURED.**
+    Mutation: hand `run` the terminal too, on the theory that what helps one verb helps both.
+
+    `run` is not a person at a keyboard: it sends one command, reads the stream back, and finds
+    the remote exit status by parsing a sentinel out of it. Handing that session the terminal
+    would put the output somewhere this process never sees, so `_remote_status` would find no
+    sentinel and every successful run would report that the session ended without saying what
+    the command did -- which is the exact sentence #384 was opened to stop, arrived at from the
+    opposite side. The companion assertion is that it still asks for the standard input that
+    fix gave it.
+    """
+    runner = a_laptop(tmp_path)
+
+    code, out, _ = invoke(
+        ["run", "--project", "mixlaw", "--compute", "gpu-1xt4", "--", "nvidia-smi"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert runner.handed_over_the_terminal_for("aws", "ssm", "start-session") == [False]
+    assert runner.held_stdin_open_for("aws", "ssm", "start-session") == [True]
+    assert code == EXIT_OK
+    assert "hello from the machine" in out
+
+
 def test_the_notebook_flag_forwards_a_port_and_prints_the_address(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
