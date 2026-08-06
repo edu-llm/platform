@@ -43,6 +43,32 @@ does not fail the run. What is never allowed is silence.
 is public, and an AWS error message names the calling and resource ARNs. Only the error code
 is repeated. The invocation response is read for its error *type* and never echoed whole,
 because a handler traceback quotes paths and environment values.
+
+**A METRIC THAT HAS NOT BEEN PUBLISHED YET IS NOT A FUNCTION THAT DID NOT RUN, AND THIS USED
+TO REPORT IT AS ONE.** Lambda publishes ``Invocations`` and ``Errors`` to CloudWatch a couple
+of minutes after the fact. The window here opens at the function's own ``LastModified``, so a
+check run inside those first minutes measures a window in which nothing could have been
+published whatever the function did, and it raised ``deployed_lambda_never_invoked`` for a
+notifier that had just run four times cleanly. Confirmed rather than assumed on 2026-08-06:
+the identical command against the same ``deployed_at`` answered ``3 of 3 invocations`` a few
+minutes later with nothing invoked in between.
+
+The window it lies in is exactly the window a deploy workflow runs it in, and the sentence it
+lies with is the sentence it would use for a real outage. An instrument built to catch silent
+failure that cries wolf on every deploy is ignored inside a week, and then it catches nothing.
+
+Two changes, and neither of them makes the check weaker. :data:`PUBLICATION_LAG_SECONDS` is
+how long the metric takes to appear, and a window younger than it cannot support a claim
+either way, so it is reported as unmeasurable rather than as a finding. And where ``--invoke``
+was passed and the smoke invocation returned, that return is a direct observation of the
+function running and returning, which outranks a lagging count of the same event: a
+``deployed_lambda_never_invoked`` raised in the same breath as an invocation this process just
+made and read is a self-contradiction, not a finding.
+
+What is deliberately unchanged is the outage this exists to catch. A function invoked 934
+times that raised every time publishes those 934 errors, and is still red. A quiet
+schedule-driven function whose window is older than the lag is still red. What stops being red
+is the first two minutes after a deploy.
 """
 
 from __future__ import annotations
@@ -142,6 +168,17 @@ FUNCTION_ERROR_KEY: Final = "FunctionError"
 #: has to outlast it, or a slow cold start is reported as a check that could not look.
 INVOKE_TIMEOUT_SECONDS: Final = 120
 
+#: How long Lambda takes to publish ``Invocations`` and ``Errors`` to CloudWatch, and
+#: therefore how young a window has to be before an empty one says nothing.
+#:
+#: MEASURED RATHER THAN TAKEN FROM THE DOCUMENTATION, WHICH GIVES NO FIGURE. On 2026-08-06 the
+#: notifier was deployed at 07:05:16Z and invoked four times immediately; a read at 07:06
+#: answered zero invocations and a read a few minutes later answered three, with nothing
+#: invoked in between. Five minutes is above the gap that produced and below any window a
+#: reader would call stale, and being generous here costs one line saying the answer is not
+#: available yet while being ungenerous costs the whole instrument's credibility.
+PUBLICATION_LAG_SECONDS: Final = 300
+
 
 class LambdaLivenessFinding(Exception):
     """One function does not run, or could not be established to run.
@@ -166,6 +203,24 @@ class Window:
     deployed_at: datetime
     invocations: int
     errors: int
+    #: How long the window is, in seconds, measured when it was read. Carried rather than
+    #: recomputed by the caller, because the clock moves between the read and the verdict and
+    #: a window that was too young to measure must not become old enough on the way back.
+    seconds: int
+
+    @property
+    def published(self) -> bool:
+        """Whether enough time has passed for an empty answer to mean anything.
+
+        A WINDOW YOUNGER THAN THE PUBLICATION LAG CANNOT SAY THE FUNCTION DID NOT RUN. It
+        cannot say the function did run either, and that is why this is a property of the
+        window rather than a fallback verdict: what it justifies is refusing to answer, not
+        answering the other way.
+
+        Non-zero invocations are believed whatever this says, because the lag only ever
+        withholds datapoints. CloudWatch does not publish an invocation that did not happen.
+        """
+        return self.seconds >= PUBLICATION_LAG_SECONDS
 
     @property
     def successes(self) -> int:
@@ -324,6 +379,11 @@ def read_window(function_name: str, *, profile: str | None, region: str) -> Wind
         errors=_metric_sum(
             "Errors", function_name, since=deployed_at, profile=profile, region=region
         ),
+        # Taken after both reads rather than before them, so the age is never larger than the
+        # window the metrics were actually asked over. Two CloudWatch calls take a second or
+        # two, and rounding the age up would let a window be treated as measurable when the
+        # first of the two reads was made before it was.
+        seconds=int((datetime.now(tz=UTC) - deployed_at).total_seconds()),
     )
 
 
@@ -352,8 +412,14 @@ def smoke_payload(fixture: Path) -> bytes:
     ).encode("utf-8")
 
 
-def smoke_invoke(key: str, function_name: str, *, profile: str | None, region: str) -> None:
+def smoke_invoke(key: str, function_name: str, *, profile: str | None, region: str) -> bool:
     """Invoke the function on the committed fixture and require it not to raise.
+
+    Answers ``True`` when the invocation returned, and that answer is evidence rather than
+    bookkeeping. It is a direct observation, by this process, of the deployed code running
+    and returning, and it is what the CloudWatch counters below are a delayed report of. The
+    caller uses it to refuse to raise ``deployed_lambda_never_invoked`` about a function it
+    just watched run.
 
     ``FunctionError`` rather than the HTTP status, and the distinction is the trap this check
     exists to avoid. A handler that raises still answers ``StatusCode: 200`` -- the
@@ -405,6 +471,7 @@ def smoke_invoke(key: str, function_name: str, *, profile: str | None, region: s
             "paths and environment values and this log is public.",
             code=EXIT_DISAGREES,
         )
+    return True
 
 
 def _error_type(body: str) -> str:
@@ -428,21 +495,48 @@ def check(key: str, function: Function, *, invoke: bool, profile: str | None, re
     The invocation happens before the window is read, so its own success is inside the window
     it is then measured over. That ordering is what makes the notifier's line say something
     rather than nothing on the morning after a deploy that nothing has yet triggered.
+
+    **THE ORDERING IS NOT ENOUGH ON ITS OWN AND USED TO BE TREATED AS THOUGH IT WERE.** Being
+    inside the window and being published into it are different things, and the second takes
+    a couple of minutes. Two guards close that gap and both of them are about what may be
+    concluded from an empty count rather than about what the count says. A window younger
+    than :data:`PUBLICATION_LAG_SECONDS` cannot support a conclusion either way. And a smoke
+    invocation that returned is a direct observation of the function running, which the
+    counters are a delayed report of, so it settles the liveness question by itself.
     """
     name = deployed_function_name(function.template)
     smoked = invoke and key in SMOKE_FIXTURE
-    if smoked:
-        smoke_invoke(key, name, profile=profile, region=region)
+    observed = smoke_invoke(key, name, profile=profile, region=region) if smoked else False
 
     window = read_window(name, profile=profile, region=region)
     since = window.deployed_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    smoked_note = " Smoke invocation returned without error." if observed else ""
 
     if window.invocations == 0:
+        if observed:
+            # The one case the old code got flatly wrong. This process invoked the function,
+            # read the answer, and found no FunctionError, and then reported that the
+            # function has never been invoked. Reporting the observation is the whole fix.
+            return (
+                f"{name} returned on a smoke invocation just now, {_lag_said(window)} after "
+                f"it was deployed at {since}. CloudWatch has published no datapoint for it "
+                "yet, which is the publication lag rather than a finding."
+            )
         if TRIGGER[key] == "traffic":
             return (
                 f"{name} has not been invoked since it was deployed at {since}. It is driven "
                 "by researcher traffic, so a quiet window is not a finding, and this check "
                 "says nothing about whether it works."
+            )
+        if not window.published:
+            # Not a finding and not an answer. A schedule that has not fired yet and a
+            # schedule that is detached look identical this soon after a deploy, and the
+            # difference is a couple of minutes of waiting rather than anything measurable
+            # now. Saying so is what keeps the sentence below meaning something.
+            return (
+                f"{name} was deployed {_lag_said(window)} ago at {since} and CloudWatch "
+                f"publishes Lambda metrics about {PUBLICATION_LAG_SECONDS // 60} minutes "
+                "late, so an empty window says nothing yet. Run this again in a few minutes."
             )
         raise LambdaLivenessFinding(
             "deployed_lambda_never_invoked",
@@ -454,6 +548,17 @@ def check(key: str, function: Function, *, invoke: bool, profile: str | None, re
         )
 
     if window.successes <= 0:
+        if observed:
+            # Every published invocation raised and the one this process made did not, which
+            # is two true things rather than a contradiction: the errors are published and
+            # this success is not yet. The function is named as running because it was
+            # watched running, and the failures are named because they are the reason to look.
+            return (
+                f"{name} returned on a smoke invocation just now, and CloudWatch has "
+                f"published {window.invocations} invocations since {since} of which all "
+                "raised. The smoke is not in that count yet. Read the log group: real events "
+                "are failing on a path the committed fixture does not take."
+            )
         raise LambdaLivenessFinding(
             "deployed_lambda_has_never_succeeded",
             f"{name} has been invoked {window.invocations} times since it was deployed at "
@@ -463,11 +568,16 @@ def check(key: str, function: Function, *, invoke: bool, profile: str | None, re
             code=EXIT_DISAGREES,
         )
 
-    smoked_note = " Smoke invocation returned without error." if smoked else ""
     return (
         f"{name} has succeeded {window.successes} of {window.invocations} invocations since "
         f"it was deployed at {since}.{smoked_note}"
     )
+
+
+def _lag_said(window: Window) -> str:
+    """How old the window is, in the units a person waits in."""
+    minutes = window.seconds // 60
+    return f"{window.seconds}s" if minutes < 1 else f"{minutes}m"
 
 
 def build_parser() -> argparse.ArgumentParser:

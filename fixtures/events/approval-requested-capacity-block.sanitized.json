@@ -1,0 +1,40 @@
+{
+  "version": "0",
+  "id": "2c8b5e77-9a13-4f6e-b3c1-5d0a7e41f933",
+  "detail-type": "Run Approval Requested",
+  "source": "edullm.platform",
+  "account": "<aws-account-id>",
+  "time": "2026-08-06T02:37:00Z",
+  "region": "us-east-1",
+  "resources": [],
+  "detail": {
+    "approval_class": "exception",
+    "approving_environment": "run-approval-admin",
+    "experiment": "h100-capacity-block",
+    "image_scan_reviewed": true,
+    "manifest": {
+      "schema_version": 1,
+      "repository": "OLMo-core",
+      "commit_sha": "0000000000000000000000000000000000000007",
+      "image_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000007",
+      "dataset_release": "olmo-150b-dolma2-v1",
+      "command": ["python", "-m", "olmo_core.train", "--config", "configs/h100.yaml"],
+      "team": "pre-training",
+      "wandb_project": "olmo-core-h100",
+      "workload_profile": "olmo-core-train",
+      "compute_profile": "gpu-8xh100",
+      "maximum_runtime_hours": "12",
+      "maximum_attempts": 1,
+      "checkpoint": {
+        "interval_minutes": 30,
+        "destination_prefix": "s3://sbsandbox-intern-edullm-checkpoints/runs/",
+        "resume_required": true
+      },
+      "fanout": null
+    },
+    "manifest_sha256": "1f0e9d8c7b6a5948372615043f2e1d0c9b8a7960514233221100ffeeddccbbaa",
+    "run_id": "run_019fd3cc-79a0-70f5-aa29-6db4a2061a61",
+    "submitter": "philote-dev",
+    "url": "https://github.com/edu-llm/platform/actions/runs/31079336881"
+  }
+}

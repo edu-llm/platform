@@ -551,6 +551,61 @@ class PlatformActions:
             raise GithubUnreachableError(f"gh api {path} answered with something that is not JSON") from exc
 
 
+@dataclass(frozen=True)
+class Decline:
+    """A lead saying no, which is a different fact from anything going wrong.
+
+    **THE PLATFORM HAD ONE WORD FOR TWO THINGS AND THEY SEND A SUBMITTER TO DIFFERENT
+    PLACES.** GitHub gives a rejected deployment review the same run conclusion it gives a
+    job that crashed, so ``submission_state`` called both ``REFUSED`` and a researcher
+    reading that went looking for a bug in a submission a person had simply declined. One is
+    a judgement with a name and a sentence behind it; the other is a stack trace.
+
+    ``reason`` is what the reviewer typed into GitHub's box and is ``None`` where they typed
+    nothing, which is common and is worth showing as an absence: "declined, no reason given"
+    tells a submitter to go and ask, where a blank tells them the tool did not look.
+    """
+
+    by: str | None
+    reason: str | None
+    at: datetime | None
+
+
+#: The word ``status`` prints for a run a person said no to. Held apart from ``REFUSED``,
+#: which is what everything else that ends a submission badly reads as.
+DECLINED: Final = "DECLINED"
+
+#: The two conclusions a declined deployment review can leave behind. GitHub's own
+#: documentation does not fix which, and no run in this repository has been declined yet, so
+#: both are looked at rather than one being guessed. The approvals endpoint is what actually
+#: decides; these only bound which runs are worth asking it about.
+MIGHT_BE_DECLINED: Final = frozenset({"REFUSED", "CANCELLED"})
+
+
+def decline_of(actions: PlatformActions, workflow_run_id: int) -> Decline | None:
+    """Whether somebody declined this run, and what they said, or ``None`` for neither.
+
+    Reads the same endpoint ``_released`` reads for the approval, which is the endpoint
+    ``submit-run.yml`` itself reads to learn whose authorization to evaluate. So this is not
+    a second source for the fact. It is the same source, asked the other question.
+
+    Asked only of runs that ended badly, which is what keeps the listing affordable: a
+    successful run cannot have been declined, and asking about every run in the window would
+    put one API call per row behind a verb people run in a loop while they wait.
+    """
+    for approval in actions.approvals(workflow_run_id):
+        if approval.get("state") != "rejected":
+            continue
+        user = approval.get("user")
+        comment = approval.get("comment")
+        return Decline(
+            by=user["login"] if isinstance(user, dict) and isinstance(user.get("login"), str) else None,
+            reason=comment.strip() if isinstance(comment, str) and comment.strip() else None,
+            at=_instant(approval.get("comment_created_at")),
+        )
+    return None
+
+
 def read_submission_runs(
     actions: PlatformActions,
     *,
@@ -568,10 +623,13 @@ def read_submission_runs(
         compiled = actions.compiled_submission(identifier) if resolve_run_ids else None
         manifest = compiled.get("manifest") if isinstance(compiled, dict) else None
         fanout = manifest.get("fanout") if isinstance(manifest, dict) else None
+        state = submission_state(run)
+        if state in MIGHT_BE_DECLINED and decline_of(actions, identifier) is not None:
+            state = DECLINED
         found.append(
             SubmissionRun(
                 workflow_run_id=identifier,
-                state=submission_state(run),
+                state=state,
                 created_at=created,
                 url=str(run.get("html_url") or ""),
                 run_id=_string(compiled, "run_id"),
@@ -613,6 +671,10 @@ class RunFacts:
     #: From ``approvals``, once somebody has.
     approver: str | None = None
     approved_at: datetime | None = None
+    #: From the same endpoint, when somebody said no instead. ``None`` for every run nobody
+    #: declined, which is what lets ``status`` print a decline as a decline rather than as
+    #: the failure GitHub's run conclusion makes it look like.
+    declined: Decline | None = None
     experiment: str | None = None
     team: str | None = None
 
@@ -686,6 +748,13 @@ def read_run_facts(
     if submission.state == "PENDING_APPROVAL":
         return _parked(actions, facts)
     if admission is None or conclusion == "skipped":
+        # A DECLINE LOOKS EXACTLY LIKE THIS AND IS NOT THIS. Rejecting a deployment review
+        # stops the admission job from ever running, so the branch a declined run falls into
+        # is the same one a compile refusal falls into, and the sentence below sends somebody
+        # to a run page to look for a defect in a submission a person simply said no to.
+        declined = decline_of(actions, submission.workflow_run_id)
+        if declined is not None:
+            return _declined(facts, declined)
         return replace(
             facts,
             admitted=Admitted.NO,
@@ -712,6 +781,36 @@ def read_run_facts(
             f"the admission job ended {conclusion}, which does not say whether it got as "
             "far as starting the run. It writes where a run went only after admission "
             "answers, so asking AWS is the only way to be sure."
+        ),
+    )
+
+
+def _declined(facts: RunFacts, declined: Decline) -> RunFacts:
+    """A run a person said no to, described as that and not as a failure.
+
+    ``Admitted.NO`` for the same reason a parked run is: nothing reached AWS, so there is no
+    Batch job to describe and no runner worth spending to be told so.
+
+    The sentence names where the reason lives, because that is the question a submitter has
+    three months later and the honest answer has a horizon on it. GitHub keeps a workflow run
+    for ninety days by default and then the page, the reviewer's comment and the whole
+    deployment record go with it. So the sentence points at the run page, which is where it
+    is, and the message the notifier posts into the runs channel is what outlives it.
+    """
+    said = declined.reason or "no reason was typed into the box GitHub offers"
+    return replace(
+        facts,
+        admitted=Admitted.NO,
+        declined=declined,
+        # The heading reads off the submission, so the state is corrected there as well as
+        # recorded here. Two places that could disagree would be worse than one that is
+        # wrong, and the heading is the half a reader sees first.
+        submission=(
+            None if facts.submission is None else replace(facts.submission, state=DECLINED)
+        ),
+        because=(
+            f"this run was declined at the approval gate, so nothing reached AWS. It did not "
+            f"fail and nothing about it is broken. The reason given was: {said}"
         ),
     )
 

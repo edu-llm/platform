@@ -827,29 +827,21 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # LNv7E3nuhEowl_a7C7BQZys.g7190V13, both cut from 5ca93d2, and both templates and both
     # release records name the digests those builds produced.
     #
-    # The notifier entry below is not an oversight and must not be tidied away with them.
-    # edullm/the-approval-message is in flight over exactly this zip -- it adds
-    # notifications/approval.py, notifications/messages.py and notifications/overnight.py,
-    # rewrites notifier_handler.py and edits tools/build_notifier_lambda.py -- and it had no
-    # pull request at all when these three were cut. Releasing the notifier from under it
-    # would upload bytes somebody is midway through changing, and the branch landing an hour
-    # later would owe a second release of one function from two branches, which is the
-    # arrangement the "released twice in the space of an hour" paragraph above was written
-    # about. The entry stands until that branch lands, and whoever merges it cuts the
-    # release and deletes the entry in that commit.
+    # The notifier entry that stood here was not an oversight and it is gone now, which is
+    # the arrangement it asked for rather than a departure from it. It said in as many words
+    # that edullm/the-approval-message was in flight over exactly this zip, that releasing
+    # the notifier from under it would upload bytes somebody was midway through changing,
+    # and that whoever merged that branch should cut the release and delete the entry in the
+    # same commit. That branch is this one. The notifier was uploaded as object version
+    # vjBGeKHvXZfL13W4gFrrvlQlKgtaS..W, and its template and release record both name the
+    # digest that build produced.
+    #
+    # So the deferral worked exactly as intended and cost one function one release rather
+    # than two, which is what the "released twice in the space of an hour" paragraph above
+    # was written to prevent. What is worth keeping from it is the rule rather than the
+    # instance: a zip a branch is rewriting is one to leave alone and record, not one to cut
+    # from main because the register looks untidy.
     releases: tuple[PendingRelease, ...] = (
-        PendingRelease(
-            function="notifier",
-            reason=(
-                "The same nullable attempt_id, reached through notifications/facts.py "
-                "importing contracts/results.py. Nothing the notifier says about a run "
-                "reads the field, so this is bytes and no behaviour."
-            ),
-            cleared_by="uv run python tools/release_lambda.py --function notifier",
-            builds_to="abb7d03146dda3e231a36ff04f950f874a924b03c15b3f6dab54b5e1da485540",
-            released="b85765ebc5f0c14ae8b28ebfd088a36475c242b6261028955bc3d4f2f943cbe3",
-            recorded_on=date(2026, 8, 6),
-        ),
     # A THIRTEENTH WAS OPENED AND CLEARED WITHIN THE HOUR, AND WHAT IS WORTH KEEPING IS THAT
     # THE THING IT WAS WAITING FOR HAD ALREADY HAPPENED WHEN IT WAS WRITTEN. The janitor's
     # zip carries researcher_lane.py for two tag keys and a role name, and #318 moved that

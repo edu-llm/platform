@@ -38,5 +38,5 @@
 # which is the check that would have caught this function on the day its template landed.
 schema_version: 1
 s3_key: notifier/notifier.zip
-s3_object_version: joH9ikshZSvQZ.zA5pS7ni0aK6MRptRn
-sha256: b85765ebc5f0c14ae8b28ebfd088a36475c242b6261028955bc3d4f2f943cbe3
+s3_object_version: vjBGeKHvXZfL13W4gFrrvlQlKgtaS..W
+sha256: b291227b4905c7ac9b89b78e3f8b3491ab8912d5768059a9d00d945927e8c53f

@@ -92,6 +92,91 @@ Resources:
                 aws:SourceAccount:
                   Ref: AWS::AccountId
 
+          # THE SECOND WRITER, AND IT IS THE PLATFORM TALKING TO ITSELF RATHER THAN BATCH.
+          #
+          # A separate statement rather than a second ARN in the list above, because the two
+          # writers say different things and one of them is allowed to say only one thing.
+          # The lifecycle rule delivers whatever Batch reports; the schedule below delivers a
+          # constant this template carries, so widening the first condition to cover it would
+          # let either rule deliver either shape.
+          #
+          # Both queues, for the reason the statement above lists both: EventBridge writes to
+          # a target's dead-letter queue under the rule's own ARN, so a schedule that could
+          # reach the queue and not the dead-letter queue would lose the one delivery worth
+          # keeping, which is the one that did not arrive.
+          - Sid: AllowTheMorningScheduleToDeliver
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource:
+              - Fn::GetAtt:
+                  - NotifierQueue
+                  - Arn
+              - Fn::GetAtt:
+                  - NotifierDeadLetterQueue
+                  - Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn:
+                  Fn::GetAtt:
+                    - MorningPageSchedule
+                    - Arn
+              StringEquals:
+                aws:SourceAccount:
+                  Ref: AWS::AccountId
+
+  # ------------------------------------------------------------------------------------
+  # The morning page
+  # ------------------------------------------------------------------------------------
+  #
+  # ONE PAGE A DAY, ONTO THE QUEUE THE NOTIFIER ALREADY READS. A schedule rather than a
+  # second Lambda, and a constant input rather than a payload anybody assembles, because
+  # everything the page needs is read by the function at the moment it runs: one
+  # batch:ListJobs per declared queue, bounded by the window, priced against the catalog in
+  # its own zip. There is nothing for a producer to put in the event except how far back to
+  # look.
+  #
+  # WHY IT IS NOT A TARGET ON THE LIFECYCLE RULE. That rule matches Batch state changes and
+  # this fires on a clock, so they are two different rules by construction. What they share
+  # is the queue, which is deliberate: the queue is where a message that could not be posted
+  # goes to be found, and a morning page nobody got is the same incident as a run-ended line
+  # nobody got. Two queues would be two dead-letter queues and two alarms watching one thing.
+  #
+  # 13:00 UTC, which is eight in the morning on the east coast and seven in the middle. The
+  # window the constant asks for is twelve hours, so the page covers everything since eight
+  # the evening before, which is the whole of the time nobody was reading the channel. The
+  # hour is here rather than in the handler because it is a property of who reads it.
+  MorningPageSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: sbsandbox-intern-edullm-morning-page
+      Description: Asks the notifier to post what happened overnight, once every morning.
+      ScheduleExpression: cron(0 13 * * ? *)
+      State: ENABLED
+      Targets:
+        - Id: notifier-queue
+          Arn:
+            Fn::GetAtt:
+              - NotifierQueue
+              - Arn
+          # The envelope the handler recognises, spelled out here because a schedule has no
+          # event of its own to carry one. `source` and `detail-type` are the two keys
+          # `notifications/overnight.py` matches on, and
+          # tests/test_notifications_infrastructure.py holds both against the constants in
+          # that module so the schedule cannot start firing something nothing reads.
+          Input: >-
+            {"source":"edullm.platform","detail-type":"Overnight Activity","detail":{"hours":12}}
+          # A page that could not be posted three times is one the webhook is refusing, and
+          # the queue's own redrive policy is what puts it where the dead-letter alarm sees
+          # it. This one covers the shorter path: EventBridge failing to reach the queue at
+          # all, which the queue's redrive policy cannot see because nothing was enqueued.
+          DeadLetterConfig:
+            Arn:
+              Fn::GetAtt:
+                - NotifierDeadLetterQueue
+                - Arn
+
   # ------------------------------------------------------------------------------------
   # The function
   # ------------------------------------------------------------------------------------
@@ -119,7 +204,7 @@ Resources:
       Code:
         S3Bucket: sbsandbox-intern-edullm-artifacts
         S3Key: notifier/notifier.zip
-        S3ObjectVersion: joH9ikshZSvQZ.zA5pS7ni0aK6MRptRn
+        S3ObjectVersion: vjBGeKHvXZfL13W4gFrrvlQlKgtaS..W
       Environment:
         Variables:
           # A NAME AND NEVER A VALUE. A Slack incoming webhook carries its whole credential in

@@ -1,0 +1,13 @@
+{
+  "version": "0",
+  "id": "3d7c4f88-0b25-4e70-a4d2-6e1b8f52a044",
+  "detail-type": "Overnight Activity",
+  "source": "edullm.platform",
+  "account": "<aws-account-id>",
+  "time": "2026-08-06T12:00:00Z",
+  "region": "us-east-1",
+  "resources": [],
+  "detail": {
+    "hours": 12
+  }
+}

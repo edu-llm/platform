@@ -1,0 +1,40 @@
+{
+  "version": "0",
+  "id": "0e4d0a4c-2c17-4a44-9d5d-3f1b0d2a7c11",
+  "detail-type": "Run Approval Requested",
+  "source": "edullm.platform",
+  "account": "<aws-account-id>",
+  "time": "2026-08-06T02:31:00Z",
+  "region": "us-east-1",
+  "resources": [],
+  "detail": {
+    "approval_class": "routine",
+    "approving_environment": "run-approval-lead",
+    "experiment": "context-length-sweep",
+    "image_scan_reviewed": true,
+    "manifest": {
+      "schema_version": 1,
+      "repository": "OLMo-core",
+      "commit_sha": "0000000000000000000000000000000000000005",
+      "image_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+      "dataset_release": "regmix-10b-v1",
+      "command": ["python", "-m", "olmo_core.train", "--config", "configs/long-context.yaml"],
+      "team": "pre-training",
+      "wandb_project": "olmo-core-context",
+      "workload_profile": "olmo-core-train",
+      "compute_profile": "gpu-8xa10g",
+      "maximum_runtime_hours": "24",
+      "maximum_attempts": 2,
+      "checkpoint": {
+        "interval_minutes": 30,
+        "destination_prefix": "s3://sbsandbox-intern-edullm-checkpoints/runs/",
+        "resume_required": true
+      },
+      "fanout": null
+    },
+    "manifest_sha256": "1f0e9d8c7b6a5948372615043f2e1d0c9b8a7960514233221100ffeeddccbbaa",
+    "run_id": "run_019fd4f0-cf95-70b1-9f65-461245dbd08e",
+    "submitter": "nzhao721",
+    "url": "https://github.com/edu-llm/platform/actions/runs/31080677880"
+  }
+}

@@ -272,7 +272,13 @@ def status_document(facts: RunFacts) -> dict[str, Any]:
     ``--json``: the report is markdown scraped out of a job log, so a field carrying it would
     publish a shape that does not exist. The key is here rather than absent so that the
     answer is "nothing was asked" rather than a ``KeyError``.
+
+    ``declined`` is present and ``None`` for every run nobody said no to, for the same
+    reason. A caller branching on whether a run failed has to be able to ask whether it was
+    declined instead, and reading that out of the prose in ``because`` is exactly what the
+    machine-readable form exists to avoid.
     """
+    declined = facts.declined
     return {
         **envelope("status"),
         "run_id": facts.run_id,
@@ -286,6 +292,13 @@ def status_document(facts: RunFacts) -> dict[str, Any]:
         "you_can_release": facts.you_can_release,
         "approver": facts.approver,
         "approved_at": None if facts.approved_at is None else facts.approved_at.isoformat(),
+        "declined": None
+        if declined is None
+        else {
+            "by": declined.by,
+            "reason": declined.reason,
+            "at": None if declined.at is None else declined.at.isoformat(),
+        },
         "experiment": facts.experiment,
         "team": facts.team,
         "aws_report": None,

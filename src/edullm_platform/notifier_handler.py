@@ -1,8 +1,16 @@
-"""The Lambda that turns a Batch state change into something somebody reads.
+"""The Lambda that turns what the platform did into something somebody reads.
 
 A thin shell over ``edullm_platform.notifications``. Everything worth testing is in those
-three modules; this one unwraps a delivery, decides whether a message is owed, and says which
+modules; this one unwraps a delivery, decides whether a message is owed, and says which
 records could not be posted.
+
+**Three things it says, on one queue.** A run ended, which comes from Batch. A run is waiting
+on a lead, which comes from the platform describing its own approval gate. And what happened
+overnight, which comes from a schedule. :func:`message_for` picks between them on the
+envelope's ``source`` and ``detail-type``, and each reader answers ``None`` for an envelope
+that is not its own, so a delivery none of them claims is a success rather than a retry.
+One queue rather than three, because the queue is where a message that could not be posted
+goes to be found and all three failures are the same incident.
 
 **It reads and it cannot act.** The role holds a queue read, one secret read, one object read
 under the lineage store's ``intent/`` prefix, one listing of the outputs bucket,
@@ -50,11 +58,21 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
+from functools import cache
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
 
+from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.lifecycle_projection import CheckpointLister
+from edullm_platform.notifications.approval import (
+    APPROVAL_DETAIL_TYPE,
+    PLATFORM_EVENT_SOURCE,
+    ApprovalRequestedFacts,
+    load_policy,
+    read_approval_requested,
+)
 from edullm_platform.notifications.delivery import Transport, WebhookTransport
 from edullm_platform.notifications.facts import (
     DEFAULT_LINEAGE_BUCKET,
@@ -64,7 +82,14 @@ from edullm_platform.notifications.facts import (
     IntentReader,
     read_run_ended,
 )
-from edullm_platform.notifications.messages import render_run_ended
+from edullm_platform.notifications.messages import (
+    Message,
+    render_approval_requested,
+    render_morning_page,
+    render_run_ended,
+)
+from edullm_platform.notifications.overnight import read_overnight
+from edullm_platform.run_history import RunHistory, load_run_history
 
 __all__ = [
     "BATCH_ITEM_FAILURES_KEY",
@@ -74,6 +99,7 @@ __all__ = [
     "NotifierEventError",
     "SecretReader",
     "handler",
+    "message_for",
 ]
 
 #: The key Lambda reads a per-message verdict out of, and the event source mapping property
@@ -102,6 +128,8 @@ WEBHOOK_SECRET_VARIABLE: Final = "EDULLM_WEBHOOK_SECRET_ID"
 #: is why the validator carries the same three files and has never once failed to find them.
 CONFIG_DIRECTORY_VARIABLE: Final = "EDULLM_CONFIG_DIRECTORY"
 DEFAULT_CONFIG_DIRECTORY: Final = Path(__file__).resolve().parent / "config"
+
+MILLISECONDS_A_SECOND: Final = 1000
 
 
 class NotifierEventError(ValueError):
@@ -193,12 +221,114 @@ def _default_cell_lister() -> CellLister:
     return cast(CellLister, boto3.client("batch"))
 
 
+def _is_an_approval(envelope: Mapping[str, Any]) -> bool:
+    """Whether this delivery is worth opening the policy for.
+
+    The same two keys ``read_approval_requested`` checks first, asked here so the two files
+    that message needs are read only when one has arrived. Duplicated rather than restructured
+    because the alternative is a reader that reports why it declined, and every other reader
+    in this package answers ``None`` and says nothing.
+    """
+    return (
+        envelope.get("source") == PLATFORM_EVENT_SOURCE
+        and envelope.get("detail-type") == APPROVAL_DETAIL_TYPE
+    )
+
+
+def _sent_at(record: Mapping[str, Any], envelope: Mapping[str, Any]) -> int:
+    """When this delivery was put on the queue, in milliseconds, out of the delivery itself.
+
+    THE ONE CLOCK THIS FUNCTION HAS, AND IT IS READ RATHER THAN TAKEN. The morning page needs
+    a moment to measure a window back from, and everything under ``notifications/`` is
+    written with no clock so that every answer is reproducible from a committed envelope.
+    SQS stamps ``SentTimestamp`` on every record, which is the instant the schedule fired
+    rather than the instant this container got round to it, so a retry after a cold start
+    measures the same window the first attempt would have.
+
+    ``time.time`` is the fallback and it is only reached by a caller that built the record by
+    hand. Falling back rather than refusing, because a morning page measured from a second
+    later is right and a morning page nobody got is not.
+    """
+    attributes = record.get("attributes")
+    stamp = attributes.get("SentTimestamp") if isinstance(attributes, Mapping) else None
+    if isinstance(stamp, str) and stamp.isdigit():
+        return int(stamp)
+    if isinstance(stamp, int) and not isinstance(stamp, bool):
+        return stamp
+    del envelope
+    return int(time.time() * MILLISECONDS_A_SECOND)
+
+
+def message_for(
+    envelope: Mapping[str, Any],
+    record: Mapping[str, Any],
+    *,
+    catalogs: Catalogs,
+    policy: Callable[[], ApprovalPolicy],
+    history: Callable[[], RunHistory | None],
+    intent_reader: IntentReader | None,
+    lineage_bucket: str,
+    cell_lister: CellLister | None,
+    checkpoint_lister: CheckpointLister | None,
+) -> Message | None:
+    """The one thing to say about this delivery, or ``None`` because it is owed nothing.
+
+    THREE SHAPES ON ONE QUEUE, AND THE SOURCE IS WHAT TELLS THEM APART. Batch's own state
+    changes arrive from ``aws.batch``; the approval request and the morning trigger arrive
+    from ``edullm.platform``, because nothing in AWS produces either and a reader that could
+    not tell them from a job would try to price a submission as one.
+
+    A second queue per shape was the alternative and it buys nothing. The queue is where a
+    message that could not be posted goes to be found, and a message nobody got is the same
+    incident whichever of the three it was. Three queues would be three dead-letter queues
+    and three alarms watching for one thing.
+
+    Every reader is asked in turn and each answers ``None`` for an envelope that is not its
+    own, which is the same shape ``read_run_ended`` already had for a non-terminal event.
+
+    ``policy`` and ``history`` arrive as callables rather than as values, and the laziness is
+    the point rather than a style. Nine deliveries in ten are Batch state changes owing a
+    run-ended line, and that line reads neither file. Loading both eagerly would make every
+    one of those invocations pay for two reads it does not use, and would make a run-ended
+    message fail on a deployment whose policy file was missing, which is a message about a
+    run that demonstrably happened lost to a file it never opens.
+    """
+    ended = read_run_ended(
+        envelope,
+        catalogs=catalogs,
+        intent_reader=intent_reader,
+        lineage_bucket=lineage_bucket,
+        cell_lister=cell_lister,
+        checkpoint_lister=checkpoint_lister,
+    )
+    if ended is not None:
+        return render_run_ended(ended)
+
+    asked: ApprovalRequestedFacts | None = (
+        read_approval_requested(envelope, catalogs=catalogs, policy=policy(), history=history())
+        if _is_an_approval(envelope)
+        else None
+    )
+    if asked is not None:
+        return render_approval_requested(asked)
+
+    overnight = read_overnight(
+        envelope,
+        catalogs=catalogs,
+        cell_lister=cell_lister,
+        now_ms=_sent_at(record, envelope),
+    )
+    return None if overnight is None else render_morning_page(overnight)
+
+
 def handler(
     event: Mapping[str, Any],
     context: object = None,
     *,
     transport: Transport | None = None,
     catalogs: Catalogs | None = None,
+    policy: ApprovalPolicy | None = None,
+    history: RunHistory | None = None,
     intent_reader: IntentReader | None = None,
     cell_lister: CellLister | None = None,
     checkpoint_lister: CheckpointLister | None = None,
@@ -213,17 +343,19 @@ def handler(
     ``transport is None`` RATHER THAN A FLAG. A caller that supplied a transport is a test,
     and a test that got a real boto3 client behind its fake transport would reach the account
     from the suite. A caller that supplied none is the deployed function.
+
+    ``policy`` and ``history`` come from the same packaged directory the catalogs come from,
+    and both are read at most once per invocation and only when an approval request arrives.
+    ``history`` is ``None`` where no reading is packaged, which the approval message says
+    rather than treating as a shape nothing has run.
     """
     del context
 
     sender = transport if transport is not None else WebhookTransport(endpoint=_webhook_endpoint())
-    loaded = (
-        catalogs
-        if catalogs is not None
-        else Catalogs.load(
-            Path(os.environ.get(CONFIG_DIRECTORY_VARIABLE) or DEFAULT_CONFIG_DIRECTORY)
-        )
-    )
+    directory = Path(os.environ.get(CONFIG_DIRECTORY_VARIABLE) or DEFAULT_CONFIG_DIRECTORY)
+    loaded = catalogs if catalogs is not None else Catalogs.load(directory)
+    rules = cache(lambda: policy if policy is not None else load_policy(directory))
+    reading = cache(lambda: history if history is not None else load_run_history(directory))
     reader, lister, cells = intent_reader, checkpoint_lister, cell_lister
     if transport is None and reader is None and lister is None and cells is None:
         storage = _default_s3_client()
@@ -236,16 +368,19 @@ def handler(
     failures: list[tuple[str | None, Exception]] = []
     for record in records:
         try:
-            facts = read_run_ended(
+            message = message_for(
                 _envelope(record),
+                record,
                 catalogs=loaded,
+                policy=rules,
+                history=reading,
                 intent_reader=reader,
                 lineage_bucket=bucket,
                 cell_lister=cells,
                 checkpoint_lister=lister,
             )
-            if facts is not None:
-                sender.deliver(render_run_ended(facts))
+            if message is not None:
+                sender.deliver(message)
         except Exception as error:  # noqa: BLE001
             # Broad on purpose: one delivery that cannot be read or posted must not stop the
             # ones beside it, and every way it can fail is handled the same way.

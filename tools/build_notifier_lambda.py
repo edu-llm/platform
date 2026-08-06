@@ -70,10 +70,28 @@ HANDLER_ENTRY_POINT = "edullm_platform.notifier_handler.handler"
 #: What this function imports, which is what its zip carries.
 NOTIFIER_ENTRYPOINT = "edullm_platform.notifier_handler"
 
-#: The three reviewed files this function opens, and no others. Held to what the packaged
+#: The five reviewed files this function opens, and no others. Held to what the packaged
 #: modules actually name, in both directions, by tests/test_lambda_package_closure.py.
+#:
+#: IT WAS THREE AND THE TWO THAT JOINED IT BOTH BELONG TO THE APPROVAL MESSAGE. ``policy.yaml``
+#: carries the bound under which nobody releases a run and the role that releases everything
+#: else, and the routing line quotes both, so a message that did not read the file would be
+#: stating a threshold from memory. That file has been bumped five times and its one surviving
+#: bound has moved by a factor of a hundred. ``run-history.json`` is the measured median for
+#: runs of a shape, and it is what lets a lead tell an expensive run that is correct from an
+#: expensive run that is a typed-in maximum, which the five factors alone cannot.
+#:
+#: Both widen what moves this function's release digest, and that is the cost of them. A
+#: policy bump now needs the notifier re-released as well as the validator, which is stated
+#: in infra/README.md beside the procedure.
 NOTIFIER_CONFIG: frozenset[str] = frozenset(
-    {"organization.yaml", "workload-catalog.yaml", "execution-targets.yaml"}
+    {
+        "organization.yaml",
+        "workload-catalog.yaml",
+        "execution-targets.yaml",
+        "policy.yaml",
+        "run-history.json",
+    }
 )
 
 
