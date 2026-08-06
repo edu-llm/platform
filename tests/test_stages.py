@@ -584,6 +584,14 @@ def test_no_cell_may_be_implied_by_another_rows_cell_unless_the_manifest_says_wh
     a file. Implication is the relation that matters and equality is only its special case. Worth
     knowing before somebody simplifies this back into the version that passes.
 
+    AND THE EQUALITY VERSION WAS STOPPED BY RUNNING THE MUTATION RATHER THAN BY ANYBODY READING
+    IT. It was written, it passed the suite, and it read as correct; a reviewer looking at that
+    diff had nothing to go on, because the test and its subject were both plausible and the gap
+    between them was two cells being weaker rather than absent. The rule that caught it is that a
+    guard is not finished until the defect it names has been put back and seen to go red. That is
+    cheap here -- restore one row, run one file -- and it is the only step in this that does not
+    depend on somebody being clever on the day.
+
     WHY IMPLICATION IS NOT ITSELF A DEFECT, WHICH IS WHY THE ANSWER IS A DECLARATION. Nineteen
     paths here are named by more than one row and almost all of it is honest. `capacity-yaml`
     asserting that `capacity.yaml` exists is implied by `control-plane` asserting that all eight
