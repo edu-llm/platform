@@ -17,6 +17,7 @@ name = "edullm-platform"
 #
 # 0.2.0 rather than 0.1.1 because 0.1.0 was never released and nothing was ever installed
 # from a tag; the first tag this repository has should not look like the second.
+# WHY THIS IS A MINOR RATHER THAN A PATCH. This branch exists to prove the guard runs.
 version = "3.4.0"
 requires-python = ">=3.12"
 dependencies = [
