@@ -265,10 +265,14 @@ $SubmissionSteps = [ordered]@{
             }
             Write-Did 'installed.'
         }
+        # The phrase uv actually prints is kept whole on one line rather than wrapped across
+        # two. `test_nothing_recommends_the_upgrade_command_that_does_not_work` reads these
+        # files for it, and a line break inside it reads to that check as a file naming
+        # `uv tool upgrade` with no warning attached.
         Write-Note 'Re-running that same line later is the upgrade and the repair, because --force makes'
-        Write-Note 'it idempotent. `uv tool upgrade` is not the same thing: for an install pinned at a'
-        Write-Note 'release tag, which is the line every release note hands out, it answers "Nothing to'
-        Write-Note 'upgrade" and exits 0 however far behind that install has fallen.'
+        Write-Note 'it idempotent. `uv tool upgrade` is not the same thing. For an install pinned at a'
+        Write-Note 'release tag, which is the line every release note hands out, uv answers'
+        Write-Note '"Nothing to upgrade" and exits 0 however far behind that install has fallen.'
         return $true
     }
 

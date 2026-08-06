@@ -280,10 +280,14 @@ step_install() {
     fi
     did "installed."
   fi
+  # The phrase uv actually prints is kept whole on one line rather than wrapped across two.
+  # `test_nothing_recommends_the_upgrade_command_that_does_not_work` reads these files for it,
+  # and a line break inside it reads to that check as a file naming `uv tool upgrade` with no
+  # warning attached.
   note "Re-running that same line later is the upgrade and the repair, because --force makes"
-  note "it idempotent. \`uv tool upgrade\` is not the same thing: for an install pinned at a"
-  note "release tag, which is the line every release note hands out, it answers \"Nothing to"
-  note "upgrade\" and exits 0 however far behind that install has fallen."
+  note "it idempotent. \`uv tool upgrade\` is not the same thing. For an install pinned at a"
+  note "release tag, which is the line every release note hands out, uv answers"
+  note "\"Nothing to upgrade\" and exits 0 however far behind that install has fallen."
   return 0
 }
 
