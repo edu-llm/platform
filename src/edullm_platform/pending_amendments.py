@@ -819,6 +819,25 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # can meet changes. What waits is the improvement. The validator and the notifier read
     # the contract and neither reads this field, so for them the window is bytes and no
     # behaviour at all.
+    #
+    # TWO OF THOSE RECORDS WERE WIDENED RATHER THAN JOINED BY A FOURTEENTH, WHICH IS WHAT THE
+    # REGISTER'S ONE-RECORD-PER-FUNCTION RULE FORCES AND IS ALSO THE HONEST SHAPE. A workload
+    # profile was added to config/workload-catalog.yaml, which ADMISSION_CONFIG and
+    # NOTIFIER_CONFIG both package, so the validator and notifier zips moved a second time
+    # before either had been released. compare_release reported both as SKEWED rather than
+    # absorbing the difference -- the record no longer explained the pair of digests -- which
+    # is the register working, and the remedy its own message names is to rebuild and update
+    # the entry.
+    #
+    # NEITHER FUNCTION READS A WORKLOAD PROFILE BY NAME, SO THIS IS THE SAME BYTES-AND-NO-
+    # BEHAVIOUR WINDOW THE attempt_id CHANGE OPENED. RunManifest.workload_profile is a plain
+    # string and nothing looks it up: a submission is compiled on a runner from main's
+    # catalog and carries its own runtime bound, attempt count and checkpoint contract, and
+    # admission re-derives the class from those fields and from the compute profile's rate.
+    # So a run naming edullm-p1-train is admitted correctly by the deployed validator today,
+    # and the release below moves bytes rather than an answer. The catalog entries that would
+    # not survive this window are compute profiles, which admission does look up, and none
+    # moved.
     releases: tuple[PendingRelease, ...] = (
         PendingRelease(
             function="recorder",
@@ -837,12 +856,15 @@ def pending_releases() -> tuple[PendingRelease, ...]:
         PendingRelease(
             function="validator",
             reason=(
-                "The same nullable attempt_id, reached by importing contracts/results.py. "
-                "The validator does not read the field, so its packaged bytes move and "
-                "nothing it decides does."
+                "The same nullable attempt_id, reached by importing contracts/results.py, "
+                "and now also the edullm-p1-train workload profile added to "
+                "config/workload-catalog.yaml, which ADMISSION_CONFIG packages. The "
+                "validator reads neither: it does not read the field, and it looks up "
+                "compute profiles rather than workload profiles, so its packaged bytes move "
+                "and nothing it decides does."
             ),
             cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="df9952459e54ff0ebbce89660b5faf3b7a87bae47d2a0856c2553c9735d2740f",
+            builds_to="ab78ebd2a0fd2387a70dd5a6bd08d010b1c63949687f73ac824e3bc68c007d14",
             released="da7313e1055d1abdafb79d7a83c344bdbde32cc7a6739b36df99291c0643f2e9",
             recorded_on=date(2026, 8, 6),
         ),
@@ -850,11 +872,13 @@ def pending_releases() -> tuple[PendingRelease, ...]:
             function="notifier",
             reason=(
                 "The same nullable attempt_id, reached through notifications/facts.py "
-                "importing contracts/results.py. Nothing the notifier says about a run "
-                "reads the field, so this is bytes and no behaviour."
+                "importing contracts/results.py, and now also the edullm-p1-train workload "
+                "profile added to config/workload-catalog.yaml, which NOTIFIER_CONFIG "
+                "packages. Nothing the notifier says about a run reads either -- it names "
+                "the workload the manifest names -- so this is bytes and no behaviour."
             ),
             cleared_by="uv run python tools/release_lambda.py --function notifier",
-            builds_to="abb7d03146dda3e231a36ff04f950f874a924b03c15b3f6dab54b5e1da485540",
+            builds_to="e42c35853db6f705c5b77f12eec90281054ecfa6ee9bb72f5ef75afecf677b6d",
             released="b85765ebc5f0c14ae8b28ebfd088a36475c242b6261028955bc3d4f2f943cbe3",
             recorded_on=date(2026, 8, 6),
         ),
