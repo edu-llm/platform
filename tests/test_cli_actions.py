@@ -41,8 +41,8 @@ from edullm_platform.cli.configuration import (
     find_config_directory,
 )
 from edullm_platform.cli.main import EXIT_UNUSABLE, NOT_BUILT_YET, _SignOfLife
-from edullm_platform.lifecycle_projection import BATCH_JOB_STATUSES
 from edullm_platform.cli.workspace import SubprocessRunner, read_git_facts
+from edullm_platform.lifecycle_projection import BATCH_JOB_STATUSES
 from edullm_platform.operational_inventory import EXPECTED_GITHUB_ORG, EXPECTED_GITHUB_REPOSITORY
 from tests.cli_support import PROJECT_ROOT, FakeRunner, invoke, ok
 
