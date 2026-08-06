@@ -33,8 +33,8 @@ s3_key: expiry-janitor/expiry-janitor.zip
 # already names this digest" comparison would have skipped an upload of an object the bucket did
 # not hold. --force exists for exactly that case and for no other, which is why it is not needed
 # here: a record right about the bytes, naming an object that is missing.
-s3_object_version: rvDqHdvoX4UtGiW_rxkGlEh6pnZGmopg
+s3_object_version: h8HSBm_rNjFqzRIrZgmt9gAJfBQmKqi1
 # The 64 hex characters tools/build_janitor_lambda.py printed under "sha256". The build is
 # deterministic, so re-running it on an unchanged tree reproduces this exactly -- which is what
 # tests/test_released_zips.py compares against, in the case parametrized [janitor].
-sha256: 10f94f8a70828c7b6d4c70ab99319ac0e6de037f4710e9ae105df31f0806aace
+sha256: 50922d41d3750af154e3b2342cfe634c4105b398ed2895a2de585b48579b98d9
