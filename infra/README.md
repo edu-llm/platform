@@ -1660,6 +1660,46 @@ self-assumption test against a trust policy that accidentally granted only its c
 `docs-frank/reference/aws-spend-controls.md`, "The live test plan", step 3 is the one that
 cannot be skipped.
 
+### What stops `edullm stop` ending somebody else's machine is the CLI, not this policy
+
+**A lane credential can terminate any instance in the account, and this template is where
+somebody concludes otherwise.** `AllowResearchWorkingSet` is `Action: "*"` on
+`Resource: "*"`, and every Deny below it names `ec2:RunInstances`, `ec2:CreateTags` or a
+bucket. None names `ec2:TerminateInstances`, so nothing in the policy scopes what the role
+may end — not the Batch compute the platform runs on, and not the machines other people in
+this sandbox have left up.
+
+**The fence is `src/edullm_platform/cli/lane.py`, and it is a filter rather than a
+permission.** `find_lane_machines_argv` describes instances filtered on `tag:edullm:lane`
+equal to the person `person_from_caller_arn` read off the caller's own ARN, and `edullm stop`
+terminates only ids that describe returned. Nothing above it accepts an instance id: `stop`
+has no `--instance` flag, and
+`tests/test_cli_stop.py::test_no_flag_names_an_instance_so_none_can_be_smuggled_in` is what
+keeps it that way, because an id typed on a command line is an id the filter never saw and
+would be the one route through.
+
+**So the guarantee holds exactly as far as the binary does.**
+`tools/enter_researcher_lane.py` hands out lane credentials for a shell, and in that shell a
+bare `aws ec2 terminate-instances` reaches anything in the account. That is a defensible
+place for the control — the verb is the supported interface, and the identity it filters on
+is one it already holds — but it is a convention rather than a permission, and the person
+auditing this file should not have to derive that from a docstring.
+
+**IAM could carry it, which is why leaving it in the CLI is a choice worth recording.** The
+trust policy already permits `sts:SetSourceIdentity` (`InternRolesMayNameThePerson`), so
+`${aws:SourceIdentity}` is in the request context and the deny would be roughly a
+`StringNotEquals` between `ec2:ResourceTag/edullm:lane` and that value, on
+`ec2:TerminateInstances`. It is not written, has not been simulated, and has a known edge:
+`lane_machines` deliberately keeps a machine whose tag somebody removed, and a condition
+keyed on a tag refuses whatever the tag is missing from — which would strand exactly the
+machine only this verb can currently reach. Do not add it from this paragraph. Simulate it
+first, the way the boundary above was simulated.
+
+**First real use, 2026-08-06.** `edullm stop --project drain-verify` ended
+`i-00ea79d5c4a2c206b`, a `g6.xlarge` the expiry janitor had stopped rather than terminated
+and which `find_machine_argv` and `expiry_janitor` therefore both stepped over. That orphan
+is the state the verb argues against, and clearing it was the verb's first job.
+
 ### Applying them
 
 Both from a clean `main` at its tip, per *Which tree you deploy from* above.
