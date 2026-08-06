@@ -864,7 +864,7 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "and nothing it decides does."
             ),
             cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="ab78ebd2a0fd2387a70dd5a6bd08d010b1c63949687f73ac824e3bc68c007d14",
+            builds_to="6d75de935fcfe9039487d3a2ea737a663e9e14faa1b9c45368dabb856881829c",
             released="da7313e1055d1abdafb79d7a83c344bdbde32cc7a6739b36df99291c0643f2e9",
             recorded_on=date(2026, 8, 6),
         ),
@@ -878,7 +878,7 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "the workload the manifest names -- so this is bytes and no behaviour."
             ),
             cleared_by="uv run python tools/release_lambda.py --function notifier",
-            builds_to="e42c35853db6f705c5b77f12eec90281054ecfa6ee9bb72f5ef75afecf677b6d",
+            builds_to="729d1742ada4814c0193cbe9ba869041982977106b5fa44550c5cdff59fbb21a",
             released="b85765ebc5f0c14ae8b28ebfd088a36475c242b6261028955bc3d4f2f943cbe3",
             recorded_on=date(2026, 8, 6),
         ),
