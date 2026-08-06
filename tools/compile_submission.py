@@ -19,7 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -40,6 +40,7 @@ from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.daily_ceiling import CeilingReading, read_the_day
 from edullm_platform.errors import SubmissionRefusedError
 from edullm_platform.image_resolution import PublishedImage
 from edullm_platform.placement import (
@@ -49,6 +50,7 @@ from edullm_platform.placement import (
     read_capacity,
 )
 from edullm_platform.run_history import RunHistoryFormatError, load_run_history
+from edullm_platform.run_index import RunIndexFormatError, from_document
 from edullm_platform.submission import (
     SubmissionInputs,
     compile_submission,
@@ -133,6 +135,50 @@ def read_published_images(
     return published, summary, findings
 
 
+def read_the_days_ceiling(
+    index: Path | None, *, policy: ApprovalPolicy, now: datetime
+) -> CeilingReading | None:
+    """What the day's ledger says, or ``None`` where no ceiling is configured.
+
+    **THE ORDER OF THESE TWO QUESTIONS IS THE WHOLE OF WHAT KEEPS THIS HONEST.** An unset
+    ceiling is asked about first and answers ``None``, which changes nothing anywhere. Every
+    other outcome, including every way the ledger fails, is a reading -- and a reading that
+    could not be taken routes to a lead. The reverse order would let a platform with no
+    ceiling configured start sending runs to a lead the first time a fetch failed, and, far
+    worse, would make "the index is missing" and "no ceiling is set" the same answer.
+
+    Three things go wrong here and all three are the same verdict with different sentences.
+    The workflow did not hand over an index, which is a job that changed shape. There is no
+    file where it said, which is a fetch that failed or a branch that does not exist. The
+    file will not parse, which is a document somebody has to look at. A reader of the log
+    has to be able to tell those apart to fix any of them, and none of them may quietly
+    become "the day is empty".
+    """
+    ceiling = policy.thresholds.automatic_daily_ceiling_usd
+    if ceiling is None:
+        return None
+    if index is None:
+        return read_the_day(
+            None,
+            ceiling_usd=ceiling,
+            now=now,
+            unreadable_because=(
+                "this job was given no --run-index, so nothing here can say what the day "
+                "has already committed"
+            ),
+        )
+    try:
+        runs = from_document(json.loads(index.read_text(encoding="utf-8")))
+    except (OSError, ValueError, KeyError, TypeError, RunIndexFormatError) as exc:
+        return read_the_day(
+            None,
+            ceiling_usd=ceiling,
+            now=now,
+            unreadable_because=f"the run index at {index} could not be read ({exc})",
+        )
+    return read_the_day(runs, ceiling_usd=ceiling, now=now)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inputs", required=True, type=Path)
@@ -147,6 +193,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--summary", type=Path)
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument(
+        "--run-index",
+        type=Path,
+        default=None,
+        help=(
+            "the run-index.json off machine/run-index, which is what says how much of "
+            "today has already been committed by runs nobody released. Optional only "
+            "because a policy carrying no automatic_daily_ceiling_usd has nothing to "
+            "compare against; where a ceiling is set, not passing this routes the "
+            "submission to a team lead rather than waving it through"
+        ),
+    )
     parser.add_argument(
         "--run-id",
         help=(
@@ -256,6 +314,13 @@ def main(argv: list[str] | None = None) -> int:
         # a checkpoint written against a retired corpus has to keep naming that corpus, and
         # a refusal nobody can lift would make lying about it the only route.
         require_a_dataset_release_that_is_current(inputs.dataset_release, datasets=registry)
+        # Read before compiling because the class this raises is decided inside
+        # compile_submission, and read here rather than inside it for the reason every other
+        # environmental fact is passed in: that function is given loaded configuration and
+        # opens no file.
+        daily_ceiling = read_the_days_ceiling(
+            args.run_index, policy=policy, now=datetime.now(UTC)
+        )
         submission = compile_submission(
             inputs,
             run_id=args.run_id or new_run_id(),
@@ -267,6 +332,7 @@ def main(argv: list[str] | None = None) -> int:
             image_scan_summary=image_scan_summary,
             image_scan_findings=blocking_findings,
             published_images=published_images,
+            daily_ceiling=daily_ceiling,
         )
     except SubmissionRefusedError as exc:
         print(f"submission refused: {exc}", file=sys.stderr)
@@ -318,6 +384,14 @@ def main(argv: list[str] | None = None) -> int:
     if scan_note is not None:
         print(scan_note, file=sys.stderr)
 
+    # ON THE LOG WHATEVER THE VERDICT, AND THE UNDER CASE IS THE ONE WORTH ARGUING FOR. A
+    # ceiling that speaks only when it fires is a ceiling nobody can tell apart from one
+    # that is switched off, which is exactly the state this platform was in about every
+    # other cost control it thought it had. Printing the running total on every compile
+    # makes the mechanism observable on the ordinary day, and it is one line.
+    if daily_ceiling is not None:
+        print(daily_ceiling.said, file=sys.stderr)
+
     document = {
         "run_id": submission.run_id,
         "submitter": args.submitter,
@@ -353,6 +427,7 @@ def main(argv: list[str] | None = None) -> int:
                 placement_note=placement_note,
                 scan_note=scan_note,
                 run_history=run_history,
+                daily_ceiling=daily_ceiling,
             ),
             encoding="utf-8",
         )
@@ -365,6 +440,17 @@ def main(argv: list[str] | None = None) -> int:
                 ("approval_class", submission.approval_class.value),
                 ("environment", submission.approving_environment.value),
                 ("manifest_sha256", submission.manifest_sha256),
+                # WHAT THIS SUBMISSION IS AUTHORISED TO COMMIT, HANDED TO THE JOB THAT
+                # WRITES THE INDEX. It is the figure this job just computed, the one the
+                # approver page prints and the one the class was chosen against, and
+                # recording it is what lets the next submission read the day. Passed as a
+                # step output rather than recomputed downstream, because a second
+                # implementation of the arithmetic is a second answer to the question the
+                # ceiling is comparing.
+                (
+                    "maximum_compute_cost_usd",
+                    str(submission.cost.maximum_compute_cost_usd),
+                ),
             ),
         )
 

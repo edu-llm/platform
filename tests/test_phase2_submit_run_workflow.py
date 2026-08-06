@@ -152,7 +152,13 @@ WANDB_CREDENTIAL_TOOL = "tools/verify_wandb_credential.py"
 # action.
 DECLARED_OUTPUTS = {
     "commit": ("commit_sha",),
-    "compile": ("run_id", "approval_class", "environment", "manifest_sha256"),
+    "compile": (
+        "run_id",
+        "approval_class",
+        "environment",
+        "manifest_sha256",
+        "maximum_compute_cost_usd",
+    ),
     "credentials": ("aws-account-id",),
 }
 
@@ -594,6 +600,13 @@ def test_every_needs_reference_names_an_output_the_job_actually_declares() -> No
         "needs.compile.outputs.approval_class",
         "needs.compile.outputs.environment",
         "needs.compile.outputs.manifest_sha256",
+        # Read once, by the job that writes the run index, and it is the half of the daily
+        # ceiling that closes the loop: what this submission is authorised to commit is what
+        # the next submission's ceiling check reads back. It is in this list rather than
+        # derived downstream because the arithmetic must have one author, and it is a
+        # `needs.` reference rather than an `inputs.` one for the same reason the class is --
+        # a submitter who could type it would be choosing how much of the day they had spent.
+        "needs.compile.outputs.maximum_compute_cost_usd",
         "needs.compile.outputs.run_id",
         # Read by two jobs and written by neither of them. The identify job turns whatever
         # the submitter typed into a commit, and both the registry lookup and the compile
@@ -609,13 +622,25 @@ def test_every_expression_names_something_that_actually_exists() -> None:
 
 
 def test_the_compile_job_publishes_exactly_the_outputs_its_tool_writes() -> None:
-    # The four names are decided in tools/compile_submission.py and read here from the
+    # The five names are decided in tools/compile_submission.py and read here from the
     # call that writes them, so renaming one on either side fails rather than resolving
     # to the empty string on the other.
+    #
+    # maximum_compute_cost_usd is the newest and it is the one this test earns its keep on.
+    # It is read by the index job below and by nothing else in this file, so a rename that
+    # silently resolved to the empty string would write an unpriced entry, and an unpriced
+    # entry from today makes the daily ceiling fail closed on every subsequent submission.
+    # The symptom would be every run going to a lead, days later, with nothing naming this.
     written = _tool_step_output_names(PROJECT_ROOT / "tools" / "compile_submission.py")
     outputs = _job("compile")["outputs"]
 
-    assert set(written) == {"run_id", "approval_class", "environment", "manifest_sha256"}
+    assert set(written) == {
+        "run_id",
+        "approval_class",
+        "environment",
+        "manifest_sha256",
+        "maximum_compute_cost_usd",
+    }
     assert set(outputs) == set(written)
     for name in written:
         assert outputs[name] == f"${{{{ steps.compile.outputs.{name} }}}}"
@@ -821,10 +846,11 @@ def test_no_run_body_interpolates_a_github_expression() -> None:
 def test_every_run_body_enables_strict_bash() -> None:
     bodies = list(_run_bodies())
 
-    # Twenty-five since the compile job started reading whether the gate still asks anybody.
-    # Counted rather than sampled, so a body added without the strict line fails here instead
-    # of running past its first error.
-    assert len(bodies) == 25
+    # Twenty-six: twenty-five once the compile job read whether the gate still asks anybody,
+    # and one more since it also reads what the day has already committed. Counted rather than
+    # sampled, so a body added without the strict line fails here instead of running past its
+    # first error.
+    assert len(bodies) == 26
     for name, script in bodies:
         assert script.startswith("set -euo pipefail\n"), name
 

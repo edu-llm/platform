@@ -393,11 +393,18 @@ def test_policy_yaml_validates_against_contract() -> None:
     project_root = Path(__file__).resolve().parents[1]
     config_path = project_root / "config" / "policy.yaml"
     policy = load_yaml(config_path, ApprovalPolicy)
-    # v5 since the exception class stopped carrying runs. Pinned rather than merely
-    # pattern-checked so that a policy change without a version bump fails here, which is
-    # the whole reason a decision record carries the version.
-    assert policy.policy_version == "v5"
+    # v6 since the day got a bound of its own. Pinned rather than merely pattern-checked so
+    # that a policy change without a version bump fails here, which is the whole reason a
+    # decision record carries the version.
+    assert policy.policy_version == "v6"
     assert policy.thresholds.automatic_below_cost_usd == Decimal(500)
+    # THE FIRST BOUND IN THIS FILE THAT IS NOT ABOUT THE SUBMISSION IN FRONT OF IT, AND THE
+    # ONE THAT HAS TO BE SET FOR ANY OF IT TO FIRE. The field is optional so that a platform
+    # can carry no aggregate bound and say so, which means the whole mechanism is switched
+    # off by a value being absent rather than by any code path -- so the shipped file
+    # carrying one is the only thing separating this platform from the one measured on
+    # 2026-08-06, where thirty-five researchers could commit $16,873 with nobody asked.
+    assert policy.thresholds.automatic_daily_ceiling_usd == Decimal(1000)
     assert policy.routine_approver_role == "team_lead"
     assert policy.exception_approver_roles == ("platform_admin",)
     assert policy.image_scan.blocking_severities == (ImageScanSeverity.CRITICAL,)

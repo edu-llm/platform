@@ -386,14 +386,56 @@ slices:
         deployed: {not_applicable: config files}
         under_test: {tests: [tests/test_config.py]}
 
-      # THE PATTERN USED TO BE `AlarmActions|budgets:` AND IT STOPPED MEANING WHAT IT SAYS ON
-      # 2026-08-06. It was a proxy: when it was written every alarm in the account had an empty
-      # `AlarmActions`, so "no alarm does anything" stood in for "nothing reacts to a metric".
-      # Then #303 gave the alarms an SNS topic to fire into, because six correct alarms firing
-      # into nothing is worse than no alarms, and this row went red for it -- on the strength of
-      # the bare word `AlarmActions`, which the old pattern also matched inside the six comments
-      # explaining that history. An alarm that posts to a topic tells somebody. It does not stop
-      # a run, and this row is about stopping runs.
+      # THIS ROW READ `Nothing anywhere may stop a run for cost` AND PROVED IT, WHICH IS THE
+      # worst shape a row in this file can take. Its `proven` lookup was
+      # `{absent: [infra, "AlarmActions|budgets:"]}`: green exactly while no cost control
+      # existed, and red the day somebody built one. So the board reported a gap as a
+      # property, and the one reader who most needed to see it -- the owner, on the morning
+      # of thirty-five onboardings -- was shown a tick.
+      #
+      # What made it a finding rather than a decision is what the absence was measured
+      # against. The sixteen enabled Batch compute environments are all on-demand EC2, so the
+      # catalogue's rates are the rates, and the profiles a submission may actually name
+      # total $685.35 an hour saturated against a $5,000 monthly limit. 7.3 hours. Read
+      # 2026-08-06 and unchanged since.
+      #
+      # IT IS SPLIT IN TWO BECAUSE TWO DIFFERENT THINGS WERE FOLDED INTO ONE SENTENCE. One
+      # of them is a real property that is still true and is still wanted, and it is the row
+      # below. The other was a hole, and it is this one.
+      - id: unattended-spend-bound
+        name: A bound on what a day commits with nobody asked
+        designed: {reached: overview draws it}
+        planned: {not_reached: built against a red team reading rather than a plan}
+        built: {exists: src/edullm_platform/daily_ceiling.py}
+        # THE GREP READS THE VALUE AND NOT THE FILE, AND THAT IS THE WHOLE OF THE LOOKUP.
+        # automatic_daily_ceiling_usd is optional, and a policy carrying no value for it
+        # classifies exactly as v5 did. So `on_main: config/policy.yaml` would go green on a
+        # platform where the mechanism was switched off, which is precisely the reading the
+        # row this replaced was giving.
+        deployed: {grep: [config/policy.yaml, "^  automatic_daily_ceiling_usd:"]}
+        under_test: {tests: [tests/test_daily_ceiling.py, tests/test_compile_submission_cli.py]}
+
+      # THE HALF OF THE OLD ROW THAT WAS TRUE AND IS KEPT ON PURPOSE. Nothing in this account
+      # kills a container, drains a queue or detaches a policy because of money, and nothing
+      # here should: a training run stopped at hour six to protect a forecast destroys more
+      # than it saves. The bound above cannot reach a running job -- it is consulted once, in
+      # a job with no AWS credential, before a gate is chosen -- and this row is what would
+      # notice if something acquired that reach.
+      #
+      # It is still an absence and it is still proven by one, so it carries the same weakness
+      # every absence-proof does: it goes red when somebody builds the thing. That is correct
+      # here and was not correct above, and the difference is which way round the desirable
+      # state sits. Red on this row means a budget action or an alarm action now exists in
+      # infra/ and somebody has to say whether it may stop a job.
+      #
+      # THE PATTERN CARRIED DOWN FROM THE OLD ROW AND IS WORTH KEEPING THE HISTORY OF. It used
+      # to be `AlarmActions|budgets:`, which was a proxy: when it was written every alarm in the
+      # account had an empty `AlarmActions`, so "no alarm does anything" stood in for "nothing
+      # reacts to a metric". Then #303 gave the alarms an SNS topic to fire into, because six
+      # correct alarms firing into nothing is worse than no alarms, and the row went red for it
+      # -- on the strength of the bare word `AlarmActions`, which the old pattern also matched
+      # inside the comments explaining that history. An alarm that posts to a topic tells
+      # somebody. It does not stop a run, and this row is about stopping runs.
       #
       # WHAT THE PATTERN NAMES NOW IS THE THING ITSELF RATHER THAN A PROXY FOR IT. A CloudWatch
       # alarm stops or terminates through an `arn:aws:automate:<region>:ec2:stop` action, and a
@@ -401,8 +443,8 @@ slices:
       # stop is actually spelled as, and none of them is in `infra/`. Checked both ways when it
       # was changed: nothing matches today, and a planted `arn:aws:automate:us-east-1:ec2:
       # terminate` under an `AlarmActions` list matches, so this can still go red.
-      - id: no-cost-stop
-        name: Nothing anywhere may stop a run for cost
+      - id: nothing-kills-a-running-job
+        name: Nothing may stop a job that is already running, for cost
         designed: {reached: overview draws it}
         planned: {not_applicable: "a property, not a build"}
         built: {not_applicable: an absence}

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import sys
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -61,6 +62,7 @@ def _minted(run_id: str, *, workflow_run_id: int = A_WORKFLOW_RUN, **overrides: 
         "approval_class": "lead",
         "fanout_size": None,
         "minted_at": MINTED,
+        "maximum_compute_cost_usd": Decimal("21.96"),
     }
     fields.update(overrides)
     return MintedRun(**fields)  # type: ignore[arg-type]
@@ -79,6 +81,7 @@ def _environment(monkeypatch: pytest.MonkeyPatch, **overrides: str) -> None:
         "APPROVAL_CLASS": "lead",
         "EXPERIMENT": "mixlaw-370m",
         "FANOUT_SIZE": "",
+        "MAXIMUM_COMPUTE_COST_USD": "21.96",
     }
     values.update(overrides)
     for name, value in values.items():
@@ -243,6 +246,52 @@ def test_a_missing_workflow_run_id_is_refused_rather_than_indexed_as_nothing(
     assert main(["--index", str(index)]) == EXIT_UNUSABLE
     assert "run_index_not_written" in capsys.readouterr().err
     assert not index.exists()
+
+
+def test_a_run_arriving_with_no_worst_case_is_refused_rather_than_indexed_unpriced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: default the figure to absent, the way the field itself is defaulted.
+
+    The field on ``MintedRun`` is optional because the branch holds entries written before
+    it existed and a reader has to parse them. Writing one without it is a different thing:
+    the compile job computes this on every submission and puts it in ``GITHUB_OUTPUT``, so
+    an entry arriving here with no cost means the workflow stopped passing it.
+
+    Defaulting it would be the quiet failure and it is quiet in the worst direction. Every
+    subsequent submission would read a day it could not price, ``daily_ceiling`` would fail
+    closed, and every run on the platform would go to a team lead for a reason nothing on
+    the page explains. That is a control stuck on rather than off, and the first repair
+    anybody reaches for is deleting the ceiling. Refusing here puts it in the log of the
+    job that broke it, on the run that broke it.
+    """
+    index = tmp_path / "run-index.json"
+    _environment(monkeypatch, MAXIMUM_COMPUTE_COST_USD="")
+
+    assert main(["--index", str(index)]) == EXIT_UNUSABLE
+    assert "MAXIMUM_COMPUTE_COST_USD" in capsys.readouterr().err
+    assert not index.exists()
+
+
+@pytest.mark.parametrize("carried", ["free", "-1.00", "$21.96"])
+def test_a_worst_case_that_is_not_an_amount_is_refused(
+    carried: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mutation: read it with ``Decimal`` and let whatever parses through.
+
+    ``Decimal("free")`` raises and ``Decimal("-1.00")`` does not, which is the row worth
+    having: a negative figure in this document subtracts from the day's total and buys back
+    unattended spending that a real run committed. It cannot arrive from the compile job,
+    which is exactly why nothing else would notice it.
+    """
+    index = tmp_path / "run-index.json"
+    _environment(monkeypatch, MAXIMUM_COMPUTE_COST_USD=carried)
+
+    assert main(["--index", str(index)]) == EXIT_UNUSABLE
+    assert "MAXIMUM_COMPUTE_COST_USD" in capsys.readouterr().err
 
 
 def test_a_submission_with_no_experiment_is_indexed_without_one(
