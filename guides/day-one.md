@@ -86,6 +86,8 @@ median of     20 timed iterations after 3 warm-up
   4096       20.074        69.255     89.329     366,824
 ```
 
+**Your milliseconds will not be these**, and nothing is wrong when they are not. It is a real measurement on a card somebody else was using an hour ago. Two runs of it hours apart on 2026-08-06 differed by two to five percent on every figure. What tells you it worked is the card, the shape, and four rows arriving.
+
 ## The notification, and how to find out without one
 
 When a run ends the platform composes one line for `#edullm-runs`. It looks like this.
