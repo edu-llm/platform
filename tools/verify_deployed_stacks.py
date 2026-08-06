@@ -86,8 +86,8 @@ from typing import Any, Final
 
 import yaml
 
+from edullm_platform import stack_templates
 from edullm_platform.evidence import ACCOUNT_ID_IN_FREE_TEXT, AWS_ACCOUNT_ID_PLACEHOLDER
-from edullm_platform.stack_templates import STACK_TEMPLATES
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -99,6 +99,7 @@ __all__ = [
     "EXIT_UNUSABLE",
     "STACKS",
     "STACK_NAME_PREFIX",
+    "STACK_TABLE",
     "STATUSES_WITHOUT_A_STACK",
     "STATUSES_WITH_A_TEMPLATE_APPLIED",
     "DeployedStackFinding",
@@ -151,6 +152,15 @@ VALUE_WIDTH: Final = 200
 #: ``tests/test_deployed_stacks.py`` holds every workflow-deployed name to this prefix, and
 #: ``infra/README.md`` names every laptop-deployed one.
 STACK_NAME_PREFIX: Final = "sbsandbox-intern-edullm-"
+
+#: Where a reader told to claim a stack has to go, asked of the module rather than typed.
+#:
+#: The table was in this file until 2026-08-06, when a second reader needed it and it moved
+#: to the library. :data:`STACKS` below became a resolution of it and kept the name, so the
+#: one instruction this check gives about a stack nobody has claimed went on naming this
+#: file for a table that is no longer in it -- and what is in it under that name is a
+#: derived comprehension, which is the wrong thing to edit and edits cleanly.
+STACK_TABLE: Final = f"{stack_templates.__name__}.STACK_TEMPLATES"
 
 #: The one status under which ``list-stacks`` returns a name and the account holds no stack.
 #: A deleted stack is returned forever, so carrying these into the listing would give the
@@ -241,7 +251,7 @@ class Stack:
 #: resolution to a path, because a library module has no business knowing where a checkout is.
 STACKS: Final = {
     name: Stack(name=name, template=PROJECT_ROOT / template)
-    for name, template in STACK_TEMPLATES
+    for name, template in stack_templates.STACK_TEMPLATES
 }
 
 
@@ -751,12 +761,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             "deployed_stack_is_unaccounted_for",
             f"the account holds a stack called {name} and nothing in this repository "
             "declares which template it was deployed from, so this check has no idea whether "
-            "it matches main and is not going to pretend it does. Add it to STACKS in "
-            "tools/verify_deployed_stacks.py beside the template it was applied from, add "
-            "its ARN to the cloudformation:GetTemplate grant in "
-            "infra/iam/audit-reader-role.yaml, and record the stack name in "
-            "infra/README.md if it is applied by hand. If it should not exist, that is the "
-            "finding.",
+            f"it matches main and is not going to pretend it does. Add it to {STACK_TABLE} "
+            "beside the template it was applied from, add its ARN to the "
+            "cloudformation:GetTemplate grant in infra/iam/audit-reader-role.yaml, and "
+            "record the stack name in infra/README.md if it is applied by hand. If it "
+            "should not exist, that is the finding.\n"
+            "  Look for an open pull request declaring it before writing any of that. An "
+            "IAM stack is applied from a laptop and the apply routinely happens while the "
+            "branch carrying its template is still open, so the ordinary reason for this "
+            "finding is that window rather than an orphan, and the repair for a window is "
+            "to merge. A second template for a stack that already has one on a branch is "
+            "caught, but only after the template, the grant and the README section have all "
+            "been written, and by a message about the table rather than about the "
+            "duplicate.",
             code=EXIT_DISAGREES,
         )
         findings.append(unclaimed)
