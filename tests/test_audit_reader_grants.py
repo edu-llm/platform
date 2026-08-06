@@ -119,6 +119,13 @@ EXPECTED_SIDS = frozenset(
         # symptom in between. What it discloses is every role name in a shared account, which
         # is why it is argued at length beside the statement rather than only listed here.
         "ListTheInternRolesTheRosterIsComparedAgainst",
+        # The two from platform #310, and they are the first grants here that read a router
+        # rather than a thing the router feeds. Every grant above answers about a queue, a
+        # function or a record; none of them could say which events reach the recorder at all,
+        # which is how a rule scoped to sixteen shared job queues fed it 1327 dead letters and
+        # held its alarm red for at least eight days.
+        "ReadWhatTheLifecycleRuleDelivers",
+        "AskEventBridgeWhetherAPatternMatches",
     }
 )
 
