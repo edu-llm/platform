@@ -4,9 +4,11 @@ import pytest
 
 from edullm_platform.build_cache import (
     ANCESTOR_LIMIT,
+    BATCH_GET_IMAGE_LIMIT,
     IMAGE_TAG_LENGTH,
     ancestor_tags,
     cache_source_reference,
+    candidate_batches,
     choose_published_ancestor,
     image_tag_for_commit,
 )
@@ -148,7 +150,40 @@ def test_a_reference_that_could_be_read_as_more_than_one_argument_is_refused(
         cache_source_reference(registry=registry, ecr_repository=repository, tag=value)
 
 
-def test_the_ancestor_limit_stays_well_inside_what_one_describe_images_call_takes() -> None:
-    # DescribeImages accepts a hundred image ids in one call, and the publish job makes
-    # exactly one. A limit above that would silently become several calls or an error.
-    assert 0 < ANCESTOR_LIMIT <= 100
+def test_the_ancestor_limit_still_fits_one_call_even_though_it_no_longer_has_to() -> None:
+    # The publish job budgeted one round trip between the ECR login and the build. Going
+    # over the batch bound is now correct rather than fatal, but it is not free, so a
+    # limit that quietly crossed it should be a decision somebody made.
+    assert 0 < ANCESTOR_LIMIT <= BATCH_GET_IMAGE_LIMIT
+
+
+def test_candidates_are_batched_into_calls_the_service_will_accept() -> None:
+    # BatchGetImage refuses more than a hundred image ids with a parameter validation
+    # error, which the resolver can only read as an unreachable registry: no cache, a
+    # printed reason and a green build. That is the same silent-miss shape this module
+    # already shipped once, so the bound is enforced here rather than assumed upstream.
+    candidates = tuple(f"{index:012x}" for index in range(BATCH_GET_IMAGE_LIMIT + 1))
+
+    batches = candidate_batches(candidates)
+
+    assert len(batches) == 2
+    assert len(batches[0]) == BATCH_GET_IMAGE_LIMIT
+    assert len(batches[1]) == 1
+
+
+def test_batching_preserves_the_order_the_ancestry_gave() -> None:
+    # A caller may stop at the first batch that yields a hit, so a reordering here would
+    # silently return a published ancestor that is not the nearest one.
+    candidates = tuple(f"{index:012x}" for index in range(7))
+
+    assert sum(candidate_batches(candidates, limit=3), ()) == candidates
+
+
+def test_an_empty_candidate_list_costs_no_call() -> None:
+    assert candidate_batches(()) == ()
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_a_batch_limit_that_would_never_terminate_is_refused(limit: int) -> None:
+    with pytest.raises(ValueError):
+        candidate_batches((tag("a"),), limit=limit)

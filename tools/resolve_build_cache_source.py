@@ -4,10 +4,10 @@ Runs in the publish job under the publisher session, between the ECR login and t
 The gate job supplied the candidates -- the commits this one descends from -- and this asks
 the registry which of them it holds, then names the nearest.
 
-THE PERMISSION QUESTION, ANSWERED BY NOT ASKING FOR ONE. ``ecr:DescribeImages`` is already
-among the publisher role's nine actions on exactly these repositories; the pre-flight
-lookup two steps above makes the same call. Importing the cache needs ``BatchGetImage``,
-``GetDownloadUrlForLayer`` and ``BatchCheckLayerAvailability``, which are three more of the
+THE PERMISSION QUESTION, ANSWERED BY NOT ASKING FOR ONE. ``ecr:BatchGetImage`` is already
+among the publisher role's nine actions on exactly these repositories, and the resume path
+in the same workflow already calls it. Importing the cache needs it along with
+``GetDownloadUrlForLayer`` and ``BatchCheckLayerAvailability``, which are two more of the
 nine. Nothing in ``infra/iam/`` moves, no repository is created, and the denial matrix that
 ran before this job is as true afterwards as it was before.
 
@@ -16,9 +16,9 @@ published, a registry that would not say -- is the same outcome as today's build
 import nothing at all. The reason is printed because a cache that quietly stopped working
 would show up as a bill months later rather than as a line in a log.
 
-Only the machine-readable outcome reaches the streams. ``DescribeImages`` names the
-registry id in its error text and the runner log is world readable for any public caller
-repository, so the error is read by this process and never echoed by it.
+Only the machine-readable outcome reaches the streams. An ECR error names the registry id
+in its text and the runner log is world readable for any public caller repository, so the
+error is read by this process and never echoed by it.
 """
 
 from __future__ import annotations
@@ -31,8 +31,10 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from edullm_platform.build_cache import (
+    BATCH_GET_IMAGE_LIMIT,
     CacheSourceReason,
     cache_source_reference,
+    candidate_batches,
     choose_published_ancestor,
 )
 from edullm_platform.build_tooling import UnsafeStepOutputError, append_step_outputs
@@ -41,12 +43,14 @@ from edullm_platform.build_tooling import UnsafeStepOutputError, append_step_out
 #: more than the cache would save it.
 AWS_CALL_TIMEOUT_SECONDS = 30
 
-#: What ECR calls a tag it does not hold. When every candidate is absent the call fails as
-#: a whole with this code rather than returning an empty list, which is an ordinary answer
-#: -- the first build of a repository reaches it -- and not a fault.
-IMAGE_NOT_FOUND = "ImageNotFoundException"
-
-__all__ = ["build_parser", "main", "published_tags", "resolve_cache_source"]
+__all__ = [
+    "BATCH_GET_IMAGE_LIMIT",
+    "batch_get_image_tags",
+    "build_parser",
+    "main",
+    "published_tags",
+    "resolve_cache_source",
+]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -59,32 +63,34 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def published_tags(
-    candidates: Sequence[str],
+def batch_get_image_tags(
+    batch: Sequence[str],
     *,
     ecr_repository: str,
     region: str,
 ) -> tuple[frozenset[str], CacheSourceReason | None]:
-    """Ask ECR which of these tags it holds.
+    """One ``BatchGetImage`` call, answering which of these tags the registry holds.
 
-    One call for every candidate rather than one call each: ``DescribeImages`` takes a
-    hundred image ids, reaching the registry costs the build time this exists to save, and
-    a loop would spend twenty-five round trips to learn what one can say.
+    ``--accepted-media-types`` is deliberately not passed, unlike the resume path's call in
+    the same workflow. That step reads the manifest body and has to name the types it can
+    parse; this one reads nothing but the tag, so narrowing the accepted set could only
+    turn a published ancestor into a ``failures`` entry and lose a cache hit over a media
+    type nobody thought to list. The service default is the widest set it offers.
     """
     try:
         completed = subprocess.run(
             [
                 "aws",
                 "ecr",
-                "describe-images",
+                "batch-get-image",
                 "--region",
                 region,
                 "--repository-name",
                 ecr_repository,
                 "--image-ids",
-                *(f"imageTag={tag}" for tag in candidates),
+                *(f"imageTag={tag}" for tag in batch),
                 "--query",
-                "imageDetails[].imageTags[]",
+                "images[].imageId.imageTag",
                 "--output",
                 "json",
             ],
@@ -97,11 +103,11 @@ def published_tags(
     except (OSError, subprocess.TimeoutExpired):
         return frozenset(), CacheSourceReason.REGISTRY_UNREADABLE
 
+    # An absent image is not an error here, which is the whole reason this call and not
+    # DescribeImages: it comes back under `failures` with `ImageNotFound` and the call
+    # still exits zero. So a non-zero exit is a registry that would not answer, and the
+    # text that says which is never read, because it names the account.
     if completed.returncode != 0:
-        # Read here and not printed: the distinction matters to this function and the text
-        # that carries it names the account.
-        if IMAGE_NOT_FOUND in completed.stderr:
-            return frozenset(), CacheSourceReason.NO_PUBLISHED_ANCESTOR
         return frozenset(), CacheSourceReason.REGISTRY_UNREADABLE
 
     try:
@@ -111,6 +117,40 @@ def published_tags(
     if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
         return frozenset(), CacheSourceReason.REGISTRY_UNREADABLE
     return frozenset(tags), None
+
+
+def published_tags(
+    candidates: Sequence[str],
+    *,
+    ecr_repository: str,
+    region: str,
+) -> tuple[frozenset[str], CacheSourceReason | None]:
+    """Ask ECR which of these tags it holds, tolerating the ones it does not.
+
+    THE ANSWER MUST BE THE PUBLISHED SUBSET, NOT ALL-OR-NOTHING. Most candidate lists have
+    holes in them: a repository builds the branches somebody pushed, so a commit nobody
+    pushed a branch for has no image, and eleven of OLMo-core's twenty-five had none on the
+    day this was written. Treating a list with a hole in it as a list with nothing in it is
+    the defect this function was rewritten to remove.
+
+    One call per :data:`BATCH_GET_IMAGE_LIMIT` candidates rather than one call each:
+    reaching the registry costs the build time the cache exists to save, and twenty-five
+    round trips would spend it learning what one call says. At today's ancestor limit that
+    is exactly one call.
+    """
+    found: set[str] = set()
+    for batch in candidate_batches(candidates):
+        tags, reason = batch_get_image_tags(batch, ecr_repository=ecr_repository, region=region)
+        if reason is not None:
+            # A batch that could not be read costs the ancestors it held and nothing more.
+            # Anything a nearer batch already found is still a published ancestor of this
+            # commit, and it is nearer than anything the unread batch could have offered,
+            # so it stands and the reason goes unreported.
+            if found:
+                break
+            return frozenset(), reason
+        found |= tags
+    return frozenset(found), None
 
 
 def resolve_cache_source(
