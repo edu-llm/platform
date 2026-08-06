@@ -34,6 +34,7 @@ from typing import Any
 import pytest
 import yaml
 
+from edullm_platform.cli.actions import ADMITTED, DECLINED, submission_state
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.workload import WorkloadCatalog
 
@@ -1497,4 +1498,56 @@ def test_the_refusal_day_one_quotes_is_the_refusal_a_stale_install_earns() -> No
     assert require_a_shell_command_that_kept_its_quotes(quoted) == quoted, (
         "the guard now refuses the day-one command as it is actually quoted, which makes "
         "the whole submission path unreachable rather than making this guide wrong"
+    )
+
+
+def states_status_can_print() -> set[str]:
+    """Every state ``edullm status`` prints for a submission, driven out of the function.
+
+    Every GitHub status crossed with every conclusion, rather than the handful anybody would
+    think to list, so a branch added to :func:`submission_state` is covered here the day it
+    lands. ``DECLINED`` is not returned by that function -- a decline and a compile refusal
+    reach the runs endpoint identically and only the approvals endpoint separates them -- so
+    it is unioned in from the constant the two readers of it share.
+    """
+    return {
+        submission_state({"status": status, "conclusion": conclusion})
+        for status in ("queued", "in_progress", "completed", "requested", "waiting", "pending")
+        for conclusion in (None, "success", "failure", "cancelled", "skipped", "timed_out")
+    } | {ADMITTED, DECLINED}
+
+
+def test_the_reference_names_every_state_edullm_status_can_print() -> None:
+    """Mutation: rename a state in ``actions.py`` and leave the guides where they are.
+
+    **THIS IS THE STALENESS THE PAGES ACTUALLY SUFFERED.** ``guides/day-one.md`` and
+    ``guides/the-platform.md`` both taught ``SUBMITTED`` as the word every finished run
+    reads, in three places between them, one of which was a row in day one's standing-walls
+    table. Both were true when they were written. The moment the word became ``ADMITTED``
+    they described a tool nobody had, and a guide that warns a reader about something that
+    no longer happens is how a document teaches people to stop believing the rest of it.
+
+    Coverage rather than a forbidden-word list, and that is what makes it catch a rename in
+    the direction a rename actually breaks. A state the tool gains and the page does not
+    mention fails here; a state the page keeps and the tool has dropped fails here too, by
+    the state that replaced it being absent. A list of words not to say would need editing
+    every time and would be edited by whoever renamed the state, which is the one person who
+    has already forgotten the pages exist.
+
+    ``the-platform.md`` and not every page, because it is the reference and day one is a
+    walkthrough. A walkthrough naming three of eight states is doing its job.
+
+    ``UNKNOWN`` is in the set and therefore has to be in the table. It is a real answer --
+    GitHub reports a completed run and no conclusion -- and a reader who meets it with no
+    entry to look up has met an undocumented word, which is the whole complaint here.
+    """
+    page = PLATFORM_GUIDE_PATH.read_text(encoding="utf-8")
+    missing = sorted(
+        state for state in states_status_can_print() if f"`{state}`" not in page
+    )
+
+    assert not missing, (
+        f"edullm status prints {missing} and guides/the-platform.md names none of them. "
+        "The page is the reference for this verb, so a state it does not carry is a word a "
+        "researcher meets in their terminal with nowhere to look it up"
     )
