@@ -76,6 +76,7 @@ on:
       - infra/batch-events.yaml
       - infra/expiry-janitor.yaml
       - infra/notifications.yaml
+      - infra/alarm-destination.yaml
       - infra/admission-state-machine.yaml
 
 permissions:
@@ -111,6 +112,11 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      # For the one `gh workflow run` at the end of this job, which asks the audit to invoke
+      # what was just deployed. It is the narrowest way to get that check to happen after a
+      # deploy: the alternative is lambda:InvokeFunction on the deploy credential, and the
+      # deployer builds and never runs.
+      actions: write
     steps:
       # WHO MAY DEPLOY BY HAND, ENUMERATED RATHER THAN MATCHED. workflow_dispatch is
       # offered to anybody holding write, and write stopped meaning "an admin" when the
@@ -258,6 +264,12 @@ jobs:
             --body infra/batch-compute-gpu-shapes.yaml
           aws cloudformation validate-template \
             --template-url https://s3.${AWS_REGION}.amazonaws.com/sbsandbox-intern-edullm-artifacts/cloudformation-templates/batch-compute-gpu-shapes.yaml
+          aws s3api put-object \
+            --bucket sbsandbox-intern-edullm-artifacts \
+            --key cloudformation-templates/alarm-destination.yaml \
+            --body infra/alarm-destination.yaml
+          aws cloudformation validate-template \
+            --template-url https://s3.${AWS_REGION}.amazonaws.com/sbsandbox-intern-edullm-artifacts/cloudformation-templates/alarm-destination.yaml
           aws s3api put-object \
             --bucket sbsandbox-intern-edullm-artifacts \
             --key cloudformation-templates/notifications.yaml \
@@ -444,6 +456,23 @@ jobs:
           aws cloudformation wait stack-delete-complete --stack-name "${stack}"
           echo "::notice::Deleted ${stack}, which held no resources. The step below now creates it from scratch."
 
+      # BEFORE ALL THREE STACKS THAT DECLARE ALARMS, BECAUSE THEIR AlarmActions IMPORT ITS
+      # EXPORT. Fn::ImportValue is resolved at deploy time and fails the importing stack if
+      # the export does not exist, so the notifier, the events stack and the janitor all
+      # require this one to have been applied first. The other reason it is first is the one
+      # it exists for: those alarms deployed perfectly well without it for weeks, with an
+      # empty AlarmActions, four of them in ALARM on 2026-08-06 and nobody told.
+      - name: Deploy the alarm destination
+        if: inputs.describe_run == ''
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name sbsandbox-intern-edullm-alarms \
+            --template-file infra/alarm-destination.yaml \
+            --s3-bucket sbsandbox-intern-edullm-artifacts \
+            --s3-prefix cloudformation-templates/checksummed \
+            --no-fail-on-empty-changeset
+
       # BEFORE THE EVENTS STACK, BECAUSE THE RULE'S SECOND TARGET NAMES A QUEUE THIS CREATES.
       # EventBridge does not check that an SQS target exists at PutTargets time, so the wrong
       # order deploys perfectly and drops every notification until somebody notices a channel
@@ -518,6 +547,41 @@ jobs:
             --s3-bucket sbsandbox-intern-edullm-artifacts \
             --s3-prefix cloudformation-templates/checksummed \
             --no-fail-on-empty-changeset
+
+      # RUN THE THING THAT WAS JUST DEPLOYED -- FROM THE AUDIT, NOT FROM HERE, AND THE
+      # INDIRECTION IS THE POINT RATHER THAN A WORKAROUND.
+      #
+      # Every check this repository had asked a question about the artifact: the released zip
+      # is the one the tree builds, the deployed digest is the one the record names, the
+      # tripwire covers all four functions, the pending register is empty. On 2026-08-06 all
+      # of them were green and every one of the notifier's 934 invocations had raised
+      # FileNotFoundError, because the builder wrote the reviewed configuration to
+      # edullm_platform/config/ and the handler read /var/task/config/. A chain made entirely
+      # of questions about bytes will agree that a function which has never once run is fine.
+      # So something has to invoke one.
+      #
+      # THIS JOB CANNOT BE THE THING THAT INVOKES IT, AND SHOULD NOT BECOME IT. The deployer
+      # builds and never runs: lambda:InvokeFunction is one of fourteen actions named in
+      # tests/test_phase3_deployer_role.py's BUILDS_BUT_NEVER_RUNS, each one written into
+      # infra/iam/infra-deployer-role.yaml as deliberately absent with its reason. Granting it
+      # here, even scoped to the one function whose invocation does nothing, buys a signal a
+      # few hours earlier and pays for it with a permanent hole in a bright line whose whole
+      # value is that it has no exceptions to reason about.
+      #
+      # Dispatching the audit costs no AWS grant at all. The smoke invocation runs there,
+      # under the audit reader, which is read-only apart from one invoke on the notifier that
+      # is argued out in full in infra/iam/audit-reader-role.yaml. What this gives up is
+      # failing *this* run: the deploy goes green and the audit goes red a few minutes later.
+      # That is a worse signal than an inline check and a much better one than tomorrow, and
+      # it is the best available without weakening the deploy credential.
+      - name: Ask the audit to invoke what was just deployed
+        if: inputs.describe_run == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run audit.yml --repo "${GITHUB_REPOSITORY}" --ref main
+          echo "::notice::Dispatched audit.yml. Its 'the deployed functions actually run' job invokes the notifier on a committed fixture; a deploy that broke it goes red there within minutes rather than at 05:00 tomorrow."
 
       # WHAT THIS STEP CANNOT PROVE, said here so the green tick is read correctly. A
       # compute environment reporting VALID and ENABLED establishes that Batch accepted the

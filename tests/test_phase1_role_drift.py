@@ -317,6 +317,14 @@ def test_the_deployer_projection_keeps_the_narrowed_wildcards_it_was_given(
         # wildcard at all. The notifier's function, queue, rule and log group all fall inside
         # entries already above, so naming the role it passes was the only edit it forced.
         role_arn % "sbsandbox-intern-edullm-notifier-lambda",
+        # Where those alarms fire to, named in full rather than by the prefix every other
+        # entry here uses. There is one topic and there is meant to be one, because the whole
+        # defect it answers is an alarm with somewhere plausible to send that reaches nobody:
+        # a prefix grant would let a second topic be created and wired without anybody
+        # subscribing to it, which is the same failure with a new name. The alarms themselves
+        # were deployable throughout by the cloudwatch entry above, all six with an empty
+        # AlarmActions, which is exactly how they were.
+        template_arn % ("sns", "sbsandbox-intern-edullm-alarms"),
         # The second exception, and the same cause in another service: an event source
         # mapping is addressed by a UUID Lambda assigns at creation, so the mapping's tag
         # read cannot be scoped by name either. It is the only action granted on it and it

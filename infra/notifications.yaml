@@ -191,6 +191,14 @@ Resources:
   #
   # None of them can stop a run and none of them is in the path of one. A red alarm here means
   # nobody was told about a run, never that a run did not happen.
+  #
+  # ALL THREE SEND TO THE SNS TOPIC IN infra/alarm-destination.yaml AND NOT THROUGH THE
+  # NOTIFIER, WHICH IS THE POINT. These three watch the notifier, so delivering them through
+  # the notifier would be asking a broken component to report that it is broken. On
+  # 2026-08-06 every invocation of it raised, and all three of these were in ALARM with an
+  # empty AlarmActions for hours -- correct alarms, right thresholds, firing into nothing.
+  # OKActions as well as AlarmActions, so a reader who got the first message learns that the
+  # condition cleared instead of having to go and look.
 
   # Anything at all in the dead-letter queue means at least one run ended and nobody was told.
   # There is no acceptable non-zero level. Missing data is not breaching, because an empty
@@ -215,6 +223,10 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
+      OKActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
 
   # The half that fires first. A notifier that has stopped consuming leaves messages ageing in
   # its queue before the third retry sends the first one to the dead-letter queue. Ten minutes
@@ -238,6 +250,10 @@ Resources:
       Threshold: 600
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
+      OKActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
 
   # A notifier that raises is one whose events go round the retry loop, so this overlaps the
   # two above on purpose: it fires earlier and it names the cause. The other two say nobody was
@@ -260,6 +276,10 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
+      OKActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
 
 Outputs:
   QueueUrl:

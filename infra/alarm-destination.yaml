@@ -1,0 +1,117 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Where this platform's alarms go. One SNS topic, exported, so that every alarm in every
+  other stack has somewhere to send a state change and nobody has to know which.
+
+# WHY THIS STACK EXISTS
+# --------------------------------------------------------------------------------------
+#
+# Six alarms existed before this file and every one of them had an empty AlarmActions. They
+# were correct alarms: the thresholds were right, the dimensions were right, and on the
+# night of 2026-08-06 four of them were in ALARM and had been for hours. They fired into
+# nothing. Nobody knew until somebody opened the console for an unrelated reason.
+#
+# An alarm with no action is a metric filter with extra steps. It is worse than no alarm,
+# because the repository reads as though the condition is watched, and the next person to
+# ask "would we notice?" finds an alarm and stops looking.
+#
+# WHY SNS AND NOT THE SLACK WEBHOOK THIS PLATFORM ALREADY HAS
+# --------------------------------------------------------------------------------------
+#
+# There is a working Slack webhook in Secrets Manager and a Lambda whose whole job is
+# posting to it, so wiring alarms through the notifier is the obvious move and it is the
+# wrong one. Three of the six alarms here are *about the notifier*: its errors, its backlog
+# and its dead letters. Routing those through the notifier means the component reports its
+# own failure, which is the one thing a broken component cannot do. Tonight is the worked
+# example -- every invocation raised FileNotFoundError, so a notifier-delivered alarm about
+# the notifier failing would have raised FileNotFoundError too, and the silence would have
+# been indistinguishable from health. That is not a hypothetical about a future outage; it
+# is a description of the outage this file was written during.
+#
+# The other three are about the lifecycle recorder and the expiry janitor, and routing
+# those through the notifier would be defensible on its own. Splitting the destination by
+# which component an alarm watches would mean the alarm most likely to be lost is the one
+# nobody thought to except, so all six go to the same place.
+#
+# SNS with an email subscription is the unglamorous option and its whole merit is that it
+# shares no dependency with anything it watches. It needs no Lambda, no container image, no
+# reviewed configuration file, no VPC, no zip in a bucket and no secret. The failure modes
+# it has left are AWS's own SNS and the recipient's mail provider.
+#
+# WHAT IT COSTS
+# --------------------------------------------------------------------------------------
+#
+# Email notifications on SNS are free for the first thousand a month and $2.00 per hundred
+# thousand after that, and the first thousand SNS requests a month are free. Six alarms on
+# a platform this size produce a handful of transitions a day, so the running cost is zero
+# and stays zero at any volume this account will reach. The real cost is the other kind: an
+# email is not a page, nobody is on call, and a message that arrives at four in the morning
+# is read at nine. That is the correct amount of urgency for every condition here -- none of
+# these alarms means a run failed, they mean somebody was not told about one -- and it is
+# stated so that the next person to want a page knows this was chosen rather than defaulted
+# into.
+#
+# THE SUBSCRIPTION IS NOT IN THIS FILE, AND THAT IS DELIBERATE RATHER THAN UNFINISHED.
+# An SNS email subscription is not usable until the recipient clicks a link in a confirmation
+# email, so CloudFormation cannot complete one: a subscription declared here would sit in
+# `PendingConfirmation` and the stack would report CREATE_COMPLETE over a topic that still
+# reaches nobody, which is the exact failure this stack exists to end, rebuilt one layer up.
+# It also needs an address, and config/organization.yaml keys people on GitHub logins and
+# holds no email for anybody.
+#
+#   aws sns subscribe \
+#     --topic-arn arn:aws:sns:us-east-1:<account>:sbsandbox-intern-edullm-alarms \
+#     --protocol email --notification-endpoint <address>
+#
+# and then click the link. tools/verify_alarms_reach_somebody.py fails while the topic has
+# no confirmed subscription, so an unconfirmed one is visible in the daily audit rather than
+# discovered during the next incident.
+
+Resources:
+  # No KmsMasterKeyId. Encryption at rest on this topic would mean a customer-managed key
+  # -- SNS's AWS-managed key cannot be used by CloudWatch as an alarm action -- and the
+  # payload is an alarm name, a metric name, a threshold and a state. All four are in this
+  # public repository already. A key here would buy nothing and add a second thing that can
+  # deny the publish that matters.
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: sbsandbox-intern-edullm-alarms
+      DisplayName: eduLLM platform alarms
+
+  # CloudWatch publishes as a service principal rather than as anybody's role, so without
+  # this the alarms are wired to a topic that refuses them -- which fails at publish time,
+  # silently, exactly like having no action at all. The account condition keeps the grant
+  # to this account's own alarms rather than to every alarm in every account.
+  AlarmTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - Ref: AlarmTopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudWatchAlarmsInThisAccountToPublish
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action: sns:Publish
+            Resource:
+              Ref: AlarmTopic
+            Condition:
+              StringEquals:
+                AWS:SourceAccount:
+                  Ref: AWS::AccountId
+
+Outputs:
+  # Exported rather than passed as a parameter, because three separate stacks need it and
+  # `aws cloudformation deploy` in .github/workflows/deploy-phase3-batch.yml passes no
+  # parameters to any of them. An export also refuses to let this stack be deleted while an
+  # alarm still imports it, which is the right constraint: deleting the destination out from
+  # under six alarms would return them all to firing into nothing.
+  AlarmTopicArn:
+    Description: The topic every alarm on this platform sends its state changes to.
+    Value:
+      Ref: AlarmTopic
+    Export:
+      Name: sbsandbox-intern-edullm-alarm-topic-arn

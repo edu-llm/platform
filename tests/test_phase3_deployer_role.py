@@ -661,6 +661,11 @@ def test_the_phase3_policy_reaches_no_service_the_phase_does_not_deploy() -> Non
     # which the Phase 2 policy withholds. infra/batch-events.yaml recorded the rule for that
     # fork -- a capability added rather than a restriction removed -- and this is the second
     # time it has been applied.
+    # ``sns`` is the destination the alarms fire to, and it is here because the ``cloudwatch``
+    # grant beside it was on its own enough to deploy six correct alarms with an empty
+    # AlarmActions -- which is what happened, and four of them were in ALARM on 2026-08-06
+    # with nobody told. infra/alarm-destination.yaml is the topic; it is a Phase 3 stack
+    # because the three stacks whose alarms import it are.
     assert services == {
         "batch",
         "cloudwatch",
@@ -670,6 +675,7 @@ def test_the_phase3_policy_reaches_no_service_the_phase_does_not_deploy() -> Non
         "lambda",
         "logs",
         "scheduler",
+        "sns",
         "sqs",
     }
     assert not any("*" in action for action in granted)

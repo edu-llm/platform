@@ -503,6 +503,46 @@ jobs:
       - name: Compare what AWS is running against what was released
         run: uv run --frozen python tools/verify_deployed_lambdas.py
 
+      # AND THEN ASK WHETHER ANY OF IT RUNS, WHICH THE STEP ABOVE CANNOT.
+      #
+      # The comparison above is correct and was correct all night on 2026-08-06, about a
+      # notifier that had raised FileNotFoundError on every one of its 934 invocations since
+      # it was first deployed. So were the two committed tripwires, the parametrized release
+      # check and the pending register. Every one of them asks about the artifact; the bytes
+      # were the right bytes, and the handler read a directory the builder never wrote to.
+      #
+      # This step compares outcomes instead, over the window that opens at each function's own
+      # LastModified so that a deploy resets it and yesterday's health cannot vouch for
+      # today's code. Zero successes against a non-zero invocation count is a function that
+      # ran and never worked.
+      #
+      # HERE AS WELL AS IN THE DEPLOY WORKFLOW, BECAUSE THE TWO CATCH DIFFERENT THINGS. The
+      # deploy check answers "did this change break it", in front of whoever made it. It
+      # cannot answer anything about a break that no deploy caused -- a rotated webhook
+      # secret, a lapsed grant, a reviewed file that stopped parsing, an event shape that
+      # moved under a function nobody has touched in a month. Those surface here or nowhere,
+      # and the notifier's own state tonight is the argument for a daily floor: nothing about
+      # it was deployed after the deploy that broke it, so a deploy-only check would have
+      # reported it once, weeks ago, and never again.
+      #
+      # --invoke reaches one function. The grant is scoped to the notifier alone in
+      # infra/iam/audit-reader-role.yaml, where the reasoning for the other three is written
+      # out: invoking them would admit a submission, write lineage for a run that did not
+      # happen, or stop machines. This one posts nothing, because the committed fixture is a
+      # non-terminal event and no message is owed for it.
+      - name: Ask whether the deployed functions actually run
+        run: uv run --frozen python tools/verify_lambdas_actually_run.py --invoke
+
+      # AND WHETHER ANYTHING THAT NOTICES A FAILURE CAN SAY SO. Six alarms existed on
+      # 2026-08-06 and every one had an empty AlarmActions; four were in ALARM and had been
+      # for hours. They were correct alarms with right thresholds, and they fired into
+      # nothing, which is worse than not existing: the next person to ask whether a condition
+      # is watched finds an alarm and stops looking. This asks both halves -- every alarm has
+      # an action, and the topic those actions name has a confirmed subscriber -- because an
+      # SNS topic with no subscription accepts every publish and returns a message id.
+      - name: Check the alarms can reach somebody
+        run: uv run --frozen python tools/verify_alarms_reach_somebody.py
+
   deployed-stack-templates:
     name: the deployed stacks are the templates main declares
     runs-on: ubuntu-latest

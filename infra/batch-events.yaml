@@ -362,6 +362,10 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
+      OKActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
 
   # The other half of the same failure, and the half that fires first. A recorder that has
   # stopped consuming -- wrong permissions, a disabled event source mapping, a function that
@@ -388,6 +392,10 @@ Resources:
       Threshold: 900
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
+      OKActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
 
   # A recorder that raises is a recorder whose events go round the retry loop, so this
   # overlaps the two above on purpose: it fires earlier and it names the cause. The other
@@ -409,6 +417,10 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
+      OKActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
 
 Outputs:
   RuleName:

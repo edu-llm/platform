@@ -96,6 +96,17 @@ EXPECTED_SIDS = frozenset(
         # have stayed green if every grant below were deleted.
         "ReadExpiryJanitorDeployedCode",
         "ReadNotifierDeployedCode",
+        # The four from the 2026-08-06 notifier outage. Every grant above this line reads
+        # what is deployed, and all of them answered correctly for the whole of the time the
+        # notifier was raising on every invocation, because the bytes were right and the
+        # handler read a directory the builder never wrote to. These read outcomes instead:
+        # whether the functions succeed, whether the one function that is safe to invoke does
+        # run, whether the alarms have anywhere to fire and whether that anywhere reaches a
+        # person.
+        "ReadWhetherTheDeployedFunctionsSucceed",
+        "SmokeInvokeTheNotifierAndNothingElse",
+        "ReadWhetherTheAlarmsHaveSomewhereToFire",
+        "ReadWhetherTheAlarmTopicHasASubscriber",
         "ReadTheDeployedTemplateOfEachStack",
         "FindStacksNothingInTheRepositoryAccountsFor",
         "FindEveryResourceThisPlatformTagged",

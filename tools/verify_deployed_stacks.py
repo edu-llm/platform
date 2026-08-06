@@ -271,6 +271,10 @@ STACKS: Final = _stacks(
     ("sbsandbox-intern-edullm-phase5-image-resolver-iam", IAM_ROOT / "image-resolver-role.yaml"),
     ("sbsandbox-intern-edullm-run-preview-iam", IAM_ROOT / "run-preview-role.yaml"),
     ("sbsandbox-intern-edullm-notifier-iam", IAM_ROOT / "notifier-lambda-role.yaml"),
+    # Before the three stacks whose alarms import its topic ARN, which is also the order
+    # .github/workflows/deploy-phase3-batch.yml deploys them in. An export cannot be imported
+    # before it exists, so a first deploy in any other order fails on the importing stack.
+    ("sbsandbox-intern-edullm-alarms", INFRA_ROOT / "alarm-destination.yaml"),
     ("sbsandbox-intern-edullm-notifications", INFRA_ROOT / "notifications.yaml"),
     ("sbsandbox-intern-edullm-scratch", INFRA_ROOT / "scratch-bucket.yaml"),
     ("sbsandbox-intern-edullm-lane-instance-iam", IAM_ROOT / "lane-instance-role.yaml"),

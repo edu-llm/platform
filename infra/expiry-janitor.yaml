@@ -107,6 +107,46 @@ Resources:
       Timeout: 60
       MemorySize: 512
 
+  # THE ALARM THAT MAKES THIS FUNCTION'S DESIGN TRUE.
+  #
+  # janitor_handler.handler prints its summary and then deliberately raises when it could not
+  # stop a machine, and the argument for raising is written into that docstring: failing is the
+  # one signal a scheduled function has that anybody can alarm on. That argument was false for
+  # as long as it has existed, because there was no alarm on this function. Six of the eleven
+  # sweeps since the 2026-08-06 deploy raised, all of them on one stop-protected instance, and
+  # nothing anywhere said so. The reclaim service was refusing to reclaim, on a schedule, in
+  # silence.
+  #
+  # The other two failure modes of a scheduled function are covered elsewhere and are worth
+  # naming so this is not mistaken for complete cover. A sweep that stops running altogether
+  # publishes no Errors and no Invocations, and TreatMissingData: notBreaching means this alarm
+  # stays green through it -- that is the right choice here, because the alternative fires
+  # whenever CloudWatch is briefly late, and the case is caught instead by
+  # tools/verify_lambdas_actually_run.py, which fails when a scheduled function has not been
+  # invoked at all since it was deployed. And a sweep that runs and quietly does nothing is
+  # caught by neither; it is what the printed summary is for.
+  ExpiryJanitorErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sbsandbox-intern-edullm-expiry-janitor-errors
+      AlarmDescription: A sweep could not reclaim a machine, so an expired instance is still running and still costing.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value:
+            Ref: ExpiryJanitorFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
+      OKActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
+
 Outputs:
   FunctionName:
     Value:
