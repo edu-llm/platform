@@ -127,9 +127,17 @@ Resources:
           # console and in get-function-configuration, and this repository is public. The
           # secret is created by hand; infra/README.md carries the command.
           EDULLM_WEBHOOK_SECRET_ID: sbsandbox-intern-edullm-runs-webhook
-          # Where Lambda unpacks the zip. The three reviewed files the notifier reads are
-          # packaged into it by tools/build_notifier_lambda.py.
-          EDULLM_CONFIG_DIRECTORY: /var/task/config
+          # EDULLM_CONFIG_DIRECTORY IS DELIBERATELY ABSENT, AND SETTING IT AGAIN IS THE
+          # 2026-08-06 OUTAGE. It was set here to /var/task/config, which is not where
+          # tools/build_notifier_lambda.py puts the three reviewed files: they go to
+          # edullm_platform/config inside the zip, so /var/task/edullm_platform/config once
+          # Lambda unpacks it. Every invocation raised FileNotFoundError on organization.yaml
+          # from the first deploy onward, and every check the platform had still passed,
+          # because all of them asked about the artifact and none of them ran the function.
+          # Unset, the handler resolves the directory off its own __file__ and therefore
+          # cannot disagree with the builder. The variable still exists as an override for a
+          # test that wants to point the handler somewhere else; a deployment has no business
+          # using it, and the admission validator's template has never set its equivalent.
           # Where the intent records are, which is where the submitter comes from. Named here
           # as well as in the role, and a test compares the two: a mismatch is an AccessDenied
           # on every message, swallowed by the fallback, showing up only as a channel where
