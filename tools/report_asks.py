@@ -27,13 +27,14 @@ from typing import Any, Final, Literal
 
 from pydantic import Field
 
-from edullm_platform.cli.intake import ASK_KINDS
+from edullm_platform.cli.intake import ASK_KINDS, ASK_QUEUE_LABEL
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.base import ContractModel
 
 __all__ = [
     "ASKS_CONFIG_PATH",
     "ASK_KINDS",
+    "ASK_QUEUE_LABEL",
     "AskThresholds",
     "asks_worth_a_config_change",
     "build_parser",
@@ -109,7 +110,7 @@ def _open_asks(repository: str) -> list[dict[str, Any]]:
             "gh",
             "api",
             "--paginate",
-            f"repos/{repository}/issues?state=open&labels=ask&per_page=100",
+            f"repos/{repository}/issues?state=open&labels={ASK_QUEUE_LABEL}&per_page=100",
         ],
         capture_output=True,
         text=True,
@@ -157,7 +158,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     print("## Open asks, by kind\n")
-    print(f"Examined {len(issues)} open issues labelled `ask`.\n")
+    print(f"Examined {len(issues)} open issues labelled `{ASK_QUEUE_LABEL}`.\n")
     print("| Kind | Open | Worth a config change |")
     print("| --- | --- | --- |")
     for kind in ASK_KINDS:

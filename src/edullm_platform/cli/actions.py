@@ -280,18 +280,28 @@ class PlatformActions:
             )
         self._dispatched.append(workflow)
 
-    def create_issue(self, *, title: str, body: str, label: str | None) -> tuple[str, bool]:
-        """File one issue and answer with its URL and whether the label went on.
+    def create_issue(self, *, title: str, body: str, labels: Sequence[str]) -> tuple[str, bool]:
+        """File one issue and answer with its URL and whether the labels went on.
 
         **A LABEL THAT WILL NOT ATTACH DOES NOT STOP THE ASK, AND THAT IS A RULING RATHER
         THAN A FALLBACK.** GitHub creates a label declared in an issue form the first time
         that form is used, so a repository can be in a state where the vocabulary is correct
         and the label does not exist yet. Refusing an ask over that would be a gate that
         prevents nothing and costs the one thing this call exists to produce. The caller is
-        told which label did not attach so somebody can add it, and an uncounted ask is worth
-        more than an unfiled one.
+        told which labels did not attach so somebody can add them, and an uncounted ask is
+        worth more than an unfiled one.
 
-        The second value rather than a second call, because whether the label attached is
+        **A SEQUENCE RATHER THAN ONE LABEL, BECAUSE AN ASK NEEDS TWO AND USED TO GET ONE.**
+        The queue label is what ``tools/report_asks.py`` searches on and the kind is what it
+        groups by, so an ask carrying only its kind is filed correctly and counted nowhere.
+        That was this method's shape until 2026-08-06 and the board showed it as an empty
+        queue rather than as an error.
+
+        **EVERY LABEL OR NONE, BECAUSE THAT IS WHAT ``gh`` DOES.** One ``gh issue create``
+        naming a label the repository does not carry fails the whole call and files nothing,
+        so there is no partial attachment to report and the second value stays a boolean.
+
+        The second value rather than a second call, because whether the labels attached is
         something only this method observes. A caller asking again would be asking GitHub a
         question this already has the answer to.
         """
@@ -306,8 +316,9 @@ class PlatformActions:
             "--body",
             body,
         )
-        if label is not None:
-            labelled = self._runner((*argv, "--label", label))
+        if labels:
+            asked = tuple(part for label in labels for part in ("--label", label))
+            labelled = self._runner((*argv, *asked))
             if labelled.ok:
                 return labelled.text, True
         result = self._runner(argv)

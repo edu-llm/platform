@@ -1,0 +1,32 @@
+# How long the platform will go on believing a capture of who can open the lead gate.
+#
+# WHAT THIS NUMBER BUYS, AND IT IS NOT CORRECTNESS. Who is in the GitHub `team-leads` team is
+# what actually opens `run-approval-lead`, and it is organization state that no file in this
+# repository follows. Nothing here can read it: `orgs/edu-llm/teams/team-leads/members` needs
+# the Members organization permission, the Actions GITHUB_TOKEN has no organization permissions
+# at all, and a stored PAT would be a repository secret that
+# test_the_repository_holds_no_secret_a_branch_could_read forbids by name. So the comparison is
+# against a committed capture somebody takes by hand, and the only question this file settles is
+# how long a hand capture is allowed to stand before somebody is made to take another.
+#
+# WHY IT IS SHORTER THAN THE CONTRACT WINDOW. FRESHNESS_WINDOW in src/edullm_platform/evidence.py
+# is thirty days and refuses to load a capture older than that, which is the outer bound on how
+# wrong the platform can be about this. Thirty days is also exactly how long the ninth member of
+# that team went unnoticed, which is the incident config/organization.yaml records in its own
+# words. A shorter number here does not make the capture more accurate. It makes the question get
+# asked more often, and the window in which GitHub and the roster can disagree unobserved is the
+# number below rather than thirty days.
+#
+# Seven rather than one. A daily re-capture is an SSO-free two-command chore, but it is a chore a
+# person does, and a check that goes red every morning is one nobody reads on the morning it
+# means something. A week is short enough that a change is caught inside the sprint that made it
+# and long enough that a clean week is silent.
+#
+# Under config/reports/ rather than config/ for the reason config/reports/asks.yaml gives: the
+# eight control-plane files in docs-frank/reference/system-overview.md do not include this, and
+# .github/workflows/release-tag.yml names six files under config/ and no directory, so a number
+# here moves no installed CLI's answer and earns no version.
+schema_version: 1
+
+# Inclusive. A capture of exactly this age still stands; older than this is red.
+capture_stands_for_days: 7

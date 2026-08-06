@@ -169,6 +169,80 @@ body:
     validations:
       required: true
 
+  - type: markdown
+    attributes:
+      value: |
+        ### If you picked `run-problem`, the five fields below are what make it answerable
+
+        **"I cannot do X" is unanswerable without the command and what it printed.** The next
+        five are optional because this form is also filled in by people whose problem is that
+        they cannot get as far as a command. Fill in the ones you have. Every one you leave
+        blank is a round trip, and the person on the other end is the one who merges every
+        configuration change.
+
+        If you have `edullm` installed, `edullm ask --kind run-problem` fills in the version
+        for you and files the same issue in the same queue.
+
+  - type: input
+    id: command
+    attributes:
+      label: The command you ran
+      description: >-
+        The whole line, as you typed it, including the flags. A refusal usually names the one
+        field to change and which field that is depends on what was asked for.
+      placeholder: edullm submit --experiment context-length-sweep --dataset regmix-10b-v1
+    validations:
+      required: false
+
+  - type: textarea
+    id: output
+    attributes:
+      label: What it printed
+      description: >-
+        Paste it rather than describing it. `edullm check --json` and `edullm status --json`
+        print a refusal as a list of codes, and the code is the part that identifies the wall.
+        The prose beside it is written for a person and gets reworded, so a summary in your
+        own words can match no code at all.
+      render: text
+    validations:
+      required: false
+
+  - type: input
+    id: repository
+    attributes:
+      label: Which repository you were in
+      description: >-
+        The research codebase, not this one. A refusal about registration, an image or a
+        Dockerfile is about that repository, and the same command run in two of them gets two
+        answers.
+      placeholder: OLMo-core
+    validations:
+      required: false
+
+  - type: input
+    id: compute_profile
+    attributes:
+      label: Which compute profile you asked for
+      description: >-
+        The profile named in `.edullm/run.yaml` or on the command line. What a profile costs,
+        which queue can place it and how many people have to approve it are all decided by
+        this, so a refusal that looks like a permissions problem is often a placement one.
+      placeholder: cpu-small
+    validations:
+      required: false
+
+  - type: input
+    id: cli_version
+    attributes:
+      label: Which version of edullm, from `edullm --version`
+      description: >-
+        An install checking against the reviewed configuration it was built with is the
+        commonest cause of a refusal that looks wrong, and it is invisible from everything
+        else on this form. Re-installing is one line and it is worth trying before you file.
+      placeholder: 3.4.3
+    validations:
+      required: false
+
   - type: textarea
     id: tried
     attributes:

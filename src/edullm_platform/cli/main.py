@@ -104,6 +104,7 @@ from edullm_platform.cli.configuration import (
 from edullm_platform.cli.intake import (
     ADD_KINDS,
     ASK_KINDS,
+    ASK_QUEUE_LABEL,
     SELF_SERVICE_KINDS,
     issue_body,
     register_repository_form,
@@ -2406,14 +2407,16 @@ def _ask(
         config_directory=str(configuration.directory),
         run_id=arguments.run,
     )
-    url, labelled = actions.create_issue(title=arguments.title, body=body, label=arguments.kind)
+    wanted = (ASK_QUEUE_LABEL, arguments.kind)
+    url, labelled = actions.create_issue(title=arguments.title, body=body, labels=wanted)
     if not labelled:
         print(
             "\n".join(
                 _wrapped(
-                    f"filed without the {arguments.kind} label, which this repository does "
-                    "not carry yet. Asks are counted by label, so add it to the issue or to "
-                    "the repository and this one joins the count.",
+                    f"filed without the {' and '.join(wanted)} labels, one of which this "
+                    f"repository does not carry yet. The count reads {ASK_QUEUE_LABEL} and "
+                    "groups by kind, so add both to the issue or to the repository and this "
+                    "one joins the count.",
                     indent="",
                 )
             ),

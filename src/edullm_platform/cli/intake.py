@@ -35,6 +35,7 @@ from edullm_platform.cli.preflight import Refusal
 __all__ = [
     "ADD_KINDS",
     "ASK_KINDS",
+    "ASK_QUEUE_LABEL",
     "SELF_SERVICE_KINDS",
     "issue_body",
     "register_repository_form",
@@ -122,6 +123,21 @@ ASK_KINDS: Final[tuple[str, ...]] = (
     "feedback",
     "run-problem",
 )
+
+#: The label that puts an ask in the queue, which is a separate fact from what kind it is.
+#:
+#: **THE KIND IS NOT THIS, AND CONFUSING THE TWO IS HOW THE COUNT WENT WRONG.**
+#: ``tools/report_asks.py`` asks GitHub for issues carrying this and then groups those by kind,
+#: so a kind label on its own reaches no queue. Both doors have to put this on. The form does,
+#: unconditionally, in its ``labels:``; the CLI did not, and every ask filed through it between
+#: the verb shipping and 2026-08-06 is absent from the board while looking correctly labelled
+#: on the issue itself. That is the failure the four-into-one collapse existed to prevent,
+#: arriving through the door nobody was watching.
+#:
+#: One constant read by all three rather than the string typed in three places. The counter
+#: imports it, ``edullm ask`` sends it, and ``tests/test_triage_form.py`` holds the form's
+#: ``labels:`` equal to it, so the queue cannot be renamed on one side only.
+ASK_QUEUE_LABEL: Final = "ask"
 
 
 def issue_body(

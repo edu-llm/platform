@@ -126,6 +126,36 @@ name: The audit (what the platform recorded, against what is actually there)
 #     is red until somebody applies it -- which is the state the visibility board spent its
 #     first weeks in, and it is named here rather than discovered at 05:00.
 #
+#   lead-gate — the only job here whose subject is a thing this repository cannot read, and
+#     the only one whose finding is an age. Who is in the GitHub `team-leads` team is what
+#     opens `run-approval-lead` and it is organization state that no file here follows.
+#     Nothing on this schedule can ask: orgs/edu-llm/teams/team-leads/members needs the
+#     Members organization permission, the GITHUB_TOKEN has none, and a stored PAT would be a
+#     repository secret test_the_repository_holds_no_secret_a_branch_could_read forbids by
+#     name. config/organization.yaml records all of that and concluded that no scheduled
+#     check could be had.
+#
+#     THE HALF A SCHEDULE CAN REACH IS HOW OLD THE ANSWER IS, AND THAT IS THE HALF THAT WENT
+#     WRONG. The comparison already runs on every push, in
+#     tests/test_phase2_github_evidence.py, against a capture somebody takes by hand.
+#     FreshEvidenceModel refuses that capture after thirty days, and until that moment a green
+#     suite is reporting on whatever GitHub looked like the day it was taken. Thirty days is
+#     also exactly how long the ninth member of that team went unnoticed. This job goes red
+#     when the capture is older than config/reports/lead-gate.yaml allows, which is seven
+#     days, so the window in which the two can disagree unobserved is a number somebody chose.
+#
+#     It is red on a finding, unlike roster-against-the-account directly above it, and the
+#     difference is that this finding is a fault in both directions. A login on the team the
+#     roster does not authorize opens the gate and is then refused by admission with
+#     approver_lacks_lead_or_admin_role, which spends somebody's approval on a no. An
+#     authorized login absent from the team is somebody the gate can never route to, their own
+#     group's runs included, and can_admins_bypass is false there so being an admin does not
+#     help. Both were live at once for the two days ending 2026-07-30.
+#
+#     Like open-asks it needs no role, no repository variable and no secret. Two committed
+#     files are the whole of what it reads, so it is the second job here that cannot fail for
+#     a reason outside the question it was asked.
+#
 # ONE OF THE SEVEN IS NO LONGER ONLY A SIGNAL, AND THAT CHANGES WHAT A RED CROSS ON IT
 # COSTS. wandb-credential publishes its answer as an artifact, and submit-run.yml refuses a
 # submission on the strength of it -- because the role this job assumes is the only
@@ -1142,6 +1172,61 @@ jobs:
             echo "granted in infra/iam/audit-reader-role.yaml and applied by hand." >&2
             exit 1
           fi
+
+  # NO `permissions:` BLOCK, WHICH IS THE CATEGORY RATHER THAN AN OVERSIGHT. This job reads
+  # two committed files and nothing else, so the file-level `contents: read` is the whole of
+  # what it needs, and tests/test_ci_workflow.py refuses a block on a job of this kind. No
+  # id-token means no AWS identity is obtainable however the steps are later written.
+  lead-gate:
+    name: who can open the lead gate, and how old the answer is
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # THIS ONE IS RED ON A FINDING AND THE JOB ABOVE IT IS NOT, AND THE DIFFERENCE IS NOT
+      # INCONSISTENCY. A person reaching AWS before the roster is Tuesday, so
+      # roster-against-the-account reports it and exits 0. A disagreement here is a fault in
+      # both directions: a login on the GitHub team the roster does not authorize opens
+      # `run-approval-lead` and is then refused by admission, spending somebody's approval on
+      # a no, and an authorized login absent from the team is a person the gate can never
+      # route to, their own group's runs included. Both were live at once for two days ending
+      # 2026-07-30.
+      #
+      # WHAT IS ACTUALLY NEW HERE IS THE CLOCK. tests/test_phase2_github_evidence.py already
+      # makes this comparison on every push. What it cannot do is notice that the capture it
+      # compares was taken by hand and has been sitting there. FreshEvidenceModel refuses one
+      # after thirty days, and thirty days is exactly how long the ninth member of that team
+      # went unnoticed. config/reports/lead-gate.yaml shortens that window and this job is
+      # what enforces it.
+      #
+      # It reads GitHub for nothing, and config/organization.yaml explains why at length:
+      # orgs/edu-llm/teams/team-leads/members needs the Members organization permission, the
+      # GITHUB_TOKEN has no organization permissions, and a PAT would be a secret
+      # test_the_repository_holds_no_secret_a_branch_could_read forbids by name. So a clean
+      # run means the last hand capture agreed with the roster and is recent enough to be
+      # worth believing, and it does not mean somebody was not added to the team this morning.
+      - name: Compare the captured team against the roster, and say how old the capture is
+        run: |
+          set -uo pipefail
+          status=0
+          uv run --frozen python tools/report_who_can_open_the_lead_gate.py > lead-gate.md \
+            || status=$?
+
+          if [[ -s lead-gate.md ]]; then
+            cat lead-gate.md >> "${GITHUB_STEP_SUMMARY}"
+            cat lead-gate.md
+          fi
+
+          exit "${status}"
 
   open-asks:
     name: which asks have stopped being asks
