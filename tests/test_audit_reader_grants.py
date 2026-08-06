@@ -101,6 +101,13 @@ EXPECTED_SIDS = frozenset(
         "FindEveryResourceThisPlatformTagged",
         "LookUpLaunchEvents",
         "ReadTheQueuesThePlacementVerdictNeeds",
+        # The first grant here that is about people rather than about runs, and the equality
+        # is what put it in front of a reader. Nothing in the account or the repository could
+        # say who holds AWS access that `config/organization.yaml` has never heard of, so a
+        # person could self-serve a role and be refused by admission a week later with no
+        # symptom in between. What it discloses is every role name in a shared account, which
+        # is why it is argued at length beside the statement rather than only listed here.
+        "ListTheInternRolesTheRosterIsComparedAgainst",
     }
 )
 

@@ -48,6 +48,7 @@ CREDENTIALED_AUDIT_JOBS = frozenset(
         "visibility-board",
         "placement-verdicts",
         "substrate-capture",
+        "roster-against-the-account",
     }
 )
 

@@ -36,9 +36,16 @@ answers `Nothing to upgrade`. Re-install with `--force`.
 | `edullm cancel` | Stops one admitted run, with a reason that goes on the record. |
 | `edullm add` | Teaches the platform about a repository, dataset, shape, model or person. Produces a configuration pull request. |
 | `edullm ask` | Files one ask for something you need yourself. Produces an issue somebody answers. |
+| `edullm run` | Ships this working tree to a machine of your own and streams the output of the command after a bare `--` back. Ungated, and no run anybody can cite. |
+| `edullm shell` | A terminal on that same machine, or a notebook on it with `--notebook`. |
 
-`edullm run` and `edullm shell` are settled and not built. A bare `edullm` prints the list, and
-`edullm <verb> --help` prints what that verb takes.
+Nine verbs, all built. A bare `edullm` prints the list, and `edullm <verb> --help` prints what
+that verb takes.
+
+The last two are the exploration route and they are not the submission path. Nothing they do
+is checked against the registry, priced, approved or written to a lineage record, so what
+comes off them is a thing you saw rather than a result anybody can cite. Reach for `check` and
+`submit` for anything that is meant to count.
 
 ## Start with `check`, always
 
@@ -88,6 +95,26 @@ Branch on these before you read anything.
 
 3 is the only one worth retrying. 1 means something has to change and retrying it unchanged
 reaches the same place. 2 means the command itself was wrong.
+
+## Push a branch when its first commit exists
+
+Not when the work is finished. `git push -u origin HEAD` on a branch nobody has reviewed
+changes nothing on `main`, costs nothing, and is the only artifact another session can find.
+A branch that exists only in a worktree is invisible to everybody, including whoever picks the
+work up tomorrow, which is usually you with none of the context.
+
+The evening of 2026-08-05 produced two cases and both had already cost the time they were
+going to cost by the time anybody noticed. The repository registration tool was reworked,
+finished, left unpushed, and then reworked from scratch hours later by a different session;
+driving both implementations over the same templates produced byte-identical output, and the
+second author had no way to know the first existed. A guard against module rebinding, 524
+lines, sat on one laptop and no remote until it was rebased over eighty-one commits, whereupon
+it went red immediately on a loader written days after the branch was cut, by somebody who had
+read neither the incident nor the file describing it, because that file was in a worktree
+nobody could see.
+
+Push first, keep pushing, and let the branch be the record. A draft pull request is better
+still where the work is going to become one.
 
 ## Never do these
 

@@ -72,8 +72,8 @@ name: The audit (what the platform recorded, against what is actually there)
 #     red -- and because a fork's pull request should not be able to spend this
 #     repository's API budget enumerating an organisation.
 #
-#   open-asks — the newest, the cheapest, and the only one whose subject is neither the
-#     account nor a repository but the people using this one. It counts the open issues
+#   open-asks — the cheapest, and the only one whose subject is neither the account nor a
+#     repository but the people using this one. It counts the open issues
 #     labelled `ask` by kind and says which kinds have reached the threshold
 #     config/reports/asks.yaml names. docs-frank/reference/system-overview.md says one place
 #     makes asks countable "which turns the third identical one into a config change"; this
@@ -89,6 +89,32 @@ name: The audit (what the platform recorded, against what is actually there)
 #     queue of asks getting long is a finding and never a failure, for the reason
 #     tools/report_spend.py gives about itself. Exit 2 means the count could not be taken,
 #     which is a real failure and is red.
+#
+#   roster-against-the-account — the newest, and the only one whose finding is not a fault.
+#     Every other job here compares two things that ought to agree and goes red when they do
+#     not. This one compares who holds an `Intern-*` role in the account against who
+#     config/organization.yaml names, and the two are expected to disagree: anybody in the
+#     organization can self-serve a role in about five minutes and a roster change is a
+#     reviewed pull request, so a person reaching AWS before the roster is the ordinary order
+#     of events rather than a defect. It is here rather than on the pull-request path for the
+#     reason the five account checks are, and it needs the same identity.
+#
+#     IT REPORTS AS INFORMATION AND NOT AS A FAILURE, WHICH IS AN EXCEPTION TO THE RULE THIS
+#     HEADER OPENS WITH AND IS ARGUED RATHER THAN ASSUMED. That rule is about jobs whose
+#     finding is a fault: a red cross is the alarm, and an alarm that means Tuesday is not
+#     one. This account gained eight `Intern-*` roles in the fortnight to 2026-08-05, so a
+#     job that went red on the finding would be red most mornings, and the cost of that is
+#     not borne by this job alone -- it is the five above it, whose red crosses stop being
+#     read. So there is no exit code 1, and it is absent by construction in
+#     tools/report_roster_against_the_account.py rather than by a continue-on-error here,
+#     which would also swallow the failures that are real. Exit 2 is one of those and is red:
+#     a comparison that could not be made says nothing either way, and an account answering
+#     with no `Intern-*` role at all is a read that did not work rather than a tidy account.
+#
+#     It is also the only job here that needed a grant this role did not already hold.
+#     iam:ListRoles landed in the same change, and this stack is applied by hand, so this job
+#     is red until somebody applies it -- which is the state the visibility board spent its
+#     first weeks in, and it is named here rather than discovered at 05:00.
 #
 # ONE OF THE SEVEN IS NO LONGER ONLY A SIGNAL, AND THAT CHANGES WHAT A RED CROSS ON IT
 # COSTS. wandb-credential publishes its answer as an artifact, and submit-run.yml refuses a
@@ -850,6 +876,86 @@ jobs:
           git add --force substrate/
           git diff --cached --quiet || git commit -m "substrate: $(date -u +%F)"
           git push origin machine/substrate
+
+  roster-against-the-account:
+    name: who the account knows about that the roster does not
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the audit reader role is deployed
+        env:
+          ROLE_ARN: ${{ vars.AWS_AUDIT_READER_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ROLE_ARN}" ]]; then
+            echo "audit_reader_role_not_deployed" >&2
+            echo "AWS_AUDIT_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
+            echo "The role is infra/iam/audit-reader-role.yaml, applied from a laptop like" >&2
+            echo "every IAM stack here. See infra/README.md for the stack name and the" >&2
+            echo "repository variable it needs." >&2
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_AUDIT_READER_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # WHAT THIS CATCHES IS A PERSON, AND IT IS THE ONE JOB HERE WHOSE FINDING IS NOT A
+      # FAULT. Anybody in the organization can self-serve an Intern-<first>.<last>-sbsandbox
+      # role in about five minutes, admission reads config/organization.yaml, and nothing
+      # tells that file a role appeared. So the ordinary sequence is that somebody holds AWS
+      # credentials for a week and is refused by `edullm submit` the first time they use
+      # them, with no symptom before that moment. On 2026-08-05 the account held 43 of these
+      # roles against a 35-person roster and nobody knew until somebody counted by hand.
+      #
+      # NO EXIT CODE 1, BY CONSTRUCTION IN THE TOOL RATHER THAN BY continue-on-error HERE.
+      # The distinction matters and it is the reason this job is allowed on a schedule whose
+      # header says nothing here is informational. A red cross means something is wrong; a
+      # person appearing in the account before the roster is Tuesday. A job that went red for
+      # it would be red most mornings, and a check that is red most mornings is one nobody
+      # reads on the morning it means something -- which would cost the five jobs above their
+      # signal as well as this one. So the finding is a step summary and the exit code is
+      # zero, exactly as tools/report_asks.py argues for its own queue length.
+      #
+      # Exit 2 is a real failure and is red, because a comparison that could not be made says
+      # nothing about the roster in either direction. The tool separates the two ways that
+      # happens: a refused read, which is usually iam:ListRoles and which prints the grant to
+      # paste, and an account that answered with no Intern-* role at all, which is not a tidy
+      # account but a read that did not work.
+      - name: Compare who the account knows about against who the roster does
+        run: |
+          set -uo pipefail
+          status=0
+          uv run --frozen python tools/report_roster_against_the_account.py \
+            --region "${AWS_REGION:-us-east-1}" > roster.md || status=$?
+
+          if [[ -s roster.md ]]; then
+            cat roster.md >> "${GITHUB_STEP_SUMMARY}"
+            cat roster.md
+          fi
+
+          if [[ "${status}" -ne 0 ]]; then
+            echo "roster_comparison_unmade" >&2
+            echo "The account was not read, so this run says nothing about the roster either" >&2
+            echo "way. The error above says which read was refused; a denial is iam:ListRoles," >&2
+            echo "granted in infra/iam/audit-reader-role.yaml and applied by hand." >&2
+            exit 1
+          fi
 
   open-asks:
     name: which asks have stopped being asks

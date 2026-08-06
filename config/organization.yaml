@@ -469,11 +469,20 @@ members:
 # and how many did not, and it names the unresolved ones that are named like people. Adding a
 # row here is the fix; the denominator is what tells you a row is missing.
 #
-# Read from the account on 2026-08-05: it holds 43 `Intern-*` roles and twenty of them are
+# Read from the account on 2026-08-05: it holds 43 `Intern-*` roles and twenty-one of them are
 # the roster's. Two of the 43 are not people at all -- `Intern-p3math-olmo370-eval-20260731`
 # and `Intern-p3math-smoke-download-20260731` are task roles that happen to carry the prefix,
-# which is exactly why the prefix is a highlight in the report and never a filter. The rest
-# belong to people this roster has never heard of and are given up on deliberately.
+# which is exactly why the prefix is a highlight in the report and never a filter. They are in
+# `excluded_roles` below with their trust policies as the evidence. The remaining twenty belong
+# to people this roster has never heard of, and are left alone rather than given up on: the
+# account is shared with about a dozen unrelated projects, and nine of the twenty are
+# positively attributed to one of them by what they have actually done in CloudTrail.
+#
+# NOBODY IS ADDED TO THIS ROSTER BY THAT REPORT, AND THAT IS THE POINT OF SEPARATING THE TWO
+# HALVES. Being on this file is what lets somebody submit a run against a team's budget, so a
+# row here is an authorization and not an observation. The daily comparison in
+# `.github/workflows/audit.yml` observes; a pull request against this file authorizes; and the
+# gap between them is where a person gets asked which project they are on.
 #
 # Re-derive both sides with:
 #   AWS_PROFILE=sbsandbox aws iam list-roles \
@@ -500,6 +509,15 @@ members:
 # Nothing downstream carries either number: the morning message derives it by set difference
 # against this block and says so in the line it prints, so this file is the only place the
 # figure has to be right.
+#
+# THE SAME ARGUMENT RAN AGAIN ON 2026-08-05 AND REACHED THE SAME PLACE ONCE.
+# `Intern-langming.xing-sbsandbox` is bound below on the confirmation already recorded above
+# `meric233`, and it is a second role for somebody the roster already carries, so it changes
+# who may submit a run not at all. The other twenty unrostered role-holders are not bound and
+# not added, because a confirmation is the only thing that resolves a near-match and there is
+# none for any of them -- and because adding a stranger to a research roster is worse than
+# leaving them off. Fifteen roster members still hold no role, since binding a second role for
+# a bound person moves neither figure.
 aws_identities:
   # Sorted by role_name, matched on display_name because the role names are
   # `Intern-<first>.<last>-sbsandbox` and the roster is keyed on GitHub logins.
@@ -517,6 +535,19 @@ aws_identities:
     - {role_name: Intern-frank.gonzalez-sbsandbox, github_login: philote-dev}
     - {role_name: Intern-grant.matherne-sbsandbox, github_login: GMatherne}
     - {role_name: Intern-hiya.vyas-sbsandbox, github_login: hiyasvyas}
+    # THE SECOND ROLE THIS PERSON HOLDS, AND BINDING IT GRANTS NOTHING. meric233 is already on
+    # the roster and already admitted; what this line changes is which launches are attributed
+    # to a person rather than reported as nobody's. The role name matches no display name here
+    # and never will -- the same 2026-08-04 confirmation that resolved this person's W&B
+    # account recorded that the eduLLM entity holds them as `Langming Xing` while the roster
+    # holds them as Meric Xing, and the comment above their `members` row says so.
+    #
+    # The AWS side is independently evidenced rather than inferred from the W&B one, which
+    # matters because the two systems could have disagreed: this role put a bucket policy on
+    # `edullm-datasets` on 2026-07-25, so it is a role doing eduLLM work whatever it is called.
+    # It is the only one of the twenty-one unrostered role-holders on 2026-08-05 with any
+    # eduLLM evidence at all.
+    - {role_name: Intern-langming.xing-sbsandbox, github_login: meric233}
     # Bound on the owner's 2026-08-04 confirmation rather than on the name, which does not
     # match: the roster carries this person as Eric Ni. See the block comment above.
     - {role_name: Intern-linjian.ni-sbsandbox, github_login: ninLi0}
@@ -543,3 +574,26 @@ aws_identities:
         A branch preview of a platform change. It submits to Batch directly and carries no
         lineage record by design, so it looks exactly like an unaccounted launch. Its
         launches are counted and reported as their own figure rather than dropped.
+    # THE TWO ROLES THAT CARRY THE PERSON PREFIX AND ARE NOT PEOPLE, AND THE EVIDENCE IS IN
+    # THEIR TRUST POLICIES RATHER THAN IN THEIR NAMES. A self-served person's role is trusted
+    # by the credential broker; these two are trusted by `ec2.amazonaws.com` and
+    # `lambda.amazonaws.com`, so nobody can assume either of them and there is no person
+    # behind them to put on a roster. Both are tagged `Project: p3math`, which is a repository
+    # in this GitHub organization, and the second is tagged `Owner: anshul` -- anshulmago1,
+    # who is on the roster and whose own role is bound above.
+    #
+    # They are excluded rather than filtered by shape. `Intern-` is a highlight and never a
+    # filter, so a role carrying it is reported until somebody writes down what it is; that is
+    # what keeps the next unexpectedly-named role from disappearing with nothing saying it had
+    # stopped being looked at. These two are that writing-down, and it is the reason the daily
+    # comparison reports twenty-one people rather than twenty-three rows.
+    - role_name: Intern-p3math-olmo370-eval-20260731
+      reason: >-
+        An EC2 instance role for a p3math evaluation, not a person: its trust policy names
+        ec2.amazonaws.com, so nobody can assume it. Tagged Project p3math, Purpose
+        olmo370-eval, created 2026-08-01.
+    - role_name: Intern-p3math-smoke-download-20260731
+      reason: >-
+        A Lambda execution role for a p3math smoke download, not a person: its trust policy
+        names lambda.amazonaws.com. Tagged Project p3math, Owner anshul, which is the roster's
+        anshulmago1, whose own role is bound above.
