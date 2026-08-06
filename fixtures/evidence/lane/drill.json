@@ -1,0 +1,15 @@
+{
+  "agent_ping": "Online",
+  "expires_at": "2026-08-06T07:45:52Z",
+  "final_state": "stopped",
+  "instance_id": "i-077d44945d34d07e3",
+  "lane_tag": "frank.gonzalez",
+  "launched_by": "edullm run",
+  "remote_command_ran": true,
+  "remote_exit_status": 0,
+  "session_id": "lane-lane-drill-25tzqprgyicnd36dqdgtuhbyh8",
+  "stopped_by": "sbsandbox-intern-edullm-expiry-janitor",
+  "warned_before_stop": true,
+  "work_object": "s3://edullm-scratch/frank.gonzalez/lane-drill/drill-was-here.txt",
+  "work_object_read_after_stop": true
+}

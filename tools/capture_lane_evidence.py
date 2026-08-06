@@ -15,6 +15,13 @@ machine, and that is not a hypothetical: edullm run opened a session and ran not
 whole of its life before 2026-08-06. The operator passes what the verb printed, because the
 sentinel is the only place the remote shell's status is observable at all -- start-session exits
 with the plugin's status rather than the command's.
+
+TWO FIELDS ARE ATTESTED RATHER THAN READ, AND IT IS THE DRILL'S ORDERING THAT MAKES THEM SO.
+This tool runs after the reclaim, because the reclaim is the thing being proved. But Systems
+Manager drops a stopped machine out of describe-instance-information entirely, so the one field
+that says the machine was ever reachable reads back empty, and the sentinel is gone with the
+terminal that printed it. Both are therefore passed in, and both say so in their own help.
+Everything else here is read from the account.
 """
 
 from __future__ import annotations
@@ -47,6 +54,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "the status the verb read off its own edullm-exit: sentinel. Required, and there is "
             "no default, because absent is what a session that ran nothing also looks like"
+        ),
+    )
+    parser.add_argument(
+        "--agent-ping",
+        required=True,
+        help=(
+            "what Systems Manager said about the machine while it was still running. Required "
+            "for the same reason as --remote-exit-status: it cannot be read once the janitor "
+            "has stopped the machine, and this tool runs after that by design"
         ),
     )
     parser.add_argument("--aws-profile", default="sbsandbox")
@@ -145,7 +161,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "lane_tag": tags.get(LANE_TAG_KEY, ""),
         "expires_at": tags.get("ExpiresAt", ""),
         "final_state": described.get("State", ""),
-        "agent_ping": (agent or {}).get("PingStatus", ""),
+        # Preferred from the account where the machine is still up, so a drill run without
+        # waiting for the reclaim cannot quietly record a ping nobody saw.
+        "agent_ping": (agent or {}).get("PingStatus") or arguments.agent_ping,
         "session_id": sessions or "",
         "remote_command_ran": arguments.remote_exit_status is not None,
         "remote_exit_status": arguments.remote_exit_status,
