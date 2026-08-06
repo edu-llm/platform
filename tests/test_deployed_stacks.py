@@ -38,9 +38,10 @@ from typing import Any
 
 import pytest
 import yaml
-from edullm_platform.stack_templates import STACK_TEMPLATES
 from infrastructure_support import ACCOUNT_LITERAL, INFRA_ROOT
 from workflow_support import WORKFLOWS_ROOT, aws_commands, load_workflow
+
+from edullm_platform.stack_templates import STACK_TEMPLATES
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TOOL = PROJECT_ROOT / "tools" / "verify_deployed_stacks.py"
