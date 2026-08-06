@@ -2,13 +2,13 @@
 
 Checking each shard of a staged corpus against the bounds its family declares. Access, the form, the corpora, the run id, the environment and stopping a run are in [`the-platform.md`](the-platform.md).
 
-> **The read grant is committed and not yet deployed.** `infra/iam/batch-roles.yaml` now gives the CPU workload role `s3:GetObject` and `s3:ListBucket` on both `edullm-landing` and `edullm-data`, in an inline policy named `read-the-dataset-airlock`. Until `sbsandbox-intern-edullm-batch-iam` is deployed from a laptop, the account still holds the old role and you should still expect `AccessDenied` before the first shard is checked. Check which state you are in with `aws iam list-role-policies --role-name sbsandbox-intern-edullm-batch-workload`.
+> **The read grant is deployed.** The CPU workload role carries `s3:GetObject` and `s3:ListBucket` on both `edullm-landing` and `edullm-data`, in an inline policy named `read-the-dataset-airlock`. This banner used to say the grant was committed and not yet applied, and to expect `AccessDenied` before the first shard was checked. The committed capture of the deployed role, `fixtures/evidence/phase-3/roles/sbsandbox-intern-edullm-batch-workload.sanitized.json`, names that policy and `arn:aws:s3:::edullm-landing/*`, and it was read off the account at 2026-08-06T02:04Z. Read that file. Do not reach for `aws iam list-role-policies`, which most of us cannot run and which this guide used to tell you to.
 
-> **`cpu-32vcpu` is not advice here, it is the only profile that works.** Only the CPU workload role reads `edullm-landing`. Every GPU profile runs as `sbsandbox-intern-edullm-batch-gpu-workload`, which reads the sealed `edullm-data` and not the landing zone, so a validator sent to a GPU queue fails on its first read at between $0.53 and $55.04 an hour.
+> **`cpu-32vcpu` is not advice here, it is the only profile that works.** Only the CPU workload role reads `edullm-landing`. Every GPU profile runs as `sbsandbox-intern-edullm-batch-gpu-workload`, which reads the sealed `edullm-data` and not the landing zone, so a validator sent to a GPU queue fails on its first read at between $0.53 and $30.13 an hour.
 
 ## Prerequisites
 
-- [ ] You have read the two notes above and know whether the grant has been deployed yet
+- [ ] You have read the two notes above
 - [ ] Your branch is named `edullm/…`. A merge to `main` builds nothing here, see below
 - [ ] The build workflow has gone green on your commit
 - [ ] The image has finished its security scan, a few minutes *after* the build goes green
@@ -18,7 +18,7 @@ Checking each shard of a staged corpus against the bounds its family declares. A
 
 | Capability | Available | Why |
 | --- | --- | --- |
-| Reading `edullm-landing` or `edullm-data` | Yes, on `cpu-32vcpu`, once the grant is deployed | `s3:GetObject` on both, plus an unconditioned `s3:ListBucket` on each so the manifest walk and the `--prefix`-less discovery can see what is there |
+| Reading `edullm-landing` or `edullm-data` | Yes, on `cpu-32vcpu` | `s3:GetObject` on both, plus an unconditioned `s3:ListBucket` on each so the manifest walk and the `--prefix`-less discovery can see what is there. Deployed, and the capture named in the banner is the evidence |
 | Reading `edullm-landing` on a GPU profile | No | The GPU workload role reads the sealed `edullm-data` and nothing in the landing zone, which is the one bucket the two workload roles deliberately differ on. A validator reads a candidate before it reads the published copy, so it fails on its first call |
 | Writing `_VALIDATED.json` / `_REJECTED.json`, or `--promote` | No | Both land in the dataset project's buckets, and this role holds no write there at all. The promoter runs as a role of its own that no submitted job assumes |
 | Writing under your run's prefix | Yes | `s3:PutObject` under `sbsandbox-intern-edullm-outputs/teams/*/runs/*` is the one write this role has |
@@ -75,7 +75,7 @@ There is no `ENTRYPOINT` and no `CMD`, so the script name comes first; `bash -lc
 | Setting | Value | Why | Basis |
 | --- | --- | --- | --- |
 | `compute_profile` | `cpu-32vcpu` | The landing-zone read is on the CPU workload role and on no other. A GPU profile fails with `AccessDenied` on the first read rather than merely costing more | configuration |
-| Source-bucket reads | Granted in the template, pending a deploy | `read-the-dataset-airlock` in `infra/iam/batch-roles.yaml` grants `s3:GetObject` and `s3:ListBucket` on both buckets. If the stack has not been deployed you still meet `AccessDenied`. Say that on the run rather than concluding your prefix was wrong | configuration |
+| Source-bucket reads | Granted and deployed | `read-the-dataset-airlock` in `infra/iam/batch-roles.yaml` grants `s3:GetObject` and `s3:ListBucket` on both buckets, and the committed capture of the deployed role carries it. An `AccessDenied` here is now worth reporting rather than expecting | evidence |
 | `--prefix` | Set it | With no prefix and nothing pending, the script prints `no pending datasets` and returns zero, which Batch and the record both read as a success. Read the log, not the exit code | configuration |
 | `--promote` | Leave off | It writes, and this profile's bounds are a read's bounds. At `--promote-workers 1` promotion is roughly two S3 round-trips per object, and `olmo-150b-dolma2-v1` is 6,851 objects | configuration |
 
