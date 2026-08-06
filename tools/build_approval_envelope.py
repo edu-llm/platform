@@ -21,6 +21,11 @@ So this tool copies and does not compute. :func:`envelope_for` asserts the copy 
 both directions, which is what stops a later edit quietly dropping a field the renderer
 reads or adding one nobody reviewed.
 
+**AND "NOBODY REVIEWED" IS NOT THE SAME AS "REVIEWED AND LEFT OFF."** The document may carry
+a field a lead has no use for, and :data:`RECORDED_BUT_NOT_SAID` is where that decision is
+written down. Without it the refusal below would ask a yes-or-no question and accept only
+yes, so the only way to record a no would be to say the thing anyway.
+
 **THE URL IS BUILT HERE AND IS NEVER PASSED IN WHOLE.** It is the one value on the message
 that is not in the document, and it is the one a lead clicks. Assembling it from the server,
 the repository and the workflow run id -- three values off the ``github`` context, none of
@@ -83,6 +88,26 @@ SUBMISSION_FIELDS: Final = (
     "submitter",
 )
 
+#: Fields the compiled submission carries that the approval message deliberately does not.
+#:
+#: **A SECOND LIST RATHER THAN A LONGER FIRST ONE, BECAUSE THE REFUSAL ABOVE ASKS A REAL
+#: QUESTION AND "YES" WAS THE ONLY ANSWER IT ACCEPTED.** A field arriving on the document
+#: is refused until somebody decides whether a lead should see it, which is right; with one
+#: list, the only way to record the decision was to make the answer yes. So a field nobody
+#: wants on the message could only be added by widening the message, and the guard would
+#: have taught people to widen it.
+#:
+#: ``edullm_version`` is the first entry and the reason is what a lead is deciding. They read
+#: the cost, the machine, the hours and the cell count and they release or they do not.
+#: Which install typed the submission changes none of that: a stale install that produced a
+#: valid submission produced a valid submission, and the compile job has already refused
+#: anything it did not. It is recorded on the artifact, where somebody asking how many people
+#: are on a current edullm can count it, and that is the whole of what it is for.
+RECORDED_BUT_NOT_SAID: Final = ("edullm_version",)
+
+#: What a compiled submission may carry, whichever of the two answers each field got.
+KNOWN_FIELDS: Final = (*SUBMISSION_FIELDS, *RECORDED_BUT_NOT_SAID)
+
 
 class EnvelopeError(ValueError):
     """The compiled submission is not something an approval request can be built from."""
@@ -124,19 +149,20 @@ def envelope_for(
             "read from it. That field is built here from the workflow run precisely so "
             "that nothing a submitter supplies can become the link a lead clicks."
         )
-    missing = [field for field in SUBMISSION_FIELDS if field not in document]
+    missing = [field for field in KNOWN_FIELDS if field not in document]
     if missing:
         raise EnvelopeError(
             f"the compiled submission carries none of {missing}, which the approval message "
             "reads. tools/compile_submission.py writes every field this needs, so a "
             "document missing one was not written by it or was written by an older copy."
         )
-    unexpected = sorted(set(document) - set(SUBMISSION_FIELDS))
+    unexpected = sorted(set(document) - set(KNOWN_FIELDS))
     if unexpected:
         raise EnvelopeError(
             f"the compiled submission carries {unexpected}, which this tool does not know "
             "whether the approval message should say. Add the field to SUBMISSION_FIELDS "
-            "once somebody has decided, rather than letting it reach a lead unreviewed."
+            "or to RECORDED_BUT_NOT_SAID once somebody has decided, rather than letting it "
+            "reach a lead unreviewed."
         )
 
     return {

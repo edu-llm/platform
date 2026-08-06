@@ -27,6 +27,14 @@ from pydantic import ValidationError
 from edullm_platform.admission import image_scan_refusal_detail
 from edullm_platform.build_tooling import append_step_outputs
 from edullm_platform.canonical import canonical_json_bytes
+from edullm_platform.cli.actions import PLATFORM_REPOSITORY
+from edullm_platform.cli.release import install_command
+from edullm_platform.client_version import (
+    SubmittingClient,
+    defect_note,
+    read_client_version,
+    submitted_by_said,
+)
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.identity import new_run_id
@@ -189,6 +197,12 @@ def build_parser() -> argparse.ArgumentParser:
     # an unbuilt commit the first time the workflow forgot to pass the file.
     parser.add_argument("--published-images", required=True, type=Path)
     parser.add_argument("--submitter", required=True)
+    # NOT REQUIRED, AND THE DEFAULT IS THE HONEST ONE. A dispatch from the Actions tab
+    # names no install, which is a legitimate path rather than a fault, so absence is the
+    # ordinary case and reads as "this cannot be known" everywhere below. Nothing is
+    # refused on it: see edullm_platform.client_version for why a floor here would cost
+    # more than it could buy.
+    parser.add_argument("--client-version", default="")
     parser.add_argument("--repository-url", required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--summary", type=Path)
@@ -216,8 +230,34 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _say_what_the_install_explains(
+    refusal: str, *, client: SubmittingClient, install: str
+) -> None:
+    """Print the version sentence for the refusals a known defect explains, and no others.
+
+    Both refusal paths get it because a defect could surface either way, and a helper is
+    what stops the two arms of that answering differently.
+    """
+    note = defect_note(refusal, client=client, install=install)
+    if note is not None:
+        print(note, file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    # Read first and printed first, so the log says which install typed this above whatever
+    # happens next. On stdout rather than beside the refusals, because it is a fact about
+    # every submission rather than a complaint about this one.
+    #
+    # FLUSHED, AND THE FIRST LIVE RUN IS WHY. stdout is block-buffered when it is not a
+    # terminal and stderr is not, so on a runner this line was held until the process
+    # exited and arrived *below* the refusal it was supposed to introduce -- naming the
+    # install after the paragraph that needed it. Nothing in this file's own output
+    # revealed that, because everything else it prints goes to stderr.
+    client = read_client_version(args.client_version)
+    print(submitted_by_said(client), flush=True)
+    installs_with = install_command(repository=PLATFORM_REPOSITORY)
 
     try:
         payload = json.loads(args.inputs.read_text(encoding="utf-8"))
@@ -336,9 +376,16 @@ def main(argv: list[str] | None = None) -> int:
         )
     except SubmissionRefusedError as exc:
         print(f"submission refused: {exc}", file=sys.stderr)
+        _say_what_the_install_explains(str(exc), client=client, install=installs_with)
         return EXIT_REFUSED
     except ValidationError as exc:
         print(f"the submission does not compile into a valid manifest: {exc}", file=sys.stderr)
+        # AFTER THE REFUSAL AND NOT INSTEAD OF IT. The refusal above names the field and
+        # what is wrong with it, which is right for a submitter who really did type an
+        # unquoted command. What it cannot know is that an old install may have unquoted a
+        # correct one, so the note contradicts its remedy rather than replacing it, and
+        # both readers get a line they can act on.
+        _say_what_the_install_explains(str(exc), client=client, install=installs_with)
         return EXIT_REFUSED
 
     # After compiling rather than before it, because the profile to ask about is the one
@@ -412,6 +459,20 @@ def main(argv: list[str] | None = None) -> int:
         # A sibling for the same reason `experiment` is -- it is a fact about how the image
         # was judged, not about what will run, and the manifest is hashed.
         "image_scan_reviewed": submission.facts.image_scan_reviewed,
+        # WHICH INSTALL TYPED THIS, AND WHY IT IS WRITTEN HERE RATHER THAN ANYWHERE DEEPER.
+        # Nothing this platform stores has ever recorded a client version, which is the
+        # recorded reason it is impossible to say whether anybody is on a current edullm.
+        # This artifact is the cheapest place that changes: it is already uploaded for
+        # every submission, already downloaded by `edullm status`, and carries no digest
+        # anybody has published. The lineage record would be the natural home and is the
+        # expensive one -- RunManifest is content-addressed and CompiledSubmission.experiment
+        # records what a field added to it costs -- so the question is answerable from here
+        # over the artifact retention window rather than forever, which is the whole of
+        # what was asked for.
+        #
+        # `None` for a dispatch from the Actions tab, which names no install and is not
+        # wrong for it.
+        "edullm_version": client.said,
     }
     args.output.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 

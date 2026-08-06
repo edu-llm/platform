@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
+import sys
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -109,7 +111,14 @@ def compile_form(
     document: object = None,
     published_images: Path | None = None,
     submitter: str = SUBMITTER,
+    client_version: str = "",
 ) -> tuple[int, dict[str, Any]]:
+    """Compile one form, defaulting to a dispatch that named no install.
+
+    Empty by default because that is what the Actions tab sends and what every dispatch
+    made before the input existed sends, so it is the state most of this module should be
+    written against.
+    """
     inputs = tmp_path / "submission-form.json"
     inputs.write_text(json.dumps(payload if payload is not None else form()), encoding="utf-8")
     if published_images is None:
@@ -135,6 +144,8 @@ def compile_form(
             str(published_images),
             "--submitter",
             submitter,
+            "--client-version",
+            client_version,
             "--repository-url",
             REPOSITORY_URL,
             "--output",
@@ -1176,3 +1187,222 @@ def test_the_resolver_document_is_required_rather_than_defaulted_to_nothing(
         )
 
     assert exit_info.value.code == 2
+
+
+# ---------------------------------------------------------------------------------------
+# Which install typed the submission
+# ---------------------------------------------------------------------------------------
+
+#: A command that lost the quotes grouping ``bash -lc``'s program into one word. This is
+#: what every ``edullm submit`` before 3.4.8 sent for the ``bash -lc`` line the guides
+#: carry, because it rejoined the split command with a plain space.
+UNQUOTED_COMMAND = ["bash", "-lc", "python", "train.py", "--steps", "20"]
+
+
+@pytest.mark.parametrize(
+    ("client_version", "expected"),
+    [
+        pytest.param("3.7.1", "Submitted by edullm 3.7.1.", id="an install that named itself"),
+        pytest.param("", "names no edullm version", id="the Actions form"),
+    ],
+)
+def test_the_log_says_which_install_typed_every_submission_that_compiles(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    client_version: str,
+    expected: str,
+) -> None:
+    """Mutation: print it only when something is refused.
+
+    Nothing this platform stores has ever recorded a client version, which is the recorded
+    reason nobody can say whether anybody is on a current edullm. The submissions that
+    answer that question are the ones that worked, so the line is printed before anything
+    else happens rather than as part of a complaint.
+    """
+    exit_code, _compiled = compile_form(tmp_path, client_version=client_version)
+
+    assert exit_code == EXIT_OK
+    assert expected in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("client_version", "recorded"),
+    [
+        pytest.param("3.7.1", "3.7.1", id="an install that named itself"),
+        pytest.param("", None, id="the Actions form"),
+        pytest.param("latest", None, id="something that is not a version"),
+    ],
+)
+def test_the_compiled_submission_records_which_install_typed_it(
+    tmp_path: Path, client_version: str, recorded: str | None
+) -> None:
+    """The one place the answer survives the job, and the reason it is this place.
+
+    Mutation: fold it into the manifest instead. ``RunManifest`` is hashed whole and the
+    digest is what an approver releases, so a field added there moves the digest of every
+    record ever written -- ``CompiledSubmission.experiment`` measured exactly that. A
+    sibling costs nothing and is what ``edullm status`` already downloads.
+    """
+    exit_code, compiled = compile_form(tmp_path, client_version=client_version)
+
+    assert exit_code == EXIT_OK
+    assert compiled["edullm_version"] == recorded
+    assert "edullm_version" not in compiled["manifest"]
+
+
+@pytest.mark.parametrize("client_version", ["", "3.4.7", "3.7.1", "latest"])
+def test_nothing_is_refused_on_the_version_it_says_it_came_from(
+    tmp_path: Path, client_version: str
+) -> None:
+    """Mutation: refuse anything below the release that fixed the last defect.
+
+    A stale install that produces a valid submission still produces a valid submission, and
+    the reviewed configuration this job judges against is the job's own rather than the
+    submitter's. A floor here would refuse correct work on the strength of a probability,
+    at the hour when whoever is submitting can least afford it -- and every one of the four
+    values below has to compile for that to stay true, including the two this cannot order.
+    """
+    exit_code, compiled = compile_form(tmp_path, client_version=client_version)
+
+    assert exit_code == EXIT_OK
+    assert compiled["run_id"] == RUN_ID
+
+
+def test_the_install_is_named_above_the_refusal_and_not_below_it(tmp_path: Path) -> None:
+    """Mutation: drop the flush. It is invisible in-process and wrong on every runner.
+
+    stdout is block-buffered when it is not a terminal and stderr is not, so the line
+    introducing a submission was held until the process exited and arrived underneath the
+    refusal it was meant to introduce. Measured on run 31094757003 before the flush and
+    fixed after it. Only a subprocess with the two streams merged can see this: ``capsys``
+    keeps them apart, which is exactly how the whole suite stayed green through it.
+    """
+    inputs = tmp_path / "submission-form.json"
+    inputs.write_text(json.dumps(form(command=UNQUOTED_COMMAND)), encoding="utf-8")
+    published = tmp_path / "published-image.json"
+    published.write_text(json.dumps(resolved()), encoding="utf-8")
+
+    # One pipe for both streams, which is what a workflow log is and the only arrangement
+    # in which the ordering exists to be asserted.
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(PROJECT_ROOT / "tools" / "compile_submission.py"),
+            "--inputs",
+            str(inputs),
+            "--config-dir",
+            str(CONFIG_DIR),
+            "--published-images",
+            str(published),
+            "--submitter",
+            SUBMITTER,
+            "--client-version",
+            "3.4.7",
+            "--repository-url",
+            REPOSITORY_URL,
+            "--output",
+            str(tmp_path / "compiled-submission.json"),
+            "--run-id",
+            RUN_ID,
+        ],
+        cwd=PROJECT_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == EXIT_REFUSED
+    assert result.stdout.index("Submitted by edullm 3.4.7.") < result.stdout.index(
+        "does not compile into a valid manifest"
+    )
+
+
+def test_an_old_install_is_told_to_reinstall_rather_than_to_quote_what_it_unquoted(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The refusal this whole change is about, from the install that caused it.
+
+    Mutation: leave the refusal as it was. What the submitter then reads is "Quote the
+    whole program", which is what they did -- their install took the quotes off between
+    the spec and the form -- so the advice sends them to re-do the one thing that was
+    already right and the second attempt is refused identically.
+    """
+    exit_code, compiled = compile_form(
+        tmp_path, payload=form(command=UNQUOTED_COMMAND), client_version="3.4.7"
+    )
+    reported = capsys.readouterr().err
+
+    assert exit_code == EXIT_REFUSED
+    assert compiled == {}
+    assert "Reinstall edullm" in reported
+    assert "3.4.7" in reported
+    assert "3.4.8" in reported
+    assert "uv tool install --force" in reported
+
+
+def test_a_submission_that_named_no_install_is_offered_both_readings(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mutation: read a blank field as an old install and accuse the reader of being behind.
+
+    A dispatch from the Actions tab names no install and never will, and that is how
+    tonight's probe runs were launched. Somebody who typed this command into the form by
+    hand really did leave the quotes off, and the refusal above them is right; somebody on
+    an install older than the field did not. The sentence has to leave both open.
+    """
+    exit_code, _compiled = compile_form(tmp_path, payload=form(command=UNQUOTED_COMMAND))
+    reported = capsys.readouterr().err
+
+    assert exit_code == EXIT_REFUSED
+    assert "If you ran edullm submit" in reported
+    assert "Actions form" in reported
+
+
+def test_a_current_install_is_told_only_what_is_wrong_with_its_command(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mutation: print the reinstall note whenever the refusal matches.
+
+    A submission from an install that never unquoted anything arrived exactly as it was
+    written, so the refusal's own advice is the correct advice and a second paragraph
+    telling this reader to reinstall would send them round a loop that cannot help.
+    """
+    exit_code, _compiled = compile_form(
+        tmp_path, payload=form(command=UNQUOTED_COMMAND), client_version="3.7.1"
+    )
+    reported = capsys.readouterr().err
+
+    assert exit_code == EXIT_REFUSED
+    assert "reads exactly one word as the command" in reported
+    assert "Reinstall edullm" not in reported
+    assert "uv tool install" not in reported
+
+
+@pytest.mark.parametrize("client_version", ["", "3.4.7"])
+def test_a_refusal_no_install_caused_never_mentions_the_install(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    client_version: str,
+) -> None:
+    """Mutation: annotate every refusal with the version, or match on something looser.
+
+    An unregistered repository is a refusal about a field the submitter chose, and it reads
+    the same from every install there has ever been. A version sentence beside it is a
+    second thing to read that changes nothing, and a reader who meets one three times stops
+    reading them -- including on the refusal where it is the whole answer.
+    """
+    exit_code, _compiled = compile_form(
+        tmp_path,
+        payload=form(repository="tokenizer-flores-validation"),
+        client_version=client_version,
+    )
+    reported = capsys.readouterr().err
+
+    assert exit_code == EXIT_REFUSED
+    assert "config/repositories.yaml" in reported
+    assert "Reinstall edullm" not in reported
+    assert "uv tool install" not in reported

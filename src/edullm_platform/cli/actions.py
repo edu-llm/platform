@@ -45,8 +45,9 @@ dispatch, which is what happened before any of this existed.
 from __future__ import annotations
 
 import json
+import re
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -59,6 +60,7 @@ from edullm_platform.cli.workspace import CommandResult, CommandRunner
 __all__ = [
     "ADMISSION_JOB",
     "CANCEL_WORKFLOW",
+    "EDULLM_VERSION_FIELD",
     "PLATFORM_REPOSITORY",
     "PRINTED_RUN_ID",
     "REGISTER_WORKFLOW",
@@ -90,6 +92,14 @@ PLATFORM_REPOSITORY: Final = "edu-llm/platform"
 
 SUBMIT_WORKFLOW: Final = "submit-run.yml"
 CANCEL_WORKFLOW: Final = "cancel-run.yml"
+
+#: The one input on the submission form that is not a ``SubmissionInputs`` field. It names
+#: the install that dispatched, so that a refusal caused by a defect in this binary can say
+#: which release ended it rather than repeating advice the submitter already followed.
+#: Spelled here because three places need the same word -- what ``submit`` sends, what it
+#: tells :meth:`PlatformActions.dispatch` it may drop, and what the workflow declares --
+#: and ``tests/test_phase2_submit_run_workflow.py`` compares it against the form.
+EDULLM_VERSION_FIELD: Final = "edullm_version"
 
 #: The workflow that edits five platform files, runs a local verification and opens the
 #: registration pull request. Named here with the other two rather than in ``intake.py``,
@@ -290,14 +300,59 @@ class PlatformActions:
         """Every workflow this has set going, in order, and empty until one has been."""
         return tuple(self._dispatched)
 
-    def dispatch(self, workflow: str, fields: Mapping[str, str]) -> None:
+    def dispatch(
+        self,
+        workflow: str,
+        fields: Mapping[str, str],
+        *,
+        courtesy: Collection[str] = (),
+    ) -> None:
         """``gh workflow run``, with every value passed as its own ``-f`` argument.
 
         One argument per field rather than a formatted string, so that a command containing
         a quote, a newline or a shell metacharacter reaches GitHub as the submitter typed
         it. The compile job POSIX-splits the command on the far side; anything this layer
         did to it first would be a second parse.
+
+        **``courtesy`` NAMES THE FIELDS A DISPATCH MAY LOSE RATHER THAN FAIL OVER, AND
+        WITHOUT IT A FIELD THIS BINARY GAINS IS A FIELD THAT BREAKS EVERY SUBMISSION.**
+        GitHub validates dispatch inputs against the workflow file at the ref it is aimed
+        at and answers 422 ``Unexpected inputs provided`` for one it does not declare -- it
+        does not ignore it, which this module's own test file used to say it did. So an
+        install newer than ``main`` cannot submit at all, for the whole window between the
+        two, and the window is not hypothetical: a merge train that takes this half of a
+        change and drops the workflow half opens it, and so does anybody installing from a
+        branch.
+
+        Retried without those fields rather than warned about, because there is nothing for
+        a submitter to do with the warning. What the fields carry is a courtesy to whoever
+        reads the run afterwards; the dispatch is the thing that was asked for, and the two
+        are not worth trading. A 422 naming anything outside ``courtesy`` is a real defect
+        in this typist and still fails loudly.
         """
+        result = self._runner(self._dispatch_argv(workflow, fields))
+        if not result.ok and courtesy:
+            unexpected = _unexpected_inputs(_said(result))
+            if unexpected and unexpected <= set(courtesy):
+                result = self._runner(
+                    self._dispatch_argv(
+                        workflow,
+                        {
+                            name: value
+                            for name, value in fields.items()
+                            if name not in unexpected
+                        },
+                    )
+                )
+        if not result.ok:
+            raise GithubUnreachableError(
+                f"gh could not dispatch {workflow}: {_said(result)}. This is not a refusal "
+                "of the submission. Check gh auth status and that you can see "
+                f"{self._repository}."
+            )
+        self._dispatched.append(workflow)
+
+    def _dispatch_argv(self, workflow: str, fields: Mapping[str, str]) -> tuple[str, ...]:
         argv: list[str] = [
             "gh",
             "workflow",
@@ -308,14 +363,7 @@ class PlatformActions:
         ]
         for name, value in fields.items():
             argv.extend(("-f", f"{name}={value}"))
-        result = self._runner(tuple(argv))
-        if not result.ok:
-            raise GithubUnreachableError(
-                f"gh could not dispatch {workflow}: {_said(result)}. This is not a refusal "
-                "of the submission. Check gh auth status and that you can see "
-                f"{self._repository}."
-            )
-        self._dispatched.append(workflow)
+        return tuple(argv)
 
     def create_issue(self, *, title: str, body: str, labels: Sequence[str]) -> tuple[str, bool]:
         """File one issue and answer with its URL and whether the labels went on.
@@ -1037,6 +1085,27 @@ def _instant(value: object) -> datetime | None:
     # branch is for a document that carried a naive instant. Assumed UTC rather than local:
     # every timestamp on this path is the API's and the API's are UTC.
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+#: The inputs GitHub names when it refuses a dispatch for carrying one the workflow does
+#: not declare. Quoted and comma-separated inside brackets, which is the API's own
+#: rendering: ``Unexpected inputs provided: ["edullm_version"]``.
+_UNEXPECTED_INPUTS: Final = re.compile(r"Unexpected inputs provided:\s*\[(?P<names>[^\]]*)\]")
+
+
+def _unexpected_inputs(said: str) -> set[str]:
+    """Which inputs a 422 named, or nothing at all for every other failure.
+
+    An empty set for a message this does not recognise, which is what keeps
+    :meth:`PlatformActions.dispatch` from retrying a network failure or an authentication
+    one as though a field were to blame.
+    """
+    match = _UNEXPECTED_INPUTS.search(said)
+    if match is None:
+        return set()
+    return {
+        name.strip().strip("\"'") for name in match.group("names").split(",") if name.strip()
+    }
 
 
 def _said(result: CommandResult) -> str:

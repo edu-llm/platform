@@ -46,6 +46,7 @@ from edullm_platform.admission_denials import (
 )
 from edullm_platform.batch_denials import ADMISSION_BATCH_DENIED_ACTIONS
 from edullm_platform.build_tooling import load_registry
+from edullm_platform.cli.actions import EDULLM_VERSION_FIELD
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.contracts.execution import ExecutionTarget, ExecutionTargetCatalog
@@ -265,9 +266,24 @@ def test_the_workflow_is_dispatch_only() -> None:
 
 
 def test_the_form_is_the_submission_inputs_contract_field_for_field() -> None:
+    """Mutation: add a second input the contract does not carry, or rename one it does.
+
+    The exception is one name and it is subtracted by that name rather than by a rule, so a
+    second field that describes the run but skipped the contract fails here. What made an
+    exception necessary at all is that a dispatch has nowhere else to carry anything:
+    GitHub refuses an input a workflow does not declare, so the only way to learn which
+    install typed a submission is a form field, and the thing learned is not a field of the
+    submission.
+    """
     declared = _load()["on"]["workflow_dispatch"]["inputs"]
 
-    assert set(declared) == set(SubmissionInputs.model_fields)
+    assert set(declared) - {EDULLM_VERSION_FIELD} == set(SubmissionInputs.model_fields)
+    assert EDULLM_VERSION_FIELD not in SubmissionInputs.model_fields
+    client = declared[EDULLM_VERSION_FIELD]
+    assert client["required"] is False
+    assert client["default"] == ""
+    assert client["type"] == "string"
+    assert client["description"].strip()
     assert len(declared) <= WORKFLOW_DISPATCH_INPUT_CEILING
     # Required on the form exactly where the contract has no default, so a submitter is
     # never asked for something the workload profile already fixes.
@@ -278,6 +294,26 @@ def test_the_form_is_the_submission_inputs_contract_field_for_field() -> None:
         # would be refused at parse. A choice is a string with a menu in front of it.
         assert declared[name]["type"] in ("string", "choice"), name
         assert declared[name]["description"].strip(), name
+
+
+def test_the_install_that_dispatched_never_reaches_the_document_the_contract_validates() -> None:
+    """Mutation: hand the form-assembly step the version, the way every other input is.
+
+    ``SubmissionInputs`` forbids a key it does not declare, so a field smuggled into
+    ``submission-form.json`` would not be dropped -- it would refuse every submission at
+    parse, as an unusable form rather than as anything a reader could act on. The two steps
+    are asserted in both directions here because each half is invisible from the other:
+    the assemble step reads its inputs from the environment, so a variable added to it is
+    a field in the document, and the compile step is the only place a fact about the
+    typist may enter.
+    """
+    assemble = step(_job("compile"), FORM_STEP)
+    compile_step = step(_job("compile"), COMPILE_STEP)
+
+    assert "EDULLM_VERSION" not in assemble["env"]
+    assert EDULLM_VERSION_FIELD not in assemble["run"]
+    assert compile_step["env"]["EDULLM_VERSION"] == f"${{{{ inputs.{EDULLM_VERSION_FIELD} }}}}"
+    assert "--client-version" in compile_step["run"]
 
 
 def test_no_optional_field_defaults_to_a_value_somebody_could_have_meant() -> None:
@@ -1984,7 +2020,15 @@ def _run_compile_step(
     tmp_path: Path,
     *,
     uv_body: str,
+    edullm_version: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    """The compile step under a stubbed uv, defaulting to a dispatch that named no install.
+
+    Empty by default because that is what the Actions form sends and what every dispatch
+    before the input existed sent, and because the step runs under ``set -u``: a variable
+    the workflow reads and this harness forgets is an unbound-variable failure rather than
+    a missing argument, which is the failure a reader would misdiagnose.
+    """
     stub_bin = tmp_path / "bin"
     recorded = tmp_path / "argv.txt"
     write_stub(stub_bin, "uv", f'printf "%s\\n" "$@" > "{recorded}"\n{uv_body}')
@@ -1995,6 +2039,7 @@ def _run_compile_step(
             "RUNNER_TEMP": str(tmp_path),
             "GITHUB_OUTPUT": str(tmp_path / "step-output.txt"),
             "SUBMITTER": "caiiris",
+            "EDULLM_VERSION": edullm_version,
             "SERVER_URL": "https://github.com",
             "REPOSITORY_OWNER": "edu-llm",
             "RESEARCH_REPOSITORY": "dolma",
@@ -2008,12 +2053,13 @@ def _run_compile_step(
 def test_the_compile_step_hands_the_tool_the_reviewed_configuration_and_the_submitter(
     tmp_path: Path,
 ) -> None:
-    result, arguments = _run_compile_step(tmp_path, uv_body="exit 0\n")
+    result, arguments = _run_compile_step(tmp_path, uv_body="exit 0\n", edullm_version="3.7.1")
 
     assert result.returncode == 0, result.stderr
     passed = dict(itertools.pairwise(arguments))
     assert passed["--config-dir"] == "config"
     assert passed["--submitter"] == "caiiris"
+    assert passed["--client-version"] == "3.7.1"
     assert passed["--repository-url"] == "https://github.com/edu-llm/dolma"
     assert passed["--inputs"] == str(tmp_path / "submission-form.json")
     assert passed["--output"] == str(tmp_path / "compiled-submission.json")

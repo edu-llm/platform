@@ -81,6 +81,7 @@ from pydantic import ValidationError
 
 from edullm_platform.cli.actions import (
     CANCEL_WORKFLOW,
+    EDULLM_VERSION_FIELD,
     PLATFORM_REPOSITORY,
     PRINTED_RUN_ID,
     REGISTER_WORKFLOW,
@@ -2087,7 +2088,13 @@ def _submit(
         _say_where_the_team_came_from(preflight, err=err)
     _say_whether_this_edullm_is_current(runner, repository=arguments.platform_repository, err=err)
     dispatched_at = datetime.now(UTC)
-    actions.dispatch(SUBMIT_WORKFLOW, _submission_form(preflight.request))
+    actions.dispatch(
+        SUBMIT_WORKFLOW,
+        _submission_form(
+            preflight.request, edullm_version=installed_version().version
+        ),
+        courtesy=(EDULLM_VERSION_FIELD,),
+    )
     print(f"dispatching {SUBMIT_WORKFLOW} ... queued", file=out)
     if arguments.no_wait:
         print(
@@ -2228,13 +2235,21 @@ def _say_whether_this_edullm_is_current(
         print(file=err)
 
 
-def _submission_form(request: SubmissionRequest) -> dict[str, str]:
-    """``SubmissionInputs`` field for field, which is what the form is.
+def _submission_form(
+    request: SubmissionRequest, *, edullm_version: str | None
+) -> dict[str, str]:
+    """``SubmissionInputs`` field for field, plus the one input that is not one of them.
 
     ``image_digest`` is deliberately absent rather than empty. The workflow derives it from
     the declared commit and the field survives only as an override for a deliberate
     rebuild-and-pin; sending a value this binary made up would be that override, aimed at
     nothing.
+
+    ``edullm_version`` is passed in rather than read here, so that both answers are
+    reachable from a test. Its absence is the ordinary state of a maintainer's editable
+    install and it is left off the form entirely rather than sent empty, because an empty
+    string and a missing field mean the same thing on the far side and only one of them
+    invites somebody to parse it.
     """
     fields = {
         "repository": request.repository,
@@ -2261,6 +2276,15 @@ def _submission_form(request: SubmissionRequest) -> dict[str, str]:
     if request.fanout_size is not None and request.fanout_index_parameter is not None:
         fields["fanout_size"] = str(request.fanout_size)
         fields["fanout_index_parameter"] = request.fanout_index_parameter
+    # WHICH INSTALL TYPED THIS, WHICH IS NOT A FIELD OF THE SUBMISSION AND IS SENT ANYWAY.
+    # A submission the compile job refuses cannot say whether the thing it is refusing was
+    # typed that way or was altered on the way here, and the defect of 2026-08-06 was
+    # exactly the second: this function joined the command with a plain space, the quotes
+    # came off, and the refusal told the submitter to quote what they had already quoted.
+    # Nothing gates on the value -- see src/edullm_platform/client_version.py -- and
+    # `dispatch` is told it may drop this field rather than fail over it.
+    if edullm_version is not None:
+        fields[EDULLM_VERSION_FIELD] = edullm_version
     return fields
 
 
