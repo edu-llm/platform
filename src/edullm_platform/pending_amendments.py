@@ -681,38 +681,23 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # for is deciding who to tell about a run, so the window is a notification addressed by
     # the roster as it was, which is the same reporting gap the entry above describes and not
     # a second kind of hazard.
+    #
+    # THE EIGHTH IS CLEARED BY THE RELEASE THAT CARRIES THIS DELETION AND THE NINTH IS NOT,
+    # WHICH IS THE FIRST TIME THIS REGISTER HAS BEEN PARTLY CLEARED. The validator zip was
+    # built from 77e5af9, uploaded as object version CEH5XuEEq7XCVbt4GX7eqmgQFLtH_57_, and
+    # infra/admission-validator-release.yaml and infra/admission-state-machine.yaml both now
+    # name da7313e1. The notifier entry below stands: releasing it is a second upload against
+    # a second template and a second stack deploy, and doing it in the same change as the
+    # first would put two unverified digests in one diff where the account can only confirm
+    # them one at a time.
+    #
+    # A RELEASE IS A STAGING STEP AND THE DEPLOYED BYTES DO NOT MOVE UNTIL THE STACK DOES.
+    # The upload and the template edit are all this deletion rests on; what makes the account
+    # run da7313e1 is deploy-phase2-admission.yml, which fires on a push to main touching
+    # infra/admission-state-machine.yaml. So the digest worth reading is the one Lambda
+    # answers with after that, and tools/verify_deployed_lambdas.py is what reads it. A
+    # workflow log saying the upload succeeded is not the same claim.
     releases: tuple[PendingRelease, ...] = (
-        PendingRelease(
-            function="validator",
-            reason=(
-                "A ROSTER CHANGE, WHICH IS CONFIGURATION THIS ZIP CARRIES RATHER THAN CODE. "
-                "config/organization.yaml is one of the seven files ADMISSION_CONFIG packages "
-                "into the validator, so the packaged bytes move whenever the roster does. The "
-                "edit is binding Intern-langming.xing-sbsandbox to meric233 and excluding the "
-                "two Intern-p3math-* task roles."
-                "\n\n"
-                "NOTHING IN IT CHANGES WHO MAY SUBMIT A RUN, and that is a fact about this "
-                "edit rather than a claim about roster edits in general. meric233 was already "
-                "on the roster and already admitted, so binding a second AWS role to that "
-                "login adds no authorization; an excluded role is one whose trust policy "
-                "names a service rather than the credential broker, so nobody can assume it "
-                "to submit anything. A roster edit that added a member would be a different "
-                "entry with a different sentence here."
-                "\n\n"
-                "The window is real and runs the safe way round. Until this zip is released, "
-                "admission inside AWS decides on the roster as it was, so a launch under the "
-                "newly-bound role goes on being attributed to nobody by whatever reads the "
-                "deployed copy -- a reporting gap that already exists and is not widened. "
-                "`edullm check` on a laptop reads the tree and is correct immediately, which "
-                "is the half that decides whether somebody is refused, and it is the half "
-                "that the note above about the ninety-second window argues should be the one "
-                "that leads."
-            ),
-            cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="da7313e1055d1abdafb79d7a83c344bdbde32cc7a6739b36df99291c0643f2e9",
-            released="e4a45e5666ccd3648b29687c77e513460d91ef14af1c353325c921b0f25ed804",
-            recorded_on=date(2026, 8, 6),
-        ),
         PendingRelease(
             function="notifier",
             reason=(
