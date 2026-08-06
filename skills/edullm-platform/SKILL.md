@@ -25,10 +25,15 @@ uv tool install --force git+https://github.com/edu-llm/platform
 edullm --version
 ```
 
+`uv` is the installer and it is the only one that works here. Where the shell answers
+`command not found: uv`, install uv first with `curl -LsSf https://astral.sh/uv/install.sh | sh`
+and run the line above again. Do not reach for `pip` or `pipx` instead.
+
 Two near misses that both look like they ought to work.
 
-- `uv tool install edullm` fails to resolve. The distribution is `edullm-platform`, it is
-  published to no index, and the name on PyPI is nobody's.
+- `uv tool install edullm` answers `not found in the package registry`. `edullm` is the
+  executable, `edullm-platform` is the distribution, and neither is published to an index,
+  so there is nothing at either name to resolve. The line above installs from git.
 - `uv tool upgrade` does not upgrade a tool installed from git. `uv tool upgrade edullm`
   errors, because `edullm` is the executable rather than the installed tool, and
   `uv tool upgrade edullm-platform` prints `Nothing to upgrade` however far behind the
@@ -138,7 +143,7 @@ The `detail` names the field and usually the file. These are the ones you will m
 | `no_experiment` | Pass `--experiment`. There is no default and there is not going to be |
 | `no_dataset` | Pass `--dataset`, with `none` where the run reads no corpus |
 | `experiment_not_a_slug` | Lower case, digits, single hyphens between words, none at either end |
-| `team_is_ambiguous` | Pass `--team`. The `detail` lists the groups the roster puts this person on. Do not pick one that is not in that list |
+| `team_is_ambiguous` | Pass `--team` with one of the groups the `detail` names, and with none it does not. It also names the one to use for work nobody will keep |
 | `uncommitted_changes` | Commit or stash. The image is built from the commit, so what would run is not what is on disk |
 | `commit_not_pushed` | Push to a branch named `edullm/<something>`. That push is what builds the image. If you just pushed, `git fetch` first, because this reads the refs this clone holds |
 | `unregistered_repository` | The platform does not carry this codebase. Go to **When the platform does not carry this codebase** below |

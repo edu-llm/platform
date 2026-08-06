@@ -58,11 +58,19 @@ UPGRADE_REFUTATION = "Nothing to upgrade"
 #: owner was handed by an assistant and which answers "not found in the package registry".
 BROKEN_INSTALL = "uv tool install edullm"
 
-#: uv's answer to the ``--from`` form, and the phrase every file that quotes the wrong line
-#: already carries. Same bargain as ``UPGRADE_REFUTATION``: naming the broken command is
-#: allowed, because it has to be written down somewhere or the next person reinvents it,
-#: but only beside the sentence that says it does not work.
-BROKEN_REFUTATION = "does not match install request"
+#: uv's answers to the two wrong lines, either of which is enough. Same bargain as
+#: ``UPGRADE_REFUTATION``: naming the broken command is allowed, because it has to be
+#: written down somewhere or the next person reinvents it, but only beside the sentence
+#: that says it does not work.
+#:
+#: **TWO PHRASES RATHER THAN ONE, BECAUSE THE TWO SPELLINGS FAIL DIFFERENTLY AND
+#: ``BROKEN_INSTALL``'S OWN NOTE ALREADY SAID SO.** The first is what uv answers the
+#: ``--from`` form. The second is what a bare ``uv tool install edullm`` answers, verified
+#: on uv 0.9.17 against PyPI, which carries neither ``edullm`` nor ``edullm-platform``. A
+#: rule accepting only the first made a document quoting uv's real answer to the command it
+#: was warning about the thing this refuses, which teaches the next author to paste a
+#: sentence uv never says.
+BROKEN_REFUTATIONS = ("does not match install request", "not found in the package registry")
 
 #: The suffixes a person reads instructions out of. Everything else this repository tracks
 #: is data, generated, or binary.
@@ -301,7 +309,8 @@ def test_nothing_tells_anybody_to_install_the_console_script() -> None:
     offenders = [
         str(path.relative_to(PROJECT_ROOT))
         for path in readable_files()
-        if BROKEN_INSTALL in (text := flattened(path)) and BROKEN_REFUTATION not in text
+        if BROKEN_INSTALL in (text := flattened(path))
+        and not any(refutation in text for refutation in BROKEN_REFUTATIONS)
     ]
 
     assert not offenders, (
@@ -309,7 +318,7 @@ def test_nothing_tells_anybody_to_install_the_console_script() -> None:
         f"the console script and {DISTRIBUTION} is the distribution:\n  "
         + "\n  ".join(offenders)
         + f"\nWrite {install_command(repository=PLATFORM_REPOSITORY)} instead, or quote "
-        f"uv's answer ({BROKEN_REFUTATION!r}) beside it."
+        f"one of uv's answers ({' / '.join(BROKEN_REFUTATIONS)}) beside it."
     )
 
 

@@ -664,11 +664,12 @@ def test_the_researcher_skill_prints_the_install_line_the_binary_itself_prints()
 def test_the_researcher_skill_names_the_distribution_rather_than_the_executable() -> None:
     """Mutation: leave the near miss out, on the grounds that the right line is above it.
 
-    ``uv tool install edullm`` is the command somebody reaches for and it resolves against no
-    index, and ``uv tool upgrade`` answers ``Nothing to upgrade`` for a tool installed from
-    git however far behind it is. Both were verified against uv rather than assumed. An agent
-    that hits either concludes the tool does not exist or that it is current, and the second
-    is the one that costs a researcher a day of running against a stale configuration.
+    ``uv tool install edullm`` is the command somebody reaches for and uv answers
+    ``not found in the package registry``, and ``uv tool upgrade`` answers
+    ``Nothing to upgrade`` for a tool installed from git however far behind it is. Both were
+    verified on uv 0.9.17 rather than assumed. An agent that hits either concludes the tool
+    does not exist or that it is current, and the second is the one that costs a researcher
+    a day of running against a configuration that has moved.
     """
     from edullm_platform.cli.release import DISTRIBUTION
 
