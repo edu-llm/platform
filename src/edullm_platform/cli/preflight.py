@@ -507,12 +507,28 @@ def working_tree_refusals(facts: GitFacts, *, spec_path: Path | None = None) -> 
                 ),
             )
         )
-    if facts.commit_sha is not None and not facts.commit_on_a_remote:
+    # ABOUT ``submitted_commit`` AND NOT ABOUT HEAD, WHICH IS THE COMMIT THE MANIFEST
+    # CARRIES. ``--commit`` was honoured by the manifest and ignored here, so pinning a
+    # reviewed commit while standing on a local one was refused for the local one -- a
+    # commit the submission never mentions, and pushing it would change nothing.
+    submitted = facts.submitted_commit
+    if submitted is not None and facts.commit_was_pinned and not facts.submitted_commit_is_in_this_clone:
+        refusals.append(
+            Refusal(
+                code="commit_not_in_this_clone",
+                detail=(
+                    f"check the sha you passed to --commit: this clone holds no commit "
+                    f"{submitted[:12]}. It is not a question of pushing, because there is "
+                    "no object here to push. git fetch if it was made somewhere else."
+                ),
+            )
+        )
+    elif submitted is not None and not facts.commit_on_a_remote:
         refusals.append(
             Refusal(
                 code="commit_not_pushed",
                 detail=(
-                    f"push {facts.commit_sha[:12]} to a branch under edullm/**, or git "
+                    f"push {submitted[:12]} to a branch under edullm/**, or git "
                     "fetch if you already have. No remote-tracking branch in this clone "
                     "contains it, so nothing has built an image from it, and this reads "
                     "the refs the clone holds rather than asking GitHub."

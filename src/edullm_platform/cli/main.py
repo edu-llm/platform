@@ -1169,7 +1169,7 @@ def _check(
     cwd: Path,
 ) -> int:
     configuration = _configuration(arguments)
-    facts = read_git_facts(runner, cwd=cwd)
+    facts = read_git_facts(runner, cwd=cwd, submitting=arguments.commit)
     submitter = github_login(runner, allow_network=False)
     in_hand = _spec_for_checking(arguments, configuration, facts, cwd=cwd)
     if in_hand.written is not None:
@@ -1185,7 +1185,7 @@ def _check(
         # answering twice cannot disagree with itself the way a patched copy could. It
         # costs five git calls on the one invocation in a repository's life that writes a
         # spec, and nothing on any other.
-        facts = read_git_facts(runner, cwd=cwd)
+        facts = read_git_facts(runner, cwd=cwd, submitting=arguments.commit)
         # ON STDERR UNDER --json, BECAUSE STDOUT IS ONE DOCUMENT THERE AND NOTHING ELSE.
         # A caller pipes stdout into a parser, and the one invocation in a repository's life
         # that writes a spec is exactly the one a first-run agent makes.
@@ -1920,7 +1920,7 @@ def _submit(
     dispatched: list[str],
 ) -> int:
     configuration = _configuration(arguments)
-    facts = read_git_facts(runner, cwd=cwd)
+    facts = read_git_facts(runner, cwd=cwd, submitting=arguments.commit)
     submitter = github_login(runner, allow_network=True)
     declared = arguments.spec if arguments.spec else find_spec(cwd)
     spec = load_spec(declared) if declared is not None else None
@@ -2857,7 +2857,9 @@ def _preflight(
     missing = _missing_required(arguments, spec, team, configuration)
     refusals.extend(missing)
 
-    if spec is None or team is None or missing or facts.commit_sha is None:
+    # ``submitted_commit`` rather than ``commit_sha``, because that is the one the request
+    # below is built from. Where no ``--commit`` was given the two are the same value.
+    if spec is None or team is None or missing or facts.submitted_commit is None:
         return Preflight(
             request=_partial_request(arguments, spec, facts, team),
             refusals=said_once(refusals),
@@ -2866,7 +2868,10 @@ def _preflight(
 
     request = SubmissionRequest(
         repository=arguments.repository or facts.repository or "",
-        commit_sha=arguments.commit or facts.commit_sha,
+        # ``facts.submitted_commit`` rather than the same expression written out again, so
+        # the manifest and the refusals cannot read two different commits. They did: the
+        # manifest honoured ``--commit`` and ``commit_not_pushed`` was about HEAD.
+        commit_sha=facts.submitted_commit,
         workload_profile=arguments.workload or spec.workload_profile,
         compute_profile=arguments.compute or spec.suggested_compute or "",
         dataset_release=arguments.dataset,
@@ -2985,7 +2990,7 @@ def _partial_request(
     """Whatever is known, so a refusal can still say what it was refusing."""
     return SubmissionRequest(
         repository=arguments.repository or facts.repository or "",
-        commit_sha=arguments.commit or facts.commit_sha or "",
+        commit_sha=facts.submitted_commit or "",
         workload_profile=arguments.workload or (spec.workload_profile if spec else ""),
         compute_profile=arguments.compute or (spec.suggested_compute if spec else "") or "",
         dataset_release=arguments.dataset or "",

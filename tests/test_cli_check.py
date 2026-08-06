@@ -18,6 +18,7 @@ import io
 import json
 import shutil
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 from re import findall
 
@@ -40,16 +41,20 @@ from edullm_platform.cli.main import (
 )
 from edullm_platform.cli.preflight import Preflight
 from edullm_platform.cli.presentation import config_source_said
+from edullm_platform.cli.workspace import CommandResult
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.placement import CAPACITY_FILENAME, PLACES_UNRELIABLY
 from tests.cli_support import (
+    COMMIT,
     CONFIG_DIR,
     SUBMITTER_ON_TWO_TEAMS,
     SUBMITTER_TEAM,
     FakeRunner,
+    failed,
     git_answers,
     invoke,
+    ok,
     write_spec,
 )
 
@@ -64,6 +69,120 @@ EIGHT_PROCESS_COMMAND = (
 def checkout(tmp_path: Path, **spec: object) -> tuple[Path, FakeRunner]:
     write_spec(tmp_path, **spec)  # type: ignore[arg-type]
     return tmp_path, FakeRunner(git_answers(tmp_path))
+
+
+#: A commit that is not the one HEAD resolves to, for the cases about ``--commit``.
+PINNED = "cfe2ce3c1c6172849ee217eeb8163a6073b5d0fb"
+
+
+def checkout_where(tmp_path: Path, *, on_a_remote: Iterable[str], known: Iterable[str] = ()) -> tuple[Path, FakeRunner]:
+    """A checkout where each commit answers ``--contains`` for itself.
+
+    The shipped helper answers one containment result for every sha, which is exactly the
+    conflation the cases below are about: a clone can hold a pushed commit and an unpushed
+    one at the same time, and which of the two a refusal is about is the whole question.
+    """
+    write_spec(tmp_path)
+    on_a_remote, known = set(on_a_remote), set(known) | set(on_a_remote)
+
+    def contains(argv: tuple[str, ...]) -> CommandResult:
+        asked = argv[-1]
+        if asked not in known:
+            return failed(f"error: no such commit {asked}\n", returncode=129)
+        return ok("  origin/edullm/an-arm\n" if asked in on_a_remote else "")
+
+    answers = dict(git_answers(tmp_path))
+    answers[("git", "branch", "--remotes", "--contains")] = contains
+    return tmp_path, FakeRunner(answers)
+
+
+def test_a_pinned_commit_that_is_pushed_is_not_refused_for_the_one_you_are_standing_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: ask the containment question about HEAD, which is what shipped.
+
+    ``--commit`` is honoured by the manifest and was ignored by the refusal that reads it.
+    A submitter pinning a reviewed commit and standing on a local one was refused
+    ``commit_not_pushed`` naming the local one, and told to push a commit their submission
+    does not mention. Both remedies the refusal offers -- push it, or fetch -- are about a
+    commit that has nothing to do with what would run.
+
+    Asserted on the code rather than on the sha, and then on the manifest, because the bug
+    was not that a refusal was wrong: it was that the refusal and the manifest were reading
+    two different commits.
+    """
+    root, runner = checkout_where(tmp_path, on_a_remote={PINNED}, known={COMMIT})
+
+    code, out, err = invoke(
+        ["check", "--json", "--commit", PINNED, "--dataset", "none", "--experiment", "pinned"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+    document = json.loads(out)
+
+    assert [refusal["code"] for refusal in document["refusals"]] == []
+    assert document["manifest"]["commit_sha"] == PINNED
+    assert code == EXIT_OK, out + err
+
+
+def test_a_pinned_commit_that_is_on_no_remote_is_refused_and_the_refusal_names_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: ask the containment question about HEAD, which is what shipped.
+
+    This is the direction that cost a dispatch. Standing on a pushed commit and pinning an
+    unpushed one was cleared by ``check`` with no refusal at all, because the question was
+    asked about the commit nobody had submitted. Nothing has built an image from the pinned
+    one, so the submission was going to be turned away inside AWS after a queue wait and
+    somebody's approval.
+    """
+    root, runner = checkout_where(tmp_path, on_a_remote={COMMIT}, known={PINNED})
+
+    code, out, err = invoke(
+        ["check", "--json", "--commit", PINNED, "--dataset", "none", "--experiment", "pinned"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+    document = json.loads(out)
+    said = " ".join(
+        refusal["detail"] for refusal in document["refusals"] if refusal["code"] == "commit_not_pushed"
+    )
+
+    assert code == EXIT_REFUSED, out + err
+    assert "commit_not_pushed" in [refusal["code"] for refusal in document["refusals"]]
+    assert PINNED[:12] in said
+    assert COMMIT[:12] not in said
+
+
+def test_a_pinned_commit_this_clone_does_not_have_is_not_answered_with_push_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: fold an unknown commit into ``commit_not_pushed``.
+
+    ``git branch --remotes --contains`` exits non-zero for a sha the clone has never seen,
+    which is indistinguishable from "contains nothing" if only the output is read. Folding
+    the two gives a mistyped ``--commit`` the sentence "push cfe2ce3c1c61 to a branch under
+    edullm/**", and there is nothing to push: no such object exists here. The two facts have
+    different remedies, so they get different codes.
+    """
+    root, runner = checkout_where(tmp_path, on_a_remote={COMMIT})
+
+    code, out, err = invoke(
+        ["check", "--json", "--commit", PINNED, "--dataset", "none", "--experiment", "pinned"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+    document = json.loads(out)
+    codes = [refusal["code"] for refusal in document["refusals"]]
+    said = " ".join(refusal["detail"] for refusal in document["refusals"])
+
+    assert code == EXIT_REFUSED, out + err
+    assert "commit_not_in_this_clone" in codes
+    assert "commit_not_pushed" not in codes
+    assert PINNED[:12] in said
 
 
 def test_check_reaches_no_network_at_all_however_stale_this_install_is(

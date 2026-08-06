@@ -318,17 +318,45 @@ class GitFacts:
     #: that; expanding it would mean ``--untracked-files=all``, which turns one line about an
     #: untracked output folder into ten thousand.
     untracked_paths: tuple[str, ...]
-    #: Whether any remote-tracking ref in this clone contains the commit. False is not proof
-    #: that nothing was pushed -- a clone that has not fetched since the push says the same
-    #: thing -- which is why the refusal it produces names ``git fetch`` beside ``git push``.
+    #: The commit the submission will name, which is ``--commit`` where one was given and
+    #: HEAD otherwise. Beside ``commit_sha`` rather than replacing it, because the two are
+    #: different facts and a refusal has to be about this one.
+    #:
+    #: **EVERY QUESTION BELOW IS ASKED ABOUT THIS AND NOT ABOUT HEAD, WHICH IS THE WHOLE
+    #: REASON IT EXISTS.** ``--commit`` was honoured by the manifest and ignored by the
+    #: refusal that reads it, so somebody pinning a reviewed commit while standing on a
+    #: local one was refused ``commit_not_pushed`` naming the local one -- told to push a
+    #: commit their submission does not mention, with the pinned one never checked at all.
+    submitted_commit: str | None
+    #: Whether this clone holds :attr:`submitted_commit` as an object at all. False only
+    #: reaches a refusal for a pinned commit: a mistyped ``--commit`` is a different mistake
+    #: from an unpushed one and "push it" is not a thing that can be done about it.
+    submitted_commit_is_in_this_clone: bool
+    #: Whether any remote-tracking ref in this clone contains :attr:`submitted_commit`.
+    #: False is not proof that nothing was pushed -- a clone that has not fetched since the
+    #: push says the same thing -- which is why the refusal it produces names ``git fetch``
+    #: beside ``git push``.
     commit_on_a_remote: bool
 
     @property
     def is_a_repository(self) -> bool:
         return self.root is not None
 
+    @property
+    def commit_was_pinned(self) -> bool:
+        """Whether ``--commit`` named something other than what this tree is standing on."""
+        return self.submitted_commit is not None and self.submitted_commit != self.commit_sha
 
-def read_git_facts(runner: CommandRunner, *, cwd: Path) -> GitFacts:
+
+def read_git_facts(
+    runner: CommandRunner, *, cwd: Path, submitting: str | None = None
+) -> GitFacts:
+    """The working tree, read about the commit ``submitting`` names rather than about HEAD.
+
+    ``submitting`` is the CLI's ``--commit``. It changes which commit the containment
+    question is asked about and nothing else: HEAD is still resolved and still reported, so
+    a caller that has no override gets exactly what it got before.
+    """
     root = runner(("git", "rev-parse", "--show-toplevel"), cwd=cwd)
     if not root.ok:
         return GitFacts(
@@ -338,6 +366,8 @@ def read_git_facts(runner: CommandRunner, *, cwd: Path) -> GitFacts:
             commit_sha=None,
             dirty_paths=(),
             untracked_paths=(),
+            submitted_commit=None,
+            submitted_commit_is_in_this_clone=False,
             commit_on_a_remote=False,
         )
     top = Path(root.text)
@@ -346,9 +376,10 @@ def read_git_facts(runner: CommandRunner, *, cwd: Path) -> GitFacts:
     branch = runner(("git", "rev-parse", "--abbrev-ref", "HEAD"), cwd=top)
     status = runner(("git", "status", "--porcelain"), cwd=top)
     commit_sha = head.text if head.ok and len(head.text) == 40 else None
+    submitted_commit = submitting or commit_sha
     contains = (
-        runner(("git", "branch", "--remotes", "--contains", commit_sha), cwd=top)
-        if commit_sha is not None
+        runner(("git", "branch", "--remotes", "--contains", submitted_commit), cwd=top)
+        if submitted_commit is not None
         else CommandResult(returncode=1, stdout="", stderr="")
     )
     reported = [line for line in status.stdout.splitlines() if len(line) > 3] if status.ok else []
@@ -364,6 +395,11 @@ def read_git_facts(runner: CommandRunner, *, cwd: Path) -> GitFacts:
         # commit and no index". Read off the same lines rather than from a second `git
         # status`, so the two answers cannot describe two moments.
         untracked_paths=tuple(line[3:] for line in reported if line[:2] == "??"),
+        submitted_commit=submitted_commit,
+        # `--contains` exits non-zero for a sha this clone has never seen and exits zero
+        # with nothing on stdout for one it holds on no remote branch. Reading only the
+        # output conflates them, and the two have different remedies.
+        submitted_commit_is_in_this_clone=contains.ok,
         commit_on_a_remote=contains.ok and bool(contains.text),
     )
 
