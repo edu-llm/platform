@@ -1294,6 +1294,101 @@ def test_the_event_rule_matches_the_job_queue_the_compute_stack_creates() -> Non
     assert pattern["detail-type"] == ["Batch Job State Change"]
 
 
+def rule_job_name_prefixes() -> list[str]:
+    pattern = properties_of(EVENTS_PATH, "AWS::Events::Rule")["EventPattern"]
+    return [entry["prefix"] for entry in pattern["detail"]["jobName"]]
+
+
+def test_the_rule_is_scoped_to_what_this_platform_submitted_and_not_to_the_queue() -> None:
+    """Mutation: delete the ``jobName`` clause from the pattern and leave the queue list.
+
+    That mutation is the state this rule shipped in and stayed in for at least eight days.
+    These sixteen queues are shared: a census on 2026-08-06 of every job AWS Batch still
+    listed on them returned 395, of which 165 distinct names were not a run's -- dataset
+    builds, validator jobs, memory probes, shims -- and every state change any of them made
+    was delivered to a recorder that refused it, five times, and then dead-lettered. 1327
+    messages, and the recorder's own log group counted 6635 refusals over nine days, which is
+    those 1327 multiplied by the ``maxReceiveCount`` above.
+
+    None of that lost anything. What it cost is the alarm: while it was true,
+    ``batch-lifecycle-dead-letters`` was in ALARM continuously on a known cause, so a real
+    recorder failure would have changed nothing anybody could see.
+
+    The queue list is not enough on its own and never was, which is what this pins. Deleting
+    ``jobName`` leaves a template that deploys, a rule that matches, and lineage that is
+    complete -- so nothing else in this suite goes red for it.
+    """
+    pattern = properties_of(EVENTS_PATH, "AWS::Events::Rule")["EventPattern"]
+
+    assert "jobName" in pattern["detail"], (
+        "the rule is scoped to the job queues alone again, so every utility job on a shared "
+        "queue is being handed to the lifecycle recorder and the notifier"
+    )
+    assert rule_job_name_prefixes() != []
+
+
+def test_the_rule_admits_exactly_the_names_this_platform_gives_its_jobs(
+    submit_request: dict[str, Any],
+) -> None:
+    """Reads THREE files. Mutation: change the prefix in the template, or ``JobName`` in
+    ``execution.py``, or ``RUN_ID_PREFIX`` in ``contracts/identity.py``.
+
+    Nothing connects the three. ``execution.py`` names every Batch job after the run,
+    ``contracts/identity.py`` says what a run id begins with, and the pattern is a literal in
+    YAML that no CloudFormation reference reaches. Narrowing this rule is only safe while all
+    three agree, and the way they can stop agreeing is silent in the worst direction: a prefix
+    that no run id starts with deploys perfectly, matches nothing, and writes no lifecycle
+    event, attempt or result ever again. That is the same half-working failure the queue
+    rename above produces, reached by a different edit.
+
+    So the prefix is compared against the constant rather than against ``"run_"``, and against
+    a job name a real submission produces rather than against a hand-written one.
+    """
+    from edullm_platform.contracts.identity import RUN_ID_PREFIX
+
+    prefixes = rule_job_name_prefixes()
+
+    assert prefixes == [RUN_ID_PREFIX]
+    assert submit_request["JobName"].startswith(prefixes[0])
+
+
+def test_the_recorder_still_refuses_a_name_the_narrowed_rule_would_admit() -> None:
+    """Mutation: make ``project_batch_event`` return ``None`` for an unrecognised job name.
+
+    That mutation is the second candidate fix in platform #310 and it was rejected. The rule
+    matches a prefix, because EventBridge has no regex and cannot express the whole ``run_``
+    plus UUIDv7 shape; the recorder matches the shape. Between them sits a real gap --
+    ``run_not-a-uuid`` is delivered and unreadable -- and the recorder's refusal is what
+    covers it.
+
+    Deleting that refusal in favour of a silent ``None`` would make the recorder discard
+    anything it does not recognise, which is precisely how a real run whose name shape changed
+    would vanish from lineage with nothing red anywhere. The scope belongs in the router and
+    the shape check belongs in the handler, and this asserts the handler still has one after
+    the router got narrower.
+    """
+    from edullm_platform.contracts.identity import RUN_ID_PREFIX
+    from edullm_platform.lifecycle_projection import UnreadableBatchEventError
+
+    admitted_by_the_rule = f"{RUN_ID_PREFIX}not-a-uuid"
+    envelope = {
+        "source": "aws.batch",
+        "detail-type": "Batch Job State Change",
+        "id": "11111111-2222-3333-4444-5555aaaa5555",
+        "time": "2026-08-06T07:00:00Z",
+        "detail": {
+            "jobName": admitted_by_the_rule,
+            "jobId": "0000aaaa-0000-0000-0000-0000aaaa0000",
+            "status": "RUNNING",
+            "jobQueue": "arn:aws:batch:us-east-1:123456789012:job-queue/sbsandbox-intern-edullm-cpu",
+        },
+    }
+
+    assert admitted_by_the_rule.startswith(rule_job_name_prefixes()[0])
+    with pytest.raises(UnreadableBatchEventError, match="not a run id"):
+        project_batch_event(envelope)
+
+
 def test_the_queue_the_states_role_may_submit_to_is_the_queue_that_exists() -> None:
     """Reads THREE files. Mutation: rename the queue in any one of them.
 

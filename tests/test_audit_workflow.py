@@ -1919,6 +1919,16 @@ def test_the_role_can_read_and_cannot_write(role: dict[str, Any]) -> None:
     owes no message, so it loads its catalogs, reads its secret, projects the event and posts
     nothing. Invoking any of the other three would admit a submission, file lineage for a run
     that did not happen, or stop machines, and none of those is grantable here at any width.
+
+    ``events:TestEventPattern`` IS THE SECOND ACTION HERE THAT IS NOT A READ OF ANYTHING, and
+    it is a smaller thing than the invoke above. It touches no account state at all: it takes
+    a pattern and an event as request parameters, runs EventBridge's matcher over them, and
+    answers true or false. Nothing in the account is read, nothing is changed, and nothing is
+    disclosed that the caller did not put in the request. It is here because the alternative
+    is writing a matcher in this repository and believing it, and prefix matching -- the
+    clause platform #310 turns on -- is exactly the sort that is easy to get almost right.
+    The write half of that service stays absent and matters: a credential that could disable
+    the lifecycle rule could stop every run's lineage being written and leave nothing red.
     """
     granted = {
         action for statement in statements(role) for action in statement_actions(statement)
@@ -1941,6 +1951,8 @@ def test_the_role_can_read_and_cannot_write(role: dict[str, Any]) -> None:
         "batch:ListJobs",
         "batch:DescribeJobs",
         "iam:ListRoles",
+        "events:DescribeRule",
+        "events:TestEventPattern",
     }
     for action in granted:
         assert not any(fragment in action for fragment in MUTATING_ACTION_FRAGMENTS), action
@@ -1956,6 +1968,7 @@ def test_the_role_can_read_and_cannot_write(role: dict[str, Any]) -> None:
                 "cloudtrail:",
                 "batch:",
                 "iam:",
+                "events:",
             )
         ), action
         assert "*" not in action, action
@@ -2082,6 +2095,13 @@ def test_no_grant_reaches_a_whole_bucket_or_every_secret(role: dict[str, Any]) -
         # alarm configuration for this region, which is counts, thresholds and states.
         "ReadWhetherTheDeployedFunctionsSucceed",
         "ReadWhetherTheAlarmsHaveSomewhereToFire",
+        # And the matcher, which is the one grant in this policy that reads nothing. IAM has
+        # no resource type for TestEventPattern because the call names none: the pattern and
+        # the event are both request parameters, and the answer is a boolean over the two of
+        # them. There is nothing behind it to confine. The region condition is on it anyway,
+        # as it is on every unscopable grant here, so a policy read cannot find a statement
+        # with neither a resource nor a bound.
+        "AskEventBridgeWhetherAPatternMatches",
     }
     assert {
         statement["Sid"]

@@ -717,6 +717,23 @@ jobs:
       - name: Check the alarms can reach somebody
         run: uv run --frozen python tools/verify_alarms_reach_somebody.py
 
+      # AND WHETHER AN ALARM THAT CAN REACH SOMEBODY CAN STILL SAY ANYTHING. The lifecycle
+      # dead-letter alarm was wired to the topic on 2026-08-06 and was already red, on 1327
+      # messages that were not about anything this platform ran: the rule was scoped to the
+      # job queues rather than to this platform's submissions, and those queues are shared.
+      # Nothing was lost -- there was no lineage in any of them -- and a genuine dead letter
+      # would have changed nothing anybody could see, which is the whole cost.
+      #
+      # The alarm cannot ask this question about itself. "Is the queue empty" is answered for
+      # a day by a purge and says nothing about whether the cause is still there. This asks
+      # the condition: over every job AWS Batch still lists on the queues the DEPLOYED pattern
+      # names, can that pattern deliver one whose name the recorder refuses? The pattern comes
+      # from EventBridge rather than from infra/batch-events.yaml, and the verdict comes from
+      # EventBridge's own matcher through TestEventPattern, so neither half is this repository
+      # agreeing with itself.
+      - name: Check the lifecycle rule delivers only what the recorder can read
+        run: uv run --frozen python tools/verify_lifecycle_event_scope.py
+
   deployed-stack-templates:
     name: the deployed stacks are the templates main declares
     runs-on: ubuntu-latest

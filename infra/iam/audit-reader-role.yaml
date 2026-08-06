@@ -495,6 +495,42 @@ Resources:
                   StringEquals:
                     aws:RequestedRegion:
                       Fn::Sub: ${AWS::Region}
+              # WHAT THE LIFECYCLE RULE IS SCOPED TO, AND WHETHER THAT SCOPE STILL HOLDS.
+              # tools/verify_lifecycle_event_scope.py reads the deployed rule's pattern and
+              # then asks EventBridge itself, over every job on the queues that pattern names,
+              # whether it would deliver one the recorder refuses. Both halves have to come
+              # from the account: a pattern read out of infra/batch-events.yaml would describe
+              # a rule that may not be deployed, and a matcher written here would eventually
+              # disagree with the bus about prefix matching, which is the clause the whole
+              # check turns on.
+              #
+              # DescribeRule is scoped to the one rule. TestEventPattern is not scoped to
+              # anything, because it names no resource -- it takes a pattern and an event as
+              # request parameters and answers true or false. There is nothing behind it to
+              # confine: it reads no account state, returns nothing but a boolean, and calling
+              # it a thousand times discloses only what the caller already put in the request.
+              #
+              # events:PutRule, events:PutTargets, events:DeleteRule, events:RemoveTargets and
+              # events:DisableRule stay absent, which matters more here than the usual. A
+              # credential that could disable this rule could stop lineage being written for
+              # every run in the account and leave nothing red: the recorder would simply
+              # never be invoked, and two of the three alarms on this path watch queues that
+              # would go quiet rather than fill.
+              - Sid: ReadWhatTheLifecycleRuleDelivers
+                Effect: Allow
+                Action:
+                  - events:DescribeRule
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/sbsandbox-intern-edullm-batch-lifecycle
+              - Sid: AskEventBridgeWhetherAPatternMatches
+                Effect: Allow
+                Action:
+                  - events:TestEventPattern
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion:
+                      Fn::Sub: ${AWS::Region}
               # WHO EXISTS IN THE ACCOUNT, AGAINST WHO EXISTS ON THE ROSTER. Admission reads
               # config/organization.yaml and nothing tells that file when somebody appears in
               # AWS. Anybody in the organization can self-serve an
