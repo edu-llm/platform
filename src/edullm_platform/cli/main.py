@@ -155,6 +155,7 @@ from edullm_platform.cli.lane import (
     placement_said,
     placement_verdict,
     placement_warning,
+    plugin_install_commands,
     priced_as,
     read_aws_config,
     refusal_code,
@@ -1398,7 +1399,7 @@ def _lane_session(
         print(render_refusals((missing_broker_refusal(),)), end="", file=err)
         return EXIT_UNUSABLE
     if shutil.which(SESSION_PLUGIN) is None:
-        print(render_refusals((missing_plugin_refusal(),)), end="", file=err)
+        print(_missing_plugin_said(), end="", file=err)
         return EXIT_UNUSABLE
     # THE PROFILE IS RESOLVED HERE AND HANDED TO THE TWO CALLS BELOW RATHER THAN EXPORTED. Both
     # take the ambient environment overlaid with what they are given, so a profile in `env` is
@@ -1422,7 +1423,7 @@ def _lane_session(
     profile = None if resolved.profile is None else {AWS_PROFILE_VARIABLE: resolved.profile}
     identity = runner(("aws", "sts", "get-caller-identity", "--output", "json"), env=profile)
     if not identity.ok:
-        print(_no_aws_session(identity.stderr), end="", file=err)
+        print(_no_aws_session(identity.stderr, opens_a_session=True), end="", file=err)
         return EXIT_UNREACHABLE
     facts = json.loads(identity.stdout)
     person = person_from_caller_arn(str(facts["Arn"])) or ""
@@ -1656,7 +1657,43 @@ def _start_a_machine(
     return EXIT_UNREACHABLE
 
 
-def _no_aws_session(said: str) -> str:
+def _missing_plugin_said() -> str:
+    """The plugin refusal and, under it, the commands AWS documents for this laptop.
+
+    **THE THREE FACTS ARE MEASURED HERE AND THE MESSAGE IS DECIDED IN ``cli/lane.py``, WHICH
+    IS THE SEAM ``gh_config_directory`` ALREADY SITS ON.** That module runs no process and
+    reads no environment, so it cannot ask which operating system this is; what it can do is
+    pick the right one of AWS's five installers once somebody tells it, which is what makes
+    the Windows text assertable from a Mac. ``dpkg`` decides only which Linux package family
+    to name and is not consulted about the other two platforms.
+
+    **THE COMMANDS ARE PRINTED UNDER THE BLOCK RATHER THAN INSIDE IT, AND THAT IS THE WHOLE
+    REASON THIS FUNCTION EXISTS.** ``render_refusals`` wraps a detail at 76 columns, so a
+    ``curl "..." -o "..."`` carried in one arrives split across four indented lines and has
+    to be reassembled before it runs -- which is most of the work this message was rewritten
+    to remove. Printed here they are one line each, exactly as AWS gives them.
+    """
+    refusal = missing_plugin_refusal(
+        system=platform.system(),
+        machine=platform.machine(),
+        has_dpkg=shutil.which("dpkg") is not None,
+    )
+    commands = plugin_install_commands(
+        system=platform.system(),
+        machine=platform.machine(),
+        has_dpkg=shutil.which("dpkg") is not None,
+    )
+    return "".join(
+        [
+            render_refusals((refusal,)),
+            "\n",
+            *(f"  {command}\n" for command in commands),
+            "\n",
+        ]
+    )
+
+
+def _no_aws_session(said: str, *, opens_a_session: bool) -> str:
     """No credential at all, which is the first thing a newcomer hits and is not a refusal.
 
     **IT NAMES THE COMMAND, BECAUSE THERE IS EXACTLY ONE AND ASSUMING IT IS KNOWN IS HOW A
@@ -1665,14 +1702,44 @@ def _no_aws_session(said: str) -> str:
     account comes from the broker and from nothing else -- there are no long-lived keys to
     fall back on and creating one is refused -- so the way is ``sb-aws-creds login``, and a
     refusal that will not say so is asking the reader to go and find out.
+
+    **AND THEN IT SAYS WHAT TO DO WHEN THAT COMMAND IS NOT A COMMAND, WHICH IS THE CASE FOR
+    THE FIFTEEN PEOPLE MOST LIKELY TO READ THIS.** ``sb-aws-creds`` is a private package
+    published out of another repository: ``guides/the-platform.md`` records ``npm view
+    sb-aws-creds`` answering 404 on 2026-08-06, so there is no public install line and there
+    is not going to be one. Naming the command and stopping there sends everybody who does
+    not already have the broker into a shell error, which reads as a broken refusal rather
+    than as a missing prerequisite, and gives them nothing to do next. The route the guide
+    settled on is named here instead, at the moment somebody needs it.
+
+    **``opens_a_session`` IS WHAT KEEPS THE PREREQUISITE COUNT TRUE FOR EACH CALLER, AND IT
+    IS NOT DECORATION.** :func:`_lane_session` checks the Session Manager plugin before it
+    makes this call, so a reader who reached this from ``run`` or ``shell`` has already got
+    past that gate and needs to be told there is no third wall behind this one -- a person
+    who has just been sent to install something assumes there is. :func:`_stop` opens no
+    session, checks no plugin and is deliberately usable on a laptop whose plugin has broken,
+    so the same sentence there would invent a prerequisite the verb does not have. One
+    paragraph asserting a fact about a gate the caller never ran is the shape of defect this
+    whole message is being repaired for.
     """
+    prerequisites = (
+        "That is the second and last of the two things these verbs want on your laptop, and "
+        "the Session Manager plugin is the first, which this already found on your PATH."
+        if opens_a_session
+        else "That is the only thing this verb wants on your laptop. It opens no session on "
+        "the machine, so the Session Manager plugin the other lane verbs need is not a "
+        "prerequisite here."
+    )
     return "\n".join(
         [
             "",
             *_wrapped(
                 "AWS would not say who you are, so no machine was asked for. The lane needs an "
                 f"AWS session the way the recorded path needs gh: run `{AWS_LOGIN_COMMAND}`, "
-                "complete the browser approval it opens, and run this again. "
+                f"complete the browser approval it opens, and run this again. {prerequisites} "
+                f"If your shell has no `{AWS_LOGIN_COMMAND.split()[0]}` at all, that broker is "
+                "a private package with no public install line, and `edullm ask --kind "
+                "access-request` is the route to it. "
                 f"What AWS said: {said.strip()}",
                 indent="",
             ),
@@ -2162,7 +2229,7 @@ def _stop(
     settings = load_working_tier_settings(configuration.directory)
     identity = runner(("aws", "sts", "get-caller-identity", "--output", "json"))
     if not identity.ok:
-        print(_no_aws_session(identity.stderr), end="", file=err)
+        print(_no_aws_session(identity.stderr, opens_a_session=False), end="", file=err)
         return EXIT_UNREACHABLE
     facts = json.loads(identity.stdout)
     person = person_from_caller_arn(str(facts["Arn"])) or ""

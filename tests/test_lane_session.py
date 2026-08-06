@@ -21,9 +21,12 @@ import pytest
 
 from edullm_platform.cli.lane import (
     ACCESS_REQUEST_COMMAND,
+    ARM_MACHINES,
     AWS_BROKER,
+    AWS_LOGIN_COMMAND,
     AWS_PROFILE_COMMAND,
     AWS_PROFILE_VARIABLE,
+    PLUGIN_DOWNLOADS,
     SESSION_PLUGIN,
     agent_online_argv,
     aws_config_path,
@@ -34,6 +37,7 @@ from edullm_platform.cli.lane import (
     missing_broker_refusal,
     missing_plugin_refusal,
     notebook_forward_argv,
+    plugin_install_commands,
     read_aws_config,
     remote_command_argv,
     remote_script,
@@ -313,6 +317,19 @@ def test_wsl_is_a_linux_laptop_and_gets_the_line_its_own_ssh_can_run() -> None:
     assert "sh -c" in ssh_proxy_command(INSTANCE, system="Linux")
 
 
+#: Every laptop this platform is used from, and the two AWS publishes a package for beyond
+#: them. Windows carries no architecture because AWS ships one 64-bit installer for it.
+EVERY_LAPTOP = (
+    ("Windows", "AMD64", False),
+    ("Darwin", "arm64", False),
+    ("Darwin", "x86_64", False),
+    ("Linux", "x86_64", True),
+    ("Linux", "aarch64", True),
+    ("Linux", "x86_64", False),
+    ("Linux", "aarch64", False),
+)
+
+
 def test_a_missing_plugin_is_an_installation_and_says_so() -> None:
     """Mutation: let the aws CLI's own message through.
 
@@ -321,7 +338,7 @@ def test_a_missing_plugin_is_an_installation_and_says_so() -> None:
     needed. The refusal names the tool, says why the lane needs it, and does not read as a
     verdict on anything they asked for.
     """
-    refusal = missing_plugin_refusal()
+    refusal = missing_plugin_refusal(system="Darwin", machine="arm64")
 
     assert refusal.code == "session_plugin_missing"
     assert SESSION_PLUGIN in refusal.detail
@@ -582,6 +599,158 @@ def test_the_config_file_is_read_from_where_the_aws_cli_would_read_it() -> None:
     assert aws_config_path({"AWS_CONFIG_FILE": "/tmp/elsewhere"}, home=home) == Path(
         "/tmp/elsewhere"
     )
+
+
+@pytest.mark.parametrize(("system", "machine", "has_dpkg"), EVERY_LAPTOP)
+def test_every_laptop_is_given_a_command_and_not_a_documentation_page(
+    system: str, machine: str, has_dpkg: bool
+) -> None:
+    """**THE DEFECT THIS WHOLE CHANGE IS ABOUT.**
+    Mutation: put "install it from the AWS documentation for the Session Manager plugin" back.
+
+    Both refusals a first `edullm run` can produce were well written in every respect except
+    that they ended by sending somebody to a search engine on their first morning. The
+    process knows its operating system and its architecture, so there is always a command it
+    could have printed, and this asserts one exists for every laptop anybody here is on.
+
+    Asserted as an AWS download plus a verb rather than against a fixed string, because the
+    URLs move when AWS reorganises and the wording is the writer's business.
+    """
+    commands = plugin_install_commands(system=system, machine=machine, has_dpkg=has_dpkg)
+
+    assert commands, "no command at all, which is the documentation page by another name"
+    assert PLUGIN_DOWNLOADS in " ".join(commands)
+    assert any(
+        command.startswith(("curl ", "sudo ", PLUGIN_DOWNLOADS)) for command in commands
+    )
+
+
+@pytest.mark.parametrize(("system", "machine", "has_dpkg"), EVERY_LAPTOP)
+def test_no_install_command_arrives_wrapped_and_therefore_unpasteable(
+    system: str, machine: str, has_dpkg: bool
+) -> None:
+    """**WHY THE COMMANDS ARE NOT IN THE REFUSAL DETAIL, HELD AS A PROPERTY.**
+    Mutation: interpolate the commands into `missing_plugin_refusal`'s detail again.
+
+    `presentation.render_refusals` wraps a detail at 76 columns with `textwrap.wrap`, which
+    replaces every newline with a space. A `curl "..." -o "..."` carried inside one therefore
+    arrives split across four indented lines and has to be reassembled by hand before it
+    runs, which is most of the work this change exists to remove -- and it is not a
+    hypothetical, because the first version of this repair did exactly that. A URL survives
+    wrapping because it is one token and `break_long_words` is off; a command with spaces in
+    it does not.
+
+    Held on the detail rather than on the printed block, because the detail is the thing a
+    tidying edit would put them back into.
+    """
+    detail = missing_plugin_refusal(system=system, machine=machine, has_dpkg=has_dpkg).detail
+
+    for command in plugin_install_commands(system=system, machine=machine, has_dpkg=has_dpkg):
+        if " " in command:
+            assert command not in detail, (
+                f"{command!r} is in the wrapped paragraph, so it reaches the terminal broken "
+                "across lines. Print it under the block instead"
+            )
+
+
+@pytest.mark.parametrize(("system", "machine", "has_dpkg"), EVERY_LAPTOP)
+def test_the_plugin_refusal_names_the_wall_after_it_and_its_own_place(
+    system: str, machine: str, has_dpkg: bool
+) -> None:
+    """**THE THREE PREREQUISITES ARE ORDERED AND EACH ONE HAS TO SAY WHERE IT SITS.**
+    Mutation: put back "there are two prerequisites and this is the first of them".
+
+    `cli/main.py`'s `_lane_session` checks the broker, then the plugin, then a profile, all
+    before it calls `sts:GetCallerIdentity`. So this is the second wall a newcomer meets and
+    the profile is the third. Somebody who installs the plugin, believes they are finished,
+    and then meets another refusal has been made to discover the shape of the setup one wall
+    at a time. Naming the next one costs a sentence here and saves an attempt there.
+
+    The count is asserted and not just the ordering word, because "first of two" was true
+    until the broker check landed in front of this one and is the exact claim that goes
+    stale when a wall is added. A test that only looked for an ordering word would have gone
+    on passing over it.
+    """
+    detail = missing_plugin_refusal(system=system, machine=machine, has_dpkg=has_dpkg).detail
+
+    assert AWS_LOGIN_COMMAND in detail
+    assert "second" in detail, "the ordering is the fact, not merely that a next thing exists"
+    assert "three prerequisites" in detail, "the count moved when the broker went in front"
+    assert "first" not in detail, "the plugin stopped being the first wall on 2026-08-06"
+
+
+def test_windows_is_told_the_two_ways_a_working_install_looks_broken() -> None:
+    """**BOTH ARE AWS'S OWN WARNINGS AND BOTH PRODUCE THE SAME SYMPTOM.**
+    Mutation: drop either clause, or drop the Administrator note.
+
+    AWS documents that the installer needs Administrator rights, that Windows usually does
+    not give the new PATH entry to the shell that ran it, and that the plugin supports
+    PowerShell and the Command shell only. The middle one is the likeliest way a successful
+    install goes on printing this same refusal, and the third produces an identical symptom
+    from a different cause in a population sitting in Git Bash -- this binary drives `git`
+    and `gh`, so a Git Bash window is where somebody already is. Naming one of two causes
+    for one symptom sends half the readers to the wrong repair.
+
+    Nowhere else gets a caveat, and the second half of this asserts that: prose nobody needs
+    is prose that pushes the command off the screen.
+    """
+    windows = missing_plugin_refusal(system="Windows", machine="AMD64").detail
+
+    assert "Administrator" in windows
+    assert "PATH" in windows and "new PowerShell or Command Prompt window" in windows
+    assert "Git Bash" in windows
+    for system, machine, has_dpkg in EVERY_LAPTOP:
+        if system == "Windows":
+            continue
+        elsewhere = missing_plugin_refusal(
+            system=system, machine=machine, has_dpkg=has_dpkg
+        ).detail
+        assert "Administrator" not in elsewhere
+        assert "PowerShell" not in elsewhere
+
+
+def test_the_package_matches_the_silicon_under_both_names_for_it() -> None:
+    """Mutation: test `arm64` only, or `aarch64` only.
+
+    Darwin says `arm64` and Linux says `aarch64` for the same processor. Checking one
+    spelling hands every laptop using the other an x86 package, which installs and then will
+    not run -- a failure that happens after the person believes they are finished and does
+    not name a cause.
+    """
+    for machine in ARM_MACHINES:
+        for system, has_dpkg in (("Darwin", False), ("Linux", True), ("Linux", False)):
+            joined = " ".join(
+                plugin_install_commands(system=system, machine=machine, has_dpkg=has_dpkg)
+            )
+            assert "arm64" in joined, f"{system} on {machine} is offered an x86 package"
+
+    for system, machine, has_dpkg in (
+        ("Darwin", "x86_64", False),
+        ("Linux", "x86_64", True),
+        ("Linux", "x86_64", False),
+    ):
+        joined = " ".join(
+            plugin_install_commands(system=system, machine=machine, has_dpkg=has_dpkg)
+        )
+        assert "arm64" not in joined
+
+
+def test_no_package_manager_aws_does_not_document_is_named() -> None:
+    """**Mutation: name a Homebrew formula for macOS.**
+
+    It is the first thing anybody reaches for on a Mac and AWS documents none -- their macOS
+    page gives the signed `.pkg` and the bundled `.zip` and nothing else. A formula name
+    guessed here would be printed to somebody with no way to check it, at the moment they
+    are least able to absorb being sent somewhere that does not exist. Everything printed on
+    every platform comes off an AWS page.
+    """
+    for system, machine, has_dpkg in EVERY_LAPTOP:
+        joined = " ".join(
+            plugin_install_commands(system=system, machine=machine, has_dpkg=has_dpkg)
+        )
+        assert "brew" not in joined
+        assert "apt-get" not in joined and "apt install" not in joined
+        assert PLUGIN_DOWNLOADS in joined
 
 
 def test_nothing_the_lane_runs_needs_a_key_or_an_open_port() -> None:
