@@ -10,7 +10,14 @@ from typing import Any, Final, cast
 import pytest
 
 from edullm_platform.run_comparison import cause_for
-from tests.test_run_comparison import LEFT, RIGHT, checkpoint, payload_reading, written
+from tests.test_run_comparison import (
+    LEFT,
+    RIGHT,
+    at_version_two,
+    checkpoint,
+    payload_reading,
+    written,
+)
 from tools.compare_two_runs import (
     CELL_BUDGET,
     EXIT_DIFFERED,
@@ -603,6 +610,43 @@ def test_a_pair_that_saved_nothing_is_not_told_its_payloads_went_uncompared(
     assert code == EXIT_MATCHED
     assert "were not compared" not in printed
     assert "DID NOT RUN" not in printed
+
+
+# ----------------------------------------------------------------------------------------
+# Two manifest versions in one store
+# ----------------------------------------------------------------------------------------
+
+
+def test_each_pairing_of_manifest_versions_gets_its_own_exit_code(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: hold every pair to the union of every manifest version.
+
+    Three pairings and three answers, and the mutation collapses two of them. A v2 pair
+    held to ``dataset_release`` exits 3 on every comparison forever, which makes the first
+    stored v2 record indistinguishable from a comparison that could not be completed --
+    and after the second such report nobody reads exit 3 again.
+
+    The mixed pair exits 1 and should: two records at two schema versions carry two
+    manifests, so they are not two dispatches of one submission whatever else agrees. What
+    the report has to do is say which fields the version moved rather than merely refusing,
+    and that is what the two assertions on its text are.
+    """
+    same, mixed = tmp_path / "same", tmp_path / "mixed"
+    for root in (same, mixed):
+        written(root, LEFT)
+        written(root, RIGHT)
+        at_version_two(root, RIGHT)
+    at_version_two(same, LEFT)
+
+    both_v2, agreement = compared(same, capsys)
+    one_of_each, alarm = compared(mixed, capsys)
+
+    assert (both_v2, one_of_each) == (EXIT_MATCHED, EXIT_DIFFERED)
+    assert "NEITHER" not in agreement
+    assert "intent.manifest.dataset_release" in alarm
+    assert "intent.manifest.inputs[0].reference" in alarm
+    assert "intent.manifest.schema_version" in alarm
 
 
 def test_the_four_exit_codes_are_four_answers() -> None:
