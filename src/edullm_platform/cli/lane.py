@@ -34,7 +34,8 @@ from edullm_platform.cli.configuration import (
     ReviewedConfiguration,
 )
 from edullm_platform.cli.preflight import Refusal
-from edullm_platform.contracts.base import ContractModel
+from edullm_platform.contracts.base import ContractModel, serialize_decimal
+from edullm_platform.contracts.workload import ComputeProfile
 from edullm_platform.placement import (
     CAPACITY_FILENAME,
     PLACES_AFTER_A_WAIT,
@@ -43,6 +44,7 @@ from edullm_platform.placement import (
     UnreadableCapacityError,
     read_capacity,
 )
+from edullm_platform.precision import gpu_of
 from edullm_platform.researcher_lane import (
     EXPIRES_AT_TAG_KEY,
     PROJECT_TAG_KEY,
@@ -57,17 +59,22 @@ __all__ = [
     "LANE_TAG_KEY",
     "SCRATCH_BUCKET",
     "SESSION_PLUGIN",
+    "DefaultedCompute",
+    "LaneExpiry",
     "LaneRequest",
     "WorkingTierSettings",
     "agent_online_argv",
     "assume_lane_argv",
     "command_line",
     "credentials_environment",
+    "default_compute_profile",
     "expires_at",
+    "expiry_for_a_new_machine",
     "find_machine_argv",
     "instance_type_for",
     "lane_refusals",
     "load_working_tier_settings",
+    "machine_already_running",
     "missing_plugin_refusal",
     "notebook_forward_argv",
     "person_from_caller_arn",
@@ -262,9 +269,20 @@ def placement_verdict(
     caller that had to recognise a verdict by matching the prose would be reading a string this
     repository rewords, which is the thing ``AGENTS.md`` tells every agent not to do.
     """
+    return next(
+        (record for record in _capacity(configuration) if record.profile == profile_name), None
+    )
+
+
+def _capacity(configuration: ReviewedConfiguration) -> tuple[PlacementRecord, ...]:
+    """Every recorded verdict, out of one read of the file.
+
+    Shared by the lookup above and by :func:`default_compute_profile`, which weighs every
+    profile at once and would otherwise open the file once per candidate.
+    """
     path = configuration.directory / CAPACITY_FILENAME
     try:
-        capacity = read_capacity(path)
+        return tuple(read_capacity(path))
     except UnreadableCapacityError as exc:
         # Re-raised as the class ``main`` already turns into exit 2. ``read_capacity`` is right to
         # raise rather than default to "everything places", and a ValueError escaping a verb is a
@@ -274,7 +292,6 @@ def placement_verdict(
             f"{path} is not a document edullm can act on, so whether a machine is likely to "
             f"start cannot be said: {exc}"
         ) from exc
-    return next((record for record in capacity if record.profile == profile_name), None)
 
 
 def placement_warning(configuration: ReviewedConfiguration, profile_name: str) -> str | None:
@@ -328,6 +345,110 @@ def placement_said(verdict: PlacementRecord | None) -> str | None:
     )
 
 
+@dataclass(frozen=True)
+class DefaultedCompute:
+    """The shape the lane starts when nobody names one, and the line that says what it did.
+
+    **THE NAME AND THE SENTENCE ARE ONE OBJECT FOR THE REASON :class:`LaneExpiry` IS.** The
+    line quotes a rate and a reason, and a line composed anywhere but here would be quoting a
+    choice it did not make -- which is how ``edullm run`` came to print an expiry the machine
+    did not have.
+    """
+
+    #: The compute profile's name, exactly as ``config/workload-catalog.yaml`` spells it.
+    profile: str
+    #: What the researcher is told was chosen for them, and how to choose otherwise.
+    said: str
+
+
+def default_compute_profile(configuration: ReviewedConfiguration) -> DefaultedCompute | None:
+    """The machine to start when the researcher named none, or nothing where there is none.
+
+    **``--project`` IS STILL REQUIRED AND THIS IS NOT THE THIN END OF DEFAULTING IT.** The two
+    flags are different in kind and the difference decides the answer. A project is a name only
+    the person has: it tags the instance and the volume, it is the last segment of the working
+    prefix, and a wrong one puts two unrelated pieces of work under one bill in a prefix nobody
+    chose -- and nothing afterwards can tell them apart. A compute profile is a price, it is
+    declared in reviewed configuration, and it is visible in the first line of ``nvidia-smi``.
+    ``lane_refusals`` refuses a misspelled *destination* and an unnameable caller; a shape is
+    neither, so nothing in this module's own rule covers it.
+
+    **CHEAPEST THAT CAN RUN THE THING, WHICH IS THE SCAFFOLD'S RULE AND NOT ITS FUNCTION.**
+    ``cli/scaffold.py`` keys its choice on a workload profile, and the lane has no workload,
+    no repository and no catalog entry to read one from. What transfers is the ordering, and
+    the reason it exists: ``gpu-1xt4`` is the cheapest GPU shape here and its T4 is Turing,
+    which has no bfloat16 in the hardware, so the shape that looks cheapest is the one a
+    trainer dies on after the machine is billed. ``precision.gpu_of`` keys on the instance
+    family the catalog already declares, so a shape priced, renamed or demoted there is
+    answered here without an edit.
+
+    **THREE FILTERS, EACH OF WHICH FALLS THROUGH RATHER THAN EMPTYING THE LIST.** A default
+    that refused would be worse than the required flag it replaced, so a catalog in which
+    nothing has bfloat16, or nothing places, still yields the cheapest GPU shape and says which
+    of the two it could not honour. ``provisioned`` is deliberately not one of the filters, for
+    the reason :func:`instance_type_for` gives: it means a Batch queue exists, and a lane
+    machine is not a Batch job.
+
+    Nothing here refuses anything, which is what keeps ``tests/test_lane_verdicts.py``'s ruling
+    intact. ``gpu_of`` answers what a card can do and is not consulted about whether a person
+    may have one.
+    """
+    gpus = [
+        profile
+        for profile in configuration.catalog.compute_profiles
+        if profile.accelerator == "gpu"
+    ]
+    if not gpus:
+        return None
+    capable = [profile for profile in gpus if _has_bfloat16(profile)]
+    placing = [
+        profile
+        for profile in (capable or gpus)
+        if placement_said(
+            next(
+                (record for record in _capacity(configuration) if record.profile == profile.name),
+                None,
+            )
+        )
+        is None
+    ]
+    chosen = min(
+        placing or capable or gpus, key=lambda profile: (profile.hourly_rate_usd, profile.name)
+    )
+    return DefaultedCompute(
+        profile=chosen.name, said=_defaulted_compute_said(chosen, capable, placing)
+    )
+
+
+def _has_bfloat16(profile: ComputeProfile) -> bool:
+    card = gpu_of(profile)
+    return card is not None and card.architecture.supports_bfloat16
+
+
+def _defaulted_compute_said(
+    chosen: ComputeProfile,
+    capable: Sequence[ComputeProfile],
+    placing: Sequence[ComputeProfile],
+) -> str:
+    """Why this shape and not a cheaper one, built from the filters that actually survived.
+
+    **THE REASON IS COMPOSED FROM WHAT HAPPENED RATHER THAN WRITTEN OUT ONCE**, because both
+    filters above fall through. A sentence claiming bfloat16 over a catalog where nothing has
+    it would be the same class of untruth as an expiry that is not the tag: correct on the day
+    it was typed and false the first time the list it describes changes underneath it.
+    """
+    because = [
+        *(["whose card has bfloat16"] if capable else []),
+        *([f"that config/{CAPACITY_FILENAME} records as placing"] if placing else []),
+    ]
+    reason = f" {' and '.join(because)}" if because else ""
+    return (
+        f"No --compute given, so this starts {chosen.name}: {chosen.instance_type} at "
+        f"${serialize_decimal(chosen.hourly_rate_usd)}/hour, the cheapest GPU shape in "
+        f"config/workload-catalog.yaml{reason}. Pass --compute to start a different one."
+    )
+
+
 def lane_refusals(
     request: LaneRequest, *, configuration: ReviewedConfiguration
 ) -> tuple[Refusal, ...]:
@@ -376,21 +497,34 @@ def lane_refusals(
             )
         )
     if instance_type_for(configuration, request.compute_profile) is None:
-        offered = ", ".join(
-            sorted(profile.name for profile in configuration.catalog.compute_profiles)
-        )
         refusals.append(
-            Refusal(
-                code="unknown_machine",
-                detail=(
-                    f"{request.compute_profile!r} is not in config/workload-catalog.yaml, so "
-                    f"there is no instance type to start. Offered: {offered}. Unlike a "
-                    "submission, an unprovisioned profile is fine here: provisioned means a "
-                    "Batch queue exists and this is not a Batch job."
-                ),
-            )
+            Refusal(code="unknown_machine", detail=_no_machine_detail(configuration, request))
         )
     return tuple(refusals)
+
+
+def _no_machine_detail(configuration: ReviewedConfiguration, request: LaneRequest) -> str:
+    """Two causes, two sentences, which is the rule the five defects of 2026-08-06 bought.
+
+    A shape that was named and is not in the catalog is a misspelling, and the remedy is the
+    list. No shape at all reaching here means ``--compute`` was omitted *and*
+    :func:`default_compute_profile` had nothing to offer, which is a catalog with no GPU
+    profile in it -- a broken installation rather than a typing mistake, and a message quoting
+    an empty name back at somebody who typed no name would send them looking for the typo.
+    """
+    offered = ", ".join(sorted(profile.name for profile in configuration.catalog.compute_profiles))
+    if not request.compute_profile:
+        return (
+            "no --compute was given and there was nothing to default to, because "
+            "config/workload-catalog.yaml declares no GPU profile for this lane to pick from. "
+            f"Name a shape with --compute. Priced here: {offered or 'nothing at all'}."
+        )
+    return (
+        f"{request.compute_profile!r} is not in config/workload-catalog.yaml, so "
+        f"there is no instance type to start. Offered: {offered}. Unlike a "
+        "submission, an unprovisioned profile is fine here: provisioned means a "
+        "Batch queue exists and this is not a Batch job."
+    )
 
 
 def expires_at(now: datetime, lifetime_hours: int) -> str:
@@ -403,6 +537,128 @@ def expires_at(now: datetime, lifetime_hours: int) -> str:
     unambiguous write where a duration has to be read, interpreted and summed.
     """
     return (now + timedelta(hours=lifetime_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@dataclass(frozen=True)
+class LaneExpiry:
+    """When the janitor may stop this machine, and the one sentence that says so.
+
+    **THE VALUE AND THE SENTENCE ARE ONE OBJECT BECAUSE THEY WERE TWO AND THEY DISAGREED.**
+    The verb computed a fresh expiry on every invocation and printed it, while the
+    ``ExpiresAt`` tag kept whatever it was handed at launch. On a machine that already
+    existed those are different instants, the later one was the one printed, and the work
+    stopped while the researcher believed they had time left. The janitor was not wrong: it
+    warns at the lead ``config/reports/researcher-lane.yaml`` declares and stops shortly
+    after the tag's time, with CloudTrail naming the janitor rather than a person, which is
+    it doing exactly what the tag says. The tag was stale.
+
+    So there is one string now, and :meth:`said` is built out of it rather than beside it.
+    ``tests/test_lane_expiry.py`` reads the tag out of a launch and the timestamps out of
+    the line and asserts there is one instant between them, which is the property; either
+    checked alone would have passed throughout the defect.
+
+    **THE TAG IS NOT REWRITTEN ON REUSE, AND THAT IS A DECISION RATHER THAN THE CHEAPER
+    HALF.** The other repair was to make the printed time true by writing it onto the
+    machine, and ``infra/iam/researcher-role.yaml`` is where that stops being an API call
+    and starts being a policy change: ``DenyStrippingGovernanceTagsAfterLaunch`` denies
+    ``ec2:CreateTags`` on ``ExpiresAt`` for everything except the launch itself. That
+    statement is what stops somebody in the lane removing their own expiry, and the template
+    records beside it that IAM cannot compare a tag value against the clock -- so a grant to
+    rewrite the tag is a grant to write *any* value into it, a year out included. The
+    expiry would stop being a bound in the same edit. It would stop being one by composition
+    too: ``--hours`` is held under the bound the profile declares, and a reuse that re-arms
+    the clock is that bound taken again on each invocation, which is no bound at all.
+
+    What a person actually expects from running the verb twice is the machine they already
+    have, which is what reuse is: a find rather than a launch, and a find reports what it
+    found. The surprise the honest reading costs is answered where it lands, in the line
+    itself, which says the expiry was set when the machine started and that this command did
+    not move it.
+    """
+
+    #: Exactly what the machine's ``ExpiresAt`` tag holds, empty only where it holds nothing.
+    value: str
+    #: Whether this was read off a machine already running, rather than computed for a launch.
+    found_running: bool
+
+    def said(self, machine: str) -> str:
+        """The line the researcher reads, which cannot quote an instant that is not above.
+
+        Three causes and three sentences, on the rule the lane's five defects bought: every
+        one of them printed that the session had ended without saying what had happened, and
+        a message two causes share is a message doing none of its job. Here the causes are a
+        machine being started, a machine being found, and a machine carrying no expiry at
+        all -- and the third is the one a shared sentence would hide, because a machine
+        nothing will reclaim would otherwise announce itself by printing the word
+        ``expires`` with nothing after it.
+        """
+        if not self.value:
+            return (
+                f"{machine} is already running and carries no {EXPIRES_AT_TAG_KEY} tag, so the "
+                "expiry janitor cannot see it and nothing will stop it. It is billing until "
+                "somebody terminates it."
+            )
+        if self.found_running:
+            return (
+                f"{machine} is already running and expires {self.value}, which is the expiry "
+                "it was started with. This found that machine rather than starting one, and "
+                "did not move its expiry."
+            )
+        return f"{machine} expires {self.value}"
+
+
+def expiry_for_a_new_machine(now: datetime, lifetime_hours: int) -> LaneExpiry:
+    """The expiry a launch is about to be tagged with, and the line that announces it.
+
+    The same string reaches ``run_instances_argv`` and :meth:`LaneExpiry.said`, so the
+    machine and the sentence cannot part company on the one path where they used to agree
+    by coincidence rather than by construction.
+    """
+    return LaneExpiry(value=expires_at(now, lifetime_hours), found_running=False)
+
+
+def machine_already_running(described: str) -> tuple[str, LaneExpiry] | None:
+    """The machine this person already has for this project, with the expiry it carries.
+
+    ``None`` where they have none, which is the ordinary first invocation.
+
+    **THE EXPIRY IS READ OFF THE MACHINE AND NEVER COMPUTED HERE, WHICH IS THE CORRECTION.**
+    A second ``edullm run`` finds an instance the first one started and the janitor holds it
+    to the tag that launch wrote. Computing one against this invocation's clock produces a
+    number that is true of nothing.
+
+    **THE TAG IS MATCHED IN PYTHON AGAINST ``EXPIRES_AT_TAG_KEY`` RATHER THAN IN THE
+    ``--query``.** A JMESPath filter would spell the key a second time, in a string no import
+    reaches, and the whole point of :mod:`edullm_platform.researcher_lane` owning that
+    spelling is that the role's condition, the janitor's reader and the launch cannot say
+    three different things. It is also case-sensitive on the AWS side and silently returns
+    null on a near miss, so the spelling that drifted would present as a machine with no
+    expiry rather than as an error.
+
+    **AN ENTRY THAT IS NOT AN OBJECT IS SKIPPED RATHER THAN UNPACKED.** The shape is
+    :func:`find_machine_argv`'s ``--query`` and the two ship in this module together, so the
+    only way to see a bare string here is an install whose halves disagree -- and a
+    ``AttributeError`` traceback in front of a researcher is the one thing this binary promises
+    not to do. Skipping reads as "no machine", which starts a second one, so the finder's own
+    test pins the query rather than trusting this guard to notice.
+    """
+    for entry in json.loads(described.strip() or "[]"):
+        if not isinstance(entry, dict):
+            continue
+        machine = str(entry.get("machine") or "")
+        if not machine:
+            continue
+        tags = entry.get("tags") or []
+        found = next(
+            (
+                tag.get("Value")
+                for tag in tags
+                if isinstance(tag, dict) and tag.get("Key") == EXPIRES_AT_TAG_KEY
+            ),
+            "",
+        )
+        return machine, LaneExpiry(value=str(found or ""), found_running=True)
+    return None
 
 
 def assume_lane_argv(
@@ -746,7 +1002,7 @@ def remote_script(*, uri: str, project: str, command: str) -> str:
     """
     directory = f"/work/{project}"
     return (
-        f"set -u; sudo install -d -o \"$(id -u)\" -g \"$(id -g)\" {directory}; "
+        f'set -u; sudo install -d -o "$(id -u)" -g "$(id -g)" {directory}; '
         f"aws s3 sync {uri} {directory} --only-show-errors; "
         f"cd {directory}; "
         f"({command}); status=$?; "
