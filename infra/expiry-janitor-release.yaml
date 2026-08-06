@@ -18,19 +18,23 @@
 # beneath them, and nothing else.
 schema_version: 1
 s3_key: expiry-janitor/expiry-janitor.zip
-# UPLOADED 2026-08-06, first release of this function. Until then all three of this field,
-# infra/expiry-janitor.yaml's S3ObjectVersion and a guard step in the phase-3 workflow carried
-# PLACEHOLDER-UNTIL-THE-FIRST-UPLOAD, and tests/test_janitor_package.py held the token in all
-# of them or in none, so the guard came out in the same change as these two lines.
+# THE SECOND RELEASE OF THIS FUNCTION, 2026-08-06, AND IT NEEDED NO FLAG. It carries the repair
+# to the batched stop: one machine carrying DisableApiStop refused the stop of every machine
+# sharing its sweep, and the summary sat behind that call so the failed sweeps printed nothing
+# at all. The digest below moved with the handler, the bucket already held an object under this
+# key, and tools/release_lambda.py's ordinary comparison saw the difference and uploaded.
 #
-# The release needed --force, which is worth recording because the next first release of a
-# function will hit it too. The digest below was already correct for this tree -- it was
-# written when the zip was built and not uploaded -- so tools/release_lambda.py's "the record
-# already names this digest" comparison would have skipped the upload and left the object
-# missing. --force exists for exactly that: a record right about the bytes, naming an object
-# the bucket does not hold.
-s3_object_version: VS.b59wWeTsluXKozm3pf0W475vVyDzp
+# THE FIRST RELEASE NEEDED --force AND THE REASON IS KEPT HERE BECAUSE THE NEXT FUNCTION'S FIRST
+# RELEASE WILL MEET IT TOO. Until that release all three of this field, infra/expiry-janitor.yaml's
+# S3ObjectVersion and a guard step in the phase-3 workflow carried
+# PLACEHOLDER-UNTIL-THE-FIRST-UPLOAD, and tests/test_janitor_package.py held the token in all of
+# them or in none, so the guard came out in the same change. The digest was already correct for
+# that tree -- written when the zip was built and deliberately not uploaded -- so the "the record
+# already names this digest" comparison would have skipped an upload of an object the bucket did
+# not hold. --force exists for exactly that case and for no other, which is why it is not needed
+# here: a record right about the bytes, naming an object that is missing.
+s3_object_version: rvDqHdvoX4UtGiW_rxkGlEh6pnZGmopg
 # The 64 hex characters tools/build_janitor_lambda.py printed under "sha256". The build is
 # deterministic, so re-running it on an unchanged tree reproduces this exactly -- which is what
 # tests/test_released_zips.py compares against, in the case parametrized [janitor].
-sha256: 11a0f7a07e266678ff19f57f793531dba410dbd7dd9c689c1082a2d87a5db6ac
+sha256: 10f94f8a70828c7b6d4c70ab99319ac0e6de037f4710e9ae105df31f0806aace
