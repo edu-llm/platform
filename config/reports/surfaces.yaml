@@ -496,13 +496,21 @@ slices:
         deployed: {reached: it fires}
         proven: {reached: it has fired}
 
+      # `built` POINTED AT THE ROSTER, WHICH IS ONE OF THE TWO LISTS RATHER THAN THE THING THAT
+      # HOLDS THEM TOGETHER. A file existing says nothing about whether it agrees with the
+      # GitHub team that actually gates `run-approval-lead`, and the row is about the agreeing.
+      # It points at the comparison now.
+      #
+      # `proven` STAYS NO AND THE REASON MOVED. It used to be that nothing compared the two.
+      # Something does, and no workflow runs it, so the drift is still silent. Wiring it into
+      # the audit is a job that needs no AWS credential and it belongs beside `report_asks`.
       - id: roster-agreement
         name: The roster and the GitHub team agreeing
         designed: {reached: overview draws it}
         planned: {not_reached: no plan reaches it}
-        built: {exists: config/organization.yaml}
+        built: {exists: tools/verify_the_lead_team_matches_the_roster.py}
         deployed: {environment: run-approval-lead}
-        proven: {not_reached: the two lists disagree and nothing fails when they do}
+        proven: {not_reached: "no workflow runs the check, so a drift still fails nothing"}
 
       - id: researcher-role
         name: The researcher role
