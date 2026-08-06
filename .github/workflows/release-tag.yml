@@ -435,7 +435,7 @@ jobs:
           uv tool install --force git+https://github.com/${GITHUB_REPOSITORY}@${TAG}
           \`\`\`
 
-          \`uv tool upgrade\` does not work for a tool installed from git. It answers \`Nothing to upgrade\` whatever the state of the install, including with \`--reinstall\`. The line above is the upgrade.
+          \`uv tool upgrade\` will not move an install made from that line. The line pins this tag, and \`uv tool upgrade\` follows the ref an install named. It answers \`Nothing to upgrade\` and exits 0 however far behind that install falls, with \`--reinstall\` too. It does upgrade an install made from the same URL with no tag on the end, which is the line the README carries. Re-running the line above is the upgrade for either.
           EOF
           if [ "${SIZE}" = "minor" ] && [ -n "${REASON}" ]; then
             # DIRECTLY ABOVE THE GENERATED LIST, which is where it lands for free: everything

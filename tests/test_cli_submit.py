@@ -574,9 +574,13 @@ def test_a_stale_install_is_warned_and_dispatched_anyway(
     also fails open by requirement, so a gate here would advertise an enforcement that
     being offline defeats, over a check admission makes again inside AWS regardless.
 
-    The warning carries the ``--force`` install line and must not carry the other one:
-    ``uv tool upgrade`` answers ``Nothing to upgrade`` for a git-installed tool, so a
-    warning suggesting it would send the reader away believing they had fixed this.
+    The warning carries the ``--force`` install line and must not carry the other one.
+    ``uv tool upgrade`` answers ``Nothing to upgrade`` for an install pinned at a release
+    tag, which is every install made from a release note, so a warning suggesting it would
+    send half its readers away believing they had fixed this. The other half would be
+    upgraded and would have no way to know which they were. That claim about uv is checked
+    against uv in ``tests/test_cli_install_command.py``; the assertion here reads the
+    string this command printed and proves nothing about uv on its own.
     """
     root, runner = submitting(
         tmp_path, release=ok("v99.0.0\t2026-07-01T00:00:00Z\n")

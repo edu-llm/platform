@@ -78,10 +78,13 @@ reader = [
 # It had already been copied into two transcripts by the time anybody typed it, which is
 # why the copy is now a test rather than a comment.
 #
-# `--force` is also the upgrade, because there is no working upgrade to point at:
-# `uv tool upgrade edullm-platform` answers `Nothing to upgrade` for a git-installed tool,
-# with `--reinstall` too, so the obvious command tells a researcher they are current when
-# they are not. It must never appear in a guide except beside that answer.
+# `--force` is also the upgrade, because it is the one line that is right for both installs
+# in the field. `uv tool upgrade edullm-platform` follows the git ref the install named: it
+# re-resolves the default branch for an install from the bare URL and does upgrade it, and
+# it answers `Nothing to upgrade`, with `--reinstall` too, for one pinned at a release tag,
+# which is the install every release note hands out. So the obvious command tells some
+# researchers they are current when they are not, and it depends on a thing they will not
+# remember. It must never appear in a guide except beside that answer.
 [project.scripts]
 edullm = "edullm_platform.cli:main"
 

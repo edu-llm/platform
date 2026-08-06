@@ -201,9 +201,14 @@ def test_the_warning_carries_the_exact_re_install_line() -> None:
     """Mutation: say "please upgrade".
 
     A warning naming no remedy costs the reader a search, and the search lands on
-    ``uv tool upgrade``, which answers ``Nothing to upgrade`` and sends them away believing
-    they fixed it. The line has to be in the message, pinned to the release the message is
-    about.
+    ``uv tool upgrade``, whose answer depends on how they installed. Every install made
+    from a release note is pinned at that release's tag, and for those it answers
+    ``Nothing to upgrade`` and sends the reader away believing they fixed it. The line has
+    to be in the message, pinned to the release the message is about.
+
+    **THIS ASSERTS WHAT THE WARNING SAYS AND NOT WHAT UV DOES.** The uv behaviour the
+    paragraph above rests on is checked by installing the tool and running the command, in
+    ``tests/test_cli_install_command.py``, which is the only place in the suite that does.
     """
     warning = staleness_said(
         InstalledVersion(version="0.2.0", revision="v0.2.0"),

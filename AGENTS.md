@@ -22,8 +22,10 @@ edullm --version
 Unpinned on purpose. That line is true after every release and re-running it is the upgrade,
 where a tag written here would be a version this file has to be edited for.
 
-`uv tool upgrade` does not work for a tool installed from git. However old the install is, it
-answers `Nothing to upgrade`. Re-install with `--force`.
+`uv tool upgrade` follows the ref the install named, so what it does depends on how the tool got
+here. From the bare URL above it re-resolves the default branch and upgrades. From a release
+note's line, which pins that release's tag, it answers `Nothing to upgrade` and exits 0 however
+far behind the install is. Re-install with `--force`, which is the upgrade for both.
 
 ## The verbs
 
