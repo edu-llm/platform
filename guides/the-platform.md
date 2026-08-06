@@ -335,18 +335,20 @@ This is yours and it is local. It is not reviewed configuration, it is read by n
 ```
 AWS would not say who you are, so no machine was asked for. The lane needs an
 AWS session the way the recorded path needs gh: run `sb-aws-creds login`,
-complete the browser approval it opens, and run this again. That is the second
-and last of the two things these verbs want on your laptop, and the Session
-Manager plugin is the first, which this already found on your PATH. If your
-shell has no `sb-aws-creds` at all, that broker is a private package with no
-public install line, and `edullm ask --kind access-request` is the route to
-it. What AWS said: aws: [ERROR]: An error occurred (NoCredentials): Unable to
-locate credentials. You can configure credentials by running "aws login".
+complete the browser approval it opens, and run this again. Everything else
+these verbs want on your laptop is already there: this found the broker and
+the Session Manager plugin on your PATH and resolved a profile before it asked
+AWS anything, so a session is the last of it and there is no wall behind this.
+If your shell has no `sb-aws-creds` at all, that broker is a private package
+with no public install line, and `edullm ask --kind access-request` is the
+route to it. What AWS said: aws: [ERROR]: An error occurred (NoCredentials):
+Unable to locate credentials. You can configure credentials by running "aws
+login".
 ```
 
-`edullm stop` prints the same thing without the sentence about the plugin, because it opens no session and does not need one.
+`edullm stop` and `edullm studio` print the same thing without the sentence about the plugin, because neither opens a session and neither needs one.
 
-`edullm run` and `edullm shell` need one more thing, the AWS Session Manager plugin on your own laptop, and refuse with `session_plugin_missing` when it is not on `PATH`. **That is checked first, before the session above, so it is the wall you meet first and the session is the one behind it.** The refusal names the install command for the operating system and the processor you are on rather than sending you to a documentation page, because AWS publishes four of them and only one of them is yours. On Windows it also says the two things that make a successful install look like a failure: the installer needs Administrator rights, and Windows usually will not give the new `PATH` entry to the shell that ran it, so open a fresh PowerShell or Command Prompt window before trying again. The plugin supports those two shells only.
+**`edullm run` and `edullm shell` make three local checks before they ask AWS anything, and they are in the order a newcomer fails them.** First the credential broker itself: without `sb-aws-creds` on `PATH` nothing later can work, because the session the third check selects is minted by it, and the refusal for it deliberately prints no install command because there is none that works. Second the AWS Session Manager plugin, refused as `session_plugin_missing`; that refusal names the install command for the operating system and the processor you are on rather than sending you to a documentation page, because AWS publishes four of them and only one of them is yours. On Windows it also says the two things that make a successful install look like a failure: the installer needs Administrator rights, and Windows usually will not give the new `PATH` entry to the shell that ran it, so open a fresh PowerShell or Command Prompt window before trying again. The plugin supports those two shells only. Third a profile the broker wrote, which the CLI now finds for you, so `AWS_PROFILE` no longer has to be set in every terminal.
 
 **How the fifteen of us holding no AWS role get that broker is still not settled**, and the reason the rollout note's install line fails is worth knowing rather than retrying. `sb-aws-creds` is a private package published out of another repository, so `npm install -g sb-aws-creds` answers 404 and always will, and no amount of re-running it changes that. On a laptop that already has it, `sb-aws-creds login` is the whole of it. On one that does not, `edullm ask --kind access-request` is the route, and it will be answered with whatever the distribution turns out to be. **Nothing on the submission path waits on this.** You can produce a citable run today with `gh auth login` and nothing else.
 

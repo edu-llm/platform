@@ -1820,18 +1820,28 @@ def _no_aws_session(said: str, *, opens_a_session: bool) -> str:
     settled on is named here instead, at the moment somebody needs it.
 
     **``opens_a_session`` IS WHAT KEEPS THE PREREQUISITE COUNT TRUE FOR EACH CALLER, AND IT
-    IS NOT DECORATION.** :func:`_lane_session` checks the Session Manager plugin before it
-    makes this call, so a reader who reached this from ``run`` or ``shell`` has already got
-    past that gate and needs to be told there is no third wall behind this one -- a person
-    who has just been sent to install something assumes there is. :func:`_stop` opens no
-    session, checks no plugin and is deliberately usable on a laptop whose plugin has broken,
-    so the same sentence there would invent a prerequisite the verb does not have. One
-    paragraph asserting a fact about a gate the caller never ran is the shape of defect this
-    whole message is being repaired for.
+    IS NOT DECORATION.** :func:`_lane_session` runs three local checks before it makes this
+    call, so a reader who reached this from ``run`` or ``shell`` has already got past all of
+    them and needs to be told there is no further wall behind this one -- a person who has
+    just been sent to install something assumes there is. :func:`_stop` and :func:`_studio`
+    open no session, check no plugin and are deliberately usable on a laptop whose plugin has
+    broken, so the same sentence there would invent a prerequisite the verb does not have.
+    One paragraph asserting a fact about a gate the caller never ran is the shape of defect
+    this whole message is being repaired for.
+
+    **THE COUNT IN THE ``opens_a_session`` BRANCH MOVED ON 2026-08-06 AND THAT IS THE WHOLE
+    HAZARD OF WRITING ONE DOWN.** It said the login was the second and last of two things and
+    named the plugin as the first. Then the broker binary and the profile it writes became
+    checks of their own in front of this call, which made it the last of four rather than the
+    second of two, and the sentence went on being published while being wrong about both the
+    order and the number. It is written here as "all of them are behind you" rather than as a
+    figure, because what a reader needs at this point is to know that nothing else is
+    missing, and that is the part which stays true when a fifth check lands.
     """
     prerequisites = (
-        "That is the second and last of the two things these verbs want on your laptop, and "
-        "the Session Manager plugin is the first, which this already found on your PATH."
+        "Everything else these verbs want on your laptop is already there: this found the "
+        "broker and the Session Manager plugin on your PATH and resolved a profile before it "
+        "asked AWS anything, so a session is the last of it and there is no wall behind this."
         if opens_a_session
         else "That is the only thing this verb wants on your laptop. It opens no session on "
         "the machine, so the Session Manager plugin the other lane verbs need is not a "
@@ -2461,7 +2471,11 @@ def _studio(
 
     identity = runner(("aws", "sts", "get-caller-identity", "--output", "json"))
     if not identity.ok:
-        print(_no_aws_session(identity.stderr), end="", file=err)
+        # ``opens_a_session=False`` FOR THE REASON THE DOCSTRING ABOVE ALREADY GIVES. Studio is
+        # reached through a browser and checks no Session Manager plugin, so it is `_stop`'s
+        # case and not `_lane_session`'s: naming the plugin here would invent a prerequisite
+        # this verb does not have, in front of somebody whose laptop does not need one.
+        print(_no_aws_session(identity.stderr, opens_a_session=False), end="", file=err)
         return EXIT_UNREACHABLE
     facts = json.loads(identity.stdout)
     person = person_from_caller_arn(str(facts["Arn"])) or ""

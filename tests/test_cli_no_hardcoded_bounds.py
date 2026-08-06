@@ -441,7 +441,7 @@ def test_the_count_rule_can_see_a_count_that_has_moved() -> None:
     claims = count_claims(
         [
             (1, "The five verbs that work, and the line each shows in --help."),
-            (2, "Eleven verbs, all built."),
+            (2, "Twelve verbs, all built."),
             (3, "system-overview.md names eight configuration files as the control plane"),
             (4, "release-tag.yml names six files under config/ and no directory"),
             (5, "It is one check deferred and not more."),
