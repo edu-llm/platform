@@ -250,6 +250,45 @@ def _default_object_store() -> ObjectStore:
     return cast(ObjectStore, boto3.client("s3"))
 
 
+class _MetricsReader:
+    """One ``s3://`` uri read as JSON, over the client the writes already use.
+
+    An adapter rather than a second protocol on the client, because
+    :class:`~edullm_platform.lifecycle_projection.MetricsReader` asks a question in the
+    platform's vocabulary -- one uri, one document or nothing -- and a boto3 client answers in
+    S3's. Keeping the translation here is what lets the projection stay a pure function that a
+    test can drive without an SDK.
+
+    EVERY FAILURE IS None AND THAT IS THE SAME SILENT DEGRADATION THE LISTING ABOVE ACCEPTS,
+    for the same reason and with the same cost. An exception raised here dead-letters the
+    delivery, which loses the event, the attempt and the result for a run that demonstrably
+    happened -- so a missing key, a refused read and a document that is not JSON all come back
+    as "this run scored nothing", and only the first of the three is true. The consequence is
+    that ``eval_metrics`` stays null on every record until
+    ``sbsandbox-intern-edullm-phase3-lifecycle-iam`` is applied, and nothing goes red to say
+    so. ``infra/iam/lifecycle-lambda-role.yaml`` records the grant that closes it.
+
+    What is deliberately NOT swallowed is a document that reads and does not parse. That
+    raises out of ``read_olmo_eval_metrics`` in the projection, because bytes being present and
+    unreadable is the one case where an empty field would be a lie this handler could have
+    avoided telling.
+    """
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    def read_json(self, uri: str) -> Mapping[str, Any] | None:
+        bucket, _, key = uri.removeprefix("s3://").partition("/")
+        if not bucket or not key:
+            return None
+        try:
+            body = self._client.get_object(Bucket=bucket, Key=key)["Body"].read()
+            document = json.loads(body)
+        except Exception:  # noqa: BLE001
+            return None
+        return cast(Mapping[str, Any], document) if isinstance(document, Mapping) else None
+
+
 def _records(event: Mapping[str, Any]) -> Sequence[Mapping[str, Any]]:
     records = event.get("Records")
     if not isinstance(records, list):
@@ -295,6 +334,13 @@ def handler(
     # and that is the same honest emptiness a refused listing produces -- so a test that
     # cares about the lineage writes does not have to grow an S3 listing to keep passing.
     lister = writer if callable(getattr(writer, "list_objects_v2", None)) else None
+    # The same client again, and asked for the same way. A store implementing only the write
+    # answers None here and the projection records no metrics, which is what every caller
+    # outside the deployed function gets and what the deployed function itself got until the
+    # GetObject grant in infra/iam/lifecycle-lambda-role.yaml was applied.
+    reader = (
+        _MetricsReader(writer) if callable(getattr(writer, "get_object", None)) else None
+    )
 
     records = _records(event)
     failures: list[tuple[str | None, Exception]] = []
@@ -304,6 +350,7 @@ def handler(
                 _envelope(record),
                 output_bucket=output_bucket,
                 checkpoint_lister=cast(CheckpointLister | None, lister),
+                metrics_reader=reader,
             )
             for key, written in lineage_writes(projection):
                 _put(writer, bucket=lineage_bucket, key=key, record=written)

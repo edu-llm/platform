@@ -89,6 +89,7 @@ from edullm_platform.errors import (
 from edullm_platform.image_resolution import PublishedImage, ResolvedImage, resolve_image
 from edullm_platform.launchers import (
     require_a_process_for_every_device,
+    require_a_tensor_parallel_flag_vllm_reads,
     waived_launch_check_note,
 )
 from edullm_platform.manifest_helpers import (
@@ -579,6 +580,7 @@ def compile_submission(
         command=manifest.command,
         compute_profile=manifest.compute_profile,
     )
+    require_a_tensor_parallel_flag_vllm_reads(manifest.command)
 
     # THE OTHER HALF OF THE RULE THE ATTEMPT CHECK ABOVE ALREADY HOLDS. That one refuses a
     # retry bound with no checkpoint contract behind it; this refuses a checkpoint contract

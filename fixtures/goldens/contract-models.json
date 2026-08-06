@@ -297,9 +297,23 @@
     {
       "base": false,
       "module": "edullm_platform.contracts.manifest",
+      "name": "RunInput",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:4efe3bb59ec0161fe55a7dc8c7508abc4727adaa56682045afa33b2002bd21d8"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.manifest",
       "name": "RunManifest",
       "schema_version": "1",
       "structural_digest": "sha256:1f6d150b79887bbc6f2962f71964b08180ea13894329c783907e5309df48cedc"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.manifest",
+      "name": "RunManifestV2",
+      "schema_version": "2",
+      "structural_digest": "sha256:bee34bb15d322ef2b1404bd2f26d16c609c28d1d5c096269d8e8d6c77fcb015e"
     },
     {
       "base": false,
@@ -353,9 +367,23 @@
     {
       "base": false,
       "module": "edullm_platform.contracts.results",
+      "name": "EvalMetric",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:1704aa48a81d91e959fb46a16c3c3d7e8421704fffd76fa0944c461f1e9957e9"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.results",
+      "name": "EvalMetrics",
+      "schema_version": "1",
+      "structural_digest": "sha256:320ff21f6036ed5ed160ae54204276ccf259d982e4ae5f04c445d26b59e8dd79"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.results",
       "name": "ResultManifest",
       "schema_version": "1",
-      "structural_digest": "sha256:47ba07791dc06f0b05512ffdcc18ad5b953a650c88e68b30a7b40d93ac1f39e4"
+      "structural_digest": "sha256:12f289f215021876de0248934e3af99127e19f0305cd119b215309a6c79cad18"
     },
     {
       "base": false,

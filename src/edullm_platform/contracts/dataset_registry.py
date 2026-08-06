@@ -62,9 +62,11 @@ from .dataset import (
     DatasetReleaseId,
     PublishedDatasetPrefix,
 )
+from .vocabulary import InputRole
 
 __all__ = [
     "TRAINABLE_FAMILIES",
+    "WEIGHTS_FAMILIES",
     "DatasetRegistry",
     "PublishedDatasetReference",
     "RegisteredDatasetRelease",
@@ -102,6 +104,21 @@ __all__ = [
 #: representation must be a separately validated derived artifact". Naming it directly as a
 #: corpus asks a run to train on the thing that corpus says is not trainable yet.
 TRAINABLE_FAMILIES: Final = frozenset({"pretrain", "sft"})
+
+#: Which dataset families a run may name as the weights it starts from.
+#:
+#: A SECOND SET RATHER THAN A SECOND MEMBERSHIP IN THE FIRST, and the reason is the failure
+#: TRAINABLE_FAMILIES exists to prevent, running the other way. A base model handed to a
+#: training run as its corpus is memmapped as tokens and produces a loss curve; a corpus handed
+#: to an evaluation as its weights fails loudly, because nothing can load it. Only one of the
+#: two is silent, and folding the sets would make a single edit able to reintroduce it.
+#:
+#: ``model/`` HAS NO SEALED ENTRY YET AND THAT IS NOT A REASON TO WAIT. s3://edullm-data/ carried
+#: no model/ prefix on 2026-08-04 and config/datasets.yaml registers nothing under it. Sealing a
+#: base model is the dataset validator's act; being able to say what a model/ entry would be for
+#: is this file's, and the order has to be this way round -- a validated model with no family to
+#: land in is unreachable the day it is sealed.
+WEIGHTS_FAMILIES: Final = frozenset({"model"})
 
 
 class RegisteredDatasetRelease(ContractModel):
@@ -228,6 +245,11 @@ class PublishedDatasetReference(ContractModel):
     def is_a_corpus_a_run_may_read(self) -> bool:
         """Whether a run may name this as the corpus it trains on. See TRAINABLE_FAMILIES."""
         return self.family in TRAINABLE_FAMILIES
+
+    @property
+    def is_weights_a_run_may_start_from(self) -> bool:
+        """Whether a run may name this as the weights it starts from. See WEIGHTS_FAMILIES."""
+        return self.family in WEIGHTS_FAMILIES
 
     @model_validator(mode="after")
     def validate_reference(self) -> Self:
@@ -426,3 +448,20 @@ class DatasetRegistry(ContractModel):
             if entry.reference_id == reference_id:
                 return entry
         return None
+
+    def may_fill(self, dataset_id: str, *, role: InputRole) -> bool:
+        """Whether this dataset can be what a run named it as.
+
+        FAILS CLOSED ON AN UNRESOLVABLE ID, WHICH INVERTS is_a_trainable_corpus DELIBERATELY.
+        That method answers True for anything it cannot resolve, because a release id names no
+        family and is_registered already denies an unknown one. Here the question is what the
+        platform will hand to a container, and an id resolving to no address resolves to no
+        bytes -- so True would be a run started from nothing, reported as started from
+        something.
+        """
+        reference = self.reference_for(dataset_id)
+        if reference is None:
+            return False
+        if role is InputRole.CORPUS:
+            return reference.is_a_corpus_a_run_may_read
+        return reference.is_weights_a_run_may_start_from

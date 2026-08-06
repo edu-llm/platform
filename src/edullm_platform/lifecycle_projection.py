@@ -139,10 +139,15 @@ from .contracts.results import (
     CheckpointListingOutcome,
     CheckpointManifest,
     CheckpointSurvey,
+    EvalMetrics,
     ResultManifest,
     WandbRunRef,
 )
 from .contracts.vocabulary import RetentionClass
+
+# No cycle: eval_metrics imports from contracts.results only, and this module already imports
+# from contracts.results, so the edge added here runs the same direction as the ones above it.
+from .eval_metrics import read_olmo_eval_metrics
 
 __all__ = [
     "BATCH_JOB_STATUSES",
@@ -515,6 +520,17 @@ class CheckpointLister(Protocol):
     def list_objects_v2(self, **arguments: Any) -> Any: ...
 
 
+class MetricsReader(Protocol):
+    """Reads one JSON object out of the outputs bucket, or None where there is none.
+
+    Narrower than :class:`CheckpointLister` because the question is narrower: one key, one
+    answer. A Protocol for the same reason -- boto3 is not a project dependency and this module
+    is packaged where the SDK is not.
+    """
+
+    def read_json(self, uri: str) -> Mapping[str, Any] | None: ...
+
+
 def container_variable(detail: Mapping[str, Any], name: str) -> str | None:
     """What the container was told under one environment variable, or None if nothing.
 
@@ -877,6 +893,36 @@ def _checkpoints_written(
     return checkpoints_under(checkpoint_lister, prefix=prefix)
 
 
+def _metrics_written(
+    *,
+    written_under: str | None,
+    output_bucket: str,
+    metrics_reader: MetricsReader | None,
+) -> EvalMetrics | None:
+    """What the harness reported, when a caller supplied something to read it with.
+
+    THREE WAYS TO GET None AND ONLY ONE OF THEM IS A RUN THAT SCORED NOTHING -- which is the
+    defect ``CheckpointSurvey`` exists to have closed for the neighbouring field, and it is
+    deliberately not closed here. The difference is that an absent checkpoint list was read as
+    a claim about a training run, where an absent metrics block is the correct and expected
+    answer for every workload that is not an evaluation: a corpus validation, a tokenization
+    and a smoke test have no eval metrics to emit and are not failing to produce them
+    (system-overview.md, "Where everything is seen"). A survey here would put a field
+    explaining an absence onto every record where the absence needs no explaining.
+
+    A document that is present and unreadable still raises, through read_olmo_eval_metrics.
+    That is the case worth failing on: bytes are there and this cannot parse them.
+    """
+    if metrics_reader is None or written_under is None:
+        return None
+    if not written_under.startswith(f"s3://{output_bucket}/"):
+        return None
+    document = metrics_reader.read_json(f"{written_under}metrics.json")
+    if document is None:
+        return None
+    return read_olmo_eval_metrics(document)
+
+
 def project_batch_state_change(
     *,
     eventbridge_event_id: str,
@@ -885,6 +931,7 @@ def project_batch_state_change(
     output_bucket: str = OUTPUTS_BUCKET,
     retention_class: RetentionClass = RetentionClass.STANDARD,
     checkpoint_lister: CheckpointLister | None = None,
+    metrics_reader: MetricsReader | None = None,
 ) -> LifecycleProjection:
     """Project one ``Batch Job State Change`` detail onto the Phase 0 contracts.
 
@@ -1018,6 +1065,14 @@ def project_batch_state_change(
                     # `outcome: listed` it is a run that genuinely saved nothing; beside
                     # `outcome: refused` it is nobody having looked.
                     checkpoint_survey=checkpoint_survey,
+                    # What the run scored. None on every workload that is not an
+                    # evaluation, and on every caller that supplied no reader, which is all
+                    # of them until the lifecycle recorder is released against this tree.
+                    eval_metrics=_metrics_written(
+                        written_under=written_under,
+                        output_bucket=output_bucket,
+                        metrics_reader=metrics_reader,
+                    ),
                     wandb_run=wandb_run_for(run_id, detail),
                     retention_class=retention_class,
                     completed_at=ended_at,
@@ -1041,6 +1096,7 @@ def project_batch_event(
     output_bucket: str = OUTPUTS_BUCKET,
     retention_class: RetentionClass = RetentionClass.STANDARD,
     checkpoint_lister: CheckpointLister | None = None,
+    metrics_reader: MetricsReader | None = None,
 ) -> LifecycleProjection:
     """Project a whole EventBridge envelope, checking it is one this rule should deliver.
 
@@ -1085,4 +1141,5 @@ def project_batch_event(
         output_bucket=output_bucket,
         retention_class=retention_class,
         checkpoint_lister=checkpoint_lister,
+        metrics_reader=metrics_reader,
     )

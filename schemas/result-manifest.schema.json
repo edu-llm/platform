@@ -134,6 +134,71 @@
       "title": "CheckpointSurvey",
       "type": "object"
     },
+    "EvalMetric": {
+      "additionalProperties": false,
+      "description": "One number an evaluation produced, and enough beside it to compare two runs.\n\n``instances`` is here because a score over ten instances and a score over 1,172 are\ndifferent claims and both serialize as a float. The eval team's own sweep script keeps it\nfor the same reason.",
+      "properties": {
+        "instances": {
+          "minimum": 1,
+          "title": "Instances",
+          "type": "integer"
+        },
+        "key": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$",
+          "title": "Key",
+          "type": "string"
+        },
+        "task": {
+          "minLength": 1,
+          "title": "Task",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "task",
+        "key",
+        "value",
+        "instances"
+      ],
+      "title": "EvalMetric",
+      "type": "object"
+    },
+    "EvalMetrics": {
+      "additionalProperties": false,
+      "description": "What a run scored, as distinct from what it wrote.\n\nWhich keys make a valid cross-run comparison is a property of the metric and not of this\nrecord: see system-overview.md, \"Where everything is seen\", for the one column that is safe\nto compare across projects and the one that is not. This model carries what the harness\nreported and makes no claim about which of it is comparable.",
+      "properties": {
+        "harness": {
+          "minLength": 1,
+          "title": "Harness",
+          "type": "string"
+        },
+        "metrics": {
+          "items": {
+            "$ref": "#/$defs/EvalMetric"
+          },
+          "minItems": 1,
+          "title": "Metrics",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "harness",
+        "metrics"
+      ],
+      "title": "EvalMetrics",
+      "type": "object"
+    },
     "RetentionClass": {
       "enum": [
         "transient",
@@ -204,6 +269,17 @@
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$",
       "title": "Completed At",
       "type": "string"
+    },
+    "eval_metrics": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EvalMetrics"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "exit_code": {
       "anyOf": [
