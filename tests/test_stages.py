@@ -135,7 +135,7 @@ def test_a_persons_answer_is_marked_and_a_reading_is_not() -> None:
                         "planned": Cell(Mark.NOT_APPLICABLE),
                         "built": Cell(Mark.REACHED),
                         "deployed": Cell(Mark.NOT_READ),
-                        "proven": Cell(Mark.NOT_REACHED, derived=False),
+                        "under_test": Cell(Mark.NOT_REACHED, derived=False),
                     },
                 )
             ],
@@ -155,7 +155,7 @@ def test_a_test_file_that_exists_but_collects_nothing_is_not_proof(tmp_path: Pat
     A test module whose imports were broken by a refactor still exists, and pytest reports it as
     a collection error rather than a failure, so a suite can be green while the check a row
     claims is not running at all. Requiring the collector to have produced a test out of the
-    file is what makes `proven` a statement about a check that can fail.
+    file is what makes `under test` a statement about a check that can fail.
     """
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_thing.py").write_text("import nonexistent\n", encoding="utf-8")
@@ -294,7 +294,7 @@ def test_a_stage_is_never_inferred_from_the_one_before_it(manifest: Any) -> None
     """Mutation: fill a missing stage in from its neighbour.
 
     Every surface declares all five stages, and the resolver reads each independently. Nothing
-    anywhere maps built to deployed or a passing suite to proven, and the manifest carrying all
+    anywhere maps built to deployed or a passing suite to under test, and the manifest carrying all
     five for every row is what keeps it that way: there is no absent stage to be helpful about.
     """
     for group in manifest["slices"]:
@@ -486,7 +486,7 @@ def test_every_path_the_manifest_names_is_a_path_that_exists(
 #: The stages where a false `yes` misleads about the system rather than about a document or a
 #: plan. `designed` is a person's answer in every row by construction, and `planned` is a claim
 #: about a plan, where two surfaces built by one task is the ordinary case rather than a defect.
-MEASURED_STAGES = ("built", "deployed", "proven")
+MEASURED_STAGES = ("built", "deployed", "under_test")
 
 #: What a cell guarantees, so that one cell can be compared with another. The first element is
 #: the kind of claim -- two cells are only comparable when they make the same kind -- the second
@@ -567,13 +567,13 @@ def _declarations(manifest: Any) -> list[tuple[str, frozenset[str], str]]:
 def test_no_cell_may_be_implied_by_another_rows_cell_unless_the_manifest_says_why(
     manifest: Any,
 ) -> None:
-    """Mutation: point one row's `built` and `proven` at another row's module and test file.
+    """Mutation: point one row's `built` and `under test` at another row's module and test file.
 
     Not a hypothetical. `morning-message` did exactly that and read `yes` on both, for a surface
     nobody has ever written, because `notifications/messages.py` and
     `test_notification_messages.py` belong to the run-ended feed post -- a different surface with
     its own row. One built thing was counted twice and an unbuilt one was reported as built and
-    proven. `test_every_path_the_manifest_names_is_a_path_that_exists`, directly above, cannot
+    under test. `test_every_path_the_manifest_names_is_a_path_that_exists`, directly above, cannot
     catch it: every path named was real. It was the wrong row's paths, and nothing looked at that
     until a person read the file.
 
@@ -618,7 +618,7 @@ def test_no_cell_may_be_implied_by_another_rows_cell_unless_the_manifest_says_wh
 
     IT FOUND A SECOND FALSE POSITIVE ON THE FIRST RUN. `verb-reconciliation` had
     `built: {exists: cli/main.py}`, character for character `cli-binary`'s cell, one line under a
-    `planned` that said `settled and not built`; and a `proven` implied by two other rows' test
+    `planned` that said `settled and not built`; and an `under test` implied by two other rows' test
     sets. Nothing in the tree reconciles a verb list. It had read `yes` since #274 wrote this file.
     """
     implications = _implications(manifest)
