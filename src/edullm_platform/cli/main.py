@@ -2391,7 +2391,9 @@ def _submit(
     submitter = github_login(runner, allow_network=True)
     declared = arguments.spec if arguments.spec else find_spec(cwd)
     spec = load_spec(declared) if declared is not None else None
-    preflight = _preflight(arguments, configuration, facts, spec, submitter, spec_path=declared)
+    preflight = _preflight(
+        arguments, configuration, facts, spec, submitter, spec_path=declared
+    )
 
     if preflight.refused and not arguments.force:
         print(render_refusals(preflight.refusals), end="", file=err)
@@ -2416,7 +2418,9 @@ def _submit(
     dispatched_at = datetime.now(UTC)
     actions.dispatch(
         SUBMIT_WORKFLOW,
-        _submission_form(preflight.request, edullm_version=installed_version().version),
+        _submission_form(
+            preflight.request, edullm_version=installed_version().version
+        ),
         courtesy=(EDULLM_VERSION_FIELD,),
     )
     print(f"dispatching {SUBMIT_WORKFLOW} ... queued", file=out)
@@ -2559,7 +2563,9 @@ def _say_whether_this_edullm_is_current(
         print(file=err)
 
 
-def _submission_form(request: SubmissionRequest, *, edullm_version: str | None) -> dict[str, str]:
+def _submission_form(
+    request: SubmissionRequest, *, edullm_version: str | None
+) -> dict[str, str]:
     """``SubmissionInputs`` field for field, plus the one input that is not one of them.
 
     ``image_digest`` is deliberately absent rather than empty. The workflow derives it from
