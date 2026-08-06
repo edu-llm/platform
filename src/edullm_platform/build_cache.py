@@ -29,6 +29,25 @@ denial matrix the publish path runs against the deployed role is untouched.
 
 A cache is an optimisation, so nothing here may fail a publish. Every function answers
 "which image, or none, and why" and the caller reports the reason rather than stopping.
+
+WHY THE REGISTRY IS ASKED WITH ``BatchGetImage`` AND NOT WITH ``DescribeImages``, WHICH IS
+A BUG THIS ALREADY SHIPPED. ``DescribeImages`` given a list of image ids fails the *whole*
+call with ``ImageNotFoundException`` when any single id is absent. It does not return the
+ones it holds. A candidate list is twenty-five ancestors of one commit and a gap in it is
+the ordinary case rather than the exception: a research repository builds the branches
+somebody pushed, so the commits nobody pushed a branch for were never built. Measured
+against ``sbsandbox-intern-edullm-olmo-core`` on 2026-08-06, eleven of OLMo-core's
+twenty-five candidates had no image, so the resolver answered "no published ancestor"
+while ``fc2c4745e377`` was published and would have been chosen. Every build imported
+nothing, and nothing said so, because there was no layer worth hitting until the
+Dockerfile reorder landed the same night.
+
+``BatchGetImage`` answers the question that was actually being asked. It returns the images
+it holds in ``images`` and the ones it does not in ``failures``, each with
+``failureCode: ImageNotFound``, and exits zero. The same twenty-five ids that failed
+``DescribeImages`` outright return five found and twenty failures. It costs one round trip
+rather than twenty-five, needs no pagination, and ``ecr:BatchGetImage`` is already one of
+the publisher role's nine actions on exactly these repositories.
 """
 
 from __future__ import annotations
@@ -40,20 +59,29 @@ from typing import Final
 
 __all__ = [
     "ANCESTOR_LIMIT",
+    "BATCH_GET_IMAGE_LIMIT",
     "IMAGE_TAG_LENGTH",
     "CacheSourceReason",
     "ancestor_tags",
     "cache_source_reference",
+    "candidate_batches",
     "choose_published_ancestor",
     "image_tag_for_commit",
 ]
 
-#: How many ancestors are offered as candidates. ``DescribeImages`` takes a hundred image
-#: ids in one call, so this is not an API bound; it is how far back the search is worth
-#: going. Every push to a registered branch publishes, so the nearest ancestor is nearly
-#: always published and twenty-five is slack for the stretches where it is not -- a branch
-#: rebased onto commits that were never built, or a repository onboarded mid-history.
+#: How many ancestors are offered as candidates. This is not an API bound; it is how far
+#: back the search is worth going. Every push to a registered branch publishes, so the
+#: nearest ancestor is nearly always published and twenty-five is slack for the stretches
+#: where it is not -- a branch rebased onto commits that were never built, or a repository
+#: onboarded mid-history.
 ANCESTOR_LIMIT: Final = 25
+
+#: How many image ids ``BatchGetImage`` accepts in one call. Exceeding it is a parameter
+#: validation error rather than a partial answer, and a validation error reads exactly like
+#: an unreachable registry: no cache, a printed reason, and a green build. That is the
+#: failure this module already got wrong once, so the bound is enforced by batching rather
+#: than trusted to stay below itself.
+BATCH_GET_IMAGE_LIMIT: Final = 100
 
 #: The publish workflow tags an image with the first twelve characters of its commit. This
 #: module composes the same tag rather than being told it, so an ancestor's tag cannot be
@@ -114,6 +142,27 @@ def ancestor_tags(revision_output: str, *, limit: int = ANCESTOR_LIMIT) -> tuple
         if tag not in tags:
             tags.append(tag)
     return tuple(tags)
+
+
+def candidate_batches(
+    candidates: Sequence[str],
+    *,
+    limit: int = BATCH_GET_IMAGE_LIMIT,
+) -> tuple[tuple[str, ...], ...]:
+    """Split the candidates into groups one ``BatchGetImage`` call can carry, in order.
+
+    Order is preserved across and within the groups, so a caller that walks the groups and
+    stops at the first hit still gets the nearest published ancestor rather than merely a
+    published one. At today's :data:`ANCESTOR_LIMIT` this returns a single group and costs
+    one round trip, which is what the publish job budgeted for; the batching exists so that
+    raising that limit turns into another call rather than into a validation error the
+    caller would have to read as an unreadable registry.
+    """
+    if limit < 1:
+        raise ValueError("batch limit must be at least one")
+    return tuple(
+        tuple(candidates[start : start + limit]) for start in range(0, len(candidates), limit)
+    )
 
 
 def choose_published_ancestor(
