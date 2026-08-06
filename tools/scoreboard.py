@@ -39,22 +39,40 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
 
+from edullm_platform.stages import (
+    STAGES,
+    Slice,
+    Sources,
+    count_reached,
+    read_manifest,
+    render_stage_table,
+    resolve_manifest,
+)
+
 __all__ = [
     "PLAN_TASK_HEADING",
+    "SURFACES",
     "Row",
     "TaskCensus",
     "TaskStatus",
     "build_parser",
     "census_of_plan_tasks",
+    "collected_test_files",
     "count_collected_tests",
+    "gather",
+    "healthy_stacks",
     "main",
     "pull_requests_in_other_repositories",
     "read_task_status",
     "rows",
     "status_of_every_task",
+    "tasks_in_plans",
 ]
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parent.parent
+
+#: What each surface is and where to look for it. The stage itself is not in there.
+SURFACES: Final = PROJECT_ROOT / "config" / "reports" / "surfaces.yaml"
 
 #: A task heading in a plan. Two spellings are in use and both are load-bearing rather than
 #: sloppy. The spine plan numbers its tasks `S1` through `S5` and `P1` through `P8` because it
@@ -214,6 +232,144 @@ def pull_requests_in_other_repositories(
     )
 
 
+def collected_test_files(collector_output: str) -> frozenset[str]:
+    """Which test files pytest actually collected a test out of.
+
+    Mutation this is written against: take every line that ends in `.py`. `--collect-only -q`
+    prints one line per test as `path::name`, and it also prints error and warning blocks that
+    name files. Requiring the `::` is what separates a file a test came out of from a file
+    something went wrong in, and only the first is evidence that a check exists.
+    """
+    return frozenset(
+        line.split("::", 1)[0].strip()
+        for line in collector_output.splitlines()
+        if "::" in line and line.strip().endswith(tuple("]") + ("",)) and line.startswith("tests/")
+    )
+
+
+def _paths_on_default_branch() -> frozenset[str] | None:
+    """Every path the default branch holds, which is what `deployed` means for a workflow.
+
+    A workflow, a skill or an issue template goes live by being merged, so a working tree that
+    has it and `origin/main` that does not is a thing built and not deployed. That distinction
+    is invisible to a check that reads the tree, and it is precisely the state a row sits in
+    while its pull request is open.
+    """
+    listed = _git("ls-tree", "-r", "--name-only", "origin/main")
+    if listed is None:
+        listed = _git("ls-tree", "-r", "--name-only", "HEAD")
+    return None if listed is None else frozenset(listed.splitlines())
+
+
+def _git(*arguments: str) -> str | None:
+    try:
+        completed = subprocess.run(
+            ["git", *arguments],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=PROJECT_ROOT,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return completed.stdout if completed.returncode == 0 else None
+
+
+def healthy_stacks(deployed: Mapping[str, str], applied: Iterable[str]) -> frozenset[str]:
+    """The stacks the account holds in a status that means a template was applied.
+
+    The allow-list is imported from `tools/verify_deployed_stacks.py` rather than restated,
+    because it was widened once already to stop `ROLLBACK_COMPLETE` reading as a deploy, and a
+    second copy of it here is a second place that fix would have had to be made.
+    """
+    permitted = frozenset(applied)
+    return frozenset(name for name, status in deployed.items() if status in permitted)
+
+
+def _stacks_in_the_account(arguments: argparse.Namespace) -> frozenset[str] | None:
+    sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+    try:
+        from verify_deployed_stacks import STATUSES_WITH_A_TEMPLATE_APPLIED, list_deployed_stacks
+    except ImportError:
+        return None
+    try:
+        deployed = list_deployed_stacks(profile=arguments.profile, region=arguments.region)
+    except Exception:  # noqa: BLE001 - no session is an unread row rather than a crash
+        return None
+    return healthy_stacks(deployed, STATUSES_WITH_A_TEMPLATE_APPLIED)
+
+
+def _buckets() -> frozenset[str] | None:
+    raw = _aws("s3api", "list-buckets", "--output", "json")
+    if raw is None:
+        return None
+    try:
+        return frozenset(str(bucket["Name"]) for bucket in json.loads(raw)["Buckets"])
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def _aws(*arguments: str) -> str | None:
+    try:
+        completed = subprocess.run(
+            ["aws", *arguments], capture_output=True, text=True, check=False, timeout=120
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return completed.stdout if completed.returncode == 0 else None
+
+
+def tasks_in_plans(directory: Path, glob: str) -> frozenset[str]:
+    """Every task a plan carries, keyed the way the surface manifest names them.
+
+    The key drops the date prefix off the filename, so `2026-08-04-the-measurement.md` Task 4 is
+    `the-measurement/4`. The manifest is tracked and the plans are not, and a tracked file must
+    not carry a path into a private tree. A stem is a name rather than a path, and it survives
+    the plans moving.
+    """
+    found: set[str] = set()
+    for plan in sorted(directory.glob(glob)):
+        stem = re.sub(r"^\d{4}-\d{2}-\d{2}-", "", plan.stem)
+        for number, _ in status_of_every_task(plan.read_text(encoding="utf-8")):
+            found.add(f"{stem}/{number}")
+    return frozenset(found)
+
+
+def gather(arguments: argparse.Namespace, *, collector_output: str | None) -> Sources:
+    """Every source the board needs, read once each.
+
+    Ninety-six rows over five stages is four hundred and eighty lookups, and performing them
+    row by row would be several hundred subprocesses and a rate limit. Every one of these
+    returns ``None`` when its source is unreachable, and ``None`` becomes `not read` in the
+    cells that needed it rather than an exception that costs the whole board.
+    """
+    environments = _gh(
+        "api",
+        f"repos/{arguments.repo}/environments",
+        "--jq",
+        "[.environments[].name]",
+    )
+    released = _gh("release", "list", "--repo", arguments.repo, "--limit", "1", "--json", "tagName")
+    plans = (
+        tasks_in_plans(Path(arguments.plans_dir), arguments.plans_glob)
+        if arguments.plans_dir
+        else None
+    )
+    return Sources(
+        tree=PROJECT_ROOT,
+        on_main=_paths_on_default_branch(),
+        collected_tests=(
+            None if collector_output is None else collected_test_files(collector_output)
+        ),
+        healthy_stacks=_stacks_in_the_account(arguments),
+        buckets=_buckets(),
+        environments=None if environments is None else frozenset(json.loads(environments)),
+        released=None if released is None else bool(json.loads(released)),
+        plan_tasks=plans,
+    )
+
+
 def _gh(*arguments: str) -> str | None:
     """`gh`, or ``None`` when it is missing, unauthenticated or refused.
 
@@ -253,15 +409,49 @@ def _merged_since(repository: str, since: str) -> str | None:
     )
 
 
-def rows(arguments: argparse.Namespace, *, now: datetime | None = None) -> list[Row]:
+def stage_rows(board: Sequence[Slice]) -> list[Row]:
+    """The three stage columns as fractions, which is the aggregate worth watching.
+
+    These are the only aggregate figures the table above does not already show, and they come
+    free from it. A count of merged pull requests moves every hour and says nothing about
+    whether the platform does more than it did; `deployed 41 of 63` moves rarely and says
+    exactly that.
+    """
+    counted = []
+    for stage in ("built", "deployed", "proven"):
+        reached, applicable = count_reached(board, stage)
+        spoken = sum(
+            1
+            for group in board
+            for surface in group.surfaces
+            if surface.cells[stage].moved and not surface.cells[stage].derived
+        )
+        counted.append(
+            Row(
+                label=f"Surfaces {stage}",
+                value=f"{reached} of {applicable}",
+                command="uv run --frozen python tools/scoreboard.py",
+                note=(
+                    f"Out of the rows the stage applies to and something could answer. {spoken} "
+                    "of the yes side is a person's answer rather than a reading"
+                ),
+            )
+        )
+    return counted
+
+
+def rows(
+    arguments: argparse.Namespace,
+    *,
+    now: datetime | None = None,
+    collected: int | None = None,
+) -> list[Row]:
     """The board, computed."""
     moment = now or datetime.now(tz=UTC)
-    today = moment.date().isoformat()
     yesterday = (moment - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
     repository = arguments.repo
     short = repository.split("/")[-1]
 
-    collected = _run_collector()
     board = [
         Row(
             label="Tests in the suite",
@@ -274,15 +464,6 @@ def rows(arguments: argparse.Namespace, *, now: datetime | None = None) -> list[
                 "release", "view", "--repo", repository, "--json", "tagName", "--jq", ".tagName"
             ),
             command=f"gh release view --repo {repository} --json tagName --jq .tagName",
-        ),
-        Row(
-            label="Pull requests merged today",
-            value=_merged_since(repository, today),
-            command=(
-                f"gh pr list --repo {repository} --state merged "
-                f'--search "merged:>=$(date -u +%Y-%m-%d)" --limit 500 --json number --jq length'
-            ),
-            note="The day is UTC, so this reads low for the first hours of a US evening",
         ),
         Row(
             label="Pull requests merged in the last 24 hours",
@@ -434,7 +615,12 @@ def _hand_applied_row() -> Row:
     )
 
 
-def _run_collector() -> int | None:
+def _run_collector() -> str | None:
+    """pytest's collection, run once and read twice.
+
+    Both the suite size and every `proven` cell backed by a test come out of this, so running
+    the collector twice would double the slowest part of the board for no new information.
+    """
     try:
         completed = subprocess.run(
             [sys.executable, "-m", "pytest", "--collect-only", "-q"],
@@ -446,7 +632,7 @@ def _run_collector() -> int | None:
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    return count_collected_tests(completed.stdout)
+    return completed.stdout
 
 
 def render(board: Sequence[Row], *, moment: datetime) -> str:
@@ -481,6 +667,10 @@ def build_parser() -> argparse.ArgumentParser:
         default="2026-08-0[45]-*.md",
         help="which files in --plans-dir are plans",
     )
+    parser.add_argument("--profile", help="AWS profile to read the account's stacks under")
+    parser.add_argument("--region", default="us-east-2", help="AWS region the stacks are in")
+    parser.add_argument("--surfaces", default=str(SURFACES), help="the surface manifest to resolve")
+    parser.add_argument("--stages-only", action="store_true", help="the table and nothing else")
     parser.add_argument("--json", action="store_true", help="one JSON document instead of a table")
     return parser
 
@@ -488,28 +678,62 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     moment = datetime.now(tz=UTC)
-    board = rows(arguments, now=moment)
-    if arguments.json:
-        print(
-            json.dumps(
-                {
-                    "read_at": moment.isoformat(),
-                    "rows": [
-                        {
-                            "label": row.label,
-                            "value": row.value,
-                            "command": row.command,
-                            "note": row.note,
-                        }
-                        for row in board
-                    ],
-                },
-                indent=2,
-            )
+
+    collector_output = _run_collector()
+    manifest = read_manifest(Path(arguments.surfaces))
+    board = resolve_manifest(manifest, gather(arguments, collector_output=collector_output))
+    counted = (
+        []
+        if arguments.stages_only
+        else rows(
+            arguments,
+            now=moment,
+            collected=None if collector_output is None else count_collected_tests(collector_output),
         )
+        + stage_rows(board)
+    )
+
+    if arguments.json:
+        print(json.dumps(_document(board, counted, manifest, moment), indent=2))
         return 0
-    print(render(board, moment=moment))
+    print(render_stage_table(board, checked=str(manifest["checked"])))
+    if counted:
+        print()
+        print(render(counted, moment=moment))
     return 0
+
+
+def _document(
+    board: Sequence[Slice],
+    counted: Sequence[Row],
+    manifest: Mapping[str, Any],
+    moment: datetime,
+) -> dict[str, Any]:
+    return {
+        "read_at": moment.isoformat(),
+        "manually_checked": str(manifest["checked"]),
+        "surfaces": [
+            {
+                "slice": group.name,
+                "id": surface.id,
+                "name": surface.name,
+                **{
+                    stage: {
+                        "mark": surface.cells[stage].mark.value,
+                        "derived": surface.cells[stage].derived,
+                        "note": surface.cells[stage].note,
+                    }
+                    for stage in STAGES
+                },
+            }
+            for group in board
+            for surface in group.surfaces
+        ],
+        "rows": [
+            {"label": row.label, "value": row.value, "command": row.command, "note": row.note}
+            for row in counted
+        ],
+    }
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised through main()
