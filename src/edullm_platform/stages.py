@@ -98,8 +98,18 @@ class Cell:
 
     @property
     def countable(self) -> bool:
-        """Whether this belongs in a tally's denominator."""
-        return self.mark not in {Mark.NOT_APPLICABLE, Mark.NOT_READ}
+        """Whether this belongs in a tally's denominator.
+
+        ONLY ``NOT_APPLICABLE`` LEAVES, AND ``NOT_READ`` USED TO LEAVE WITH IT. A denominator
+        counts the rows a stage applies to, and whether a lookup ran tonight is not a fact
+        about the row. Letting an unreadable source shrink the denominator meant the fraction
+        improved as the instrument learned less: on 2026-08-06 the `deployed` column read
+        43 of 55 with an AWS session and 39 of 53 without one, because the two rows whose
+        stack lookup has no declared fallback left the denominator rather than landing in the
+        unread bucket. A reader comparing the two sees a board that lost four deploys, when
+        what it lost was the ability to look.
+        """
+        return self.mark is not Mark.NOT_APPLICABLE
 
 
 @dataclass(frozen=True)
@@ -137,6 +147,13 @@ class Sources:
     environments: frozenset[str] | None = None
     released: bool | None = None
     plan_tasks: frozenset[str] | None = None
+
+    #: Stacks CloudFormation is part-way through an operation on. Separate from
+    #: :attr:`healthy_stacks` because the account is not yet what any template says and will
+    #: be something else in a few minutes, so the only honest reading is that it was not read.
+    #: This is the one-row flap: five profiled runs in a minute on 2026-08-06 returned 43 four
+    #: times and 42 once, while an agent was applying stacks and one of them was mid-update.
+    stacks_mid_flight: frozenset[str] = frozenset()
 
 
 def _all_paths(value: Any) -> list[str]:
@@ -199,12 +216,38 @@ def _tests(declared: Sequence[str], sources: Sources) -> Cell:
     return Cell(Mark.REACHED)
 
 
+def _stack(name: str, sources: Sources) -> Cell:
+    """Reached when the account holds this stack with a template applied in full.
+
+    Mutation this is written against: read every status that is not one of the three healthy
+    ones as the stack being absent. A stack in ``UPDATE_IN_PROGRESS`` is not absent, it is
+    being deployed while the board is being read, and answering `no` makes the board disagree
+    with itself twice in the same minute for a reason that has nothing to do with the work.
+    That is the one-row flap of 2026-08-06. Mid-flight is a state to re-read, so it says so.
+    """
+    if sources.healthy_stacks is None:
+        return Cell(Mark.NOT_READ, note="the account was not read")
+    if name in sources.healthy_stacks:
+        return Cell(Mark.REACHED)
+    if name in sources.stacks_mid_flight:
+        return Cell(Mark.NOT_READ, note=f"{name} is mid-flight, so the account is between states")
+    return Cell(Mark.NOT_REACHED)
+
+
 def resolve(stage: Mapping[str, Any], sources: Sources) -> Cell:
     """One cell, from the rule the manifest declares for it.
 
-    A rule that cannot be run falls back to the answer under ``or`` when the manifest offers
-    one, and that answer prints as a person's. Where there is no fallback the cell reads
-    ``not read``, which is the state this exists to make visible.
+    A LOOKUP THAT COULD NOT RUN STAYS ``NOT_READ``, AND THE ANSWER UNDER ``or`` IS CARRIED AS
+    CONTEXT RATHER THAN SUBSTITUTED FOR IT. It used to be substituted, and that made the board
+    answer differently depending on whether a call happened to get through: fifteen `deployed`
+    rows declare a fallback and twelve of those fallbacks are a bare yes or no, so a throttled
+    or unauthenticated run silently promoted twelve opinions into the tally and reported no
+    unread rows where it had read nothing. A `*` in a table cell is not loud enough to carry
+    that, and a run that quietly answers from memory under load is the failure this board was
+    built to stop rather than one it may commit.
+
+    What the fallback is still good for is telling a reader what somebody last believed, so it
+    is printed in the note beside the reason the lookup could not run.
     """
     rule = {key: value for key, value in stage.items() if key != "or"}
     (name, value), *rest = rule.items()
@@ -217,7 +260,15 @@ def resolve(stage: Mapping[str, Any], sources: Sources) -> Cell:
     cell = _lookup(name, value, sources)
     if cell.mark is not Mark.NOT_READ or "or" not in stage:
         return cell
-    return resolve(stage["or"], sources)
+    standing = resolve(stage["or"], sources)
+    return Cell(
+        Mark.NOT_READ,
+        note=(
+            f"{cell.note}; the manifest records a standing answer of "
+            f"'{standing.mark.value}' ({standing.note}), which is not a reading and is not "
+            "counted"
+        ),
+    )
 
 
 def _lookup(name: str, value: Any, sources: Sources) -> Cell:
@@ -239,9 +290,7 @@ def _lookup(name: str, value: Any, sources: Sources) -> Cell:
         case "tests":
             return _tests(_all_paths(value), sources)
         case "stack":
-            return _from_membership(
-                str(value), sources.healthy_stacks, missing="the account was not read"
-            )
+            return _stack(str(value), sources)
         case "bucket":
             return _from_membership(str(value), sources.buckets, missing="S3 was not read")
         case "environment":
@@ -293,9 +342,11 @@ def resolve_manifest(manifest: Mapping[str, Any], sources: Sources) -> list[Slic
 def count_reached(board: Sequence[Slice], stage: str) -> tuple[int, int]:
     """How many surfaces have reached a stage, over how many the stage applies to.
 
-    The denominator excludes the rows the stage does not apply to and the rows nothing could
-    read, so it moves when a lookup starts working. That is deliberate: a fraction over a fixed
-    denominator would let an unreadable account quietly read as failure.
+    The denominator excludes only the rows the stage does not apply to, so it is a property of
+    the manifest and not of tonight's credentials. Two runs against an unchanged account get
+    the same denominator whatever either of them managed to read. A row nothing could read is
+    in the denominator and out of the numerator, and :func:`tools.scoreboard.fraction` prints
+    how many of those there were beside the figure.
     """
     cells = [surface.cells[stage] for group in board for surface in group.surfaces]
     return sum(1 for cell in cells if cell.moved), sum(1 for cell in cells if cell.countable)

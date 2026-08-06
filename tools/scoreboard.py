@@ -53,6 +53,8 @@ from edullm_platform.stages import (
 __all__ = [
     "PLAN_TASK_HEADING",
     "SURFACES",
+    "AccountStacks",
+    "Reading",
     "Row",
     "TaskCensus",
     "TaskStatus",
@@ -60,6 +62,7 @@ __all__ = [
     "census_of_plan_tasks",
     "collected_test_files",
     "count_collected_tests",
+    "default_region",
     "fraction",
     "gather",
     "healthy_stacks",
@@ -68,6 +71,8 @@ __all__ = [
     "read_task_status",
     "render_slice_rollup",
     "rows",
+    "stacks_in_the_account",
+    "stacks_mid_flight",
     "status_of_every_task",
     "tasks_in_plans",
 ]
@@ -148,6 +153,20 @@ class Row:
     value: str | None
     command: str
     note: str = ""
+
+
+@dataclass(frozen=True)
+class Reading:
+    """One pass over every source, and what it could not see.
+
+    A board printed from a complete `blind` list and a board printed from an empty one are two
+    different claims about the same account, and the fractions alone do not distinguish them.
+    Carrying the list beside the sources is what lets the printed board say which it is.
+    """
+
+    sources: Sources
+    blind: Sequence[str]
+    region: str
 
 
 def read_task_status(note: str) -> TaskStatus:
@@ -257,10 +276,15 @@ def _paths_on_default_branch() -> frozenset[str] | None:
     has it and `origin/main` that does not is a thing built and not deployed. That distinction
     is invisible to a check that reads the tree, and it is precisely the state a row sits in
     while its pull request is open.
+
+    Mutation this is written against: fall back to `HEAD` when `origin/main` cannot be read.
+    That reads the fifteen `on_main` rows off the working tree, which is the same tree the
+    `built` column reads, so every one of them jumps to deployed the moment somebody writes
+    the file -- and it does it silently, in a checkout without a remote, which is where
+    somebody is most likely to be reading the board and least likely to notice. An
+    unreadable branch is a row nobody read.
     """
     listed = _git("ls-tree", "-r", "--name-only", "origin/main")
-    if listed is None:
-        listed = _git("ls-tree", "-r", "--name-only", "HEAD")
     return None if listed is None else frozenset(listed.splitlines())
 
 
@@ -279,6 +303,22 @@ def _git(*arguments: str) -> str | None:
     return completed.stdout if completed.returncode == 0 else None
 
 
+def default_region() -> str:
+    """Where to look for the stacks, taken from the checker that owns the list of them.
+
+    Mutation this is written against: write the region here as well. It was written here as
+    well, as `us-east-2`, while `tools/verify_deployed_stacks.py` said `us-east-1`, and the
+    two disagreed for as long as nobody ran the board without `--region`. When somebody did,
+    on 2026-08-06, it listed a region holding none of these stacks and printed 30 of 55 where
+    the account holds 43. Two constants that must agree and are written twice will disagree,
+    and the one that gets read less is the one that goes wrong quietly.
+    """
+    sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+    from verify_deployed_stacks import DEFAULT_REGION
+
+    return str(DEFAULT_REGION)
+
+
 def healthy_stacks(deployed: Mapping[str, str], applied: Iterable[str]) -> frozenset[str]:
     """The stacks the account holds in a status that means a template was applied.
 
@@ -290,17 +330,70 @@ def healthy_stacks(deployed: Mapping[str, str], applied: Iterable[str]) -> froze
     return frozenset(name for name, status in deployed.items() if status in permitted)
 
 
-def _stacks_in_the_account(arguments: argparse.Namespace) -> frozenset[str] | None:
+def stacks_mid_flight(deployed: Mapping[str, str]) -> frozenset[str]:
+    """The stacks CloudFormation is part-way through an operation on.
+
+    `REVIEW_IN_PROGRESS` is excluded and is the whole reason this is not a substring test. It
+    reads like the others and it is not transient: a change set was created against the name
+    and never executed, so nothing is deployed and nothing is going to become deployed on its
+    own. Calling that unread would hide a real `no` behind a word, and one of those sat in
+    this account for five days already. Every other `_IN_PROGRESS` resolves in minutes, which
+    is what makes re-reading the right answer rather than guessing which way it will land.
+    """
+    return frozenset(
+        name
+        for name, status in deployed.items()
+        if status.endswith("_IN_PROGRESS") and status != "REVIEW_IN_PROGRESS"
+    )
+
+
+@dataclass(frozen=True)
+class AccountStacks:
+    """What one reading of the account found, or why there was not one.
+
+    `applied` is ``None`` when the account was not read at all. `why` is empty exactly when it
+    was, so a caller can print the reason without inferring it from the absence.
+    """
+
+    applied: frozenset[str] | None
+    mid_flight: frozenset[str] = frozenset()
+    why: str = ""
+
+
+def stacks_in_the_account(arguments: argparse.Namespace) -> AccountStacks:
+    """Every stack of ours the account holds, or a refusal that says why there is no answer.
+
+    A LISTING HOLDING NONE OF OUR STACKS IS REFUSED RATHER THAN BELIEVED. The manifest names
+    fourteen stacks by name, so a region answering with none of them is not the news that
+    fourteen deploys were rolled back overnight, it is the news that this looked somewhere
+    they were never deployed. That is not hypothetical: it produced the 30 of 55 that went
+    into the status document on 2026-08-06, from a run with a working session and the wrong
+    default region. The empty reading was the dangerous one precisely because it is a
+    reading -- every cell went to a confident `no`, the denominator stayed at 55, and no
+    fallback fired, so the board looked more measured than the correct run beside it.
+    """
     sys.path.insert(0, str(PROJECT_ROOT / "tools"))
     try:
         from verify_deployed_stacks import STATUSES_WITH_A_TEMPLATE_APPLIED, list_deployed_stacks
-    except ImportError:
-        return None
+    except ImportError as error:
+        return AccountStacks(None, why=f"the stack reader could not be imported ({error})")
     try:
         deployed = list_deployed_stacks(profile=arguments.profile, region=arguments.region)
-    except Exception:  # noqa: BLE001 - no session is an unread row rather than a crash
-        return None
-    return healthy_stacks(deployed, STATUSES_WITH_A_TEMPLATE_APPLIED)
+    except Exception as error:  # noqa: BLE001 - no session is an unread row rather than a crash
+        return AccountStacks(None, why=f"{arguments.region} was not read ({error})")
+    if not deployed:
+        return AccountStacks(
+            None,
+            why=(
+                f"{arguments.region} holds no stack this repository deploys, which is a "
+                "region or an account this platform was never deployed into rather than an "
+                "account that lost every stack overnight"
+            ),
+        )
+    return AccountStacks(
+        applied=healthy_stacks(deployed, STATUSES_WITH_A_TEMPLATE_APPLIED),
+        mid_flight=stacks_mid_flight(deployed),
+    )
 
 
 def _buckets() -> frozenset[str] | None:
@@ -339,14 +432,21 @@ def tasks_in_plans(directory: Path, glob: str) -> frozenset[str]:
     return frozenset(found)
 
 
-def gather(arguments: argparse.Namespace, *, collector_output: str | None) -> Sources:
-    """Every source the board needs, read once each.
+def gather(arguments: argparse.Namespace, *, collector_output: str | None) -> Reading:
+    """Every source the board needs, read once each, and a note for every one that refused.
 
     Ninety-six rows over five stages is four hundred and eighty lookups, and performing them
     row by row would be several hundred subprocesses and a rate limit. Every one of these
     returns ``None`` when its source is unreachable, and ``None`` becomes `not read` in the
     cells that needed it rather than an exception that costs the whole board.
+
+    THE REFUSALS ARE COLLECTED RATHER THAN INFERRED FROM THE ``None``s. Two runs of this
+    against an unchanged account differ only in what they managed to read, and the fraction
+    alone cannot tell a reader which of the two they are holding. Naming the sources that did
+    not answer, above the table, is what turns "the number moved" into "the number moved
+    because nobody could reach CloudFormation".
     """
+    blind: list[str] = []
     environments = _gh(
         "api",
         f"repos/{arguments.repo}/environments",
@@ -359,17 +459,41 @@ def gather(arguments: argparse.Namespace, *, collector_output: str | None) -> So
         if arguments.plans_dir
         else None
     )
-    return Sources(
-        tree=PROJECT_ROOT,
-        on_main=_paths_on_default_branch(),
-        collected_tests=(
-            None if collector_output is None else collected_test_files(collector_output)
+    stacks = stacks_in_the_account(arguments)
+    if stacks.why:
+        blind.append(f"CloudFormation: {stacks.why}")
+
+    on_main = _paths_on_default_branch()
+    if on_main is None:
+        blind.append("the default branch: `git ls-tree origin/main` did not answer")
+    buckets = _buckets()
+    if buckets is None:
+        blind.append("S3: `aws s3api list-buckets` did not answer")
+    if environments is None:
+        blind.append(f"GitHub environments: `gh api repos/{arguments.repo}/environments` refused")
+    if released is None:
+        blind.append("GitHub releases: `gh release list` refused")
+    if collector_output is None:
+        blind.append("the test suite: pytest did not collect")
+    if plans is None:
+        blind.append("the plans: no --plans-dir was given")
+
+    return Reading(
+        sources=Sources(
+            tree=PROJECT_ROOT,
+            on_main=on_main,
+            collected_tests=(
+                None if collector_output is None else collected_test_files(collector_output)
+            ),
+            healthy_stacks=stacks.applied,
+            stacks_mid_flight=stacks.mid_flight,
+            buckets=buckets,
+            environments=None if environments is None else frozenset(json.loads(environments)),
+            released=None if released is None else bool(json.loads(released)),
+            plan_tasks=plans,
         ),
-        healthy_stacks=_stacks_in_the_account(arguments),
-        buckets=_buckets(),
-        environments=None if environments is None else frozenset(json.loads(environments)),
-        released=None if released is None else bool(json.loads(released)),
-        plan_tasks=plans,
+        blind=blind,
+        region=str(arguments.region),
     )
 
 
@@ -426,15 +550,20 @@ def fraction(group: Slice, stage: str) -> str:
     THE QUALIFIERS ARE NOT DECORATION. Rolling ninety-six rows into nine loses exactly the
     information that makes a fraction trustworthy, so both losses are put back on the cell. A
     `*` means part of the yes side is somebody's recollection rather than a reading, which is
-    what the whole board is built to keep visible. An `unread` count is rows the denominator
-    silently dropped because no lookup could run, and without it a `deployed` column read with
-    no AWS session looks small and confident rather than largely unasked.
+    what the whole board is built to keep visible. An `unread` count is rows in the
+    denominator that no lookup could answer, and without it a `deployed` column read with no
+    AWS session looks small and confident rather than largely unasked.
+
+    THE DENOMINATOR DOES NOT MOVE WHEN THE UNREAD COUNT DOES. It used to: an unread row left
+    both sides, so a blind run printed a smaller fraction of a smaller whole and read better
+    than the run beside it that could see. Now the whole is what the manifest says the stage
+    applies to, and the unread count is how much of that whole this run failed to reach.
     """
     reached, applicable = count_reached([group], stage)
     cells = [surface.cells[stage] for surface in group.surfaces]
     unread = sum(1 for cell in cells if cell.mark is Mark.NOT_READ)
     spoken = sum(1 for cell in cells if cell.moved and not cell.derived)
-    if applicable == 0 and unread == 0:
+    if applicable == 0:
         return "n/a"
     text = f"{reached} of {applicable}{'*' if spoken else ''}"
     return f"{text} ({unread} unread)" if unread else text
@@ -454,25 +583,56 @@ def _bold(text: str) -> str:
     return bolded + (f"{opened}{tail}" if opened else "")
 
 
-def render_slice_rollup(board: Sequence[Slice], *, checked: str, moment: datetime) -> str:
+def render_slice_rollup(
+    board: Sequence[Slice],
+    *,
+    checked: str,
+    moment: datetime,
+    blind: Sequence[str] = (),
+    region: str = "",
+) -> str:
     """The whole platform on one screen, a row per slice and a fraction per stage.
 
     WHY THIS IS THE DEFAULT AND THE PER-SURFACE TABLE IS NOT. Ninety-six rows is a detail view.
     It answers "which thing is undeployed" and it cannot answer "where are we", because nothing
     on it is a total and a reader has to count ninety-six rows to get one. These nine rows
     answer the second question and name the command that answers the first.
+
+    WHAT DID NOT ANSWER IS PRINTED ABOVE THE TABLE AND NOT BELOW IT. Four readings of this
+    board went into the status document within two hours on 2026-08-06 disagreeing by up to
+    thirteen rows, and a reader holding any two of them had nothing on either to say which was
+    the trustworthy one. A figure produced by a run that could not reach CloudFormation has to
+    say so before the figure, because after the figure is after the reader has believed it.
     """
     total = Slice(name="Total", surfaces=[s for group in board for s in group.surfaces])
     legend = (
-        "A denominator counts the rows the stage applies to. `*` means part of that yes side is "
-        f"a person's answer as of {checked} rather than a reading, and `unread` is rows no "
-        "lookup could answer on this run, which are in neither side of the fraction."
+        "A denominator counts the rows the stage applies to and does not move when a lookup "
+        f"fails. `*` means part of that yes side is a person's answer as of {checked} rather "
+        "than a reading, and `unread` is rows in the denominator that no lookup could answer "
+        "on this run, counted as neither reached nor not."
+    )
+    read_at = (
+        f"Read at {moment.strftime('%Y-%m-%d %H:%M')} UTC by `tools/scoreboard.py`"
+        + (f", against {region}" if region else "")
+        + ". Every figure is computed on the run that prints it."
+    )
+    warning = (
+        []
+        if not blind
+        else [
+            "",
+            (
+                f"**This run could not read {len(blind)} of its sources, so every row that "
+                "needed one is unread rather than answered. Do not hold these figures "
+                "against a run that could read them.**"
+            ),
+            "",
+            *[f"- {reason}" for reason in blind],
+        ]
     )
     lines = [
-        (
-            f"Read at {moment.strftime('%Y-%m-%d %H:%M')} UTC by `tools/scoreboard.py`. Every "
-            "figure is computed on the run that prints it."
-        ),
+        read_at,
+        *warning,
         "",
         "| Slice | Built | Deployed | Proven |",
         "| --- | --- | --- | --- |",
@@ -723,7 +883,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="which files in --plans-dir are plans",
     )
     parser.add_argument("--profile", help="AWS profile to read the account's stacks under")
-    parser.add_argument("--region", default="us-east-2", help="AWS region the stacks are in")
+    parser.add_argument("--region", default=default_region(), help="AWS region the stacks are in")
     parser.add_argument("--surfaces", default=str(SURFACES), help="the surface manifest to resolve")
     parser.add_argument("--stages-only", action="store_true", help="the table and nothing else")
     parser.add_argument(
@@ -741,7 +901,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     collector_output = _run_collector()
     manifest = read_manifest(Path(arguments.surfaces))
-    board = resolve_manifest(manifest, gather(arguments, collector_output=collector_output))
+    reading = gather(arguments, collector_output=collector_output)
+    board = resolve_manifest(manifest, reading.sources)
     counted = (
         []
         if arguments.stages_only
@@ -754,12 +915,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     checked = str(manifest["checked"])
 
     if arguments.json:
-        print(json.dumps(_document(board, counted, manifest, moment), indent=2))
+        print(json.dumps(_document(board, counted, manifest, moment, reading), indent=2))
         return 0
     if arguments.detail:
         print(render_stage_table(board, checked=checked))
         return 0
-    print(render_slice_rollup(board, checked=checked, moment=moment))
+    print(
+        render_slice_rollup(
+            board, checked=checked, moment=moment, blind=reading.blind, region=reading.region
+        )
+    )
     if counted:
         print()
         print(render(counted, moment=moment, heading=False))
@@ -771,10 +936,16 @@ def _document(
     counted: Sequence[Row],
     manifest: Mapping[str, Any],
     moment: datetime,
+    reading: Reading,
 ) -> dict[str, Any]:
     return {
         "read_at": moment.isoformat(),
         "manually_checked": str(manifest["checked"]),
+        "region": reading.region,
+        # A caller reading this rather than the table needs the same warning the table
+        # carries, and needs it as a list rather than as a sentence, because the whole point
+        # of the JSON is that nobody has to parse the prose.
+        "sources_not_read": list(reading.blind),
         "surfaces": [
             {
                 "slice": group.name,

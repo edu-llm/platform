@@ -10,11 +10,28 @@ the one place a reader looks rather than found anywhere in the note.
 from __future__ import annotations
 
 import argparse
+import subprocess
+import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from edullm_platform.stages import STAGES, Cell, Mark, Slice, Surface
+import pytest
+
+from edullm_platform.stages import (
+    STAGES,
+    Cell,
+    Mark,
+    Slice,
+    Sources,
+    Surface,
+    read_manifest,
+    resolve,
+)
+from tools import scoreboard
 from tools.scoreboard import (
+    SURFACES,
+    AccountStacks,
     Row,
     TaskStatus,
     build_parser,
@@ -25,10 +42,19 @@ from tools.scoreboard import (
     read_task_status,
     render,
     render_slice_rollup,
+    stacks_in_the_account,
+    stacks_mid_flight,
     status_of_every_task,
 )
 
 MOMENT = datetime(2026, 8, 6, 1, 30, tzinfo=UTC)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _sources(found: AccountStacks) -> Sources:
+    return Sources(
+        tree=PROJECT_ROOT, healthy_stacks=found.applied, stacks_mid_flight=found.mid_flight
+    )
 
 
 def test_the_two_status_words_the_plans_already_used_are_both_read() -> None:
@@ -238,16 +264,19 @@ def test_a_slice_fraction_says_when_part_of_its_yes_side_is_somebodys_answer() -
     assert fraction(recalled, "built") == "1 of 2*"
 
 
-def test_a_row_nobody_could_read_is_named_rather_than_dropped_out_of_the_denominator() -> None:
-    """Mutation: leave unread rows out silently, which the denominator already does.
+def test_a_row_nobody_could_read_is_named_and_stays_in_the_denominator() -> None:
+    """Mutation: leave the unread rows out of the denominator, which this used to assert.
 
-    Without a session every `deployed` lookup returns unread, and the fraction would shrink to
-    the handful of rows that need no account and read small and confident. Saying how many rows
-    were not asked is what stops a blind run looking like a bad one.
+    The name of this test was already right and the assertion under it was not: it asserted
+    `1 of 1 (2 unread)`, which is the row being dropped from the denominator and named on the
+    way out. Without a session most `deployed` lookups return unread, and a fraction over only
+    the rows that happened to answer reads small and confident rather than largely unasked.
+    The whole is what the stage applies to; the unread count is how much of that whole this
+    run could not reach.
     """
     partly = _slice("Blind", Cell(Mark.REACHED), Cell(Mark.NOT_READ), Cell(Mark.NOT_READ))
 
-    assert fraction(partly, "deployed") == "1 of 1 (2 unread)"
+    assert fraction(partly, "deployed") == "1 of 3 (2 unread)"
 
 
 def test_a_stage_that_applies_to_nothing_in_a_slice_reads_as_not_applying() -> None:
@@ -275,6 +304,241 @@ def test_the_total_keeps_its_qualifier_outside_the_bold() -> None:
     assert "| **Total** | **1 of 2**\\* | **1 of 2**\\* | **1 of 2**\\* |" in printed
     assert "| A | 1 of 1* | 1 of 1* | 1 of 1* |" in printed
     assert "***" not in printed
+
+
+# ----------------------------------------------------------------------------------------
+# The gathering, which is where the board went non-deterministic
+#
+# The resolution is a pure function over what was gathered and it was never the problem. Each
+# of these stands one source up in a state it reaches in the field -- refused, capped, timed
+# out, or pointed somewhere the stacks are not -- and holds the board to answering the same
+# way twice and to saying which state it is in.
+# ----------------------------------------------------------------------------------------
+
+
+def _arguments(**overrides: object) -> argparse.Namespace:
+    settings: dict[str, object] = {
+        "repo": "edu-llm/platform",
+        "author": None,
+        "plans_dir": None,
+        "plans_glob": "2026-08-0[45]-*.md",
+        "profile": None,
+        "region": "us-east-1",
+    }
+    settings.update(overrides)
+    return argparse.Namespace(**settings)
+
+
+def _answer_the_account_with(
+    monkeypatch: pytest.MonkeyPatch, answer: Callable[..., dict[str, str]]
+) -> None:
+    """Stand in for the listing `tools/verify_deployed_stacks.py` performs.
+
+    Patched on that module rather than on this one because the board imports the function
+    inside the call, which is what keeps the board importable in a checkout with no AWS CLI.
+    """
+    sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+    import verify_deployed_stacks
+
+    monkeypatch.setattr(verify_deployed_stacks, "list_deployed_stacks", answer)
+
+
+def test_a_source_that_raises_is_an_unread_row_and_not_an_absent_stack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: let a refused listing return an empty mapping instead of no mapping.
+
+    A throttle, an expired session and a missing grant all arrive here as an exception, and
+    an empty mapping is a perfectly good answer meaning the account holds none of our stacks.
+    Collapsing the two turns "nobody could ask" into "fourteen stacks are gone", which reads
+    as the worst morning the platform has ever had and is caused by a rate limit.
+    """
+
+    def throttled(**_: object) -> dict[str, str]:
+        raise RuntimeError("Throttling: Rate exceeded")
+
+    _answer_the_account_with(monkeypatch, throttled)
+
+    found = stacks_in_the_account(_arguments())
+
+    assert found.applied is None
+    assert found.mid_flight == frozenset()
+    assert "Rate exceeded" in found.why
+    assert resolve({"stack": "sbsandbox-intern-edullm-janitor"}, _sources(found)).mark is (
+        Mark.NOT_READ
+    )
+
+
+def test_a_source_that_times_out_is_an_unread_row_and_not_an_absent_stack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: catch only the errors the stack reader raises on purpose.
+
+    The reader turns a `TimeoutExpired` into its own finding, but the board's guard has to
+    hold whatever comes out of a subprocess that hung, including the ones nobody predicted.
+    A timeout escaping here takes the whole board down rather than one column, on exactly the
+    run where somebody is trying to find out what is going on.
+    """
+
+    def hung(**_: object) -> dict[str, str]:
+        raise subprocess.TimeoutExpired(cmd=["aws", "cloudformation", "list-stacks"], timeout=120)
+
+    _answer_the_account_with(monkeypatch, hung)
+
+    found = stacks_in_the_account(_arguments())
+
+    assert found.applied is None
+    assert "was not read" in found.why
+
+
+def test_a_region_holding_none_of_these_stacks_is_refused_rather_than_reported_as_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: believe an empty listing, which is a reading and therefore looks trustworthy.
+
+    This is the 30 of 55 that reached the status document on 2026-08-06. The session was
+    valid, the call succeeded, and it succeeded against a region these stacks were never
+    deployed into, so every stack row went to a confident `no`, the denominator stayed at 55
+    and nothing was marked unread. It was the most measured-looking reading of the four taken
+    that night and the only one that was nonsense. An empty answer to a question naming
+    fourteen stacks is a question asked in the wrong place.
+    """
+    _answer_the_account_with(monkeypatch, lambda **_: {})
+
+    found = stacks_in_the_account(_arguments(region="us-east-2"))
+
+    assert found.applied is None
+    assert "us-east-2" in found.why
+    assert "never deployed into" in found.why
+
+
+def test_a_default_branch_that_cannot_be_read_is_not_answered_off_the_working_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: fall back to `git ls-tree HEAD` when `origin/main` does not answer.
+
+    It did, and that answers a different question without saying so. Fifteen `deployed` rows
+    ask whether a file is on the default branch, which is the whole of what "live" means for a
+    workflow, a skill or an issue template. Answered off the working tree they read the same
+    tree the `built` column reads, so every one of them reaches deployed the moment somebody
+    writes the file, and the state a row sits in while its pull request is open disappears.
+    The fallback fires in a checkout with no remote, which is where a reader is least likely
+    to suspect the board of answering a question they did not ask.
+    """
+    asked: list[tuple[str, ...]] = []
+
+    def only_head(*arguments: str) -> str | None:
+        asked.append(arguments)
+        return "AGENTS.md\n" if arguments[-1] == "HEAD" else None
+
+    monkeypatch.setattr(scoreboard, "_git", only_head)
+
+    assert scoreboard._paths_on_default_branch() is None
+    assert all(arguments[-1] != "HEAD" for arguments in asked), "the working tree was consulted"
+
+
+def test_a_stack_part_way_through_an_operation_is_told_apart_from_one_that_is_applied() -> None:
+    """Mutation: sort every status into applied or absent and keep no third pile.
+
+    Two of the three piles are stable and the third is not. A stack in `UPDATE_IN_PROGRESS`
+    will be something else before the reader finishes the table, so putting it in either
+    stable pile is what makes two readings a minute apart disagree.
+    """
+    account = {
+        "a": "CREATE_COMPLETE",
+        "b": "UPDATE_IN_PROGRESS",
+        "c": "ROLLBACK_COMPLETE",
+        "d": "REVIEW_IN_PROGRESS",
+        "e": "UPDATE_COMPLETE_CLEANUP_IN_PROGRESS",
+    }
+
+    assert stacks_mid_flight(account) == frozenset({"b", "e"})
+
+
+def test_the_board_looks_for_the_stacks_where_the_checker_that_owns_them_says_they_are() -> None:
+    """Mutation: give the board its own region default.
+
+    It had one. `tools/scoreboard.py` said `us-east-2` and `tools/verify_deployed_stacks.py`
+    said `us-east-1`, and the disagreement was invisible for as long as everybody passed
+    `--region`. The first run that did not read an empty region and reported thirteen live
+    deploys as undeployed. Two constants that have to agree and are written twice will stop
+    agreeing, and nothing about the output said which region had been asked.
+    """
+    sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+    from verify_deployed_stacks import DEFAULT_REGION, STACKS
+
+    assert build_parser().parse_args([]).region == DEFAULT_REGION
+    assert STACKS, "the region default is only meaningful against a declared stack list"
+
+
+def test_a_run_that_could_not_read_a_source_says_so_above_the_table_and_names_it() -> None:
+    """Mutation: print the fractions and leave what did not answer to the reader.
+
+    Four readings of this board went into the status document inside two hours on 2026-08-06,
+    ranging from 30 to 43 out of denominators of 55 and 53, and not one of them carried a word
+    about what its run had been able to reach. A reader holding two of them cannot tell a
+    deploy from a rate limit, and the reasonable thing to conclude from a board that disagrees
+    with itself is that the board is not worth reading.
+    """
+    board = [_slice("A", Cell(Mark.NOT_READ), Cell(Mark.REACHED))]
+
+    silent = render_slice_rollup(board, checked="2026-08-05", moment=MOMENT)
+    loud = render_slice_rollup(
+        board,
+        checked="2026-08-05",
+        moment=MOMENT,
+        blind=["CloudFormation: us-east-1 was not read (Throttling)"],
+        region="us-east-1",
+    )
+
+    assert "could not read" not in silent
+    assert "could not read 1 of its sources" in loud
+    assert "Throttling" in loud
+    assert "against us-east-1" in loud
+    assert loud.index("could not read") < loud.index("| Slice |")
+
+
+def test_the_built_column_rests_on_the_working_tree_and_on_no_lookup_that_can_fail() -> None:
+    """Mutation: give a `built` row a rule that needs a network, or a fallback to fall to.
+
+    `Built` is the column with the fewest excuses for being wrong, and the claim made for it
+    is that every cell is derived. Verified here rather than trusted: fifty-eight of the
+    ninety-six read the tree, thirty-eight are somebody's answer that a thing does not exist
+    or does not apply, and none of them reaches a network or declares an `or:`. That last part
+    is what matters, because the silent downgrade to opinion that made `deployed` untrustworthy
+    can only happen to a cell whose lookup can fail. None of these can.
+
+    What this does not claim is that `Built` is all measurement. Thirty-eight of the cells are
+    a person's answer, and twenty-five of those are a hand-written `no` sitting in the
+    denominator that nobody re-reads. They cannot move without somebody editing the manifest,
+    which is a different failure from the one this test holds and is not a quiet one.
+    """
+    manifest = read_manifest(SURFACES)
+    surfaces = [surface for group in manifest["slices"] for surface in group["surfaces"]]
+    needs_a_source_that_can_fail = {"on_main", "stack", "bucket", "environment", "release", "task"}
+
+    reaching = {
+        surface["id"]: rule
+        for surface in surfaces
+        for rule in [next(key for key in surface["built"] if key != "or")]
+        if rule in needs_a_source_that_can_fail
+    }
+    falling_back = [surface["id"] for surface in surfaces if "or" in surface["built"]]
+    spoken = [
+        surface["id"]
+        for surface in surfaces
+        if next(key for key in surface["built"] if key != "or")
+        in {"reached", "not_reached", "not_applicable", "unknown"}
+    ]
+
+    assert reaching == {}, "a built cell that needs a network can be downgraded under load"
+    assert falling_back == [], "a built cell with an `or:` can be answered from memory"
+    assert not [
+        surface["id"]
+        for surface in surfaces
+        if next(key for key in surface["built"] if key != "or") == "reached"
+    ], "no built cell may be a person's yes, which is the claim the `*` on the column makes"
+    assert len(spoken) == 38, "the count of hand-written built cells moved; re-read them"
 
 
 def test_the_detail_view_is_behind_a_flag_and_the_summary_is_the_default() -> None:
