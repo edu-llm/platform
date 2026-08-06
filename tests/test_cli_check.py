@@ -973,6 +973,69 @@ def test_a_word_that_is_nobody_s_verb_gets_the_list_and_the_nearest_spelling(
     assert runner.calls == []
 
 
+#: Words that reached ``shell`` or ``run`` through ``get_close_matches`` before the pool
+#: was pruned. ``help`` is the one somebody actually typed; the rest are a transposition or
+#: a dropped letter away from a lane verb, which is the distance every other entry in this
+#: binary's suggester is written for.
+WORDS_THAT_USED_TO_REACH_A_LANE_VERB = ("help", "shel", "sell", "hell", "shelll", "runn", "rn")
+
+
+@pytest.mark.parametrize("word", WORDS_THAT_USED_TO_REACH_A_LANE_VERB)
+def test_no_typo_is_answered_with_a_verb_that_starts_a_machine(
+    word: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: put ``run`` and ``shell`` back in the suggester's candidate pool.
+
+    Every word here used to be answered with ``Did you mean shell?`` or ``Did you mean
+    run?``. Those two verbs start an instance on somebody's card without pricing it, without
+    an approval and without a lineage record, and the binary was offering one of them to a
+    person who had just demonstrated they did not know what the verbs were. A suggestion is
+    read as an instruction, so the cheapest mistake in the tool was one keystroke from the
+    most expensive.
+
+    They stay in the list underneath, which is the difference between offering a verb and
+    hiding it. Somebody who wants ``shell`` can read it there and is choosing it.
+    """
+    runner = FakeRunner({})
+
+    code, out, err = invoke([word], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+
+    assert code == EXIT_UNUSABLE
+    assert "Did you mean shell?" not in err
+    assert "Did you mean run?" not in err
+    # Still listed, so this prunes what is suggested rather than what exists.
+    assert "shell" in err and "run" in err
+    assert out == ""
+    assert runner.calls == []
+
+
+def test_help_is_answered_with_the_help_rather_than_with_a_guess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: send ``help`` through the typo path, which is what shipped.
+
+    ``help`` is a verb in git, cargo, docker, npm and every other tool a researcher has in
+    their hands, so somebody typing it here has not made a spelling mistake and is not
+    asking to be guessed at. What they got was ``Did you mean shell?``.
+
+    The answer is the orientation a bare ``edullm`` prints, because that is the thing they
+    asked for and it is already written. Asserting the ``check`` sentence rather than the
+    absence of a suggestion is what keeps this from passing on an empty message.
+    """
+    runner = FakeRunner({})
+
+    code, out, err = invoke(["help"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+    said = " ".join(err.split())
+
+    assert code == EXIT_UNUSABLE
+    assert "Did you mean" not in err
+    assert "help is not a verb" not in err
+    assert "edullm --help" in said
+    assert "writes a first .edullm/run.yaml where a registered repository has none" in said
+    assert out == ""
+    assert runner.calls == []
+
+
 def test_a_mistyped_flag_is_answered_with_the_flag_and_not_with_the_verbs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
