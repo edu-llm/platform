@@ -51,6 +51,7 @@ from edullm_platform.substrate import (
 )
 
 __all__ = [
+    "LAUNCH_SOURCE",
     "DayActivity",
     "RunRow",
     "day_activity",
@@ -229,7 +230,7 @@ def render_launch_feed_unread(activity: DayActivity) -> str | None:
             "",
             (
                 "What this costs, stated rather than left to be noticed: every launch made "
-                "off the platform today is unaccounted for by this page, and the run table "
+                "off the platform on this day is unaccounted for by this page. The run table "
                 "above is unaffected, because it is keyed on runs the platform admitted and "
                 "never on what the account did."
             ),

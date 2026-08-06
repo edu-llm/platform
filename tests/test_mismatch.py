@@ -207,6 +207,28 @@ def test_the_plural_of_mismatch_is_not_mismatchs() -> None:
     assert "mismatchs" not in render_line(two)
 
 
+def test_the_plural_of_launch_is_not_launchs() -> None:
+    """Mutation: pass no irregular form for the unresolved tallies, giving "5210 launchs".
+
+    The same sibilant as the word above and the same fix, and it shipped: the autoscaler is
+    bound to nobody, so it is the longest line of the unresolved list every morning and the
+    figure beside it read "5210 launchs" the first time this section was rendered against
+    the account. A count of one takes the singular and is asserted here too, because the
+    obvious repair is to hardcode the plural.
+    """
+    many = compute_mismatches(
+        [_launch(f"e{index}", "AWSServiceRoleForNobody") for index in range(3)]
+        + [_launch("e9", "AWSServiceRoleForSomethingElse")],
+        role_logins=ROSTER,
+        excluded_roles=(),
+        known_run_ids=frozenset(),
+    )
+    section = render_section(many)
+    assert "3 launches" in section
+    assert "1 launch\n" in section
+    assert "launchs" not in section
+
+
 def test_a_denominator_that_does_not_add_up_says_so_rather_than_being_read() -> None:
     """Mutation: drop the adds_up clause from the line, or from is_clean.
 

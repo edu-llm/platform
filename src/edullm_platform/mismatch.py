@@ -192,9 +192,10 @@ def compute_mismatches(
 def _plural(count: int, singular: str, plural: str | None = None) -> str:
     """``2 roles``, and ``2 mismatches`` rather than ``2 mismatchs``.
 
-    The irregular form is a parameter rather than a rule, because the only word here that
-    needs one is the word this whole surface is named after, and a wrong plural in the first
-    figure of the message is the kind of thing that makes a reader distrust the arithmetic.
+    The irregular form is a parameter rather than a rule, because only two words on this
+    surface need one and both are sibilant: the word the surface is named after, and the
+    word for what it counts. A wrong plural in the first figure of a report is the kind of
+    thing that makes a reader distrust the arithmetic under it.
     """
     return f"{count} {singular}" if count == 1 else f"{count} {plural or singular + 's'}"
 
@@ -256,7 +257,7 @@ def render_section(report: MismatchReport) -> str:
             "",
         ]
         lines += [
-            f"- `{tally.role_name}`: {_plural(tally.launches, 'launch')}"
+            f"- `{tally.role_name}`: {_plural(tally.launches, 'launch', 'launches')}"
             + ("  **— this is named like a person**" if tally.looks_like_a_person else "")
             for tally in report.unresolved
         ]
