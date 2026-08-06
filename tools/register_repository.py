@@ -246,7 +246,14 @@ FOLLOW_UPS: tuple[FollowUp, ...] = (
             "identities, and a registration carrying only the publisher widening produces a "
             "repository that publishes and then cannot run. Skip the GPU stack and every CPU "
             "submission works while every GPU one dies at CannotPullContainerError after the "
-            "instance has scaled up."
+            "instance has scaled up. Read the deployed stack before applying this tree over "
+            "it: `aws cloudformation get-template --stack-name <stack>` against the template "
+            "here says whether somebody else's registration reached the account first. These "
+            "three stacks are applied from a laptop rather than by a workflow, so a stack "
+            "ahead of `main` is an ordinary state rather than a broken one, and deploying an "
+            "older tree over it drops that registration's grants with no error to say so -- "
+            "leaving a repository that published this morning unable to start a job this "
+            "afternoon."
         ),
         paths=(
             "infra/iam/batch-roles.yaml",
