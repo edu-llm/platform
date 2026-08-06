@@ -39,7 +39,7 @@ edullm check --team scratch --experiment day-one --dataset none
 edullm submit --team scratch --experiment day-one --dataset none
 ```
 
-That returns in seconds with a workflow link. It does not wait and it does not print the run id, because the run id is minted a couple of minutes later by the compile job. `edullm status` carries it once that job has finished.
+The run id is minted a couple of minutes later by the compile job, and `submit` is meant to wait for it. On three real submissions tonight it returned in under nine seconds instead, with a workflow link and a line saying the id is still compiling. Either way `edullm status` carries the id once that job has finished.
 
 ## Reading it back
 
@@ -94,6 +94,7 @@ Two checks are deferred to submit time and `check` names both, because they need
 | No Windows machine has ever finished this. The install used to fail with `Filename too long` for any username over eight characters, and [#291](https://github.com/edu-llm/platform/pull/291) fixed that on 2026-08-06 along with the `gh` lookup, the spec's line endings and redirected output. All of it is untested on real Windows | Follow it anyway and say where it stopped. If the install still fails on a path, point `UV_CACHE_DIR` at something short such as `C:\uv` and try again |
 | No notification is delivered | Poll `edullm status`, as above |
 | `edullm status <run-id>` prints `Container said` `nothing` for a run that printed plenty. Measured on the run above, which had nine lines waiting | `edullm logs <run-id>` reads the same stream and does show them. Believe that one |
+| `edullm submit` returns before the run id exists, though `--help` says it waits for one and `--no-wait` is the flag that turns that off | Run `edullm status` a couple of minutes later. The id is there |
 | The eval image carries no torch and no vLLM, so only the `mock` provider runs | Nothing yet. GPU evaluation through the platform is not available. eval-inference owns the choice |
 | `gh` in a clone that has an `upstream` remote answers about the wrong repository, with no warning. In OLMo-core it reported no image build for a branch whose build had succeeded | Use `edullm`, which reads `origin`. Where you must use `gh`, pass `--repo edu-llm/<name>` |
 | Roughly half of all runs fail, and about half of those failures print no cause | Nothing yet. Your first failure is probably not your fault. Bring the run id to an issue |
