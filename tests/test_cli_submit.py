@@ -15,6 +15,7 @@ submission refused locally must not be dispatched, and the way to assert that is
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,7 @@ from edullm_platform.submission import SubmissionInputs
 from tests.cli_support import (
     CONFIG_DIR,
     PROJECT_ROOT,
+    TRAINING_COMMAND,
     FakeRunner,
     failed,
     git_answers,
@@ -143,12 +145,23 @@ def test_every_field_the_form_declares_is_sent_under_the_name_the_form_declares(
 def test_the_command_reaches_the_form_as_text_a_shell_split_would_recover(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Mutation: ``shlex.join`` it.
+    """Mutation: ``" ".join`` it, which is what this did until it was run against AWS.
 
-    The compile job POSIX-splits the text box, and joining with ``shlex`` single-quotes
-    every word -- so ``"$EDULLM_CHECKPOINT_DIR"`` arrives as ``'$EDULLM_CHECKPOINT_DIR'``,
-    which no shell expands. OLMo-core is then handed twenty-two literal characters as a save
-    folder and cheerfully creates a directory with that name.
+    The compile job POSIX-splits the text box, so the only thing that matters is which
+    words it recovers. ``" ".join`` drops the quoting that groups ``bash -lc``'s program
+    into a single word, so the three words this spec carries arrive as five and the compile
+    job refuses the submission for giving ``-lc`` more than one command -- after
+    ``edullm check`` exited 0 saying there were no refusals. Every ``bash -lc`` line in the
+    guides is that shape, and so is the spec ``edullm check`` writes for OLMo-core, so the
+    CLI could not submit its own scaffold.
+
+    What this used to assert, and why it was not enough. It read the wire text for
+    ``'$EDULLM_CHECKPOINT_DIR'`` on the theory that ``shlex.join`` single-quotes every word
+    and kills the expansion. It does not reach that far here: the variable sits inside
+    ``bash -lc``'s one word, so quoting wraps the whole program and the split on the far
+    side hands it back with its double quotes intact. Both of those assertions are kept
+    below and both pass, which is the point -- they passed while the round trip was broken.
+    The word count is what fails.
     """
     root, runner = submitting(tmp_path)
 
@@ -169,6 +182,16 @@ def test_the_command_reaches_the_form_as_text_a_shell_split_would_recover(
     command = dispatched_fields(runner)["command"]
     assert '"$EDULLM_CHECKPOINT_DIR"' in command
     assert "'$EDULLM_CHECKPOINT_DIR'" not in command
+
+    recovered = shlex.split(command)
+    assert recovered == shlex.split(TRAINING_COMMAND), (
+        "the words the compile job recovers are not the words the spec declared, so the "
+        "submission it judges is not the one edullm check priced"
+    )
+    assert recovered[:2] == ["bash", "-lc"] and len(recovered) == 3, (
+        f"bash -lc reads one word as its program and this gives it {len(recovered) - 2}, "
+        "which is the refusal the compile job raises after check has already exited 0"
+    )
 
 
 def test_no_image_digest_is_sent_so_the_workflow_derives_it_from_the_commit(
