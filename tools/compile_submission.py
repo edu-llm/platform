@@ -48,6 +48,7 @@ from edullm_platform.placement import (
     placement_warning,
     read_capacity,
 )
+from edullm_platform.run_history import RunHistoryFormatError, load_run_history
 from edullm_platform.submission import (
     SubmissionInputs,
     compile_submission,
@@ -194,7 +195,25 @@ def main(argv: list[str] | None = None) -> int:
         # alternative is a file that stops parsing and takes the only warning about a
         # four-hour wait with it.
         capacity = read_capacity(args.config_dir / CAPACITY_FILENAME)
-    except (OSError, ValidationError, TypeError, UnreadableCapacityError) as exc:
+        # WHAT RUNS OF THIS SHAPE HAVE TAKEN, WHICH THE SUBMITTER WAS SHOWN AND THE
+        # APPROVER WAS NOT. `edullm check` loads this out of the same directory through
+        # `cli/configuration.py` and prints the measurement beside the ceiling, so a
+        # researcher spending nothing reads "a median of 5m" against a one-hour bound while
+        # the lead releasing it read that no reading was packaged. The reading was in the
+        # checkout this job reads the whole time; the argument was simply not passed.
+        #
+        # `None` is a directory carrying no reading, which the renderer says out loud, and
+        # a reading that will not parse raises for the reason `load_run_history` records:
+        # a measurement this tree cannot read is a broken checkout rather than an absent
+        # measurement, and `edullm check` already refuses that locally.
+        run_history = load_run_history(args.config_dir)
+    except (
+        OSError,
+        ValidationError,
+        TypeError,
+        UnreadableCapacityError,
+        RunHistoryFormatError,
+    ) as exc:
         print(f"reviewed configuration is unreadable: {exc}", file=sys.stderr)
         return EXIT_UNUSABLE
 
@@ -324,6 +343,7 @@ def main(argv: list[str] | None = None) -> int:
                 wandb_username=inventory.wandb_username_for(args.submitter),
                 placement_note=placement_note,
                 scan_note=scan_note,
+                run_history=run_history,
             ),
             encoding="utf-8",
         )
