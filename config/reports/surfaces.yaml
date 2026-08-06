@@ -605,11 +605,14 @@ slices:
         # The janitor was driven against real instances that night: it reclaimed an expired
         # machine without a person, it left a machine belonging to somebody else running, and a
         # first attempt found a machine carrying `DisableApiStop` that failed the whole batched
-        # stop, which was repaired and the drill re-run. This is a person's answer rather than a
-        # reading because the capture that would make it one was never written --
-        # `fixtures/evidence/lane/drill.json` is what `tests/test_lane_drill_evidence.py` waits
-        # for, and until it exists that test skips rather than proving anything.
-        proven: {reached: "the janitor reclaimed an expired machine on 2026-08-06 with no person in the loop"}
+        # stop, which was repaired and the drill re-run.
+        #
+        # THIS WAS A PERSON'S ANSWER FOR ABOUT AN HOUR AND IS NOW A READING, WHICH IS THE ONLY
+        # DIRECTION THAT CELL SHOULD EVER TRAVEL. #339 wrote `fixtures/evidence/lane/drill.json`,
+        # so `tests/test_lane_drill_evidence.py` stopped skipping and started asserting against
+        # the capture. Naming the test rather than the file is deliberate: a capture that exists
+        # proves a file was written, and a test that passes over it proves what the file says.
+        proven: {tests: [tests/test_lane_drill_evidence.py]}
 
       - id: triage-form
         name: One triage form, and asks that count
