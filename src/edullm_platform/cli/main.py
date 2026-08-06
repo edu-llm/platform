@@ -2375,11 +2375,7 @@ def _submit(
         )
         return EXIT_OK
     if compiled is None:
-        print(
-            "compiling. The run id is issued by the compile job; edullm status will carry "
-            "it once that job has finished.",
-            file=out,
-        )
+        print("\n".join(_wrapped(_no_run_id_yet_said(outcome.status), indent="")), file=out)
         return EXIT_OK
     print(file=out)
     print(str(compiled.get("run_id") or "unknown"), file=out)
@@ -2390,6 +2386,40 @@ def _submit(
     else:
         print("\n".join(_wrapped(_waiting_said(environment, configuration), indent="")), file=out)
     return EXIT_OK
+
+
+def _no_run_id_yet_said(status: str | None) -> str:
+    """What the wait actually ended on, which is two states and used to be one word.
+
+    THIS SAID "compiling." WHATEVER THE RUN WAS DOING, AND ON 2026-08-06 IT WAS QUEUED.
+    GitHub Actions was not starting runs, both jobs read ``queued`` with no conclusion, and
+    a first-time submitter read the word and concluded their run had started. The word was
+    wrong on any slow queue and the outage only made it likely to be seen.
+
+    ``status`` is the run's own, read by :meth:`~edullm_platform.cli.actions
+    .PlatformActions.wait_for_the_compiled_submission` on every poll to learn whether the
+    run had finished, so naming the state costs no request. ``queued`` is the one state
+    worth its own sentence: nothing has started, so nothing is compiling, and the thing to
+    wait on is a runner rather than a job.
+
+    NOTHING ELSE IS NAMED "compiling" EITHER, AND THAT IS DELIBERATE RATHER THAN TIMID. The
+    run's status is ``in_progress`` from the moment ``identify`` starts, and ``compile``
+    needs ``identify`` and ``resolve`` before it -- so a run that is running is not
+    necessarily a run that is compiling, and the per-job answer that would settle it costs a
+    second request for a word. What is known is that the job has published nothing yet, so
+    that is what is said.
+    """
+    if status == "queued":
+        return (
+            "queued. GitHub has not started this run, so nothing is compiling and no run id "
+            "has been minted. The submission is dispatched and intact; what it is waiting "
+            "for is a runner. The page above says the same thing, and edullm status will "
+            "carry the run id once the compile job has run."
+        )
+    return (
+        "no run id yet. The run id is issued by the compile job, which has not published "
+        "one; edullm status will carry it once that job has finished."
+    )
 
 
 def _waiting_said(environment: str, configuration: ReviewedConfiguration) -> str:
