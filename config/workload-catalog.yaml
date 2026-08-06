@@ -711,7 +711,9 @@ workloads:
   # there is and EXITs. So a container that fails on its own merits cannot reach the one rule
   # that retries, and that covers what an eight-rank job of this length actually dies of: a
   # collective timeout, a staging error against edullm-data, a CUDA out-of-memory, a config
-  # OLMo-core refuses. Rule one needs an EC2 host to go away underneath a running task, and
+  # OLMo-core refuses. That is not hypothetical -- three of the failures analysed in the week
+  # to 2026-08-06 were CUDA out-of-memory, and a second attempt would have been refused to
+  # every one of them. Rule one needs an EC2 host to go away underneath a running task, and
   # infra/batch-compute-gpu-shapes.yaml provisions every GPU environment as `Type: EC2`
   # rather than SPOT, so there are no reclaims to catch and it takes a hardware fault. No
   # recorded job in this account has ever produced that reason.
