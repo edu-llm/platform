@@ -27,6 +27,7 @@ from decimal import Decimal
 from edullm_platform.activity import (
     day_activity,
     render_launch_feed_unread,
+    render_launch_window,
     render_section,
 )
 from edullm_platform.substrate import (
@@ -117,12 +118,24 @@ def _facts(
     )
 
 
+def _a_launch() -> LaunchEvent:
+    """One launch by a role nothing here binds, which is all these tests need of a feed."""
+    return LaunchEvent(
+        event_id="b1e2c3d4-0000-4000-8000-a1b2c3d4e5f6",
+        event_name="RunInstances",
+        occurred_at=datetime(DAY.year, DAY.month, DAY.day, 4, 30, tzinfo=UTC),
+        role_name="Intern-cathy.du-sbsandbox",
+        run_id=None,
+    )
+
+
 def _substrate(
     *facts: RunFacts,
     experiments_read: bool = True,
     attempts_read: bool = True,
     launches: tuple[LaunchEvent, ...] | None = (),
     gaps: tuple[SourceGap, ...] = (),
+    collected_at: datetime = COLLECTED,
 ) -> Substrate:
     """A substrate built by hand, with every outcome written out rather than derived.
 
@@ -131,7 +144,7 @@ def _substrate(
     shape this repository keeps finding.
     """
     return Substrate(
-        collected_at=COLLECTED,
+        collected_at=collected_at,
         runs={one.run_id: one for one in facts},
         launches=launches,
         source_outcomes={
@@ -373,6 +386,63 @@ def test_a_feed_that_was_read_and_empty_is_reported_as_a_finding() -> None:
     assert "reported no launch at all" in render_section(activity)
 
 
+def test_a_denominator_counted_before_the_day_ended_says_which_hours_it_covers() -> None:
+    """Mutation: print the day and stop, or print nothing at all.
+
+    THIS IS THE STATE OF EVERY PAGE THE AUDIT WILL WRITE. The collector asks CloudTrail for
+    one day and the account can only answer for the part of it that has happened, so a
+    reading taken at 05:00 carries five hours of launches under a heading naming a date. Six
+    thousand is a large enough figure that a reader assumes it is the day, which makes it a
+    wrong denominator that reads as a thorough one.
+    """
+    at_breakfast = day_activity(
+        day=DAY,
+        substrate=_substrate(
+            _facts(RUN_A, "alsy7009", "12.00"),
+            launches=(_a_launch(),),
+            collected_at=datetime(DAY.year, DAY.month, DAY.day, 5, 0, tzinfo=UTC),
+        ),
+    )
+    window = render_launch_window(at_breakfast)
+    assert window is not None
+    assert "05:00" in window
+    assert "not the day" in window
+
+
+def test_a_denominator_counted_after_the_day_ended_says_it_is_the_whole_day() -> None:
+    """Mutation: print the partial-day sentence whatever the reading's own date.
+
+    A standing caveat that is sometimes false is worse than none, because the morning it is
+    false is the morning somebody stops reading it. Reporting a past day by hand does get the
+    whole feed, and saying so is what keeps the sentence worth the line it takes.
+    """
+    afterwards = day_activity(
+        day=DAY,
+        substrate=_substrate(
+            _facts(RUN_A, "alsy7009", "12.00"),
+            launches=(_a_launch(),),
+            collected_at=datetime(2026, 8, 6, 5, 0, tzinfo=UTC),
+        ),
+    )
+    window = render_launch_window(afterwards)
+    assert window is not None
+    assert "the whole of what CloudTrail reports" in window
+    assert "not the day" not in window
+
+
+def test_a_feed_nobody_read_has_no_window_to_state() -> None:
+    """Mutation: return the window sentence whether or not there is a feed under it.
+
+    A window printed over a list that does not exist describes the hours in which nothing was
+    examined, which is a caveat dressed as a measurement.
+    """
+    unread = day_activity(
+        day=DAY,
+        substrate=_substrate(_facts(RUN_A, "alsy7009", "12.00"), launches=None, gaps=(CEILING,)),
+    )
+    assert render_launch_window(unread) is None
+
+
 def test_a_feed_that_was_read_leaves_the_list_to_the_mismatch_module() -> None:
     """Mutation: return a section whenever the mismatch list would be short.
 
@@ -380,15 +450,8 @@ def test_a_feed_that_was_read_leaves_the_list_to_the_mismatch_module() -> None:
     however short, and rendering a substitute here would put two mismatch sections on one
     page or replace a real list with a caveat.
     """
-    launch = LaunchEvent(
-        event_id="b1e2c3d4-0000-4000-8000-a1b2c3d4e5f6",
-        event_name="RunInstances",
-        occurred_at=datetime(2026, 8, 4, 9, 30, tzinfo=UTC),
-        role_name="Intern-cathy.du-sbsandbox",
-        run_id=None,
-    )
     activity = day_activity(
-        day=DAY, substrate=_substrate(_facts(RUN_A, "alsy7009", "12.00"), launches=(launch,))
+        day=DAY, substrate=_substrate(_facts(RUN_A, "alsy7009", "12.00"), launches=(_a_launch(),))
     )
     assert activity.launch_outcome == SOURCE_READ
     assert render_launch_feed_unread(activity) is None

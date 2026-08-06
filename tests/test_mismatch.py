@@ -229,6 +229,27 @@ def test_the_plural_of_launch_is_not_launchs() -> None:
     assert "launchs" not in section
 
 
+def test_the_window_a_denominator_was_counted_over_goes_under_the_line() -> None:
+    """Mutation: append the window at the end of the section, or drop the argument.
+
+    A reader who sees a count and stops has to have met the hours it covers, which is the
+    same argument that puts the denominator on the line rather than in a footnote. This
+    module cannot derive the window -- it is handed events and told nothing about the call
+    that produced them -- so the assertion is that a caller's sentence reaches the place it
+    is useful and not merely the page.
+    """
+    report = compute_mismatches(
+        [_launch("e1", AMY)],
+        role_logins=ROSTER,
+        excluded_roles=(),
+        known_run_ids=frozenset(),
+    )
+    lines = render_section(report, window="counted over the first five hours").splitlines()
+
+    assert render_section(report).count("counted over") == 0
+    assert lines.index("counted over the first five hours") == lines.index(render_line(report)) + 2
+
+
 def test_a_denominator_that_does_not_add_up_says_so_rather_than_being_read() -> None:
     """Mutation: drop the adds_up clause from the line, or from is_clean.
 
