@@ -130,6 +130,10 @@ def everything_publishes(
         for entry in registry.repositories
     }
     by_slug = {f"{organization}/{entry.repository}": entry.repository for entry in registry.repositories}
+    by_branch = {
+        f"{organization}/{entry.repository}": entry.default_branch
+        for entry in registry.repositories
+    }
 
     def responder(path: str) -> subprocess.CompletedProcess[str]:
         if path.startswith("repositories/"):
@@ -143,10 +147,6 @@ def everything_publishes(
             return answer_ok(file_payload(yaml.safe_dump(caller_document(by_slug[slug]))))
         return answer_ok(file_payload("name: Tests\non: [push]\njobs: {}\n"))
 
-    by_branch = {
-        f"{organization}/{entry.repository}": entry.default_branch
-        for entry in registry.repositories
-    }
     return responder
 
 

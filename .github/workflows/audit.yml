@@ -108,6 +108,18 @@ name: The audit (what the platform recorded, against what is actually there)
 #     red -- and because a fork's pull request should not be able to spend this
 #     repository's API budget enumerating an organisation.
 #
+#   publishable-registrations — the other half of that question, and here for the same
+#     reasons. The job above asks whether a registration names a file that is there; this
+#     one asks whether the repository it names can do the thing the registration authorised.
+#     Four of the six requirements for that live in the other repository and none of them is
+#     written by tools/register_repository.py, so a registration can be complete on this side
+#     and inert on that one -- which is how edullm-p1 held an ECR repository, a widened
+#     publisher role and a workload profile for two days without an image, on an unset
+#     AWS_ECR_PUBLISHER_ROLE_ARN nothing here could see. It is on the schedule and not the
+#     pull-request path because its subject is somebody else's repository settings, which no
+#     diff to this one causes: a variable deleted at four in the afternoon has nothing to do
+#     with whatever pull request is open, and turning that pull request red would say so.
+#
 #   open-asks — the cheapest, and the only one whose subject is neither the account nor a
 #     repository but the people using this one. It counts the open issues
 #     labelled `ask` by kind and says which kinds have reached the threshold
