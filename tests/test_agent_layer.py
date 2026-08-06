@@ -665,11 +665,17 @@ def test_the_researcher_skill_names_the_distribution_rather_than_the_executable(
     """Mutation: leave the near miss out, on the grounds that the right line is above it.
 
     ``uv tool install edullm`` is the command somebody reaches for and uv answers
-    ``not found in the package registry``, and ``uv tool upgrade`` answers
-    ``Nothing to upgrade`` for a tool installed from git however far behind it is. Both were
-    verified on uv 0.9.17 rather than assumed. An agent that hits either concludes the tool
-    does not exist or that it is current, and the second is the one that costs a researcher
-    a day of running against a configuration that has moved.
+    ``not found in the package registry``. ``uv tool upgrade`` is the other one, and what it
+    answers depends on how the tool was installed: it upgrades an install made from the bare
+    URL and answers ``Nothing to upgrade`` to one pinned at a release tag, however far behind
+    that one is. An agent that hits the first concludes the tool does not exist; one that
+    hits the second on a pinned install concludes it is current, which costs a researcher a
+    day of running against a configuration that has moved.
+
+    **WHAT IS ASSERTED BELOW IS THAT THE SKILL MENTIONS THEM, AND NOTHING MORE.** Neither
+    claim about uv is tested here. Both are tested by installing a package and running the
+    commands, in ``tests/test_cli_install_command.py``. This one keeps the skill from going
+    quiet about them.
     """
     from edullm_platform.cli.release import DISTRIBUTION
 
@@ -679,7 +685,10 @@ def test_the_researcher_skill_names_the_distribution_rather_than_the_executable(
         f"the skill never names {DISTRIBUTION}, so nothing tells a reader why "
         "`uv tool install edullm` finds nothing"
     )
-    assert "uv tool upgrade" in text, "the skill does not warn off the upgrade that is a no-op"
+    assert "uv tool upgrade" in text, (
+        "the skill says nothing about the upgrade command, so an agent that reaches for it "
+        "cannot tell whether the answer it got means anything"
+    )
 
 
 def test_every_approval_class_the_researcher_skill_tabulates_is_one_the_policy_returns() -> None:

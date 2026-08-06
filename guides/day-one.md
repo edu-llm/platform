@@ -10,7 +10,7 @@ uv tool install --force git+https://github.com/edu-llm/platform
 
 Four seconds. Then `edullm --version`, which prints the version and the commit it was built from.
 
-**Re-run that same line to upgrade.** `--force` makes it idempotent, so the one line installs, upgrades and repairs. Do not reach for `uv tool upgrade`. For a tool installed from git it answers `Nothing to upgrade` however far behind you are, and exits 0, so it tells you that you are current when you are months behind. It then suggests installing `edullm`, and that fails too, because `edullm` is the command and `edullm-platform` is the package.
+**Re-run that same line to upgrade.** `--force` makes it idempotent, so the one line installs, upgrades and repairs. Reach for it rather than `uv tool upgrade`, whose answer depends on how the tool was installed: from the bare URL above it re-resolves the default branch and does upgrade, but from a release note's line, which pins that release's tag, it answers `Nothing to upgrade` and exits 0 however far behind you are. Both installs are in the field and you are unlikely to remember which is yours. Naming the command rather than the package is no better: `uv tool upgrade edullm` errors and then suggests installing `edullm`, which fails too, because `edullm` is the command and `edullm-platform` is the package.
 
 If the shell cannot find `edullm` afterwards, compare `uv tool dir --bin` against `which -a edullm`, or `where.exe edullm` on Windows. They should be the same directory. Two lines means something else called `edullm` is on your path first.
 

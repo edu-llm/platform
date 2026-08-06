@@ -1132,6 +1132,11 @@ def test_the_notes_carry_the_install_line_the_code_spells(
     test looked. ``tests/test_cli_install_command.py`` holds the README, the guide and
     ``pyproject.toml`` to :func:`install_command`; a release note is the copy that file
     cannot see, because it does not exist until a release is cut.
+
+    **THE SECOND HALF IS A PHRASE MATCH AND SAYS NOTHING ABOUT UV.** That the note's
+    install line pins this tag, and that a pinned install is the one uv will not move, is
+    checked against uv by installing a package in ``tests/test_cli_install_command.py``.
+    Here the note is only required to carry the answer beside the command.
     """
     a_released_repository(repository)
     commit(repository, "a merge", {"src/edullm_platform/cli/main.py": "code\nmore\n"})
@@ -1160,8 +1165,8 @@ def test_the_note_uses_a_full_stop_where_a_colon_would_introduce_no_list(
 
     _, notes, _, _ = run_cut(repository, tmp_path, tag="v0.2.2", previous="v0.2.1")
 
-    assert "installed from git. It answers" in notes
-    assert "installed from git:" not in notes
+    assert "follows the ref an install named. It answers" in notes
+    assert "follows the ref an install named:" not in notes
 
 
 def test_a_release_that_moves_the_configuration_says_so_first(

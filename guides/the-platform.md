@@ -248,7 +248,7 @@ This is yours and it is local. It is not reviewed configuration, it is read by n
 
 Run the install line again. `--force` makes it idempotent, so the one line installs, upgrades and repairs.
 
-**Do not reach for `uv tool upgrade`.** For a tool installed from git it answers `Nothing to upgrade` whatever state your install is in, and `--reinstall` does not change that, so the obvious command tells you that you are current when you are months behind.
+**`uv tool upgrade` is not the shortcut it looks like.** It follows the git ref the install named, so from the bare URL above it re-resolves the default branch and does upgrade, but from a release note's line, which pins that release's tag, it answers `Nothing to upgrade` and exits 0 however far behind you are, and `--reinstall` rebuilds the same commit rather than changing that. Both installs are in the field, so the line above is the instruction here: it is the upgrade for either, and it costs a few seconds on an install that was already current.
 
 The reviewed configuration travels inside the install, which is what stops a config change bricking every `edullm` in the field, and means an old install is checking against an old copy. `edullm submit` asks for the current release before it dispatches and says so if yours is not it. It never refuses on that: a release is cut most days, so being a little behind is the normal state, and admission re-derives every verdict from inside AWS regardless.
 

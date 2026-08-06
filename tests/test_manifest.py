@@ -344,6 +344,10 @@ def test_manifest_rejects_an_infrastructure_field_the_compute_profile_owns(
 
 
 def test_manifest_rejects_empty_command() -> None:
+    # The program-name rules below must not swallow this one: an absent command and an
+    # unusable program name are different mistakes and a submitter fixes them differently.
+    # This assertion was written twice under two names, once here and once at the end of
+    # that block, with identical bodies. One of them is enough and this is it.
     payload = manifest_payload()
     payload["command"] = []
     with pytest.raises(ValidationError) as exc_info:
@@ -499,20 +503,6 @@ def test_a_program_named_by_absolute_path_is_still_a_program() -> None:
     payload["command"] = ["/usr/local/bin/python", "-m", "train"]
     manifest = RunManifest.model_validate(payload)
     assert manifest.command[0] == "/usr/local/bin/python"
-
-
-def test_an_empty_command_is_still_refused_for_being_empty() -> None:
-    # The program-name rule must not swallow this one: an absent command and an unusable
-    # program name are different mistakes and a submitter fixes them differently.
-    payload = manifest_payload()
-    payload["command"] = []
-    with pytest.raises(ValidationError) as exc_info:
-        RunManifest.model_validate(payload)
-    assert_validation_error(
-        exc_info.value,
-        error_type="too_short",
-        loc=("command",),
-    )
 
 
 def test_manifest_rejects_non_decimal_runtime_hours() -> None:

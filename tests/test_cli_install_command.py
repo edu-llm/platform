@@ -9,9 +9,25 @@ each of them showed a researcher doing.
 
 A comment cannot be trusted with the only install instruction a project has, so the
 instruction now lives in :mod:`edullm_platform.cli.release` and every other copy is checked
-against it here. The same rule catches the other half: ``uv tool upgrade`` reports
-``Nothing to upgrade`` for a git-installed tool, so a guide that suggests it tells a
-researcher they are current when they are not, and no file may say it without saying that.
+against it here. The same rule catches the other half: what ``uv tool upgrade`` does depends
+on how the tool was installed, so a guide that gives one answer for both tells half its
+readers something false, and no file may name the command without saying what it really does.
+
+**WHAT UV ACTUALLY DOES, AND WHY THIS PARAGRAPH IS HERE.** ``uv tool upgrade`` re-resolves the
+git ref the install named. Installed from the bare URL, which is the line every document in
+this repository prescribes, that ref is the default branch, so it re-resolves and the upgrade
+lands. Installed from ``@v<version>``, which is the line every published release note
+prescribes, the ref is a tag that never moves, so uv answers ``Nothing to upgrade`` and exits
+0 however far behind the install has fallen, with ``--reinstall`` too. Both installs are in
+the field today.
+
+The documents said instead, in twelve places, that a git install could not be upgraded at all.
+That was consistent everywhere and true only of the pinned half, and it survived because the
+five test files holding the twelve copies together asserted that the *sentence was present*
+and none of them asked uv. Every rule below is still one of those string matches over prose
+and still cannot tell you anything about uv;
+:func:`test_uv_upgrades_an_unpinned_git_install_and_leaves_a_pinned_one_alone` is the only
+thing in this file that installs anything and runs the command.
 
 THREE RULES ARE READ OVER THE TRACKED TREE, AND THE THIRD IS THE ONE THAT WAS MISSING. No
 file may recommend the upgrade command, no file may name the wrong install line, and no
@@ -28,9 +44,13 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import subprocess
 import tomllib
+from collections.abc import Sequence
 from pathlib import Path
+
+import pytest
 
 from edullm_platform.cli.actions import PLATFORM_REPOSITORY
 from edullm_platform.cli.release import DISTRIBUTION, TAG_PATTERN, install_command
@@ -47,9 +67,14 @@ EM_DASH = "\u2014"
 #: three assertions each carrying their own copy.
 UPGRADE_COMMAND = "uv tool upgrade"
 
-#: The sentence uv actually answers a ``uv tool upgrade`` with here. A file allowed to
-#: mention the command has to carry this too, which is the difference between warning about
-#: it and recommending it.
+#: What uv answers a ``uv tool upgrade`` with when the install is pinned at a tag, which is
+#: every install made from a release note. A file allowed to mention the command has to
+#: carry this too, which is the difference between warning about it and recommending it.
+#:
+#: **THIS IS A PHRASE TO FIND IN PROSE AND IT IS NOT A CHECK ON UV.** Holding twelve copies
+#: of a sentence to one spelling is worth doing and is all it does: the previous sentence was
+#: false for an unpinned install, every rule below was green on it, and the rule that would
+#: have caught it is the one that installs the tool and runs the command.
 UPGRADE_REFUTATION = "Nothing to upgrade"
 
 #: The console script written where a distribution belongs. Both wrong install lines this
@@ -163,7 +188,8 @@ def test_the_install_command_is_also_the_upgrade() -> None:
 
     Without it, installing a newer tag over an existing install is an error rather than a
     replacement, so the researcher needs a second command -- and the second command they
-    reach for is the one uv answers ``Nothing to upgrade`` to.
+    reach for answers ``Nothing to upgrade`` for whichever half of them installed from a
+    release note.
     """
     assert "--force" in shlex.split(install_command(repository=PLATFORM_REPOSITORY))
 
@@ -267,15 +293,157 @@ def test_the_guide_says_what_check_costs_and_that_it_reaches_nothing() -> None:
     assert "edullm check" in body
 
 
+# ---------------------------------------------------------------------------------------
+# what uv does, asked of uv rather than of a document
+# ---------------------------------------------------------------------------------------
+
+
+def throwaway_package(root: Path, version: str) -> None:
+    """A one-module distribution, rewritten in place so its repository can move forward.
+
+    ``hatchling`` because it is what this project builds with, so the backend this needs is
+    the one ``uv sync`` has already put in uv's cache on any machine that can run the suite.
+    """
+    (root / "src" / "uvt_probe").mkdir(parents=True, exist_ok=True)
+    (root / "pyproject.toml").write_text(
+        "[project]\n"
+        'name = "uvt-probe"\n'
+        f'version = "{version}"\n'
+        'requires-python = ">=3.10"\n'
+        "dependencies = []\n\n"
+        "[project.scripts]\n"
+        'uvt-probe = "uvt_probe:main"\n\n'
+        "[build-system]\n"
+        'requires = ["hatchling"]\n'
+        'build-backend = "hatchling.build"\n',
+        encoding="utf-8",
+    )
+    (root / "src" / "uvt_probe" / "__init__.py").write_text(
+        f'def main() -> None:\n    print("{version}")\n', encoding="utf-8"
+    )
+
+
+def git(root: Path, *argv: str) -> None:
+    """Identity passed per invocation, so the test does not read anybody's global config."""
+    subprocess.run(
+        ("git", "-c", "user.email=probe@invalid", "-c", "user.name=probe", *argv),
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
+def isolated_tool_home(home: Path) -> dict[str, str]:
+    """uv pointed inside ``tmp_path``, so nothing here can reach a real install."""
+    return dict(os.environ, UV_TOOL_DIR=str(home / "dir"), UV_TOOL_BIN_DIR=str(home / "bin"))
+
+
+def uv(argv: Sequence[str], *, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """``check=False`` on purpose. A non-zero exit is one of the answers being read."""
+    return subprocess.run(
+        ("uv", *argv), capture_output=True, text=True, env=env, check=False
+    )
+
+
+@pytest.mark.slow
+def test_uv_upgrades_an_unpinned_git_install_and_leaves_a_pinned_one_alone(
+    tmp_path: Path,
+) -> None:
+    """**THE ONLY THING IN THIS FILE THAT ASKS UV, AND THE REASON THE REST SAY SO.**
+
+    Mutation: go back to one answer for both installs. The documents did say that for
+    twelve copies across ten files, that ``uv tool upgrade`` cannot upgrade a git install
+    at all, and the five test files enforcing it asserted the sentence was in the documents
+    rather than that uv behaved that way. So the suite was green on a false statement and
+    could not have gone red on it, which is the shape this test exists to break.
+
+    Two installs of one throwaway repository, differing only in the ref. The repository then
+    moves, exactly as ``main`` does. Unpinned re-resolves the default branch and upgrades;
+    pinned at a tag resolves to the same commit forever, so uv says ``Nothing to upgrade``
+    and means it. Nothing about ``edullm`` is under test here -- what is under test is the
+    property of uv that every install instruction in this repository rests on, and a
+    throwaway package proves it in seconds where the real one needs a release to be cut.
+
+    **Skipped rather than failed when the install itself will not run.** It needs ``uv``, a
+    ``git`` that can make a commit, and a build backend, which is a network fetch on a cold
+    cache. Those are preconditions for asking the question and not answers to it. Once both
+    installs are up the assertions are unconditional, so the skip cannot hide uv changing
+    its behaviour, only this machine being unable to ask.
+    """
+    if shutil.which("uv") is None:
+        pytest.skip("uv is not on PATH, so there is nothing to ask")
+
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    throwaway_package(repository, "0.1.0")
+    git(repository, "init", "-b", "main")
+    git(repository, "add", "-A")
+    git(repository, "commit", "-m", "0.1.0")
+    git(repository, "tag", "v0.1.0")
+
+    source = f"git+{repository.as_uri()}"
+    unpinned = isolated_tool_home(tmp_path / "unpinned")
+    pinned = isolated_tool_home(tmp_path / "pinned")
+    for env, requirement in ((unpinned, source), (pinned, f"{source}@v0.1.0")):
+        installed = uv(("tool", "install", "--force", requirement), env=env)
+        if installed.returncode != 0:
+            pytest.skip(f"uv could not install the probe package: {installed.stderr.strip()}")
+
+    throwaway_package(repository, "0.2.0")
+    git(repository, "add", "-A")
+    git(repository, "commit", "-m", "0.2.0")
+    git(repository, "tag", "v0.2.0")
+
+    moved = uv(("tool", "upgrade", "uvt-probe"), env=unpinned)
+    stayed = uv(("tool", "upgrade", "uvt-probe"), env=pinned)
+
+    # NOTHING BELOW MAY CALL uv() INSIDE AN ASSERT. pytest prints the sub-expressions of a
+    # failing assertion, and one of the arguments here is a copy of the environment, so an
+    # assertion written over the call dumped the whole of it -- tokens included -- into the
+    # log the first time it was made to fail. The results are read into names first and the
+    # assertions compare names, which prints the string and not the call.
+    after_unpinned = uv(("tool", "list"), env=unpinned).stdout
+    after_pinned = uv(("tool", "list"), env=pinned).stdout
+    refusal = stayed.stdout + stayed.stderr
+
+    assert moved.returncode == 0, moved.stderr
+    assert "uvt-probe v0.2.0" in after_unpinned, (
+        "uv did not upgrade an install made from a bare git URL. Every document here says "
+        "re-running the install line is the upgrade and explains why by describing this "
+        "case, so the explanation has to be rewritten before the sentence is"
+    )
+
+    assert stayed.returncode == 0, stayed.stderr
+    assert UPGRADE_REFUTATION in refusal, (
+        f"uv no longer answers {UPGRADE_REFUTATION!r} to a pinned install, so the phrase "
+        "every document is held to quotes something uv does not say"
+    )
+    assert "uvt-probe v0.1.0" in after_pinned, (
+        "uv moved an install pinned at a tag, so the release note's Install section is "
+        "wrong in the other direction and researchers who installed from one can upgrade"
+    )
+
+
+# ---------------------------------------------------------------------------------------
+# what the tracked documents say about it
+# ---------------------------------------------------------------------------------------
+
+
 def test_nothing_recommends_the_upgrade_command_that_does_not_work() -> None:
     """Mutation: write "then run uv tool upgrade" into a guide.
 
-    Verified on uv 0.9.17 against a real install from this repository: ``uv tool upgrade
-    edullm-platform`` answers ``Nothing to upgrade``, and so does the same command with
-    ``--reinstall``. So the rule is not that the phrase is forbidden -- it has to be
-    written down somewhere or nobody learns why -- but that a file mentioning it must also
-    carry uv's actual answer. Recommending it and warning about it look identical to a
-    grep. They do not look identical to this.
+    **THIS CHECKS PROSE AND PROVES NOTHING ABOUT UV.** It reads tracked files for the two
+    phrases and would pass just as happily if the sentence around them were false again,
+    which is exactly what it did through twelve copies of a claim that was wrong for an
+    unpinned install. What uv does is settled one function up, by
+    :func:`test_uv_upgrades_an_unpinned_git_install_and_leaves_a_pinned_one_alone`. What
+    this is worth is keeping the twelve copies from drifting apart once they are right.
+
+    The rule is not that the command may not be named -- it has to be written down
+    somewhere or nobody learns why it is not the instruction -- but that a file naming it
+    must also carry uv's answer to the pinned case. Recommending it and warning about it
+    look identical to a grep. They do not look identical to this.
     """
     offenders = [
         str(path.relative_to(PROJECT_ROOT))
@@ -285,7 +453,7 @@ def test_nothing_recommends_the_upgrade_command_that_does_not_work() -> None:
 
     assert not offenders, (
         f"these name `{UPGRADE_COMMAND}` without saying that uv answers "
-        f"{UPGRADE_REFUTATION!r} to it for a git-installed tool:\n  "
+        f"{UPGRADE_REFUTATION!r} to it for an install pinned at a release tag:\n  "
         + "\n  ".join(offenders)
         + f"\nSay so beside it, or print the {install_command(repository=PLATFORM_REPOSITORY)} "
         "line instead."
@@ -325,12 +493,15 @@ def test_nothing_tells_anybody_to_install_the_console_script() -> None:
 def test_every_file_that_says_how_to_install_says_how_to_upgrade() -> None:
     """Mutation: delete the upgrade sentence from ``README.md``.
 
+    **A PROSE CHECK, LIKE THE ONE ABOVE IT, AND SILENT ON WHAT UV DOES.** It asserts a
+    phrase is present near the install line and nothing more.
+
     The two halves were held separately and only one of them was enforced everywhere. Any
     file may be checked for recommending ``uv tool upgrade``, but a file that never
     mentions it passes that check by saying nothing -- and saying nothing is the failure.
-    Somebody who installs successfully reaches for ``upgrade`` next, and uv answers
-    ``Nothing to upgrade`` with a zero exit whatever the state of the install, so the
-    obvious command tells them they are current when they are months behind.
+    Somebody who installs successfully reaches for ``upgrade`` next, and what they get back
+    depends on how their predecessor installed the tool, which they have no way of knowing.
+    A zero exit and ``Nothing to upgrade`` is the answer for the pinned half.
 
     ``README.md`` was in exactly that state when this rule was written: it carried the
     install line, in the one paragraph on the front page addressed to somebody about to
@@ -351,7 +522,8 @@ def test_every_file_that_says_how_to_install_says_how_to_upgrade() -> None:
         "and believes it:\n  "
         + "\n  ".join(offenders)
         + f"\nSay beside the line that {UPGRADE_COMMAND} answers {UPGRADE_REFUTATION!r} "
-        "for a git-installed tool and that re-running the line is how you upgrade."
+        "for an install pinned at a release tag and that re-running the line is how you "
+        "upgrade whichever install you have."
     )
 
 

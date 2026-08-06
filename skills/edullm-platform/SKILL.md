@@ -34,10 +34,14 @@ Two near misses that both look like they ought to work.
 - `uv tool install edullm` answers `not found in the package registry`. `edullm` is the
   executable, `edullm-platform` is the distribution, and neither is published to an index,
   so there is nothing at either name to resolve. The line above installs from git.
-- `uv tool upgrade` does not upgrade a tool installed from git. `uv tool upgrade edullm`
-  errors, because `edullm` is the executable rather than the installed tool, and
-  `uv tool upgrade edullm-platform` prints `Nothing to upgrade` however far behind the
-  install is. **Re-running the install line above is the upgrade.**
+- `uv tool upgrade` does something different depending on how the tool was installed, which
+  is why it is not the instruction here. `uv tool upgrade edullm` errors whatever you have,
+  because `edullm` is the executable rather than the installed tool. `uv tool upgrade
+  edullm-platform` follows the git ref the install named: from the bare URL above it
+  re-resolves the default branch and does upgrade, but from a release note's line, which
+  pins that release's tag, it prints `Nothing to upgrade` and exits 0 however far behind the
+  install is. **Re-running the install line above is the upgrade for either, so run that
+  rather than working out which install this is.**
 
 Re-install before you trust an answer that matters. The tool carries its own copy of the
 reviewed configuration, frozen at the release it was built from, and prices against that
