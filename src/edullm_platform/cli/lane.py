@@ -36,6 +36,7 @@ from edullm_platform.cli.configuration import (
     ReviewedConfiguration,
 )
 from edullm_platform.cli.preflight import Refusal
+from edullm_platform.cli.workspace import WINDOWS
 from edullm_platform.contracts.base import ContractModel, serialize_decimal
 from edullm_platform.contracts.workload import ComputeProfile
 from edullm_platform.placement import (
@@ -1753,18 +1754,51 @@ def agent_online_argv(instance_id: str) -> tuple[str, ...]:
     )
 
 
-def ssh_proxy_command(instance_id: str) -> str:
-    """The one line that makes an editor over SSH work, printed rather than installed.
+#: What AWS's own SSH-over-Session-Manager instructions put in front of the command on Windows,
+#: down to the absolute path. The interpreter is named in full rather than as ``powershell``
+#: because a ``ProxyCommand`` is not resolved against ``PATH`` by every SSH client that reads one,
+#: and this path is present on every supported Windows.
+WINDOWS_PROXY_INTERPRETER: Final = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+
+
+def ssh_proxy_command(instance_id: str, *, system: str) -> str:
+    """The one line that makes an editor over SSH work, for the laptop it is printed on.
 
     VS Code Remote-SSH and plain ``ssh`` both drive a ``ProxyCommand``, and this is the documented
     one for Session Manager. It is printed because ``~/.ssh/config`` is a file this binary does not
     own and may not be the only thing writing to.
+
+    **THERE ARE TWO OF THESE BECAUSE AWS DOCUMENTS TWO, AND PRINTING ONLY THE FIRST HANDED EVERY
+    WINDOWS RESEARCHER A LINE THAT CANNOT RUN.** The Unix line wraps the command in ``sh -c``, and
+    native Windows has no ``sh``: not in ``System32``, not from the OpenSSH client Windows ships,
+    and not from anything a person who has only installed the AWS CLI has. The failure is at
+    connect time, inside whatever editor read the config, and what it says is that ``sh`` was not
+    found -- which sends somebody to look at their SSH configuration for a program this platform
+    never told them they needed.
+
+    So ``system`` decides, and it is the operating system this process is running on, which is the
+    one the file being pasted into belongs to. Both spellings are AWS's own, from *Step 8: Allow
+    and control permissions for SSH connections* in the Systems Manager user guide, which gives
+    the ``sh -c`` form under **Linux and macOS** and the ``powershell.exe`` form under **Windows**.
+    Neither is invented here, which matters for a line this binary cannot test by running.
+
+    **WSL TAKES THE UNIX LINE AND THAT IS NOT AN OVERSIGHT.** A researcher there is a Linux
+    process, writing a Linux ``~/.ssh/config``, read by a Linux ``ssh`` that has ``sh``.
+    :func:`platform.system` answers ``Linux`` for them, so they get the form that works, and the
+    separate hazard of a *Windows* ``gh`` on a WSL ``PATH`` is :func:`github_interop_diagnostic`'s
+    and is diagnosed there.
+
+    ``system`` is a parameter rather than a call inside this function so that both lines are
+    reachable from a suite on either kind of laptop. Compared case-folded, which is the comparison
+    :mod:`edullm_platform.cli.workspace` makes for the same reason it does there.
     """
-    return (
-        'ProxyCommand sh -c "aws ssm start-session --target '
-        f"{instance_id} --document-name AWS-StartSSHSession "
-        '--parameters portNumber=%p"'
+    session = (
+        f"aws ssm start-session --target {instance_id} "
+        "--document-name AWS-StartSSHSession --parameters portNumber=%p"
     )
+    if system.casefold() == WINDOWS:
+        return f'ProxyCommand {WINDOWS_PROXY_INTERPRETER} "{session}"'
+    return f'ProxyCommand sh -c "{session}"'
 
 
 def missing_plugin_refusal() -> Refusal:

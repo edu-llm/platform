@@ -91,6 +91,11 @@ class FakeRunner:
         #: than asserted here, because whether a given session needs one is the verb's decision
         #: and :meth:`held_stdin_open_for` is how a case reads it back.
         self.stdins_held: list[bool] = []
+        #: Which calls were handed this process's own terminal rather than being captured. The
+        #: companion to ``stdins_held`` and recorded for the same reason: which sessions are a
+        #: person typing is the verb's decision, and :meth:`handed_over_the_terminal_for` is how
+        #: a case reads it back.
+        self.terminals_handed_over: list[bool] = []
 
     def __call__(
         self,
@@ -100,10 +105,12 @@ class FakeRunner:
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
         stdin_stays_open: bool = False,
+        hands_over_the_terminal: bool = False,
     ) -> CommandResult:
         self.calls.append(argv)
         self.environments.append(dict(env or {}))
         self.stdins_held.append(stdin_stays_open)
+        self.terminals_handed_over.append(hands_over_the_terminal)
         matches = [prefix for prefix in self._answers if argv[: len(prefix)] == prefix]
         if not matches:
             raise UnexpectedCommandError(
@@ -122,6 +129,14 @@ class FakeRunner:
         return [
             held
             for argv, held in zip(self.calls, self.stdins_held, strict=True)
+            if argv[: len(prefix)] == tuple(prefix)
+        ]
+
+    def handed_over_the_terminal_for(self, *prefix: str) -> list[bool]:
+        """Whether each matching call was given this process's terminal instead of a pipe."""
+        return [
+            handed
+            for argv, handed in zip(self.calls, self.terminals_handed_over, strict=True)
             if argv[: len(prefix)] == tuple(prefix)
         ]
 
