@@ -361,13 +361,11 @@ def _names_a_precision_setting(name: str) -> bool:
 #: -- the image's own training entrypoint sets the dtype in code -- so the sentence that
 #: bounds the claim travels with every refusal that makes it.
 _WHAT_WAS_CHECKED: Final = (
-    "This read the words of your command and nothing else. bfloat16 that is set inside the "
-    "program, or in a config file in the image, or through a shell variable this cannot "
-    "resolve, is invisible here and is not refused -- .edullm/train_on_corpus.py builds its "
-    "data-parallel config in bfloat16 by default, so a command that merely runs that program "
-    "is a bfloat16 run this guard cannot see. Writing the dtype into the command is what "
-    "brings it back into view: train_module.dp_config.param_dtype=bfloat16, or "
-    "--param-dtype bfloat16, is read here and refused before the run costs anything."
+    "This read the words of your command and nothing else, so bfloat16 set inside the "
+    "program, in a config file in the image, or through a shell variable is invisible here "
+    "and is not refused. .edullm/train_on_corpus.py builds its data-parallel config in "
+    "bfloat16 by default, so a command that merely runs that program is a bfloat16 run this "
+    "guard cannot see."
 )
 
 
@@ -379,17 +377,17 @@ def _refusal(
     catalog: WorkloadCatalog,
 ) -> str:
     return (
-        f"compute profile {profile.name!r} is {profile.instance_type}, whose {gpu.model} is a "
-        f"{gpu.architecture.name}-generation card with no bfloat16 in the hardware, and this "
-        f"command asks for bfloat16: {request}. The run would be classified, released by a "
-        f"lead, admitted and placed, and then die on the first kernel that needs the format, "
-        f"at ${serialize_decimal(profile.hourly_rate_usd)}/hour. Nothing before the device "
+        "move this to a shape whose cards have bfloat16, or keep the shape and change the "
+        "recipe to fp16 with loss scaling or fp32 master weights with a smaller micro-batch. "
+        f"{_bfloat16_shapes_said(catalog)} Compute profile {profile.name!r} is "
+        f"{profile.instance_type}, whose {gpu.model} is a {gpu.architecture.name}-generation "
+        f"card with no bfloat16 in the hardware, and this command asks for bfloat16 with "
+        f"{request}. The run would be released by a lead, admitted and placed, and then die "
+        "on the first kernel that needs the format, at "
+        f"${serialize_decimal(profile.hourly_rate_usd)}/hour. Nothing before the device "
         "reports a problem, and torch.cuda.is_bf16_supported() returns true on this card, so "
         "a program that asks before committing to a dtype is told the wrong thing by the "
-        f"only source that would know. {_bfloat16_shapes_said(catalog)} Or keep the shape and "
-        "change the recipe -- fp16 with loss scaling, or fp32 master weights and a smaller "
-        "micro-batch -- which is a deviation for you to declare rather than one this platform "
-        f"makes on your behalf. {_WHAT_WAS_CHECKED}"
+        f"only source that would know. {_WHAT_WAS_CHECKED}"
     )
 
 

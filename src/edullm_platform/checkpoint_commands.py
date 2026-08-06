@@ -287,26 +287,26 @@ def _refusal(
     # They have already done the thinking this refusal would otherwise be explaining, and a
     # paragraph about quoting on every refusal is a paragraph people stop reading.
     inert = (
-        f" The name is in this command in a position nothing expands -- inside single "
-        f"quotes, behind a backslash, in a comment, or in a command the container execs "
-        f"directly rather than through a shell -- so what would reach the program is the "
-        f"literal text ${CHECKPOINT_DIRECTORY_VARIABLE}, and it will create a directory by "
-        f"that name on the instance."
+        f" The name is in this command where nothing expands it, inside single quotes, "
+        f"behind a backslash, in a comment, or in a command the container execs without a "
+        f"shell, so the program receives the literal text "
+        f"${CHECKPOINT_DIRECTORY_VARIABLE} and creates a directory by that name."
         if _names_the_directory(command)
         else ""
     )
+    example = (
+        f"bash -lc 'python train.py --save-folder \"${CHECKPOINT_DIRECTORY_VARIABLE}\"'"
+    )
     return (
-        f"workload profile {workload_profile!r} declares "
-        f"{_contract_said(checkpoint)}, and nothing in this command expands "
+        f"pass ${CHECKPOINT_DIRECTORY_VARIABLE} to whatever your program calls its save "
+        f"folder, under a shell so that it expands. Workload profile {workload_profile!r} "
+        f"declares {_contract_said(checkpoint)}, and nothing in this command expands "
         f"${CHECKPOINT_DIRECTORY_VARIABLE}.{inert} The container is given that variable and "
         "the command is exec'd exactly as typed, so a program that is not pointed at it "
-        "saves where its own default says -- /tmp/{run_name} for the OLMo-core example, "
-        "which is local disk on a machine that stops existing. The run exits zero, the "
-        "checkpoint prefix stays empty, and the retry this contract is what pays for starts "
-        "from nothing. Pass it to whatever your program calls its save folder, under a shell "
-        "so that it expands: bash -lc 'python train.py --save-folder "
-        f'"${CHECKPOINT_DIRECTORY_VARIABLE}"\'. If this run places its own checkpoints, or '
-        f"is a throwaway nobody will resume, write {CHECKPOINT_CHECK_WAIVER} into the "
-        "command, which records that on the run rather than leaving it to be read off an "
-        "empty prefix weeks later."
+        "saves where its own default says, which for the OLMo-core example is "
+        "/tmp/{run_name} on local disk that stops existing with the machine. The run exits "
+        "zero, the checkpoint prefix stays empty, and the retry this contract pays for "
+        "starts from nothing. If this run places its own checkpoints, or is a throwaway "
+        f"nobody will resume, write {CHECKPOINT_CHECK_WAIVER} into the command instead. A "
+        f"command that saves where a retry looks is {example}"
     )

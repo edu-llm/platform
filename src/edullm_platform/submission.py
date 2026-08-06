@@ -3,13 +3,13 @@
 Two jobs, and the separation between them is the whole design. Compiling happens in a job
 that holds no ``id-token`` permission and reads no secret, so the classification that
 decides which gate a submission goes to is computed before anything can reach AWS. The
-workflow then names that gate through ``needs``, never through ``inputs`` — GitHub permits
+workflow then names that gate through ``needs``, never through ``inputs``. GitHub permits
 either, and the wrong one lets a submitter choose their own approval path.
 
 The form collects what a person genuinely chooses and derives the rest. A workload profile
 fixes the runtime bound, the attempt bound and the checkpoint contract, so asking for those
 again invites a submitter to contradict the catalog. They stay available as explicit
-overrides, because a sweep that needs longer than its profile's default is ordinary — and
+overrides, because a sweep that needs longer than its profile's default is ordinary, and
 an override is visible to the approver in a way a silently different default would not be.
 
 The machine is the exception, and it is asked for outright. It was an override too, on the
@@ -25,7 +25,7 @@ seventy-one-character field that had to agree with the declared commit and was c
 nothing, so a submission could name commit A beside an image built from commit B and be
 faultless on every field. It is derived from the commit now, by
 :mod:`edullm_platform.image_resolution`, out of what the resolve job read back from the
-registry — and what survives is an override with the same visibility as the other five.
+registry, and what survives is an override with the same visibility as the other five.
 """
 
 from __future__ import annotations
@@ -251,15 +251,15 @@ def _resolve_workload(
     )
     if not for_this_repository:
         raise UnregisteredWorkloadProfileError(
-            f"unregistered workload profile {name!r}. config/workload-catalog.yaml "
-            f"registers no workload profile for {repository!r} at all, so no run can name "
-            "that repository until somebody adds one in a pull request."
+            f"add a workload profile for {repository!r} to config/workload-catalog.yaml in "
+            f"a pull request, or submit against a repository that has one. That file "
+            f"registers none for {repository!r}, so {name!r} has nothing to resolve against."
         )
     registered = ", ".join(for_this_repository)
     raise UnregisteredWorkloadProfileError(
-        f"unregistered workload profile {name!r}. config/workload-catalog.yaml registers "
-        f"these for {repository!r}: {registered}. Entries in that file for other "
-        "repositories are refused against this one, so change the repository field as well "
+        f"name one of {registered}. config/workload-catalog.yaml registers those for "
+        f"{repository!r} and carries no workload profile {name!r}. A profile registered for "
+        "another repository is refused against this one, so change the repository as well "
         "if you meant one of those."
     )
 
@@ -287,9 +287,11 @@ def require_registered_repository(
     workload profile belonging to somebody else, which points at a field that was never
     what stood in the way.
 
-    So this is asked first, out of the same registry, and it says the two things that make
-    the answer actionable: the registry is a file in this repository, and adding an entry to
-    it is a pull request rather than an owner's action.
+    So this is asked first, out of the same registry, and it leads with the command that
+    clears it. ``edullm add repository`` is the one kind in ``cli.intake.SELF_SERVICE_KINDS``
+    and ``register-repository.yml`` edits the platform files and opens the pull request, so
+    the reader who meets this can serve themselves. Naming only the registry file, as this
+    refusal did until 2026-08-06, sent that reader off to hand-edit five files instead.
 
     A function beside :func:`compile_submission` rather than a check inside it, which is
     where ``require_submitter_on_the_roster`` sits and for a related reason.
@@ -306,13 +308,12 @@ def require_registered_repository(
         return
     registered = ", ".join(entry.repository for entry in repositories.repositories)
     raise UnregisteredRepositoryError(
-        f"{repository!r} is not registered in config/repositories.yaml, so admission would "
-        f"refuse this run with unregistered_repository whoever released it. Registered "
-        f"today: {registered}. A registration is what gives a repository somewhere for its "
-        "images to go, a pinned base image to build from and a Dockerfile path to build by, "
-        "so there is no image for this run to have named. Adding an entry is a pull request "
-        "against this repository, and it takes an ECR repository and a place on the "
-        "publisher role with it."
+        f"run edullm add repository --reason '<why>' to register {repository!r}, which "
+        f"opens the pull request that does it. config/repositories.yaml carries no entry "
+        f"for it, so admission would refuse this run with unregistered_repository whoever "
+        f"released it. That pull request also carries the ECR repository the images go to, "
+        f"created when it merges, and the place on the publisher role that writes them, "
+        f"which is a stack no workflow may deploy. Registered today: {registered}."
     )
 
 
@@ -382,23 +383,19 @@ def require_a_dataset_release_that_is_current(
         return
     current = datasets.current_versions_of(dataset_release)
     instead = (
-        f"{', '.join(current)} is the version its owner names as current"
+        f"name {', '.join(current)} instead, which its owner names as current."
         if current
         else (
-            "nothing was ever published under it, so `none` is the true answer for a run "
-            "that reads no corpus"
+            "name `none` instead. Nothing was ever published under this release, so that "
+            "is the true answer for a run that reads no corpus."
         )
     )
     raise RetiredDatasetReleaseError(
-        f"{dataset_release!r} is registered in config/datasets.yaml and is retired there, "
-        f"so it is not a corpus to start new work against: {instead}. Retirement is a fact "
-        "only the corpus's owner holds -- nothing computable separates a superseded version "
-        "from the current one -- which is why it is a flag rather than something this "
-        "platform derives. The entry stays registered so that every record naming it goes "
-        "on resolving; what it stops is a new run recording that it read this. If you are "
-        "reproducing an earlier result and need exactly this corpus, that is a case for "
-        "clearing the flag in a pull request rather than for naming a different one: a run "
-        "that names the corpus it did not read is the record this refusal exists to prevent."
+        f"{instead} {dataset_release!r} is registered in config/datasets.yaml and retired "
+        "there, so it is not a corpus to start new work against. If you are reproducing an "
+        "earlier result and need exactly this corpus, clear the flag in a pull request "
+        "rather than naming a different one. A run that names the corpus it did not read "
+        "is the record this refusal exists to prevent."
     )
 
 
@@ -435,13 +432,12 @@ def require_submitter_on_the_roster(submitter: str, *, inventory: OrganizationIn
     if is_organization_member(inventory, submitter):
         return
     raise SubmitterNotOnTheRosterError(
-        f"{submitter!r} is not on the roster in config/organization.yaml, so admission "
-        "would refuse this run with submitter_not_in_roster whoever released it. Write "
-        "access to this repository and a place on the roster are granted separately, "
-        "which is why the submission form is there for somebody the roster does not name. "
-        "Add them to `members` in that file in a pull request against this repository. "
-        "That is the whole of the fix and it needs a reviewer and a merge, not an owner's "
-        "access to anything."
+        f"add {submitter!r} to `members` in config/organization.yaml, in a pull request "
+        "against this repository. It needs a reviewer and a merge rather than an owner's "
+        "access to anything, and until it merges admission would refuse this run with "
+        "submitter_not_in_roster whoever released it. Write access here and a place on the "
+        "roster are granted separately, which is why the form is open to somebody the "
+        "roster does not name."
     )
 
 
@@ -478,11 +474,12 @@ def compile_submission(
         # before Batch is cheap, and an approval spent on a submission that cannot be
         # coherent is the expensive thing to avoid.
         raise WorkloadProfileRepositoryMismatchError(
-            f"workload profile {workload.name!r} belongs to repository "
-            f"{workload.repository!r} and this submission names {inputs.repository!r}. A "
-            "workload profile fixes the runtime bound, the attempt bound and the checkpoint "
-            "contract for the codebase it was written against, so the two have to be the "
-            "same repository."
+            f"change the repository to {workload.repository!r}, or name a workload profile "
+            f"registered for {inputs.repository!r}. Workload profile {workload.name!r} "
+            f"belongs to repository {workload.repository!r} and this submission names "
+            f"{inputs.repository!r}. A profile fixes the runtime bound, the attempt bound "
+            "and the checkpoint contract for the codebase it was written against, so the "
+            "two have to be the same repository."
         )
 
     # After the repository check and before anything else, because the images below were
@@ -511,10 +508,9 @@ def compile_submission(
     )
     if attempts > 1 and workload.checkpoint is None:
         raise RetryWithoutACheckpointContractError(
-            f"workload profile {workload.name!r} declares no checkpoint contract, so it "
-            f"cannot be retried; asking for {attempts} attempts would produce a run that "
-            "restarts from nothing. Raise the attempt bound on a workload that checkpoints, "
-            "or add a checkpoint contract to this one."
+            f"ask for one attempt, or add a checkpoint contract to workload profile "
+            f"{workload.name!r} in config/workload-catalog.yaml. It declares none today, so "
+            f"asking for {attempts} attempts would produce a run that restarts from nothing."
         )
 
     # THE FORM'S IMAGE FIELD IS OPTIONAL AND THE MANIFEST'S IS NOT, AND THE ASYMMETRY IS
@@ -536,10 +532,10 @@ def compile_submission(
     # record.
     if not fullmatch(SLUG_PATTERN, inputs.experiment):
         raise ExperimentNotASlugError(
-            f"the experiment {inputs.experiment!r} is not a name this platform can group on. "
-            "An experiment is written in lower-case letters and digits, with single hyphens "
-            "between words and none at either end -- context-length-sweep, tokenizer-ablation. "
-            "It registers nothing and needs no pull request; only the shape is fixed, so that "
+            "write the experiment in lower-case letters and digits, with single hyphens "
+            "between words and none at either end. context-length-sweep and "
+            f"tokenizer-ablation have that shape and {inputs.experiment!r} does not. It "
+            "registers nothing and needs no pull request. Only the shape is fixed, so that "
             "two people naming the same experiment get one group rather than two."
         )
 
@@ -619,8 +615,9 @@ def compile_submission(
         cost = compute_manifest_cost_inputs(manifest, catalog)
     except ValueError as exc:
         raise UnpriceableComputeProfileError(
-            f"unregistered compute profile {manifest.compute_profile!r}; it has no rate, so "
-            "the submission cannot be priced and policy denies it outright"
+            "name a compute profile config/workload-catalog.yaml registers. "
+            f"{manifest.compute_profile!r} has no rate there, so the submission cannot be "
+            "priced and policy denies it outright."
         ) from exc
 
     # THE FORM SAYS `team` AND THE VALIDATOR SAYS `claimed_team`, AND ONLY ONE OF THOSE IS
@@ -658,10 +655,9 @@ def compile_submission(
         if not any(error["loc"] == ("claimed_team",) for error in exc.errors()):
             raise
         raise TeamNotASlugError(
-            f"the team {manifest.team!r} is not a team name this platform can record. A "
-            "team is written in lower-case letters and digits, with single hyphens between "
-            "words and none at either end -- memory-split, data, olmo-core-eval. Correct "
-            "the team field on the submission form."
+            "correct the team field on the submission form. A team is written in "
+            "lower-case letters and digits, with single hyphens between words and none at "
+            f"either end, like memory-split or olmo-core-eval, and {manifest.team!r} is not."
         ) from exc
 
     # Imported here rather than at module scope: admission owns this rule, and importing
@@ -821,7 +817,7 @@ def render_approver_context(
         f"# Run submission `{submission.run_id}`",
         "",
         (
-            f"**{submission.approval_class.value.upper()}** — this request must be released "
+            f"**{submission.approval_class.value.upper()}**. This request must be released "
             f"by the `{submission.approving_environment.value}` gate."
         ),
         "",
@@ -853,7 +849,7 @@ def render_approver_context(
             f"| W&B author | `{wandb_username}` |"
             if wandb_username is not None
             else (
-                f"| W&B author | **this run will not be attributed** — no W&B account is "
+                f"| W&B author | **this run will not be attributed**, no W&B account is "
                 f"recorded for `{submitter}` |"
             )
         ),

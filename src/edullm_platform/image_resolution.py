@@ -122,21 +122,20 @@ def resolve_image(
     # that it is the one that gets said.
     if not published:
         raise NoPublishedImageError(
-            f"commit {commit_sha} has no image published from it, so there is nothing for "
-            "this submission to run. Build the commit before submitting it: the "
-            "build-research-image.yml workflow publishes an image for the commit it is "
-            "called on and prints the digest it published in its step summary."
+            f"build commit {commit_sha} before submitting it. The build-research-image.yml "
+            "workflow publishes an image for the commit it is called on and prints the "
+            "digest in its step summary. Nothing has been published from this commit, so "
+            "there is nothing for this submission to run."
         )
 
     if override is not None:
         if override not in {candidate.image_digest for candidate in published}:
             raise ImageNotPublishedFromTheCommitError(
-                f"image digest {override} was not published from commit {commit_sha}. A "
-                "run's image has to be one its own commit produced, or the lineage record "
-                "names a commit that did not build the image that ran. Submit the commit "
-                "this image was built from, or name a digest this commit published: the "
-                "build-research-image.yml run for a commit prints the digest it published "
-                "in its step summary."
+                "submit the commit this image was built from, or name a digest commit "
+                f"{commit_sha} published. Its build-research-image.yml run prints the digest "
+                f"in its step summary. Image digest {override} was not published from that "
+                "commit, and a run's image has to be one its own commit produced, or the "
+                "lineage record names a commit that did not build the image that ran."
             )
         return ResolvedImage(
             image_digest=override,
@@ -171,11 +170,12 @@ def resolve_image(
         # to check for it.
         candidates = ", ".join(sorted(candidate.image_digest for candidate in tied))
         raise AmbiguousImageError(
-            f"commit {commit_sha} has {len(tied)} images published at the same instant "
+            "name the one you want in the image_digest field. Commit "
+            f"{commit_sha} has {len(tied)} images published at the same instant "
             f"({latest.isoformat()}), so which of them this submission means cannot be "
-            f"derived: {candidates}. Name the one you want in the image_digest field. A "
-            "rebuild happens because the previous build was wrong, so the difference "
-            "between them is a real one and not something to be guessed at here."
+            f"derived: {candidates}. A rebuild happens because the previous build was "
+            "wrong, so the difference between them is real rather than something to guess "
+            "at here."
         )
 
     return ResolvedImage(

@@ -372,7 +372,8 @@ def test_the_retired_refusal_does_not_send_a_resume_to_name_a_corpus_it_did_not_
         require_a_dataset_release_that_is_current("fineweb-edu-1b-v2", datasets=registry)
 
     assert "reproducing an earlier result" in str(refusal.value)
-    assert "clearing the flag in a pull request" in str(refusal.value)
+    assert "clear the flag in a pull request" in str(refusal.value)
+    assert "rather than naming a different one" in str(refusal.value)
     assert "names the corpus it did not read" in str(refusal.value)
 
 
