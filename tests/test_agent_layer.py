@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ast
 import re
+from enum import Enum
 from pathlib import Path
 
 import pytest
@@ -40,34 +41,49 @@ from tests.test_cli_no_hardcoded_bounds import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 AGENTS = PROJECT_ROOT / "AGENTS.md"
-SKILLS = PROJECT_ROOT / ".cursor" / "skills"
+
+#: WHY THIS IS ``.agents/`` AND NOT ``.cursor/``, WHICH IS THE DEFECT THAT MOVED IT. Under
+#: ``.cursor/`` these two loaded for an agent working on this platform, in one host, and for
+#: nobody working in OLMo-core or a codebase of their own -- which is precisely who the layer
+#: was asked for. Codex reads project skills out of ``.agents/skills`` and out of nowhere
+#: else, Cursor reads it natively, and ``.claude/skills/<name>`` is a symlink onto the same
+#: file because Claude Code reads nothing but its own directory. One text, three hosts.
+SKILLS = PROJECT_ROOT / ".agents" / "skills"
 
 SUBMITTING = SKILLS / "submitting-a-run" / "SKILL.md"
 REGISTERING = SKILLS / "registering-a-repository" / "SKILL.md"
 
-#: THE ONE DOCUMENT IN THIS LAYER THAT LEAVES THE REPOSITORY, AND THE DIFFERENCE DECIDES
-#: WHERE IT LIVES. The two above sit under ``.cursor/`` and are loaded by an agent working
-#: on this platform, which is not who the layer was asked for. A researcher's agent works in
-#: OLMo-core or in a codebase of its own, never has this checkout, and so reads neither
-#: ``AGENTS.md`` nor anything under ``.cursor/``. This one is copied into their tree instead,
-#: which is why it is committed outside both and why it may lean on nothing else.
-RESEARCHER_SKILL = PROJECT_ROOT / "skills" / "edullm-platform" / "SKILL.md"
+#: THE ALWAYS-ON RULE AS IT IS SHIPPED, WHICH IS NOT THIS REPOSITORY'S OWN ``AGENTS.md``.
+#: ``AGENTS.md`` above is guidance for somebody working on the platform. This is the block
+#: spliced into every registered repository's ``AGENTS.md`` by
+#: ``tools/distribute_agent_layer.py``, and it is the only part of the layer a researcher's
+#: agent loads without being asked to. The install line lives here rather than in a skill
+#: because installing is not a situation an agent recognises, it is the thing that has to
+#: have already happened.
+RESEARCHER_RULE = PROJECT_ROOT / "skills" / "agents-md-block.md"
 SKILLS_README = PROJECT_ROOT / "skills" / "README.md"
 
 #: Every document in this layer. The shared properties below are parametrized over it, so a
 #: skill added later cannot arrive unheld.
+#:
+#: **``skills/edullm-platform/SKILL.md`` WAS A FOURTH AND IS GONE.** It described the same
+#: loop as the two skills below, at more lines than both together, and it was never put to
+#: the owner as an addition to the set he settled on 2026-08-04. Three documents over one
+#: loop drift; the cure was not deleting the coverage it had accumulated but moving that
+#: coverage onto the documents that actually ship, which is what the cases at the foot of
+#: this file now do.
 AGENT_DOCUMENTS: tuple[Path, ...] = (
     AGENTS,
     SUBMITTING,
     REGISTERING,
-    RESEARCHER_SKILL,
+    RESEARCHER_RULE,
     SKILLS_README,
 )
 
-#: Every skill in this layer, which is AGENT_DOCUMENTS minus the always-on rule and the page
-#: that says where to put one. Held apart because the frontmatter and the length budget are
+#: Every skill in this layer, which is AGENT_DOCUMENTS minus the two rules and the page that
+#: says where to put one. Held apart because the frontmatter and the length budget are
 #: properties of a skill and not of a rule.
-SKILL_DOCUMENTS: tuple[Path, ...] = (SUBMITTING, REGISTERING, RESEARCHER_SKILL)
+SKILL_DOCUMENTS: tuple[Path, ...] = (SUBMITTING, REGISTERING)
 
 #: What a SKILL.md body is allowed to run to. The context window is shared with the
 #: conversation, the other skills and the request, so a long skill costs every turn rather
@@ -625,19 +641,28 @@ def test_the_registration_skill_resolves_against_the_approved_base_images() -> N
 
 
 # ---------------------------------------------------------------------------------------
-# The researcher's skill, which is the only document here that leaves this repository.
+# The two documents that leave this repository, held to the tree they describe.
 #
 # EVERY CASE BELOW IS A THING THE SHARED ONES ABOVE CANNOT SEE. They hold a document to the
 # binary's vocabulary: verbs it has, flags it takes, codes it can raise, no bound written
-# out. A skill can pass all of that and still send somebody to `uv tool install edullm`,
-# quote an approval class the policy cannot return, or print a bfloat16 spelling the guard
+# out. A document can pass all of that and still send somebody to `uv tool install edullm`,
+# describe an approval class no submission reaches, or print a bfloat16 spelling the guard
 # stopped recognising. Those are claims rather than vocabulary, and a claim has to be held
 # against the thing that decides it.
+#
+# THEY WERE WRITTEN AGAINST `skills/edullm-platform/SKILL.md` AND NOW POINT AT THE SHIPPED
+# TWO, WHICH IS THE WHOLE OF WHY THAT FILE COULD BE RETIRED WITHOUT LOSING ANYTHING. The
+# coverage was the good half of it. What it did not have was the owner's approval, a reason
+# to exist beside two skills describing the same loop, or a way of reaching anybody.
 # ---------------------------------------------------------------------------------------
 
 
-def researcher_skill() -> str:
-    return RESEARCHER_SKILL.read_text(encoding="utf-8")
+def researcher_rule() -> str:
+    return RESEARCHER_RULE.read_text(encoding="utf-8")
+
+
+def submitting_skill() -> str:
+    return SUBMITTING.read_text(encoding="utf-8")
 
 
 def fenced_lines(text: str) -> list[str]:
@@ -672,7 +697,7 @@ def first_column_under(header: str, *, text: str) -> set[str]:
     return found
 
 
-def test_the_researcher_skill_prints_the_install_line_the_binary_itself_prints() -> None:
+def test_the_always_on_rule_prints_the_install_line_the_binary_itself_prints() -> None:
     """Mutation: pin a tag into it, or write ``uv tool install edullm-platform``.
 
     ``cli/release.py``'s header records that the wrong install command sat in
@@ -685,7 +710,7 @@ def test_the_researcher_skill_prints_the_install_line_the_binary_itself_prints()
     from edullm_platform.cli.release import install_command
 
     expected = install_command(repository=PLATFORM_REPOSITORY)
-    printed = [line.strip() for line in fenced_lines(researcher_skill())]
+    printed = [line.strip() for line in fenced_lines(researcher_rule())]
 
     assert expected in printed, (
         f"no line the skill prints is exactly {expected!r}. A line with a tag on the end "
@@ -694,7 +719,7 @@ def test_the_researcher_skill_prints_the_install_line_the_binary_itself_prints()
     )
 
 
-def test_the_researcher_skill_names_the_distribution_rather_than_the_executable() -> None:
+def test_the_always_on_rule_names_the_distribution_rather_than_the_executable() -> None:
     """Mutation: leave the near miss out, on the grounds that the right line is above it.
 
     ``uv tool install edullm`` is the command somebody reaches for and uv answers
@@ -712,7 +737,7 @@ def test_the_researcher_skill_names_the_distribution_rather_than_the_executable(
     """
     from edullm_platform.cli.release import DISTRIBUTION
 
-    text = researcher_skill()
+    text = researcher_rule()
 
     assert DISTRIBUTION in text, (
         f"the skill never names {DISTRIBUTION}, so nothing tells a reader why "
@@ -724,7 +749,7 @@ def test_the_researcher_skill_names_the_distribution_rather_than_the_executable(
     )
 
 
-def test_every_approval_class_the_researcher_skill_tabulates_is_one_the_policy_returns() -> None:
+def test_every_approval_class_the_submitting_skill_tabulates_is_one_the_policy_returns() -> None:
     """Mutation: keep a class the policy stopped returning, or invent a fourth.
 
     THE SKILL'S WHOLE ANSWER TO "WHO RELEASES THIS" IS THIS FIELD, WHICH IS THE POINT.
@@ -737,7 +762,7 @@ def test_every_approval_class_the_researcher_skill_tabulates_is_one_the_policy_r
 
     known = {member.value for member in ApprovalClass}
     tabulated = first_column_under(
-        "| `approval_class` | Who releases the run |", text=researcher_skill()
+        "| `approval_class` | Who releases the run |", text=submitting_skill()
     )
 
     assert tabulated, "the table under that heading has no rows"
@@ -746,7 +771,97 @@ def test_every_approval_class_the_researcher_skill_tabulates_is_one_the_policy_r
     )
 
 
-def test_the_researcher_skill_names_every_placement_verdict_capacity_can_carry() -> None:
+def approval_classes_classify_request_can_return() -> set[str]:
+    """The classes a submission can actually be routed into, read off ``classify_request``.
+
+    ``ApprovalClass`` is the wrong question and asking it is what let the defect below sit
+    there. The enum is a vocabulary and it keeps members on purpose -- ``EXCEPTION`` is held
+    for reserved-capacity purchases nothing has built yet, and its own docstring says so. The
+    function is the routing, and the two have not agreed since policy v5.
+    """
+    source = ast.parse(
+        (PROJECT_ROOT / "src" / "edullm_platform" / "contracts" / "policy.py").read_text(
+            encoding="utf-8"
+        )
+    )
+    function = next(
+        node
+        for node in ast.walk(source)
+        if isinstance(node, ast.FunctionDef) and node.name == "classify_request"
+    )
+    return {
+        node.attr
+        for statement in ast.walk(function)
+        if isinstance(statement, ast.Return)
+        for node in ast.walk(statement)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "ApprovalClass"
+    }
+
+
+def test_the_routing_reaches_fewer_classes_than_the_enum_carries() -> None:
+    """Guards the case below, and records why it is not asserting the obvious thing.
+
+    Written the other way round -- assert the skill's table equals the classes routing can
+    reach -- this would pass today by deleting the ``exception`` row, and the row is worth
+    keeping: an agent that meets the word anywhere else needs somewhere that explains it.
+    So the rule below is about what the row *says*, and it is only meaningful while some
+    member is unreachable. When capacity blocks are built and ``classify_request`` returns
+    ``EXCEPTION`` again, this goes red and the row's wording is what has to change with it.
+    """
+    reachable = approval_classes_classify_request_can_return()
+
+    assert reachable, "no ApprovalClass member is returned, so the AST walk has broken"
+    assert reachable < {member.name for member in _approval_class()}, (
+        "every member is reachable again, so the skill may no longer say any of them is "
+        "unreachable. Reword the row and delete this pair of cases"
+    )
+
+
+def _approval_class() -> type[Enum]:
+    from edullm_platform.contracts.policy import ApprovalClass
+
+    return ApprovalClass
+
+
+def test_the_skill_says_so_about_an_approval_class_no_submission_reaches() -> None:
+    """**Mutation: leave the row reading "an admin", which is what it read until today.**
+
+    THIS IS THE DEFECT THAT RETIRED THE FOURTH DOCUMENT. Its table said ``exception`` was
+    released by "a platform admin", flatly, as one of three live routes. Under policy v5 no
+    submission classifies into it -- ``classify_request``'s own docstring says the member is
+    kept and the function no longer returns it -- so an agent reading that table could tell a
+    researcher to go and find an admin for a run no admin will ever see.
+
+    THE CASE ABOVE IT PASSED THE WHOLE TIME, AND THAT IS THE LESSON RATHER THAN AN ASIDE.
+    ``test_every_approval_class_the_submitting_skill_tabulates_is_one_the_policy_returns``
+    compares the table against ``ApprovalClass``, and ``ApprovalClass`` still has all three
+    members. A test bound to the vocabulary cannot see a claim about the routing. The layer's
+    founding rule is that a skill reads the generated artifact instead of restating policy,
+    and the corollary nobody wrote down is that a test has to read the same artifact the
+    claim is about.
+    """
+    reachable = approval_classes_classify_request_can_return()
+    unreachable = sorted(
+        member.value for member in _approval_class() if member.name not in reachable
+    )
+
+    text = submitting_skill()
+    for value in unreachable:
+        row = next(
+            (line for line in text.splitlines() if line.startswith(f"| `{value}`")),
+            None,
+        )
+        assert row is not None, f"the skill has no row for {value}"
+        assert "no submission classifies into it" in row, (
+            f"the skill's row for `{value}` describes it as a live route, and "
+            "classify_request cannot return it. Say that no submission reaches it and what "
+            f"the machinery is being kept for.\n  {row}"
+        )
+
+
+def test_the_submitting_skill_names_every_placement_verdict_capacity_can_carry() -> None:
     """Mutation: promote a fourth verdict and leave the skill reading the file for three.
 
     ``edullm check`` says nothing at all about whether EC2 will supply a shape, and a job it
@@ -757,7 +872,7 @@ def test_the_researcher_skill_names_every_placement_verdict_capacity_can_carry()
     """
     from edullm_platform.placement import PLACES_AFTER_A_WAIT, PLACES_RELIABLY, PLACES_UNRELIABLY
 
-    text = researcher_skill()
+    text = submitting_skill()
     known = {PLACES_RELIABLY, PLACES_AFTER_A_WAIT, PLACES_UNRELIABLY}
     # Out of the table rather than out of the prose. A verdict named in a sentence and
     # missing from the table is one a reader meets with no reading against it, which is the
@@ -770,7 +885,7 @@ def test_the_researcher_skill_names_every_placement_verdict_capacity_can_carry()
     assert "capacity.yaml" in text, "the skill sends nobody at the file that holds the verdicts"
 
 
-def test_the_bfloat16_spelling_the_researcher_skill_prints_is_one_the_guard_reads() -> None:
+def test_the_bfloat16_spelling_the_submitting_skill_prints_is_one_the_guard_reads() -> None:
     """**THE MOST EXPENSIVE THING THIS SKILL TEACHES, AND THE ONE MOST LIKELY TO ROT.**
 
     ``precision.py`` reads the text of a command and cannot see a dtype the program sets in
@@ -788,7 +903,7 @@ def test_the_bfloat16_spelling_the_researcher_skill_prints_is_one_the_guard_read
     from edullm_platform.errors import Bfloat16NotInTheHardwareError
     from edullm_platform.precision import bfloat16_request_in
 
-    text = researcher_skill()
+    text = submitting_skill()
     assert Bfloat16NotInTheHardwareError.reason_code in text, (
         "the skill never names the refusal this whole section is about"
     )
@@ -807,7 +922,7 @@ def test_the_bfloat16_spelling_the_researcher_skill_prints_is_one_the_guard_read
     )
 
 
-def test_every_key_the_researcher_skill_tabulates_is_a_key_a_check_emits(
+def test_every_key_the_submitting_skill_tabulates_is_a_key_a_check_emits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Mutation: rename a field in ``cli/machine.py`` and leave the skill reading the old one.
@@ -836,7 +951,7 @@ def test_every_key_the_researcher_skill_tabulates_is_a_key_a_check_emits(
     assert code == EXIT_OK, out + err
     document = json.loads(out)
 
-    tabulated = first_column_under("| Key | What it holds |", text=researcher_skill())
+    tabulated = first_column_under("| Key | What it holds |", text=submitting_skill())
 
     assert tabulated, "the table under that heading has no rows"
     assert tabulated <= set(document), (
@@ -844,7 +959,7 @@ def test_every_key_the_researcher_skill_tabulates_is_a_key_a_check_emits(
     )
 
     factors = [
-        line for line in fenced_lines(researcher_skill()) if "maximum_compute_cost_usd =" in line
+        line for line in fenced_lines(submitting_skill()) if "maximum_compute_cost_usd =" in line
     ]
     assert factors, (
         "the skill no longer writes the product a fan-out multiplies, so nothing tells an "
@@ -857,22 +972,50 @@ def test_every_key_the_researcher_skill_tabulates_is_a_key_a_check_emits(
     )
 
 
-def test_the_page_that_installs_the_skill_points_at_a_file_that_is_here() -> None:
-    """Mutation: rename the skill's folder and leave the copy line naming the old one.
+def test_the_page_names_the_directory_each_host_actually_reads() -> None:
+    """Mutation: leave the old ``curl`` lines in, or drop a host from the table.
 
-    Nobody in the organization has this checkout, so the raw URL in that page is the whole
-    of how the file reaches anybody. A dead one is a researcher who runs three commands, gets
-    an empty file or an HTML error page, and concludes the skill does not exist.
+    THAT PAGE TOLD PEOPLE TO PUT THE SKILL IN ``~/.codex/skills`` AND CODEX DOES NOT READ
+    THAT PATH. Anybody who followed it got a file no host loaded and no error saying so,
+    which is the failure mode every part of this layer has: an agent with no skill behaves
+    exactly like an agent whose skill did not match, so nobody finds out.
 
-    The branch in the URL is not checked, because nothing here can know what ``main`` holds.
-    What is checked is the path under it, which is the half a rename breaks.
+    The three paths are asserted because the three hosts disagree and the disagreement is
+    load bearing. ``.agents/skills`` is Codex's only project directory, ``.claude/skills``
+    is Claude Code's only one, and Cursor reads both. Dropping any row from that table is
+    how one third of the organization silently stops having the layer.
     """
     text = SKILLS_README.read_text(encoding="utf-8")
-    paths = set(re.findall(r"raw\.githubusercontent\.com/[^/]+/[^/]+/[^/]+/(\S+)", text))
 
-    assert paths, "the page carries no copy line at all"
-    missing = sorted(path for path in paths if not (PROJECT_ROOT / path).is_file())
-    assert not missing, f"the page points at files that are not in this tree: {missing}"
+    for path in (".agents/skills", ".claude/skills"):
+        assert path in text, f"the page never names {path}"
+    for host in ("Cursor", "Claude Code", "Codex"):
+        assert host in text, f"the page says nothing about {host}"
+    assert "CLAUDE.md" in text and "AGENTS.md" in text, (
+        "the page does not distinguish the two root files, and they are not "
+        "interchangeable: Claude Code reads one of them and the other two hosts read the "
+        "other"
+    )
+    assert "distribute_agent_layer" in text, (
+        "the page does not send anybody at the distributor, so the way to get the layer "
+        "into a repository is once again copying it by hand"
+    )
 
-    expected = RESEARCHER_SKILL.relative_to(PROJECT_ROOT).as_posix()
-    assert expected in paths, f"the page never sends anybody at {expected}"
+
+def test_the_page_tells_nobody_to_curl_a_skill_into_a_path_no_host_reads() -> None:
+    """Guards the case above against being satisfied by a page that says both things.
+
+    Adding the correct table while leaving the old copy lines underneath it would pass every
+    assertion above, and a reader who scrolls to the fenced block rather than reading the
+    prose gets the wrong one. ``~/.codex/skills`` is the specific wrong one, because it looks
+    exactly like the two lines above it that are right.
+    """
+    text = SKILLS_README.read_text(encoding="utf-8")
+
+    assert "~/.codex/skills" not in text, (
+        "the page still sends somebody at ~/.codex/skills, which Codex does not read"
+    )
+    assert "raw.githubusercontent.com" not in text, (
+        "the page still tells somebody to curl a copy for themselves. Copies made that way "
+        "are the ones nothing holds equal and nothing knows about"
+    )

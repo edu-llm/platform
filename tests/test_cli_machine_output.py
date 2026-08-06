@@ -1,6 +1,6 @@
 """The document a machine reads, and the two things it must never be.
 
-WHY THIS EXISTS AT ALL. Every skill under .cursor/skills/ matches on a refusal code, and
+WHY THIS EXISTS AT ALL. Every skill under .agents/skills/ matches on a refusal code, and
 before --json the only way to get one was to match the word after "refused" in a wrapped
 paragraph. docs-frank/reference/designing-the-cli.md settles the shape: one document on
 stdout whatever the outcome, the key names tools/compile_submission.py already writes, a

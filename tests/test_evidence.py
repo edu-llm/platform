@@ -92,10 +92,17 @@ def tracked_tree_files() -> list[Path] | None:
         text=True,
         check=True,
     )
+    # Symlinks are skipped, and the reason is not that they are uninteresting. What git
+    # tracks for one is the target path, so scanning it is scanning a path that is already
+    # scanned where it really lives -- and .claude/skills/<name> points at a *directory*, so
+    # opening it raises IsADirectoryError rather than returning nothing. The layer puts two
+    # of those in this tree deliberately, because Claude Code reads no other directory and a
+    # second real copy of a skill is a second text.
     return [
-        PROJECT_ROOT / relative_path
+        path
         for relative_path in result.stdout.splitlines()
         if relative_path and Path(relative_path).name not in EXCLUDED_TRACKED_FILENAMES
+        if not (path := PROJECT_ROOT / relative_path).is_symlink()
     ]
 
 

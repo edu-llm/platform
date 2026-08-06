@@ -1382,7 +1382,7 @@ def test_the_runbook_and_the_skill_both_name_the_variable_nothing_can_read() -> 
     )
     skill = " ".join(
         (
-            PROJECT_ROOT / ".cursor/skills/registering-a-repository/SKILL.md"
+            PROJECT_ROOT / ".agents/skills/registering-a-repository/SKILL.md"
         ).read_text(encoding="utf-8").split()
     )
 

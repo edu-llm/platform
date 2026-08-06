@@ -155,6 +155,6 @@ still where the work is going to become one.
 ## Where to go next
 
 - `edullm check --help` for the fields one submission takes.
-- `.cursor/skills/submitting-a-run/` when somebody asks you to run something.
-- `.cursor/skills/registering-a-repository/` when the platform does not carry this codebase.
+- `.agents/skills/submitting-a-run/` when somebody asks you to run something.
+- `.agents/skills/registering-a-repository/` when the platform does not carry this codebase.
 - `guides/the-platform.md` for how a person does all of this by hand.

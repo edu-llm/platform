@@ -400,7 +400,7 @@ FOLLOW_UPS: tuple[FollowUp, ...] = (
             "repository and set by hand, and there is no organization variable behind it**, "
             "so this is not inherited and the five repositories that already have one say "
             "nothing about the sixth. Until 2026-08-06 this step appeared nowhere: not in "
-            "this runbook, not in `.cursor/skills/registering-a-repository/`, and the "
+            "this runbook, not in `.agents/skills/registering-a-repository/`, and the "
             "variable's only mention in this repository was one example comment. That is why "
             "`edullm-p1` sat registered and publishing nothing for days. Nothing here can "
             "check it for you -- a token scoped to this repository is refused by the "
