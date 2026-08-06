@@ -593,20 +593,33 @@ workloads:
   # ceiling and not an estimate -- nobody has run this workload here yet, and the first
   # submission is the measurement.
   #
-  # TWO ATTEMPTS, AND THE THING THAT MAKES IT SAFE IS A REFUSAL RATHER THAN A PROMISE.
-  # grpo_fast.py resumes on its own when --checkpoint_state_dir holds state: it reads
+  # ONE ATTEMPT, AND THIS DECLARED TWO UNTIL THE PREMISE UNDER THE SECOND ONE WAS READ.
+  # grpo_fast.py does resume where --checkpoint_state_dir is a directory: it reads
   # optimization_steps_done and continues from the step after, which the repository
-  # observed on a preemptable partition when a run was taken and requeued. What that
-  # depends on is the submitted command passing the directory, and the repository's
-  # scripts/train.sh disables checkpointing entirely when its CKPT_ROOT is unset -- which
-  # is the default. So a retry under this entry is worth having only because
+  # observed on a preemptable partition when a run was taken and requeued. What this
+  # platform passes is not a directory. EDULLM_CHECKPOINT_DIR is output_prefix(team,
+  # run_id) + "checkpoints/", so it is an s3:// URI under destination_prefix below, and
+  # grpo_fast.py:477 gates the load on os.path.exists(checkpoint_state_dir) -- a
+  # local-filesystem test against that URI, false on every attempt, after which the load
+  # is skipped and optimization_steps_done stays 0. The only remote upload path in that
+  # file is validated to start with gs://. So the second attempt was a second full-price
+  # run producing one result, which is the finding #371 recorded and named this profile in.
+  #
+  # THE CHECKPOINT CONTRACT STAYS, BECAUSE WHAT IT BUYS IS A REFUSAL RATHER THAN A RESUME.
   # require_a_save_folder_a_retry_can_find refuses a submission naming this profile whose
-  # command does not expand $EDULLM_CHECKPOINT_DIR. The command has to read
+  # command does not expand $EDULLM_CHECKPOINT_DIR, so the command has to read
   #
   #   CKPT_ROOT="$EDULLM_CHECKPOINT_DIR"
   #
-  # and the refusal is what keeps the second attempt from silently repeating the first at
-  # full price.
+  # and the repository's scripts/train.sh disables checkpointing entirely when CKPT_ROOT is
+  # unset, which is its default. Dropping the contract would drop that refusal with it, and
+  # a GRPO run writing no checkpoint at all is further from what this entry is for.
+  #
+  # resume_required IS LEFT SAYING true AND IS WRONG BY THE SAME MEASUREMENT. Nothing
+  # branches on it -- checkpoint_commands quotes it into a refusal and into the approver's
+  # note -- so correcting it moves what a reader is told rather than what a run may spend,
+  # and it is a different edit from an attempt count. It is the repository's claim, and
+  # whoever owns grpo_fast.py:477 is who withdraws it.
   #
   # interval_minutes IS THE ONE FIELD HERE THAT DOES NOT DESCRIBE THIS WORKLOAD. Thirty
   # matches its two neighbours, and this trainer checkpoints on a step count rather than a
@@ -617,7 +630,7 @@ workloads:
   - name: open-instruct-scored-rewards-train
     repository: open-instruct-scored-rewards
     maximum_runtime_hours: "24"
-    maximum_attempts: 2
+    maximum_attempts: 1
     checkpoint:
       interval_minutes: 30
       destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
