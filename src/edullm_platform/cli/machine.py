@@ -160,9 +160,21 @@ def check_document(
             {"code": refusal.code, "detail": refusal.detail} for refusal in preflight.refusals
         ],
         "deferred": [{"code": code, "detail": detail} for code, detail in DEFERRED_TO_SUBMIT],
+        # The paths this refused nothing for, as paths rather than as the count the paragraph
+        # prints. A caller that wants to know whether the tree held scratch files reads the
+        # list; one that wants to know whether anything was refused reads ``refusals``, and
+        # nothing here appears in both.
+        "untracked": list(preflight.untracked),
         "run_id": None,
         "manifest_sha256": None,
         "manifest": _manifest_of(preflight),
+        # THE THREE THAT SAY WHICH TREE ANSWERED, BESIDE THE MANIFEST RATHER THAN INSIDE IT.
+        # ``manifest`` is ``None`` for every request nobody has finished describing, which is
+        # exactly when a caller most needs to know whether this read the checkout it thinks it
+        # did. ``experiment`` and ``team`` are here for the same reason and were already.
+        "repository": preflight.request.repository or None,
+        "commit_sha": preflight.request.commit_sha or None,
+        "branch": preflight.branch,
         "experiment": preflight.request.experiment or None,
         "team": preflight.request.team or None,
         "team_source": preflight.team_source or None,
