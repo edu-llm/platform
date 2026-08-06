@@ -961,6 +961,30 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # says just before it does. The difference from the validator entry is only in what
     # the window costs: nothing, in these two cases, which is why neither was worth a
     # deploy of its own.
+    #
+    # THE NOTIFIER'S ENTRY WAS EXTENDED THE SAME DAY RATHER THAN JOINED BY A TWENTIETH, WHICH
+    # IS `one_record_per_function` WORKING AS THE VALIDATOR'S SEVEN-TIME EXTENSION ABOVE
+    # DESCRIBES. A zip carries whatever the tree holds when it is built, so there is one
+    # difference between the account and this tree however many changes went into it, and two
+    # records for one zip would each describe a state that never exists.
+    #
+    # WHAT THE SECOND CHANGE IS, AND IT IS THE FIRST IN THIS REGISTER TO ADD A FILE TO A
+    # BUILDER'S CONFIG LIST RATHER THAN EDIT ONE ALREADY IN IT. The approval request names the
+    # machine somebody is being asked to pay for and now names the memory on it, which puts
+    # config/accelerators.yaml in NOTIFIER_CONFIG and edullm_platform/accelerators.py in the
+    # import closure. Unlike policy v6 above, this one does change what the account sends: the
+    # deployed zip goes on posting the same five lines without the clause, which is the
+    # previous message rather than a broken one, so the window still costs nothing anybody
+    # meets as a failure.
+    #
+    # WHAT IT COMMITS THE NOTIFIER TO, WHICH IS LESS THAN THE OTHER FIVE FILES DO. Every file
+    # in NOTIFIER_CONFIG is one whose edit becomes a release, and the five already there are
+    # files people edit -- a policy bump, a roster change, a nightly reading of the account.
+    # The policy v6 entry above is that cost arriving twice in a week. This one transcribes
+    # `describe-instance-types`, and its own header records that the figures are not expected
+    # to move, because what memory an H100 carries is a fact about silicon. What would move it
+    # is a new instance family being priced, which is a new row and a release for the shape it
+    # prices anyway.
     releases: tuple[PendingRelease, ...] = (
         PendingRelease(
             function="recorder",
@@ -986,14 +1010,20 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "of which policy v6 edits, and config/policy.yaml itself, which joined "
                 "NOTIFIER_CONFIG when the approval message started reading it. It reports "
                 "runs that have ended and classifies nothing, so the deployed bytes and the "
-                "tree behave identically inside this window"
+                "tree behave identically inside this window. Extended the same day by a "
+                "second change: the approval request now ends its first line with the memory "
+                "on the machine it is asking somebody to pay for -- `8 x A10G, 22,888 MiB "
+                "each, 183,104 MiB total` -- which puts config/accelerators.yaml and "
+                "edullm_platform/accelerators.py in this package for the first time. That "
+                "half does change what the account sends, and until the release is cut it "
+                "sends the same five lines without the clause"
             ),
             cleared_by=(
                 "uv run python tools/release_lambda.py --function notifier, from main, then "
                 "the version id and digest into infra/notifier-release.yaml and "
                 "infra/notifications.yaml in the same commit as deleting this"
             ),
-            builds_to="83656e1300caae1808df647518075eb909d5eee4c54e8d23daaf2c5a347abd88",
+            builds_to="336b77ac45bd39734f05f9e4a9ce0feefadec7e7338fcd560dbd595843d28c48",
             released="d41512d0174986aff63c6e6419bf42d5668db9734dd11f694f30ea627aa1d13b",
             recorded_on=date(2026, 8, 6),
         ),

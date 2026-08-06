@@ -70,7 +70,7 @@ HANDLER_ENTRY_POINT = "edullm_platform.notifier_handler.handler"
 #: What this function imports, which is what its zip carries.
 NOTIFIER_ENTRYPOINT = "edullm_platform.notifier_handler"
 
-#: The five reviewed files this function opens, and no others. Held to what the packaged
+#: The six reviewed files this function opens, and no others. Held to what the packaged
 #: modules actually name, in both directions, by tests/test_lambda_package_closure.py.
 #:
 #: IT WAS THREE AND THE TWO THAT JOINED IT BOTH BELONG TO THE APPROVAL MESSAGE. ``policy.yaml``
@@ -81,11 +81,20 @@ NOTIFIER_ENTRYPOINT = "edullm_platform.notifier_handler"
 #: runs of a shape, and it is what lets a lead tell an expensive run that is correct from an
 #: expensive run that is a typed-in maximum, which the five factors alone cannot.
 #:
-#: Both widen what moves this function's release digest, and that is the cost of them. A
+#: ``accelerators.yaml`` IS THE SIXTH AND IT IS THE CHEAPEST OF THE THREE TO CARRY. The others
+#: are files somebody edits: a policy bump, a roster change, a nightly reading. This one
+#: records what ``describe-instance-types`` answered about silicon, and its own header says
+#: the figures are not expected to move -- what would move it is a new instance family being
+#: priced, which is a new row rather than a re-reading of these. So the digest churn it adds
+#: is close to none, and what it buys is the machine's memory in front of the person
+#: releasing the spend.
+#:
+#: All three widen what moves this function's release digest, and that is the cost of them. A
 #: policy bump now needs the notifier re-released as well as the validator, which is stated
 #: in infra/README.md beside the procedure.
 NOTIFIER_CONFIG: frozenset[str] = frozenset(
     {
+        "accelerators.yaml",
         "organization.yaml",
         "workload-catalog.yaml",
         "execution-targets.yaml",

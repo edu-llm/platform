@@ -58,6 +58,15 @@
 # file goes away -- as does `GPUS_BY_INSTANCE_FAMILY` in `precision.py`, which is the same
 # question asked for a different reason and is keyed by family where this is keyed by profile.
 #
+# EDITING THIS FILE IS A NOTIFIER RELEASE, WHICH IT WAS NOT WHEN THE ROWS BELOW WERE FIRST
+# WRITTEN. The approval request names the memory on the machine it is asking somebody to pay
+# for, so this file is packaged verbatim into `notifier/notifier.zip` and a row changed here
+# moves that digest. `tests/test_released_zips.py` refuses the merge until the release is cut
+# or the difference is recorded in `edullm_platform.pending_amendments`. That is a small cost
+# and it was weighed: the five files already in that zip are ones people edit -- a policy bump,
+# a roster change, a nightly reading -- and this one records what silicon carries, which the
+# note above `observed_at` says is not expected to move.
+#
 # UNKNOWN IS NOT A VALUE, AND `cpu-32vcpu` IS WHY THE RULE IS WORTH RESTATING. Every profile in
 # `config/workload-catalog.yaml` appears here exactly once, including the one with no
 # accelerator, and `tests/test_accelerators.py` fails when that stops being true. A file listing

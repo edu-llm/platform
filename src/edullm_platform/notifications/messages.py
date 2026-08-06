@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final
 
+from ..accelerators import device_said, memory_said
 from ..contracts.base import serialize_decimal
 from .approval import ApprovalRequestedFacts
 from .facts import RunEndedFacts
@@ -478,6 +479,52 @@ def _routing(facts: ApprovalRequestedFacts) -> str:
     return f"Team {facts.team} routes to {named}. Any team lead may release it."
 
 
+def _the_machine(facts: ApprovalRequestedFacts) -> str:
+    """What the shape being paid for actually carries, as the first line's last field.
+
+    ON THE FIRST LINE BECAUSE THAT IS WHERE THE SPEND IS, AND THE SPEND IS WHAT IS BEING
+    RELEASED. The four fields before it say how much, on what, by whom and where; this says
+    what "where" holds. A lead sizing a request has the money and the machine in one glance
+    and does not have to know the catalog by heart to turn ``gpu-8xa100`` into 320 GiB.
+
+    ``x`` rather than ``×``, matching the arithmetic on the line directly below. One message
+    spelling the same operator two ways reads as two authors.
+
+    MIB AND NOT GB, WHICH IS THE WHOLE REASON THE MEASUREMENT EXISTS. The A10G and the L4
+    are sold as 24 GB cards and report 22,888 MiB, so a lead who reads "24 GB" and a
+    submitter who sized a batch against 24 GiB are 1.65 GiB apart before the run starts.
+    ``config/accelerators.yaml`` records what ``describe-instance-types`` answered, in the
+    unit it answered in, and this prints that.
+
+    THE PER-DEVICE FIGURE IS DROPPED ON A ONE-CARD SHAPE AND NOT ROUNDED OR REPEATED. On
+    ``gpu-1xa10g`` the two numbers are the same number, and printing it twice is the
+    invitation to look for the arithmetic error that :func:`money` exists to avoid.
+
+    A profile with no row yields nothing at all rather than a stated unknown, which is the
+    shape :func:`_over_the_profile` above already takes for its own absence. Every priced
+    profile appears in the file and ``tests/test_accelerators.py`` holds the two level, so
+    the only way here is a packaged copy that has parted company with the catalog -- a fact
+    about the deployment with nothing in it about this run.
+
+    WHAT THIS IS NOT IS A FIT CHECK, AND IT MUST NOT GROW INTO ONE HERE. Whether a model
+    fits needs the model's size, and no submission carries one:
+    ``schemas/submission-inputs.schema.json`` has no such property and neither does
+    ``RunManifest``. A warning inferred from a free-text command would be a guess presented
+    as a finding, in the one message where a guess costs somebody's approval.
+    """
+    record = facts.accelerator
+    if record is None:
+        return ""
+    if record.device is None:
+        return " · no accelerator"
+    if record.devices == 1:
+        return f" · {device_said(record)}, {memory_said(record)}"
+    return (
+        f" · {device_said(record)}, {record.memory_mib_per_device:,} MiB each, "
+        f"{memory_said(record)} total"
+    )
+
+
 def _how_to_answer(facts: ApprovalRequestedFacts) -> str:
     """Where to act, and what a decline leaves behind after the run page is gone.
 
@@ -509,6 +556,7 @@ def render_approval_requested(facts: ApprovalRequestedFacts) -> Message:
                 (
                     f"{total} · {facts.experiment or NO_EXPERIMENT} · "
                     f"{facts.person or facts.submitter or NOBODY_NAMED} · {shape}"
+                    f"{_the_machine(facts)}"
                 ),
                 _arithmetic(facts),
                 _credible(facts),

@@ -342,24 +342,27 @@ def test_nothing_a_handler_carries_imports_a_module_by_name_at_runtime(entrypoin
     )
 
 
-def test_the_notifier_carries_the_five_files_it_reads_and_no_others() -> None:
+def test_the_notifier_carries_the_six_files_it_reads_and_no_others() -> None:
     """Mutation: give the notifier the validator's configuration list.
 
     The recorder reads nothing under config/ and is therefore immune to a roster edit. The
     notifier cannot be. It resolves a W&B account to a person through organization.yaml, a
     queue to a profile through execution-targets.yaml, and a profile to a rate through
-    workload-catalog.yaml. The approval message adds two: policy.yaml, because the routing
-    line quotes the bound under which nobody releases a run rather than remembering it, and
+    workload-catalog.yaml. The approval message adds three: policy.yaml, because the routing
+    line quotes the bound under which nobody releases a run rather than remembering it,
     run-history.json, because the median a shape has taken is what tells an expensive run
-    that is correct from an expensive run that is a typo.
+    that is correct from an expensive run that is a typo, and accelerators.yaml, because the
+    line naming the machine says what memory is on it and the alternative is a lead
+    remembering that gpu-8xa100 is the 40 GB part.
 
-    Five rather than eight is what is left of the narrowing, and the two absences still earn
+    Six rather than eight is what is left of the narrowing, and the two absences still earn
     it. Nothing the notifier carries reads datasets.yaml, repositories.yaml or
     image-exceptions.yaml, and a dataset registration should not move this function's
     release digest.
     """
     assert NOTIFIER_CONFIG == frozenset(
         {
+            "accelerators.yaml",
             "organization.yaml",
             "workload-catalog.yaml",
             "execution-targets.yaml",
