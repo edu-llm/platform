@@ -86,6 +86,10 @@ class FakeRunner:
         #: Beside ``calls`` rather than zipped into it, because a case about the lane wants the
         #: credential a call carried and every case that came before wants only the argv.
         self.environments: list[dict[str, str]] = []
+        #: Which calls asked for a standard input the caller's own cannot close. Recorded rather
+        #: than asserted here, because whether a given session needs one is the verb's decision
+        #: and :meth:`held_stdin_open_for` is how a case reads it back.
+        self.stdins_held: list[bool] = []
 
     def __call__(
         self,
@@ -94,9 +98,11 @@ class FakeRunner:
         cwd: Path | None = None,
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
+        stdin_stays_open: bool = False,
     ) -> CommandResult:
         self.calls.append(argv)
         self.environments.append(dict(env or {}))
+        self.stdins_held.append(stdin_stays_open)
         matches = [prefix for prefix in self._answers if argv[: len(prefix)] == prefix]
         if not matches:
             raise UnexpectedCommandError(
@@ -109,6 +115,14 @@ class FakeRunner:
 
     def ran(self, *prefix: str) -> list[tuple[str, ...]]:
         return [argv for argv in self.calls if argv[: len(prefix)] == tuple(prefix)]
+
+    def held_stdin_open_for(self, *prefix: str) -> list[bool]:
+        """Whether each matching call asked the runner to hold its standard input open."""
+        return [
+            held
+            for argv, held in zip(self.calls, self.stdins_held, strict=True)
+            if argv[: len(prefix)] == tuple(prefix)
+        ]
 
 
 def ok(stdout: str = "") -> CommandResult:

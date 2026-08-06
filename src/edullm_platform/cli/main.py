@@ -1745,6 +1745,11 @@ def _run(
             command=remote_script(uri=uri, project=session.request.project, command=command),
         ),
         env=session.environment,
+        # THE SESSION READS NO KEYSTROKES AND MUST NOT DIE FOR WANT OF SOMEWHERE TO READ THEM.
+        # `SubprocessRunner._a_stdin_nobody_closes` carries what the plugin does with end of
+        # file on descriptor 0 and what it cost. `edullm shell` deliberately does not ask for
+        # this, because there the researcher is typing.
+        stdin_stays_open=True,
     )
     print(_without_the_sentinel(streamed.stdout), end="", file=out)
     status = _remote_status(streamed.stdout)

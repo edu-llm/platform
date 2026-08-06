@@ -10,7 +10,11 @@ be built for any of that.
 from __future__ import annotations
 
 import json
+import os
 import shlex
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from edullm_platform.cli.lane import (
@@ -26,6 +30,7 @@ from edullm_platform.cli.lane import (
     ssh_proxy_command,
     under_a_shell,
 )
+from edullm_platform.cli.workspace import SubprocessRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SETTINGS = load_working_tier_settings(PROJECT_ROOT / "config")
@@ -286,3 +291,64 @@ def test_nothing_the_lane_runs_needs_a_key_or_an_open_port() -> None:
         assert argv[0] == "aws"
         assert "--key-name" not in argv
     assert "aws ssm start-session" in ssh_proxy_command(INSTANCE)
+
+
+# ---------------------------------------------------------------------------------------
+# what the plugin reads from its own stdin, which is not a detail
+# ---------------------------------------------------------------------------------------
+
+#: A child that answers the one question the session plugin asks of its standard input before
+#: it will carry anything: is there a reader on the other end, or is it already at end of file.
+#: ``select`` rather than a read, because an open pipe with nothing in it never returns from a
+#: read and the plugin does not block on one either -- it goes on relaying the session.
+_WHAT_STDIN_IS = (
+    "import sys, select;"
+    "ready, _, _ = select.select([sys.stdin], [], [], 1.0);"
+    "print('eof' if ready and sys.stdin.read(1) == '' else 'open')"
+)
+
+
+@contextmanager
+def _stdin_at_end_of_file() -> Iterator[None]:
+    """This process's own file descriptor 0, pointed at nothing, for as long as the block runs.
+
+    Descriptor 0 and not ``sys.stdin``, because a child inherits the descriptor and never sees
+    the object. Restored through a duplicate rather than reopened, so a runner that was handed
+    a terminal, a pipe or a captured stream gets back exactly what it had.
+    """
+    saved = os.dup(0)
+    with open(os.devnull, "rb") as nothing:
+        os.dup2(nothing.fileno(), 0)
+    try:
+        yield
+    finally:
+        os.dup2(saved, 0)
+        os.close(saved)
+
+
+def test_a_session_the_researcher_types_nothing_into_still_gets_a_stdin_that_stays_open() -> None:
+    """**THE DEFECT THAT MADE ``edullm run`` FAIL FOR EVERY CALLER WITHOUT A KEYBOARD.**
+    Mutation: drop ``stdin_stays_open`` at the call, or let it pass ``DEVNULL`` instead.
+
+    ``session-manager-plugin`` relays standard input into the session and treats end of file on
+    it as the researcher hanging up, so it prints ``Cannot perform start session: EOF`` and
+    exits 0 -- before any of the remote command's output comes back. Inheriting the caller's
+    descriptor is right for a terminal and wrong everywhere else: under ``nohup``, in CI, from
+    an editor task, behind ``< /dev/null`` or under an agent, descriptor 0 is already at end of
+    file and the session dies the instant it opens. ``edullm run`` then reports that the session
+    ended without saying what the command did, which names neither the descriptor nor the cause.
+    Measured against this account on 2026-08-06: the same instance, the same command and the
+    same laptop one minute apart answered ``NVIDIA L4`` with an open descriptor and
+    ``Cannot perform start session: EOF`` with ``/dev/null``.
+
+    A pipe the parent holds rather than a terminal, because a pseudo-terminal is a per-platform
+    dependency for a session that reads no keystrokes.
+    """
+    argv = (sys.executable, "-c", _WHAT_STDIN_IS)
+
+    with _stdin_at_end_of_file():
+        inherited = SubprocessRunner()(argv)
+        held = SubprocessRunner()(argv, stdin_stays_open=True)
+
+    assert inherited.text == "eof", "the fixture has to reproduce the failure it is about"
+    assert held.text == "open"
