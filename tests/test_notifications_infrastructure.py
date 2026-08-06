@@ -293,10 +293,54 @@ def test_the_function_is_told_which_secret_holds_the_webhook_and_never_the_url()
     ]["Variables"]
 
     assert variables[WEBHOOK_SECRET_VARIABLE] == "sbsandbox-intern-edullm-runs-webhook"
-    assert variables[CONFIG_DIRECTORY_VARIABLE] == "/var/task/config"
+    assert CONFIG_DIRECTORY_VARIABLE not in variables
     assert variables[LINEAGE_BUCKET_VARIABLE] == DEFAULT_LINEAGE_BUCKET
     for value in variables.values():
         assert "https://" not in str(value)
+
+
+def test_the_notifier_looks_for_its_configuration_where_its_builder_puts_it() -> None:
+    """Mutation: set EDULLM_CONFIG_DIRECTORY in the template, or hard-code the default again.
+
+    THIS IS THE CHECK THAT WAS MISSING ON 2026-08-06 AND THE ONLY ONE THAT WOULD HAVE CAUGHT
+    IT WITHOUT AN AWS ACCOUNT. ``tests/test_lambda_package_closure.py`` already holds the
+    three *filenames* the notifier reads to the three its builder packages, in both
+    directions, and it passed throughout the outage -- because a filename is not a path. The
+    builder wrote them to ``edullm_platform/config/`` and the handler read
+    ``/var/task/config/``, and nothing in the repository compared the two, so every
+    invocation of the deployed function raised FileNotFoundError on organization.yaml while
+    every check agreed the artifact was correct.
+
+    Two halves, because there are two ways to reintroduce it.
+
+    The template must not set the variable at all. A deployment that sets it overrides the
+    only resolution that cannot be wrong, and the value it sets is a string nobody rebuilds
+    when the builder's layout changes -- which is exactly the string that caused this.
+
+    The handler's default must land on the builder's prefix. ``PACKAGED_CONFIG_PREFIX`` is
+    read from the builder rather than restated, so moving the packaged config moves what this
+    expects, and a handler left behind fails here.
+    """
+    from edullm_platform.notifier_handler import (
+        CONFIG_DIRECTORY_VARIABLE,
+        DEFAULT_CONFIG_DIRECTORY,
+    )
+    from tools.build_admission_lambda import PACKAGED_CONFIG_PREFIX
+
+    variables = template("notifications.yaml")["Resources"]["NotifierFunction"]["Properties"][
+        "Environment"
+    ]["Variables"]
+    assert CONFIG_DIRECTORY_VARIABLE not in variables
+
+    # Lambda unpacks the zip at /var/task, so the packaged prefix rooted there is the path
+    # the handler must arrive at. The default is derived from the module's own __file__, so
+    # rooting it at this checkout's src/ is the same derivation against a different root.
+    source_root = PROJECT_ROOT / "src"
+    assert DEFAULT_CONFIG_DIRECTORY == source_root / PACKAGED_CONFIG_PREFIX
+    assert (
+        Path("/var/task") / DEFAULT_CONFIG_DIRECTORY.relative_to(source_root)
+        == Path("/var/task") / PACKAGED_CONFIG_PREFIX
+    )
 
 
 def test_the_bucket_the_function_is_told_about_is_the_one_its_role_may_read() -> None:

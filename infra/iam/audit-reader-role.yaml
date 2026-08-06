@@ -244,6 +244,69 @@ Resources:
                 Action: lambda:GetFunctionConfiguration
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sbsandbox-intern-edullm-notifier
+              # WHETHER THE DEPLOYED FUNCTIONS RUN, WHICH EVERY GRANT ABOVE IS UNABLE TO ASK.
+              # The four above read what bytes are deployed. On 2026-08-06 they all answered
+              # correctly about a notifier that had raised on all 934 of its invocations,
+              # because the bytes were right and the handler read a directory the builder
+              # never wrote to. tools/verify_lambdas_actually_run.py compares outcomes
+              # instead, over the window that opens at each function's own LastModified.
+              #
+              # No resource condition, because a CloudWatch metric has no ARN: the API is
+              # scoped by namespace and dimension in the request rather than by policy. That
+              # makes this the widest read added here and it is a read of published metric
+              # statistics only -- counts and sums, no log content and no payloads.
+              - Sid: ReadWhetherTheDeployedFunctionsSucceed
+                Effect: Allow
+                Action: cloudwatch:GetMetricStatistics
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion:
+                      Fn::Sub: ${AWS::Region}
+              # THE ONE INVOKE, AND IT IS ONE ON PURPOSE. A smoke invocation is only honest
+              # where invoking the function does nothing an operator has to undo, and that is
+              # a property of the handler. Invoking the validator admits a submission,
+              # invoking the recorder writes a lineage record for a run that did not happen,
+              # and invoking the janitor stops machines -- it ignores its event entirely, so
+              # there is no harmless payload for it. None of those three is grantable here at
+              # any width.
+              #
+              # The notifier is different because a non-terminal Batch event owes no message.
+              # fixtures/events/batch-running.sanitized.json loads all three reviewed
+              # catalogs, reads the webhook secret, parses the envelope and projects the
+              # event, and then correctly decides a run that has started but not ended has
+              # nothing to say, so nothing is posted to anybody's channel. Every step that
+              # failed tonight runs; the only step not covered is the POST, which cannot be
+              # covered without posting.
+              #
+              # Unqualified, like the reads above: $LATEST is what the event source mapping
+              # invokes, so it is the one whose behaviour is in question.
+              - Sid: SmokeInvokeTheNotifierAndNothingElse
+                Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sbsandbox-intern-edullm-notifier
+              # WHETHER THE ALARMS REACH ANYBODY. Six alarms on 2026-08-06 had an empty
+              # AlarmActions and four of them were in ALARM, which nothing reported because
+              # nothing asked. DescribeAlarms takes no resource condition -- the API is
+              # filtered by name prefix in the request -- and returns configuration and state,
+              # which this repository declares in full already.
+              - Sid: ReadWhetherTheAlarmsHaveSomewhereToFire
+                Effect: Allow
+                Action: cloudwatch:DescribeAlarms
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion:
+                      Fn::Sub: ${AWS::Region}
+              # And whether that somewhere reaches a reader. A topic with no confirmed
+              # subscription accepts every publish and returns a message id, so an alarm wired
+              # to one is indistinguishable from a working alarm at every layer above this.
+              - Sid: ReadWhetherTheAlarmTopicHasASubscriber
+                Effect: Allow
+                Action: sns:ListSubscriptionsByTopic
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:sbsandbox-intern-edullm-alarms
               # WHAT EACH STACK IS ACTUALLY DEPLOYED FROM. Every check in this repository
               # compares the repository against itself; nothing compared the account against
               # the repository, and the stacks under infra/iam/ are applied by hand from
@@ -297,6 +360,7 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase5-image-resolver-iam/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-run-preview-iam/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-notifier-iam/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-alarms/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-notifications/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-scratch/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-lane-instance-iam/*

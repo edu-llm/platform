@@ -55,6 +55,7 @@ GPU_SHAPES_TEMPLATE = "infra/batch-compute-gpu-shapes.yaml"
 EVENTS_TEMPLATE = "infra/batch-events.yaml"
 JANITOR_TEMPLATE = "infra/expiry-janitor.yaml"
 NOTIFICATIONS_TEMPLATE = "infra/notifications.yaml"
+ALARM_DESTINATION_TEMPLATE = "infra/alarm-destination.yaml"
 ADMISSION_TEMPLATE = "infra/admission-state-machine.yaml"
 
 ADMISSION_STACK = "sbsandbox-intern-edullm-phase2-admission"
@@ -83,6 +84,15 @@ DEPLOYMENT_ORDER = (
         "Deploy the remaining GPU shapes stack",
         "sbsandbox-intern-edullm-phase4-gpu-shapes",
         GPU_SHAPES_TEMPLATE,
+    ),
+    # Before all three stacks that declare alarms, because their AlarmActions import its
+    # export and Fn::ImportValue fails the importing stack when the export does not exist.
+    # The reason it exists at all: those alarms deployed perfectly without it, all six with an
+    # empty AlarmActions, four of them in ALARM on 2026-08-06 with nobody told.
+    (
+        "Deploy the alarm destination",
+        "sbsandbox-intern-edullm-alarms",
+        ALARM_DESTINATION_TEMPLATE,
     ),
     # Before the events stack for the same reason the GPU compute stack is: the rule's second
     # target names the queue this creates, EventBridge does not check that an SQS target
@@ -223,7 +233,16 @@ def test_workflow_permissions_are_minimal_and_the_token_is_scoped_to_the_job() -
 
     assert parsed["permissions"] == {"contents": "read"}
     assert "id-token" not in parsed["permissions"]
-    assert job["permissions"] == {"contents": "read", "id-token": "write"}
+    # `actions: write` is for the one `gh workflow run` at the end of the job, which asks the
+    # audit to invoke what was just deployed. It is here rather than at the top level for the
+    # same reason id-token is, and it exists at all because the alternative was
+    # lambda:InvokeFunction on the deploy credential -- one of the fourteen actions
+    # tests/test_phase3_deployer_role.py names in BUILDS_BUT_NEVER_RUNS.
+    assert job["permissions"] == {
+        "contents": "read",
+        "id-token": "write",
+        "actions": "write",
+    }
     assert job["timeout-minutes"] <= 30
 
 
@@ -575,7 +594,9 @@ def test_every_run_body_is_strict_about_failures_and_unset_variables() -> None:
     # stopped looping over a pair of queue names typed into this file. The guard arrived on
     # 2026-08-05, after a create that failed and rolled back left the notifier stack
     # unupdatable and broke every dispatch of this workflow until it was deleted by hand.
-    assert len(scripts) == len(DEPLOYMENT_ORDER) + 10
+    # The eleventh is the audit dispatch, which is how a deploy gets the deployed function
+    # invoked without the deploy credential holding lambda:InvokeFunction.
+    assert len(scripts) == len(DEPLOYMENT_ORDER) + 11
     assert all(script.startswith("set -euo pipefail\n") for script in scripts)
 
 

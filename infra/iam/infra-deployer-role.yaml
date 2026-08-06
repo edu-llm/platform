@@ -800,6 +800,31 @@ Resources:
                   - cloudwatch:UntagResource
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:sbsandbox-intern-edullm-*
+              # WHERE THOSE ALARMS FIRE TO. The grant above has existed for as long as the
+              # alarms have and was on its own enough to deploy every one of them with an
+              # empty AlarmActions, which is what happened: six correct alarms, four of them
+              # in ALARM on 2026-08-06, all of them firing into nothing. This is the topic
+              # they now name, in infra/alarm-destination.yaml.
+              #
+              # SetTopicAttributes is what applies the AWS::SNS::TopicPolicy in that stack.
+              # Without it the topic deploys and then refuses CloudWatch's publish, which
+              # fails silently at fire time and is indistinguishable from having no action.
+              #
+              # Subscribe and Unsubscribe are deliberately absent. An email subscription needs
+              # an address and a click from its recipient, so CloudFormation cannot complete
+              # one and this role has no business holding a grant it cannot use. Adding a
+              # reader stays a hand action by somebody who is the reader.
+              - Effect: Allow
+                Action:
+                  - sns:CreateTopic
+                  - sns:DeleteTopic
+                  - sns:GetTopicAttributes
+                  - sns:ListTagsForResource
+                  - sns:SetTopicAttributes
+                  - sns:TagResource
+                  - sns:UntagResource
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:sbsandbox-intern-edullm-alarms
               # The queue half of D6. EventBridge delivers to SQS and an event source
               # mapping attaches the recorder, which is what lets this role stay without
               # lambda:AddPermission -- the grant the Phase 2 policy excludes with the

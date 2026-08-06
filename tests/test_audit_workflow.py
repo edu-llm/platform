@@ -1485,6 +1485,20 @@ def test_the_role_can_read_and_cannot_write(role: dict[str, Any]) -> None:
     Asserted as an exact set rather than an absence list, so an action added later has to be
     argued for here rather than merely not forbidden. The substring pass under it is what
     keeps reading true once somebody has argued one in.
+
+    ``lambda:InvokeFunction`` IS THE ONE ACTION HERE THAT IS NEITHER A READ NOR A WRITE, AND
+    IT IS ARGUED RATHER THAN WAVED THROUGH. It arrived from the 2026-08-06 notifier outage,
+    where every grant in this policy answered correctly about a function that had raised on
+    all 934 of its invocations: they read what bytes are deployed, and the bytes were right.
+    The only question that would have caught it is whether the thing runs, and nothing can
+    ask that without running it.
+
+    What keeps it inside this test's promise is the resource, which is checked separately by
+    ``test_the_lambda_grant_names_the_functions_the_templates_declare``: it reaches the
+    notifier and nothing else, and the notifier invoked on the committed non-terminal fixture
+    owes no message, so it loads its catalogs, reads its secret, projects the event and posts
+    nothing. Invoking any of the other three would admit a submission, file lineage for a run
+    that did not happen, or stop machines, and none of those is grantable here at any width.
     """
     granted = {
         action for statement in statements(role) for action in statement_actions(statement)
@@ -1496,8 +1510,12 @@ def test_the_role_can_read_and_cannot_write(role: dict[str, Any]) -> None:
         "s3:GetBucketLocation",
         "secretsmanager:GetSecretValue",
         "lambda:GetFunctionConfiguration",
+        "lambda:InvokeFunction",
         "cloudformation:GetTemplate",
         "cloudformation:ListStacks",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:DescribeAlarms",
+        "sns:ListSubscriptionsByTopic",
         "tag:GetResources",
         "cloudtrail:LookupEvents",
         "batch:ListJobs",
@@ -1512,6 +1530,8 @@ def test_the_role_can_read_and_cannot_write(role: dict[str, Any]) -> None:
                 "secretsmanager:",
                 "lambda:",
                 "cloudformation:",
+                "cloudwatch:",
+                "sns:",
                 "tag:",
                 "cloudtrail:",
                 "batch:",
@@ -1634,6 +1654,14 @@ def test_no_grant_reaches_a_whole_bucket_or_every_secret(role: dict[str, Any]) -
         "LookUpLaunchEvents",
         "ReadTheQueuesThePlacementVerdictNeeds",
         "ListTheInternRolesTheRosterIsComparedAgainst",
+        # The two CloudWatch reads, and the reason is the API rather than a narrowing
+        # somebody declined to write. A metric has no ARN: GetMetricStatistics is scoped by
+        # namespace and dimension inside the request, and DescribeAlarms by name prefix, and
+        # IAM offers no condition key for either. Both carry the region condition, which is
+        # the only bound available. What they disclose is published metric statistics and
+        # alarm configuration for this region, which is counts, thresholds and states.
+        "ReadWhetherTheDeployedFunctionsSucceed",
+        "ReadWhetherTheAlarmsHaveSomewhereToFire",
     }
     assert {
         statement["Sid"]
@@ -1684,6 +1712,8 @@ GLOBAL_SERVICE_GRANTS = {"ListTheInternRolesTheRosterIsComparedAgainst"}
         "FindEveryResourceThisPlatformTagged",
         "LookUpLaunchEvents",
         "ReadTheQueuesThePlacementVerdictNeeds",
+        "ReadWhetherTheDeployedFunctionsSucceed",
+        "ReadWhetherTheAlarmsHaveSomewhereToFire",
     ],
 )
 def test_each_unscopable_grant_is_confined_to_the_region_this_platform_deploys_in(
@@ -1944,15 +1974,31 @@ def test_the_lambda_grant_names_the_functions_the_templates_declare(
         _, function = resource_of_type(template, "AWS::Lambda::Function")
         declared.add(function["Properties"]["FunctionName"])
 
-    reach = {
-        reachable.rsplit(":function:", 1)[1]: set(statement_actions(statement))
-        for statement in statements(role)
-        for reachable in statement_resources(statement)
-        if ":lambda:" in reachable
-    }
+    # Accumulated rather than assigned, because one function is now named by two statements
+    # and a dict comprehension would keep whichever was written last -- reporting the notifier
+    # as holding only its invoke grant and asserting nothing about the read.
+    reach: dict[str, set[str]] = {}
+    for statement in statements(role):
+        for reachable in statement_resources(statement):
+            if ":lambda:" in reachable:
+                named = reachable.rsplit(":function:", 1)[1]
+                reach.setdefault(named, set()).update(statement_actions(statement))
 
     assert set(reach) == declared
-    assert all(actions == {"lambda:GetFunctionConfiguration"} for actions in reach.values())
+
+    # EVERY FUNCTION IS READ AND EXACTLY ONE IS INVOKED. The invoke arrived from the
+    # 2026-08-06 outage, where reading the deployed bytes of all four said nothing about a
+    # notifier that raised on every invocation. It is confined to the notifier because that
+    # is the only one of the four with a harmless payload: a non-terminal Batch event owes no
+    # message, so the handler loads its catalogs, reads its secret, projects the event and
+    # posts nothing. The other three admit submissions, write lineage, or stop machines.
+    invocable = {name for name, actions in reach.items() if "lambda:InvokeFunction" in actions}
+    assert invocable == {"sbsandbox-intern-edullm-notifier"}
+    assert all("lambda:GetFunctionConfiguration" in actions for actions in reach.values())
+    assert all(
+        actions <= {"lambda:GetFunctionConfiguration", "lambda:InvokeFunction"}
+        for actions in reach.values()
+    )
     # Unqualified, with no trailing `:*`. The check asks about $LATEST, which is what the
     # state machine and the events rule invoke; a version or alias suffix would be a grant
     # for something nothing here reads.

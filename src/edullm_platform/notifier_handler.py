@@ -87,9 +87,21 @@ BATCH_ITEM_FAILURES_RESPONSE_TYPE: Final = "ReportBatchItemFailures"
 #: by hand; infra/README.md carries the command.
 WEBHOOK_SECRET_VARIABLE: Final = "EDULLM_WEBHOOK_SECRET_ID"
 
-#: Where the packaged reviewed configuration is. Lambda unpacks the zip at /var/task.
+#: Where the packaged reviewed configuration is.
+#:
+#: RESOLVED FROM THIS MODULE'S OWN LOCATION RATHER THAN WRITTEN AS AN ABSOLUTE PATH, WHICH
+#: IS THE WHOLE OF THE 2026-08-06 OUTAGE. The builder copies the three reviewed files to
+#: ``build_admission_lambda.PACKAGED_CONFIG_PREFIX``, which is ``edullm_platform/config``
+#: inside the zip and therefore ``/var/task/edullm_platform/config`` once Lambda unpacks it.
+#: This constant said ``/var/task/config`` and the template repeated the same wrong string,
+#: so every invocation raised ``FileNotFoundError`` on ``organization.yaml`` while the file
+#: sat in the package one directory across. Reading it off ``__file__`` makes the handler
+#: and the builder agree by construction: whatever directory the module was unpacked into is
+#: the directory its configuration was unpacked beside. It is also how
+#: :func:`edullm_platform.admission_handler.config_directory` has always resolved it, which
+#: is why the validator carries the same three files and has never once failed to find them.
 CONFIG_DIRECTORY_VARIABLE: Final = "EDULLM_CONFIG_DIRECTORY"
-DEFAULT_CONFIG_DIRECTORY: Final = "/var/task/config"
+DEFAULT_CONFIG_DIRECTORY: Final = Path(__file__).resolve().parent / "config"
 
 
 class NotifierEventError(ValueError):

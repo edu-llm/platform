@@ -621,6 +621,29 @@
         {
           "action_match": {
             "actions": [
+              "sns:CreateTopic",
+              "sns:DeleteTopic",
+              "sns:GetTopicAttributes",
+              "sns:ListTagsForResource",
+              "sns:SetTopicAttributes",
+              "sns:TagResource",
+              "sns:UntagResource"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:sns:us-east-1:<aws-account-id>:sbsandbox-intern-edullm-alarms"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
               "sqs:CreateQueue",
               "sqs:DeleteQueue",
               "sqs:GetQueueAttributes",
@@ -716,7 +739,7 @@
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-08-06T02:04:14Z",
+  "observed_at": "2026-08-06T06:07:46Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "sbsandbox-intern-edullm-infra-deployer",
   "source": "aws",

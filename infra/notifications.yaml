@@ -119,7 +119,7 @@ Resources:
       Code:
         S3Bucket: sbsandbox-intern-edullm-artifacts
         S3Key: notifier/notifier.zip
-        S3ObjectVersion: yfZX9j6aaYvhNyGNgaBr8pWxkJOd93pV
+        S3ObjectVersion: 2vFjyN_x0o.227aRApYdrg9BbUyn8VLr
       Environment:
         Variables:
           # A NAME AND NEVER A VALUE. A Slack incoming webhook carries its whole credential in
@@ -127,9 +127,17 @@ Resources:
           # console and in get-function-configuration, and this repository is public. The
           # secret is created by hand; infra/README.md carries the command.
           EDULLM_WEBHOOK_SECRET_ID: sbsandbox-intern-edullm-runs-webhook
-          # Where Lambda unpacks the zip. The three reviewed files the notifier reads are
-          # packaged into it by tools/build_notifier_lambda.py.
-          EDULLM_CONFIG_DIRECTORY: /var/task/config
+          # EDULLM_CONFIG_DIRECTORY IS DELIBERATELY ABSENT, AND SETTING IT AGAIN IS THE
+          # 2026-08-06 OUTAGE. It was set here to /var/task/config, which is not where
+          # tools/build_notifier_lambda.py puts the three reviewed files: they go to
+          # edullm_platform/config inside the zip, so /var/task/edullm_platform/config once
+          # Lambda unpacks it. Every invocation raised FileNotFoundError on organization.yaml
+          # from the first deploy onward, and every check the platform had still passed,
+          # because all of them asked about the artifact and none of them ran the function.
+          # Unset, the handler resolves the directory off its own __file__ and therefore
+          # cannot disagree with the builder. The variable still exists as an override for a
+          # test that wants to point the handler somewhere else; a deployment has no business
+          # using it, and the admission validator's template has never set its equivalent.
           # Where the intent records are, which is where the submitter comes from. Named here
           # as well as in the role, and a test compares the two: a mismatch is an AccessDenied
           # on every message, swallowed by the fallback, showing up only as a channel where
@@ -183,6 +191,14 @@ Resources:
   #
   # None of them can stop a run and none of them is in the path of one. A red alarm here means
   # nobody was told about a run, never that a run did not happen.
+  #
+  # ALL THREE SEND TO THE SNS TOPIC IN infra/alarm-destination.yaml AND NOT THROUGH THE
+  # NOTIFIER, WHICH IS THE POINT. These three watch the notifier, so delivering them through
+  # the notifier would be asking a broken component to report that it is broken. On
+  # 2026-08-06 every invocation of it raised, and all three of these were in ALARM with an
+  # empty AlarmActions for hours -- correct alarms, right thresholds, firing into nothing.
+  # OKActions as well as AlarmActions, so a reader who got the first message learns that the
+  # condition cleared instead of having to go and look.
 
   # Anything at all in the dead-letter queue means at least one run ended and nobody was told.
   # There is no acceptable non-zero level. Missing data is not breaching, because an empty
@@ -207,6 +223,10 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
+      OKActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
 
   # The half that fires first. A notifier that has stopped consuming leaves messages ageing in
   # its queue before the third retry sends the first one to the dead-letter queue. Ten minutes
@@ -230,6 +250,10 @@ Resources:
       Threshold: 600
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
+      OKActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
 
   # A notifier that raises is one whose events go round the retry loop, so this overlaps the
   # two above on purpose: it fires earlier and it names the cause. The other two say nobody was
@@ -252,6 +276,10 @@ Resources:
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
+      OKActions:
+        - Fn::ImportValue: sbsandbox-intern-edullm-alarm-topic-arn
 
 Outputs:
   QueueUrl:
