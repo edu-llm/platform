@@ -812,7 +812,7 @@ def refusals_for(dataset_release: str) -> tuple[str, ...]:
     return tuple(refused)
 
 
-def test_the_dataset_box_is_a_choice_because_five_registered_names_are_refused_by_nothing() -> (
+def test_the_dataset_box_is_a_choice_because_six_registered_names_are_refused_by_nothing() -> (
     None
 ):
     """THE SECOND ASYMMETRY ON THIS FORM, AND THE ONE #232's REASONING DOES NOT REACH.
@@ -836,9 +836,9 @@ def test_the_dataset_box_is_a_choice_because_five_registered_names_are_refused_b
 
     So for those the option list is not a second lock. It is the only one.
 
-    **THIS SET HELD SEVEN AND HOLDS FIVE, WHICH IS THIS TEST WORKING RATHER THAN THIS TEST
-    WEAKENING.** ``dolma-2026-07`` and ``fineweb-edu-1b-v2`` left it because the refusal
-    they were waiting for got built. ``retired:`` used to have no enforcement anywhere --
+    **THIS SET HELD SEVEN, THEN FIVE, AND HOLDS SIX, AND THE TWO MOVES ARE OPPOSITE
+    THINGS.** ``dolma-2026-07`` and ``fineweb-edu-1b-v2`` left it because the refusal they
+    were waiting for got built. ``retired:`` used to have no enforcement anywhere --
     ``config/datasets.yaml`` said so in as many words, that the flag "keeps admission's
     answer and removes the menu item" -- and it now refuses in the compile job and on the
     laptop, through ``require_a_dataset_release_that_is_current``. That is exactly what the
@@ -847,10 +847,23 @@ def test_the_dataset_box_is_a_choice_because_five_registered_names_are_refused_b
     first, which is the edit that keeps this measuring the platform rather than measuring
     policy's list.
 
-    Two of the five are the case that bites hardest and is easiest to miss.
+    **``fineweb2-equal-bytes-v1`` GREW IT BACK BY ONE, WHICH IS THE DIRECTION THE ASSERTION
+    BELOW CALLS "SOMETHING REGISTERED BECAME REACHABLE THAT NOTHING CHECKS".** It is a real
+    sealed corpus in the ``pretrain`` family and its payload is ``.jsonl`` text rather than
+    token shards: one group named ``text`` at profile ``text-corpus/v1``, because it is what
+    the gigatoken tokenizers were fitted on rather than anything either of them wrote. So
+    the family rule does not reach it, it declares no tokenizer and is therefore off the
+    form, and nothing between the two says a word. It is the first name in this set that is
+    in a trainable family *and* is not conversation text, and what a run picking it reaches
+    is OLMo-core memmapping gzipped JSON as ``uint16`` tokens.
+
+    Three of the six are the case that bites hardest and is easiest to miss.
     ``lean4-mathlib-bytes-v3`` and ``math-memory-full-v1`` depend on
     ``tokenizer/bytes-utf8``, which OLMo-core has no equivalent for, so the exclusion
     resolves itself the day upstream grows one rather than needing a refusal built here.
+    ``fineweb2-equal-bytes-v1`` does not resolve itself that way and should not: no
+    tokenizer would make a text corpus readable as tokens, so what would take it off this
+    list is a refusal that reads the group's profile.
 
     SELF-RETIRING IN THE DIRECTION THAT MATTERS. Build the missing refusals and this set
     shrinks; empty it and this test says so, at which point the list has become the second
@@ -876,6 +889,7 @@ def test_the_dataset_box_is_a_choice_because_five_registered_names_are_refused_b
     }
 
     assert held_back_only_by_this_form == {
+        "fineweb2-equal-bytes-v1",
         "frontload-cl-chat-sft-v1",
         "lean4-mathlib-bytes-v3",
         "math-memory-full-v1",
@@ -903,9 +917,14 @@ def test_the_two_names_this_set_lost_are_refused_rather_than_merely_unlisted() -
     retired corpus has to go on naming that corpus, and a refusal nobody can lift would
     make naming a different one the only route.
     """
-    for retired in ("dolma-2026-07", "fineweb-edu-1b-v2"):
+    for retired in ("dolma-2026-07", "fineweb-edu-1b-v2", "formal-proof-premises-500m-v2"):
         assert refusals_for(retired) == ("retired_dataset_release",)
     assert refusals_for("fineweb-edu-1b-v6") == ()
+    # The third name joined on 2026-08-06 and is the one retirement in the registry that a
+    # sealed artifact decides rather than a person: v3's version block declares `supersedes`
+    # of v2. Asserted here rather than only in the registry so that un-retiring v2 to get
+    # both versions onto the form fails on the refusal as well as on the duplicate check.
+    assert refusals_for("formal-proof-premises-500m-v3") == ()
 
 
 def test_an_unregistered_dataset_is_refused_by_something_other_than_this_form() -> None:

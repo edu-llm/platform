@@ -55,15 +55,15 @@
 # The join is a fact about a corpus that does exist and whose tokenizer no workload can
 # construct, so it changes on its own when OLMo-core grows one.
 #
-# WHY TWENTY-FOUR ENTRIES AND WHY THIRTEEN OF THEM REACH THE FORM. Every entry here is a
+# WHY TWENTY-NINE ENTRIES AND WHY SIXTEEN OF THEM REACH THE FORM. Every entry here is a
 # promise the corpus can be resolved; a dropdown option is the stronger promise that a run
-# picking it works. The seven dolma2 corpora carry both, and so do fineweb-edu-1b at v6 on
-# smollm2-bpe, formal-proof-premises-500m at v2 on the vendored Qwen2.5 tokenizer, and the
-# four fineweb2 corpora on the two gigatoken tokenizers. The other eleven carry only the
-# first, and for three separate reasons -- a tokenizer nothing can build or none declared at
-# all, a version its owner has superseded, or a family a run must not train on. All three
-# gaps are computed rather than listed, so this comment cannot drift out of agreement with
-# the file.
+# picking it works. The nine dolma2 corpora carry both, and so do fineweb-edu-1b at v6 and
+# fineweb-edu-750m at v2 on smollm2-bpe, formal-proof-premises-500m at v3 on the vendored
+# Qwen2.5 tokenizer, and the four fineweb2 token corpora on the two gigatoken tokenizers. The
+# other thirteen carry only the first, and for three separate reasons -- a tokenizer nothing
+# can build or none declared at all, a version its owner has superseded, or a family a run
+# must not train on. All three gaps are computed rather than listed, so this comment cannot
+# drift out of agreement with the file.
 #
 # NOT EVERY REGISTERED DATASET IS A CORPUS, WHICH IS NEW AND IS THE MOST IMPORTANT LINE HERE.
 # This list now carries four tokenizers, a verbatim vendor mirror and three sft conversation
@@ -118,8 +118,8 @@
 # manifest twice.
 #
 # tokenizer/qwen25-vendored IS THE ONE TOKENIZER THIS FILE NAMES AND DOES NOT CARRY. It is
-# published and sealed, on 2026-08-02, and formal-proof-premises-500m-v2 below names it in its
-# `tokenizer` field, but there is no entry of its own for it the way there is for
+# published and sealed, on 2026-08-02, and formal-proof-premises-500m at v2 and v3 below name
+# it in their `tokenizer` field, but there is no entry of its own for it the way there is for
 # tokenizer/dolma2-bpe and tokenizer/smollm2-bpe. Nothing requires one -- the `tokenizer` field
 # is a string rather than a reference into this list, and admission resolves the corpus without
 # it -- so this is an asymmetry rather than a gap, and registering it would be an addition
@@ -131,6 +131,16 @@
 # declare `mutability: frozen`, which is what makes a content pin meaningful: the standard
 # requires the digest for frozen datasets alone, so a `live` or `append-only` dataset has
 # nothing to pin here and cannot be registered.
+#
+# THE FIVE ADDED ON 2026-08-06 WERE READ FROM A THIRD PLACE AS WELL, and it is the one the
+# other two rest on. Both of those readings are somebody's claim about the manifest, written
+# into a different file by a different pass; neither is the manifest. So for
+# reservoir-dolma2-v1, refhq-instruct-v3, formal-proof-premises-500m-v3, fineweb-edu-750m-v2
+# and fineweb2-equal-bytes-v1 the manifest object was fetched from the sealed bucket and its
+# sha256 recomputed, and all three readings agree for every one of the six groups involved.
+# That is worth doing once rather than every time: it is what would catch a seal written from
+# a manifest that was then replaced, which the two-place check reads past because both places
+# would carry the same stale digest.
 #
 # dolma2-bpe-v1 IS THE ONE ENTRY WHOSE DIGEST DID NOT COME FROM THOSE TWO PLACES, and it is
 # called out here rather than left for a reader to notice. Its seal predates the current shape
@@ -156,29 +166,33 @@
 # basis nobody has established, which is a fact about the corpus and not a defect in the
 # record.
 #
-# ELEVEN ARE REGISTERED HERE AND NOT OFFERED ON THE FORM, AND THAT IS DELIBERATE.
+# THIRTEEN ARE REGISTERED HERE AND NOT OFFERED ON THE FORM, AND THAT IS DELIBERATE.
 # Five are refused by family, above: the four tokenizers and the verbatim vendor mirror.
-# math-sft-60m, pedagogy70-normal30 and frontload-cl-chat-sft are in a trainable family and
-# declare no tokenizer at all, honestly, because they are pre-tokenization conversation text,
-# and `None` is not a key in the TOKENIZERS map, so the same join that answers the question
-# above answers this one. lean4-mathlib-bytes and math-memory-full depend on
+# math-sft-60m, pedagogy70-normal30, frontload-cl-chat-sft and fineweb2-equal-bytes declare no
+# tokenizer at all, honestly, because they are pre-tokenization text, and `None` is not a key
+# in the TOKENIZERS map, so the same join that answers the question above answers this one.
+# The first three are sft conversations and the fourth is the case worth not skimming: it is
+# in a trainable family, so the family rule does not reach it either, and its own entry below
+# carries what that costs. lean4-mathlib-bytes and math-memory-full depend on
 # `tokenizer/bytes-utf8`, and OLMo-core has no byte tokenizer. TokenizerConfig offers dolma2,
 # dolma2_sigdig, gpt_neox_olmo_dolma_v1_5, gpt2 and from_hf, and nothing under
 # olmo_core/data/ mentions bytes or utf8, measured on 2026-08-02 against the checkout the
 # training image builds from. A run picking either of those two today reaches a container
-# that cannot construct a model for the tokens it just resolved and exits 69. The eleventh is
-# fineweb-edu-1b at v2, which `retired` now refuses rather than merely unlists.
+# that cannot construct a model for the tokens it just resolved and exits 69. The last two
+# are fineweb-edu-1b at v2 and formal-proof-premises-500m at v2, which `retired` now refuses
+# rather than merely unlists.
 #
-# ONLY SIX OF THE ELEVEN ARE REFUSED BY ANYTHING, AND KNOWING WHICH IS THE POINT OF SPLITTING
-# THEM UP LIKE THIS. The five family cases trip `dataset_is_not_a_corpus` and v2 trips
-# `retired_dataset_release`. The other five -- the three with no tokenizer and the two on
-# bytes-utf8 -- are admitted by every check this platform makes, and what a run picking one
-# meets is exit 69 in a container after the GPU has been paid for. They are off the form
-# because the dropdown answers "will this work" and they will not, and they stay in the
-# refusal `edullm check` prints for an unregistered name, because that sentence answers "what
-# may a submission name" and pretending otherwise would claim an enforcement that is not
-# there. tests/test_submission_form_options.py derives that set from the same functions the
-# compile job and admission use, so it shrinks on its own as those refusals get built.
+# ONLY SEVEN OF THE THIRTEEN ARE REFUSED BY ANYTHING, AND KNOWING WHICH IS THE POINT OF
+# SPLITTING THEM UP LIKE THIS. The five family cases trip `dataset_is_not_a_corpus` and the
+# two retired ones trip `retired_dataset_release`. The other six -- the four with no
+# tokenizer and the two on bytes-utf8 -- are admitted by every check this platform makes, and
+# what a run picking one meets is exit 69 in a container after the GPU has been paid for.
+# They are off the form because the dropdown answers "will this work" and they will not, and
+# they stay in the refusal `edullm check` prints for an unregistered name, because that
+# sentence answers "what may a submission name" and pretending otherwise would claim an
+# enforcement that is not there. tests/test_submission_form_options.py derives that set from
+# the same functions the compile job and admission use, so it shrinks on its own as those
+# refusals get built.
 #
 # fineweb-edu-1b AT v6 USED TO BE ON THIS LIST AND IS THE WORKED EXAMPLE OF AN EXCLUSION
 # RETIRING ITSELF. It depends on `tokenizer/smollm2-bpe`, which always had an exact OLMo-core
@@ -225,6 +239,39 @@ published:
     version: v6
     manifest_sha256: "047d001de3d08d443f99f1b12a7c998dc06bdef57a914e26f7feeaf4601be2ca"
     tokenizer: tokenizer/smollm2-bpe
+  # NOT A SMALLER fineweb-edu-1b, WHICH THE NAMES INVITE AND THE DIGESTS REFUSE. It is a
+  # separate corpus on the same tokenizer, 749,587,434 train tokens and 1,125,064 val over
+  # sixteen payload objects and 1,501,424,996 bytes, and it pins a manifest neither
+  # fineweb-edu-1b entry shares. Its shards are uint16 `.u16le.bin`, which makes it the one
+  # corpus here where OLMo-core's default dtype is the right one rather than the hazard the
+  # paragraphs above are about.
+  - reference_id: fineweb-edu-750m-v2
+    uri: "s3://edullm-data/pretrain/fineweb-edu-750m/v2/"
+    dataset_id: pretrain/fineweb-edu-750m
+    version: v2
+    manifest_sha256: "4b0737a8dd08b220ba2f3cb6644c52bc3a3607c1f888bc299eba427c7bad7ef6"
+    tokenizer: tokenizer/smollm2-bpe
+  # THE ONE ENTRY WHOSE PAYLOAD IS TEXT AND WHOSE FAMILY SAYS CORPUS. Its single group is
+  # `text` at profile `text-corpus/v1` holding `.jsonl`, rather than a `tokens` group holding
+  # shards: 25,211 train rows and 300 val over twelve objects and 97,112,450 bytes, the Plan A
+  # pilot equal-byte multilingual sample. It declares no tokenizer honestly, because it is
+  # what the two gigatoken tokenizers were fitted on rather than something either of them
+  # wrote.
+  #
+  # SO IT IS OFF THE FORM BY THE SAME JOIN AS math-sft-60m, AND UNLIKE math-sft-60m IT IS IN A
+  # TRAINABLE FAMILY. That second half is what earns the paragraph. `pretrain` is in
+  # TRAINABLE_FAMILIES, so `dataset_is_not_a_corpus` does not fire, and a submission naming
+  # this by a route that never touched the dropdown compiles clean, classifies routine and is
+  # admitted. What it reaches is a reader asking OLMo-core to memmap gzipped JSON as tokens.
+  # That is the failure the tokenizer join already prevents for the three sft corpora,
+  # arriving in a trainable family for the first time, and it is why this name joins the set
+  # in tests/test_submission_form_options.py that records what only the option list refuses.
+  - reference_id: fineweb2-equal-bytes-v1
+    uri: "s3://edullm-data/pretrain/fineweb2-equal-bytes/v1/"
+    dataset_id: pretrain/fineweb2-equal-bytes
+    version: v1
+    manifest_sha256: "5ad228082cc0ace73b15771734cbd3e4db3f40638f9673187f465362b01cc2b8"
+    tokenizer: null
   # Plan B Phase-0 equal-token ~2B path-check corpora (100M). Equal tokens/lang subsampled
   # from the UniMax 20B arms. Digests from live promote 2026-08-04. Listed before UniMax so
   # published reference_ids stay ascending.
@@ -279,6 +326,23 @@ published:
     dataset_id: pretrain/formal-proof-premises-500m
     version: v2
     manifest_sha256: "3adad2a090b62cb3815952b56254c9965afa1a082a4ab61028012727330d843b"
+    tokenizer: tokenizer/qwen25-vendored
+    # THE ONE RETIREMENT IN THIS FILE THE BUCKET DECIDES RATHER THAN A PERSON, which is
+    # exactly what the fineweb-edu-1b pair above does not have. v3's own version block reads
+    # `{id: v3, of: v2, relation: supersedes}`, written by the sealing pass on 2026-08-05, so
+    # here there is a chain in the data and it points one way. Amy Lin, `alsy7009`, leads the
+    # team that owns the corpus; reversing this is deleting the next line.
+    retired: true
+  # A REVISION RATHER THAN A RE-SHARD, WHICH IS WHY BOTH ARE CARRIED AND ONLY ONE IS CURRENT.
+  # v3 holds 467,206,144 train tokens and 10,059,776 val against v2's 494,862,336 and
+  # 11,862,016, over the same twelve payload objects and 117,833,728 fewer bytes. Same
+  # tokenizer, same packing at sequence length 16,384, fewer documents. Sealed 2026-08-05 at
+  # 12:50 UTC, which is after every reading the paragraphs above were written from.
+  - reference_id: formal-proof-premises-500m-v3
+    uri: "s3://edullm-data/pretrain/formal-proof-premises-500m/v3/"
+    dataset_id: pretrain/formal-proof-premises-500m
+    version: v3
+    manifest_sha256: "ef320b4345493de7fa38bf197e05756315ace192566eef76c56f88b292d42a58"
     tokenizer: tokenizer/qwen25-vendored
   # Frontload-cl early-behavior-primer corpora. Digests read live 2026-08-05 from
   # each group's manifest_sha256 in dataset.json and the matching map in _VALIDATED.json.
@@ -387,6 +451,18 @@ published:
     version: v1
     manifest_sha256: "527f66916a4995f52ea667e6dc2008e7ecf83cdeb1886df9387bf04cc3b495fd"
     tokenizer: null
+  # TWO GROUPS, AND ONLY THE PAYLOAD ONE IS PINNED, which is the fineweb-edu-1b-v6 shape
+  # rather than a new one. `tokens` is 3,942,810,012 train and 5,994,057 val over `.u32le.bin`
+  # shards and is what the digest below covers. `vendor` is the raw companion those tokens
+  # were built from, carried at profile `vendored/v1` because this corpus's own notes record
+  # that Gate A does not yet accept `text-corpus/v1`, so a reader pinning this entry is
+  # pinning the tokens and not the source pull.
+  - reference_id: refhq-instruct-v3
+    uri: "s3://edullm-data/pretrain/refhq-instruct/v3/"
+    dataset_id: pretrain/refhq-instruct
+    version: v3
+    manifest_sha256: "9876b122bafd594effcf9f5c8467e9023691612f791dc36dbaac29e397af1a37"
+    tokenizer: tokenizer/dolma2-bpe
   - reference_id: refhq-regmix-5p5b-v2
     uri: "s3://edullm-data/pretrain/refhq-regmix-5p5b/v2/"
     dataset_id: pretrain/refhq-regmix-5p5b
@@ -398,6 +474,24 @@ published:
     dataset_id: pretrain/regmix-10b
     version: v1
     manifest_sha256: "a24992f53dc4a900bacf8fa571d77e343fd28ffa9054c14b93d54204b0a38cb4"
+    tokenizer: tokenizer/dolma2-bpe
+  # THE LARGEST CORPUS THIS REGISTRY HAS EVER NAMED. 1,004,872,007,680 bytes over 10,049
+  # payload objects, 250,242,924,544 train tokens and 975,077,376 val, eight source categories
+  # at exact 25,001,984-token shards with the held-out documents carved before tokenization.
+  # Sealed 2026-08-05 at 18:13 UTC, hours before this entry was written.
+  #
+  # ITS LICENCE FIELD SAYS `{basis: unknown, id: null}` AND ITS OWN NOTES SAY MORE THAN THAT,
+  # which is the `mixed` case above with a sharper edge on it. The notes record that
+  # stackexchange and finewiki are CC-BY-SA-4.0, that finewiki is additionally GFDL, and that
+  # the two together are 17,845,944,320 tokens and 7.13 percent of train. Share-alike is not
+  # the same kind of unknown as an absent licence. An absent one leaves a question open; this
+  # one is a condition anybody redistributing a model trained on this corpus has to satisfy,
+  # and the licence field on its own does not carry it to the person who would need to know.
+  - reference_id: reservoir-dolma2-v1
+    uri: "s3://edullm-data/pretrain/reservoir-dolma2/v1/"
+    dataset_id: pretrain/reservoir-dolma2
+    version: v1
+    manifest_sha256: "aba31c73d40e4473867bb8e76e6d42c5949ab67657512b6ebc7ceec79a8db388"
     tokenizer: tokenizer/dolma2-bpe
   # Registered because both fineweb-edu-1b entries pin this digest in their `depends_on`, and
   # unreachable as a corpus by family. Its dataset.json names HuggingFaceTB/SmolLM2-135M as its

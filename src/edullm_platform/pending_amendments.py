@@ -761,7 +761,49 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # validator entry was the first one ever written that a submitter could have met: it
     # named the window in which admission classified against v4 while config/policy.yaml on
     # main said v5, and the window is closed.
-    releases: tuple[PendingRelease, ...] = ()
+    #
+    # AND IT IS OPEN AGAIN THE SAME DAY, FOR THE FIVE DATASET REGISTRATIONS. That is the
+    # third validator record of 2026-08-06 and the shape is by now familiar rather than
+    # alarming: config/datasets.yaml is in ADMISSION_CONFIG, so a registration is a release,
+    # and a release cut before the registration merged cannot carry it. What is worth
+    # noticing is that the last three entries in a row have all been the kind a submitter
+    # can meet, where every entry before them was a digest moving with no behaviour behind
+    # it. The register is doing the job it was built for rather than absorbing noise.
+    releases: tuple[PendingRelease, ...] = (
+        PendingRelease(
+            function="validator",
+            reason=(
+                "config/datasets.yaml now registers five corpora that are sealed in "
+                "s3://edullm-data/ and were carried nowhere: pretrain/reservoir-dolma2 v1, "
+                "pretrain/refhq-instruct v3, pretrain/formal-proof-premises-500m v3, "
+                "pretrain/fineweb-edu-750m v2 and pretrain/fineweb2-equal-bytes v1. That is "
+                "1,029,436,494,332 bytes of corpus which admission denies outright today "
+                "under unregistered_dataset, and datasets.yaml is one of the seven files in "
+                "ADMISSION_CONFIG."
+                "\n\n"
+                "A SUBMITTER MEETS THIS ONE, AND MEETS IT AS A DISAGREEMENT BETWEEN TWO "
+                "PLACES RATHER THAN AS A REFUSAL. `edullm check` on a laptop reads the "
+                "merged file and reports nothing wrong; the deployed validator reads the "
+                "previous zip and denies the same submission from inside AWS, past the "
+                "approval gate, naming the dataset rather than the release. That is the "
+                "Phase 4 shape infra/admission-validator-release.yaml already records "
+                "paying for: correct for the bytes that produced it, wrong about the "
+                "account, and hard to read because it names the input."
+                "\n\n"
+                "It also retires pretrain/formal-proof-premises-500m at v2, and that half is "
+                "stale in the safe direction. v3's own sealed dataset.json declares "
+                "`{id: v3, of: v2, relation: supersedes}`, so the flag is read off the "
+                "corpus rather than chosen, and until the release the deployed validator "
+                "goes on admitting v2. A submitter therefore gets the superseded corpus "
+                "rather than a refusal, which is worth cutting the release for but is not "
+                "the same urgency as the paragraph above."
+            ),
+            cleared_by="uv run python tools/release_lambda.py --function validator",
+            builds_to="7a149fc4e563aa97a66371a96a36dd0c7e1fad59080949228970deb3a2077b79",
+            released="15c3f1014c6ecfdc107f39d48f740d0905dad43b7e90cfc506ee62702ddd0f54",
+            recorded_on=date(2026, 8, 6),
+        ),
+    )
     return one_record_per_function(releases)
 
 

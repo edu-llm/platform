@@ -395,12 +395,20 @@ def test_is_retired_reads_the_flag_off_both_lists_and_answers_no_for_a_name_neit
     """THE THIRD QUESTION, AND THE ONE THE FLAG WAS NEVER ASKED. Mutation: read ``retired``
     off the published list alone, since that is where the interesting case is.
 
-    Two entries in the shipped registry set it and they are one of each kind, which is the
-    whole reason the predicate has to answer over both. ``dolma-2026-07`` is a release with
-    nothing published under it; ``fineweb-edu-1b-v2`` is a published corpus its owner has
-    superseded. A predicate that read one list would enforce the flag for half the entries
-    that carry it, which is worse than not enforcing it, because the half it missed would
-    look covered.
+    Three entries in the shipped registry set it and they are not all of one kind, which is
+    the whole reason the predicate has to answer over both lists. ``dolma-2026-07`` is a
+    release with nothing published under it; ``fineweb-edu-1b-v2`` and
+    ``formal-proof-premises-500m-v2`` are published corpora their owners have superseded. A
+    predicate that read one list would enforce the flag for some of the entries that carry
+    it, which is worse than not enforcing it, because the ones it missed would look covered.
+
+    THE THIRD JOINED ON 2026-08-06 AND IS THE ONE THE REGISTRY DID NOT HAVE TO DECIDE.
+    ``config/datasets.yaml`` records at length that nothing computable separates
+    fineweb-edu-1b v2 from v6, so which is current is a fact only its owner holds.
+    ``pretrain/formal-proof-premises-500m`` v3 declares ``supersedes`` of v2 in its own
+    sealed ``dataset.json``, so there the owner has already said it and the flag is a
+    reading rather than a judgement. The predicate cannot tell the two apart and should not
+    try; the difference lives beside each entry in the registry.
 
     False for a name the registry does not hold, and that is the honest answer rather than a
     fail-open default: ``is_registered`` already refuses an unknown identifier under a
@@ -411,7 +419,9 @@ def test_is_retired_reads_the_flag_off_both_lists_and_answers_no_for_a_name_neit
 
     assert registry.is_retired("dolma-2026-07") is True
     assert registry.is_retired("fineweb-edu-1b-v2") is True
+    assert registry.is_retired("formal-proof-premises-500m-v2") is True
     assert registry.is_retired("fineweb-edu-1b-v6") is False
+    assert registry.is_retired("formal-proof-premises-500m-v3") is False
     assert registry.is_retired(NO_DATASET_ID) is False
     assert registry.is_retired("no-such-corpus-v9") is False
 
@@ -420,7 +430,11 @@ def test_is_retired_reads_the_flag_off_both_lists_and_answers_no_for_a_name_neit
         for name in (*registry.release_ids, *registry.reference_ids)
         if registry.is_retired(name)
     }
-    assert retired == {"dolma-2026-07", "fineweb-edu-1b-v2"}, (
+    assert retired == {
+        "dolma-2026-07",
+        "fineweb-edu-1b-v2",
+        "formal-proof-premises-500m-v2",
+    }, (
         "the set of retired entries has moved. Each one is a fact only a corpus's owner "
         "holds, so the reasoning beside it in config/datasets.yaml has to move with it"
     )
