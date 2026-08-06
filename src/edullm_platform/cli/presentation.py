@@ -233,6 +233,16 @@ def render_run_facts(facts: RunFacts) -> str:
             if facts.approved_at is not None:
                 released += f", {elapsed_said(facts.approved_at)} ago"
             lines += _row("released by", released)
+        if facts.declined is not None:
+            # TWO ROWS AND NOT ONE, BECAUSE WHO SAID NO AND WHY ARE DIFFERENT QUESTIONS AND
+            # THE SECOND IS OFTEN UNANSWERED. GitHub's box is optional and a decline with no
+            # sentence in it is the ordinary case, so the reason row says that rather than
+            # being dropped, which would read as a tool that did not look.
+            said = facts.declined.by or "somebody this could not name"
+            if facts.declined.at is not None:
+                said += f", {elapsed_said(facts.declined.at)} ago"
+            lines += _row("declined by", said)
+            lines += _row("reason", facts.declined.reason or "none given")
         if submission.url:
             lines += _row("run page", submission.url)
         lines.append("")

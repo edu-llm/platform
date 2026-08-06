@@ -128,6 +128,12 @@ def config_filenames_named_by(entrypoint: str) -> set[str]:
     packaged set and names six fixture files; those live under ``fixtures/``, are read by
     tests rather than by the function, and are nothing this builder should ship.
 
+    ``*.json`` as well as ``*.yaml``, because one of the reviewed files is not YAML.
+    ``config/run-history.json`` is a reading of the account rather than a setting anybody
+    types, which is why it is JSON, and the notifier reads it to tell a lead what runs of a
+    shape have taken. A glob that saw only YAML would let that file be declared and unread,
+    or read and undeclared, and neither direction would be caught by either test below.
+
     **TWO SPELLINGS ARE READ AND ONE MODULE IS SKIPPED, WHICH IS WHAT KEEPS THIS HONEST NOW
     THAT THERE IS A SHARED VOCABULARY.** ``edullm_platform.config`` defines
     :class:`ConfigFile`, is in all four closures, and names every reviewed file there without
@@ -143,6 +149,7 @@ def config_filenames_named_by(entrypoint: str) -> set[str]:
     A member reference outside that module counts as exactly the file it stands for.
     """
     on_disk = {path.name for path in CONFIG_ROOT.glob("*.yaml")}
+    on_disk |= {path.name for path in CONFIG_ROOT.glob("*.json")}
     named: set[str] = set()
     for member in reachable_modules(PROJECT_ROOT, entrypoint):
         if module_name_of(member) == ConfigFile.__module__:
@@ -335,17 +342,30 @@ def test_nothing_a_handler_carries_imports_a_module_by_name_at_runtime(entrypoin
     )
 
 
-def test_the_notifier_carries_the_three_files_it_reads_and_no_others() -> None:
+def test_the_notifier_carries_the_five_files_it_reads_and_no_others() -> None:
     """Mutation: give the notifier the validator's configuration list.
 
     The recorder reads nothing under config/ and is therefore immune to a roster edit. The
-    notifier cannot be: it resolves a W&B account to a person through organization.yaml, a
+    notifier cannot be. It resolves a W&B account to a person through organization.yaml, a
     queue to a profile through execution-targets.yaml, and a profile to a rate through
-    workload-catalog.yaml. Three files rather than eight is the whole of the narrowing, and
-    a wider list would move this function's release digest for a policy it never opens.
+    workload-catalog.yaml. The approval message adds two: policy.yaml, because the routing
+    line quotes the bound under which nobody releases a run rather than remembering it, and
+    run-history.json, because the median a shape has taken is what tells an expensive run
+    that is correct from an expensive run that is a typo.
+
+    Five rather than eight is what is left of the narrowing, and the two absences still earn
+    it. Nothing the notifier carries reads datasets.yaml, repositories.yaml or
+    image-exceptions.yaml, and a dataset registration should not move this function's
+    release digest.
     """
     assert NOTIFIER_CONFIG == frozenset(
-        {"organization.yaml", "workload-catalog.yaml", "execution-targets.yaml"}
+        {
+            "organization.yaml",
+            "workload-catalog.yaml",
+            "execution-targets.yaml",
+            "policy.yaml",
+            "run-history.json",
+        }
     )
     assert NOTIFIER_CONFIG != ADMISSION_CONFIG
     assert NOTIFIER_CONFIG != RECORDER_CONFIG
