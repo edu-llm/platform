@@ -192,13 +192,29 @@ slices:
         deployed: {not_applicable: config files}
         proven: {tests: [tests/test_config.py]}
 
+      # THE PATTERN USED TO BE `AlarmActions|budgets:` AND IT STOPPED MEANING WHAT IT SAYS ON
+      # 2026-08-06. It was a proxy: when it was written every alarm in the account had an empty
+      # `AlarmActions`, so "no alarm does anything" stood in for "nothing reacts to a metric".
+      # Then #303 gave the alarms an SNS topic to fire into, because six correct alarms firing
+      # into nothing is worse than no alarms, and this row went red for it -- on the strength of
+      # the bare word `AlarmActions`, which the old pattern also matched inside the six comments
+      # explaining that history. An alarm that posts to a topic tells somebody. It does not stop
+      # a run, and this row is about stopping runs.
+      #
+      # WHAT THE PATTERN NAMES NOW IS THE THING ITSELF RATHER THAN A PROXY FOR IT. A CloudWatch
+      # alarm stops or terminates through an `arn:aws:automate:<region>:ec2:stop` action, and a
+      # budget that acts is `AWS::Budgets::` or a `budgets:` grant. Those three are what a cost
+      # stop is actually spelled as, and none of them is in `infra/`. Checked both ways when it
+      # was changed: nothing matches today, and a planted `arn:aws:automate:us-east-1:ec2:
+      # terminate` under an `AlarmActions` list matches, so this can still go red.
       - id: no-cost-stop
         name: Nothing anywhere may stop a run for cost
         designed: {reached: overview draws it}
         planned: {not_applicable: "a property, not a build"}
         built: {not_applicable: an absence}
         deployed: {not_applicable: an absence}
-        proven: {absent: [infra, "AlarmActions|budgets:"]}
+        proven:
+          {absent: [infra, "AWS::Budgets::|budgets:|arn:aws:automate:[a-z0-9-]+:(?:ec2|batch):(?:stop|terminate)"]}
 
       - id: checkpoints-bucket
         name: edullm-checkpoints, the pile older than the platform
@@ -444,31 +460,75 @@ slices:
         deployed: {not_applicable: a catalogue entry}
         proven: {not_reached: the spend-money steps of the task are not done}
 
+  # READ THIS BEFORE READING `0 of 3` OFF THE ROLLUP, BECAUSE THE SLICE NAME AND THE ROWS UNDER
+  # IT ARE NOT THE SAME CLAIM. Every row here was written against one specific probe: the
+  # MixLaw 370M validation re-run, eight ranks on `gpu-8xa100`, compared against the prior art
+  # in `edullm-checkpoints`. That probe has not been dispatched and each `no` below is correct
+  # for it.
+  #
+  # WHAT WAS WRONG WAS EVERY REASON, AND THE REASONS ARE WHAT A PERSON READS. Three cells said
+  # `nothing has been dispatched` and `the probe has not run` on the morning of 2026-08-06,
+  # some hours after a probe ran three times and succeeded three times. A reader taking the
+  # slice at face value concluded that no probe had happened at all, which is the opposite of
+  # the truth and is the more expensive mistake of the two: it invites somebody to spend a
+  # night re-establishing a thing that is already established. The rows now say which probe has
+  # not run, and `probe-a10g` below carries the one that did, so the slice cannot be read as
+  # "nothing happened here" again.
   - name: The probe
     surfaces:
       - id: probe-rerun
         name: The re-run itself, eight ranks
         designed: {not_applicable: a probe}
         planned: {task: the-spine-and-the-probe/P4}
-        built: {not_reached: nothing has been dispatched}
+        built: {not_reached: "four ranks ran on 2026-08-06; eight on gpu-8xa100 is undispatched"}
         deployed: {not_applicable: a dispatch}
-        proven: {not_reached: nothing has been dispatched}
+        proven: {not_reached: "no run has placed eight ranks, which is where all nine known timeouts happened"}
 
+      # THE ONE ROW HERE WHOSE `no` IS A DESIGN FINDING RATHER THAN AN UNDONE TASK.
+      # `RETRY_ONLY_WHAT_A_RETRY_FIXES` is three rules in order -- retry on `Host EC2*`, exit on
+      # `OutOfMemoryError*`, exit on every exit code -- and Batch stops at the first match, so
+      # nothing a test can induce produces a second attempt. Established twice, by reading and
+      # against `run_019fcf0f`, which carried `attempts: 2` and got one. The constant was
+      # deliberately not edited to make the probe pass. So this surface is unexercisable as
+      # specified rather than merely unexercised, and the open question is what the claim should
+      # be narrowed to.
       - id: resume-across-attempts
         name: Resume across two attempts
         designed: {reached: overview draws it}
         planned: {task: the-spine-and-the-probe/P5}
         built: {not_reached: "the retry rule matches host faults only, so one attempt is all it gets"}
         deployed: {not_applicable: a dispatch}
-        proven: {not_reached: nothing has been dispatched}
+        proven: {not_reached: "no test can induce a second attempt, so the claim cannot be exercised as written"}
 
       - id: prior-art
         name: The comparison against the prior art, and the verdict
         designed: {not_applicable: a probe}
         planned: {task: the-spine-and-the-probe/P7}
-        built: {not_reached: the probe has not run}
+        built: {not_reached: "the comparison run it scores has not been dispatched"}
         deployed: {not_applicable: a verdict}
-        proven: {not_reached: the probe has not run}
+        proven: {not_reached: "no score exists at step 125 to set beside the prior art's 2.6683"}
+
+      # THE PROBE THAT ACTUALLY RAN, WHICH HAD NO ROW ANYWHERE UNTIL NOW. Three dispatches on
+      # 2026-08-06, all exit 0: a 190M OLMo-core model trained 200 steps on one A10G against a
+      # sealed corpus and printed a loss curve falling from 5.0568 bits per byte to 2.0491; one
+      # attention block was timed across four sequence lengths on a T4; and the same recipe ran
+      # on four ranks and came out of `post_train` with its `max_steps` checkpoint written.
+      # Every checkpoint landed and the three runs cost $0.63 by the platform's own accounting.
+      #
+      # `built` IS `n/a` RATHER THAN A YES, AND NOT TO FLATTER THE COLUMN. The program is
+      # `.edullm/train_on_corpus.py` in `edu-llm/OLMo-core`, which this tree does not hold, so
+      # there is nothing here for a lookup to find -- the same reason `landing`, `sealed` and
+      # `airlock` carry `another repository`. `proven` is a person's answer for the reason
+      # `synthetic-t4` is: a run id and a measured figure are what happened, and this manifest
+      # has no rule that can ask the lineage store. It is marked `*` and it should stay marked
+      # until one exists.
+      - id: probe-a10g
+        name: The probe that ran, on A10G, at one rank and four
+        designed: {not_applicable: a probe}
+        planned: {not_reached: "run in place of P4 when the eight-rank shape was not available"}
+        built: {not_applicable: the program is in another repository}
+        deployed: {not_applicable: a dispatch}
+        proven: {reached: "run_019fd5d8 200 steps, bpb 5.0568 to 2.0491; run_019fd5e1 four ranks, exit 0"}
 
   - name: The population
     surfaces:
@@ -541,7 +601,18 @@ slices:
         built: {exists: src/edullm_platform/expiry_janitor.py}
         deployed:
           {stack: sbsandbox-intern-edullm-janitor, or: {not_reached: the deployer lacks the grants}}
-        proven: {not_reached: nothing has expired through it}
+        # `nothing has expired through it` STOPPED BEING TRUE ON 2026-08-06 AND NOTHING SAID SO.
+        # The janitor was driven against real instances that night: it reclaimed an expired
+        # machine without a person, it left a machine belonging to somebody else running, and a
+        # first attempt found a machine carrying `DisableApiStop` that failed the whole batched
+        # stop, which was repaired and the drill re-run.
+        #
+        # THIS WAS A PERSON'S ANSWER FOR ABOUT AN HOUR AND IS NOW A READING, WHICH IS THE ONLY
+        # DIRECTION THAT CELL SHOULD EVER TRAVEL. #339 wrote `fixtures/evidence/lane/drill.json`,
+        # so `tests/test_lane_drill_evidence.py` stopped skipping and started asserting against
+        # the capture. Naming the test rather than the file is deliberate: a capture that exists
+        # proves a file was written, and a test that passes over it proves what the file says.
+        proven: {tests: [tests/test_lane_drill_evidence.py]}
 
       - id: triage-form
         name: One triage form, and asks that count
@@ -575,12 +646,19 @@ slices:
         deployed: {release: true}
         proven: {not_reached: the verb files an ask and no grant is behind it}
 
+      # BOTH `no`s DESCRIBED A BRANCH THAT WAS MERGED HOURS LATER AND NOTHING RE-READ THEM.
+      # `config/repositories.yaml` on `origin/main` carries `open-instruct-scored-rewards`, so
+      # the registration is written and live rather than sitting on a branch. What is still true
+      # is the half that belongs to somebody else: that repository's `main` holds no `.edullm/`
+      # directory, so the `dockerfile_path` this entry declares points at nothing and no image
+      # has ever been built. That is the honest `no` and it is a different `no` from the one
+      # this row was carrying.
       - id: register-open-instruct
         name: Registering the first outside codebase
         designed: {reached: overview draws it}
         planned: {task: the-population/12}
-        built: {not_reached: written on a branch and blocked on three things}
-        deployed: {not_reached: the pull request is not merged}
+        built: {grep: [config/repositories.yaml, "open-instruct-scored-rewards"]}
+        deployed: {not_reached: "the repository's own main holds no .edullm directory to build from"}
         proven: {not_reached: no image has been built from it}
 
       # THE EXEMPTION CANNOT BE WRITTEN WHERE PEOPLE KEEP LOOKING FOR IT. `NotPrincipal` is
@@ -629,13 +707,21 @@ slices:
         deployed: {on_main: .github/workflows/audit.yml}
         proven: {tests: [tests/test_visibility_board.py]}
 
+      # `no workflow runs the reader` WAS WRITTEN BEFORE THE AUDIT GREW THE JOB THAT RUNS IT AND
+      # NOTHING MADE IT FALSE AGAIN. `.github/workflows/audit.yml` carries `substrate-capture`,
+      # which runs `tools/read_substrate.py --write` on a schedule, and `substrate-history`,
+      # which keeps each reading on the `machine/substrate` branch so the readings can be
+      # diffed. This row is the model and `collector` below is the reader, so they are given
+      # different greps on purpose: two rows resolving off one path cannot tell a reader which
+      # of the two moved, which is the mistake the run-ended post and the morning message were
+      # already making in this file.
       - id: per-run-substrate
         name: The per-run substrate
         designed: {reached: overview draws it}
         planned: {task: the-instruments/1}
         built: {exists: src/edullm_platform/substrate.py}
-        deployed: {not_reached: no workflow runs the reader}
-        proven: {tests: [tests/test_substrate.py, tests/test_read_substrate.py]}
+        deployed: {grep: [.github/workflows/audit.yml, "machine/substrate"]}
+        proven: {tests: [tests/test_substrate.py]}
 
       - id: identity-table
         name: The AWS identity table
@@ -645,12 +731,18 @@ slices:
         deployed: {not_applicable: a contract model}
         proven: {tests: [tests/test_aws_identities.py]}
 
+      # THE MISMATCH GOES LIVE THROUGH THE ACTIVITY PAGE RATHER THAN THROUGH A JOB OF ITS OWN,
+      # WHICH IS WHY `no workflow runs it` READ FALSE FOR A THING THAT RUNS EVERY MORNING. The
+      # audit's `activity-history` job runs `tools/report_activity.py`, and that module imports
+      # `edullm_platform.mismatch` and prints the mismatch arm on the page. The grep names the
+      # import line rather than the word, because the word appears in four comments in that file
+      # and a rule that a comment can satisfy is a rule that cannot fail.
       - id: mismatch-list
         name: The mismatch list, and the denominator it prints
         designed: {reached: overview draws it}
         planned: {task: the-instruments/3}
         built: {exists: src/edullm_platform/mismatch.py}
-        deployed: {not_reached: no workflow runs it}
+        deployed: {grep: [tools/report_activity.py, "from edullm_platform.mismatch import"]}
         proven: {tests: [tests/test_mismatch.py]}
 
       - id: preview-role-excluded
@@ -677,37 +769,71 @@ slices:
         deployed: {stack: sbsandbox-intern-edullm-audit-reader-iam, or: {reached: applied by hand}}
         proven: {tests: [tests/test_audit_reader_grants.py]}
 
+      # `nothing collects` ON ALL THREE STAGES WAS THE LARGEST SINGLE FALSEHOOD ON THIS BOARD.
+      # `tools/read_substrate.py` is the collector this row names -- its own first line is
+      # "Every account read the instruments need, in one place, degrading one source at a
+      # time" -- and it is nine hundred lines, has `tests/test_read_substrate.py`, and the
+      # audit's `substrate-capture` job has been running it on a schedule. Three cells said a
+      # built, tested, scheduled thing did not exist. That is the shape that sends the next
+      # person to build it a second time, and it sat here while the plan task that produced it
+      # also went unmarked, so neither instrument contradicted the other.
       - id: collector
         name: The collector, every account read in one place
         designed: {reached: overview draws it}
         planned: {task: the-instruments/7}
-        built: {not_reached: nothing collects}
-        deployed: {not_reached: nothing collects}
-        proven: {not_reached: nothing collects}
+        built: {exists: tools/read_substrate.py}
+        deployed: {grep: [.github/workflows/audit.yml, "tools/read_substrate\\.py"]}
+        proven: {tests: [tests/test_read_substrate.py]}
 
+      # `it waits on the collector` WAS TRUE AND THEN THE COLLECTOR LANDED. #305 put
+      # `src/edullm_platform/activity.py` in the tree, `tools/report_activity.py` renders the
+      # day, and the audit's `activity-history` job writes it to the `machine/activity` branch
+      # every morning. The deployed grep names the tool the job invokes rather than the branch,
+      # because `per-run-substrate` above already holds the branch and one path may answer for
+      # one row only.
       - id: days-activity
         name: The day's activity
         designed: {reached: overview draws it}
         planned: {task: the-instruments/8}
-        built: {not_reached: it waits on the collector}
-        deployed: {not_reached: it waits on the collector}
-        proven: {not_reached: it waits on the collector}
+        built: {exists: [src/edullm_platform/activity.py, tools/report_activity.py]}
+        deployed: {grep: [.github/workflows/audit.yml, "tools/report_activity\\.py"]}
+        proven: {tests: [tests/test_activity.py, tests/test_report_activity.py]}
 
+      # SAME SHAPE AS THE MISMATCH: THE BUDGET LINE TRAVELS ON THE ACTIVITY PAGE. The audit runs
+      # `tools/report_activity.py`, which imports `spend_section` out of `tools/report_spend.py`
+      # and prints the day's figure. `no workflow calls it` was reading the absence of a job
+      # named after it rather than the absence of a caller.
       - id: budget-line
         name: The budget as one line
         designed: {reached: overview draws it}
         planned: {task: the-instruments/9}
         built: {exists: src/edullm_platform/spend.py}
-        deployed: {not_reached: no workflow calls it}
+        deployed: {grep: [tools/report_activity.py, "from report_spend import"]}
         proven: {tests: [tests/test_spend.py]}
 
+      # THIS ROW READ `yes` TWICE FOR A SURFACE THAT DOES NOT EXIST, WHICH IS THE FALSE NEGATIVE
+      # INVERTED AND IS WORSE. `built` pointed at `notifications/messages.py` and `proven` at
+      # `tests/test_notification_messages.py`, and both of those are the run-ended post, which
+      # is a different surface with its own row under "Owned by no slice". That file holds
+      # `render_run_ended` and nothing else. The plan that specifies this row names
+      # `src/edullm_platform/morning_message.py` and `tests/test_morning_message.py`, and
+      # neither has been written, so the board was counting one built thing twice and calling an
+      # unbuilt surface built and proven. Correcting it took two off the board, which is the
+      # direction this correction had to go.
+      #
+      # BOTH CELLS ARE A HAND-WRITTEN `no` AND NOT A LOOKUP AT THE TWO FILES THAT ARE OWED,
+      # BECAUSE `tests/test_stages.py` FORBIDS THE MANIFEST NAMING A PATH THAT DOES NOT EXIST.
+      # That rule is right and it costs this: a path that has been renamed and a path that has
+      # never been written both read `no`, and only one of them is news, so the manifest may
+      # only name what is there. The two file names live in the reasons instead, where the next
+      # person to build this reads them.
       - id: morning-message
         name: The morning message
         designed: {reached: overview draws it}
         planned: {task: the-instruments/10}
-        built: {exists: src/edullm_platform/notifications/messages.py}
+        built: {not_reached: "morning_message.py is unwritten; messages.py is the run-ended post"}
         deployed: {not_reached: the audit runs several jobs and none is a message}
-        proven: {tests: [tests/test_notification_messages.py]}
+        proven: {not_reached: "test_morning_message.py is unwritten; the neighbouring test proves the run-ended post"}
 
       - id: delivery
         name: Delivery, and the addressed events
@@ -720,11 +846,18 @@ slices:
 
   - name: The waves
     surfaces:
+      # ONE FACT WAS SITTING IN TWO DENOMINATORS. `built` and `proven` carried the same sentence
+      # word for word, and `designed` and `deployed` were already `a rollout`, so this row said
+      # "a rollout" about three of its stages and then asked a fourth what had been built. There
+      # is nothing to build: onboarding a group is an act performed against GitHub and the
+      # account, and no file appears when it happens. `proven` is the cell that asks the real
+      # question and it is the one kept. This is not a deletion -- the row stays, reads `no`,
+      # and is about to be answerable.
       - id: wave-onboarding
         name: The remaining groups, onboarded in batches
         designed: {not_applicable: a rollout}
         planned: {not_reached: deferred until one group works}
-        built: {not_reached: no group has been onboarded}
+        built: {not_applicable: a rollout}
         deployed: {not_applicable: a rollout}
         proven: {not_reached: no group has been onboarded}
 

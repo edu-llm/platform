@@ -502,14 +502,14 @@ def test_the_built_column_rests_on_the_working_tree_and_on_no_lookup_that_can_fa
     """Mutation: give a `built` row a rule that needs a network, or a fallback to fall to.
 
     `Built` is the column with the fewest excuses for being wrong, and the claim made for it
-    is that every cell is derived. Verified here rather than trusted: sixty-two of the
-    ninety-five read the tree, thirty-three are somebody's answer that a thing does not exist
+    is that every cell is derived. Verified here rather than trusted: sixty-four of the
+    ninety-six read the tree, thirty-two are somebody's answer that a thing does not exist
     or does not apply, and none of them reaches a network or declares an `or:`. That last part
     is what matters, because the silent downgrade to opinion that made `deployed` untrustworthy
     can only happen to a cell whose lookup can fail. None of these can.
 
-    What this does not claim is that `Built` is all measurement. Thirty-three of the cells are
-    a person's answer, and twenty-one of those are a hand-written `no` sitting in the
+    What this does not claim is that `Built` is all measurement. Thirty-two of the cells are
+    a person's answer, and eighteen of those are a hand-written `no` sitting in the
     denominator that nobody re-reads. They cannot move without somebody editing the manifest,
     which is a different failure from the one this test holds and is not a quiet one.
 
@@ -520,6 +520,20 @@ def test_the_built_column_rests_on_the_working_tree_and_on_no_lookup_that_can_fa
     fifth, the generated profile table, was a `no` that somebody cleared by building the thing.
     A hand-written cell is the one kind this file cannot re-read for itself, so the number is
     held here to make somebody look each time it changes.
+
+    IT FELL BY ONE MORE THE SAME MORNING, AND THAT ONE IS THE ARITHMETIC WORTH READING BECAUSE
+    IT WENT BOTH WAYS. Three hand-written `no`s came off rows that were built, tested and, in
+    two cases, running on a schedule: the collector is `tools/read_substrate.py`, the day's
+    activity is `activity.py` with `tools/report_activity.py`, and the first outside codebase
+    is registered in `config/repositories.yaml` on `main`. One `n/a` replaced a fourth, on the
+    onboarding waves, where `built` and `proven` carried the same sentence and three of the
+    four stages already said the row was a rollout. Against those, one hand-written `no`
+    arrived: the morning message, which had been reading `yes` off `notifications/messages.py`
+    and `tests/test_notification_messages.py`. Those are the run-ended post, which is a
+    different surface with its own row, so a built thing was counted twice and an unbuilt one
+    reported as built and proven. A person's `no` is the honest cell there, because
+    `test_every_path_the_manifest_names_is_a_path_that_exists` will not let the manifest name
+    the two files that are owed until somebody writes them.
     """
     manifest = read_manifest(SURFACES)
     surfaces = [surface for group in manifest["slices"] for surface in group["surfaces"]]
@@ -546,7 +560,7 @@ def test_the_built_column_rests_on_the_working_tree_and_on_no_lookup_that_can_fa
         for surface in surfaces
         if next(key for key in surface["built"] if key != "or") == "reached"
     ], "no built cell may be a person's yes, which is the claim the `*` on the column makes"
-    assert len(spoken) == 33, "the count of hand-written built cells moved; re-read them"
+    assert len(spoken) == 32, "the count of hand-written built cells moved; re-read them"
 
 
 def test_the_detail_view_is_behind_a_flag_and_the_summary_is_the_default() -> None:
