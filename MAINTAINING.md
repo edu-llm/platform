@@ -83,6 +83,92 @@ against live GitHub, from a session that can list the team. Between the two jobs
 asks who stands behind the reviewer slot, `the-gate-still-exists` asks whether the slot is
 still there, and neither substitutes for the other.
 
+## What is live on GitHub that nothing here has written down
+
+`run-approval-preview` is why this section exists. It was created on 2026-08-04 at 18:45 UTC,
+merged in [#197](https://github.com/edu-llm/platform/pull/197) as the environment
+`submit-run.yml` demotes a branch dispatch to, and for two days it was a fourth approval
+environment while three tests asserted there were three. Not one of them was wrong about
+GitHub. They were pointed at `APPROVAL_ENVIRONMENT_NAMES`, which is the three subjects
+`infra/iam/admission-role.yaml` enumerates, and read it as though it meant every environment
+on the repository — two sets that had always coincided and stopped coinciding that afternoon.
+So the failure was scheduled rather than immediate: nothing goes red until somebody refreshes
+`fixtures/evidence/phase-2/github/`, whereupon three assertions fail at once, correctly, in
+front of somebody who has no idea why, and the edit that clears them fastest is the one that
+stops checking the other three.
+
+**The general shape is that a GitHub setting is not a file, so the only thing that can catch
+one is something that goes and reads it.** Below is every category, what was live on
+2026-08-06, where it is written down, and what compares the two.
+
+| Category | Live | Written down in | What compares them |
+| --- | --- | --- | --- |
+| Approval environments | four | `DECLARED_GATES` | `the-gate-still-exists`, daily and live |
+| Deployment branch policies | `main` on three, `*` on the preview gate | `DeclaredGate.branch_policy_names` | the same job, as of this change |
+| Reviewers on each gate | one team, two named admins, two none | `DECLARED_GATES` | the same job, against `config/organization.yaml` live |
+| Who is in `team-leads` | unreadable from a workflow | `config/organization.yaml` | `lead-gate`, against a capture, plus `--check-team-membership` from a laptop |
+| Repository / organization / Dependabot secrets | none | must be empty, by test | a capture that expires after thirty days |
+| Environment secrets | none, on all four | must be empty, by test | the same capture |
+| Codespaces secrets | none | nowhere | nothing |
+| Repository variables | seven | an exact tuple in `tests/test_phase2_github_evidence.py` | the same capture |
+| `AWS_ECR_PUBLISHER_ROLE_ARN` on the six research repositories | present on all six | one commented example line in `build-research-image.yml` | nothing |
+| Branch protection on `main` | two required checks, zero approvals | `fixtures/evidence/phase-5/branch-protection.sanitized.json` | `tests/test_phase5_run_evidence.py`, against a capture |
+| Rulesets | none, and the organization is below the plan that offers them | nowhere | nothing |
+| Webhooks | none | nowhere | nothing |
+| Deploy keys | none | nowhere | nothing |
+| Scheduled workflows | one cron, and the workflow is `active` | one `cron:` line in `audit.yml` | nothing |
+
+**What separates the covered rows from the rest is one property of the endpoint, and it is
+not effort.** Every environment endpoint answers an anonymous request on a public repository,
+which is why `the-gate-still-exists` holds no credential of any kind and can therefore live
+in a scheduled job without putting a token anywhere. Read from this repository on 2026-08-06,
+with no session at all:
+
+```bash
+curl -so /dev/null -w '%{http_code}\n' https://api.github.com/repos/edu-llm/platform/environments                                  # 200
+curl -so /dev/null -w '%{http_code}\n' https://api.github.com/repos/edu-llm/platform/environments/run-approval-preview/deployment-branch-policies  # 200
+curl -so /dev/null -w '%{http_code}\n' https://api.github.com/repos/edu-llm/platform/actions/variables                             # 401
+curl -so /dev/null -w '%{http_code}\n' https://api.github.com/repos/edu-llm/platform/actions/secrets                               # 401
+curl -so /dev/null -w '%{http_code}\n' https://api.github.com/repos/edu-llm/platform/hooks                                         # 401
+curl -so /dev/null -w '%{http_code}\n' https://api.github.com/repos/edu-llm/platform/keys                                          # 401
+curl -so /dev/null -w '%{http_code}\n' https://api.github.com/repos/edu-llm/platform/branches/main/protection                      # 401
+```
+
+So variables, secrets, webhooks, deploy keys and branch protection cannot become live
+readings the way the gate did. Each needs a credential, an Actions `GITHUB_TOKEN` holds no
+permission that reaches any of them, and the stored token that would is a repository secret
+`test_the_repository_holds_no_secret_a_branch_could_read` forbids by name — the rule being
+broken to build the check is the rule the check would be watching. **A thirty-day photograph
+is the honest ceiling on those rows, and what is affordable there is a clock rather than a
+comparison**: `tools/report_who_can_open_the_lead_gate.py` already prints how old one capture
+is, and pointing the same clock at the environments, secrets and branch-protection captures
+is an afternoon. It would not have caught the fourth environment either, and saying so is the
+point of writing the ceiling down.
+
+**Two rows are cheap and are not done.** Rulesets answer anonymously, and asserting that
+there are none is about ten lines beside the gate comparison — worth little today, since the
+organization is below the plan that sells them, and worth a great deal on the morning
+somebody upgrades, because a ruleset can require or waive a status check with no diff here.
+Research-repository variables are the one row where a real incident is already on record:
+`edullm-p1` was fully registered, could not publish, and the cause was a missing
+`AWS_ECR_PUBLISHER_ROLE_ARN` that the other five carried. All six carry it now. Nothing here
+noticed then and nothing here would notice again — that name appears exactly once in this
+repository, in a comment in `build-research-image.yml` showing what a caller looks like. The
+fix is not a check in this repository, because a `GITHUB_TOKEN` scoped to `platform` cannot
+read another repository's variables either. It is a guard in the caller workflow the
+registration skill writes, refusing at the first step when the variable is empty, which turns
+a build that fails obscurely into one that names the missing setting.
+
+**One row cannot be covered from inside this repository at all, and the reason is worth
+stating rather than filing as work.** GitHub disables a scheduled workflow after sixty days
+without repository activity. `audit.yml` carries the only `cron:` here, and every live-versus-
+declared check described above runs inside it — so the job that would report the schedule
+having been disabled is the job that would not be running. `GET /actions/workflows` answers
+anonymously and reports `active` today, so the reading is free; the reader is the problem. A
+check on the pull-request path could make it, and that path is deliberately reserved for
+questions a diff can answer. Until somebody resolves that, the honest position is that the
+schedule is unwatched and this paragraph is what covers it.
+
 ## Layout
 
 | Path | Contents |

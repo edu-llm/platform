@@ -59,17 +59,21 @@ from typing import Any, Final
 from edullm_platform.contracts.bindings import normalize_github_login
 
 __all__ = [
+    "DECLARED_ENVIRONMENT_NAMES",
     "DECLARED_GATES",
     "LEAD_APPROVAL_GATE",
     "PLANS_CARRYING_THE_GATE_ON_A_PRIVATE_REPOSITORY",
+    "PREVIEW_GATE",
     "DeclaredGate",
     "GateFinding",
     "LiveGate",
     "compare_gate",
     "compare_lead_team_membership",
+    "compare_the_branch_policy",
     "compare_the_environment_list",
     "compare_visibility",
     "declared_gate",
+    "read_branch_policy_names",
     "read_environment",
 ]
 
@@ -77,6 +81,15 @@ __all__ = [
 #: below are only interesting about this one, and spelling it at each of them is how the
 #: three drift apart.
 LEAD_APPROVAL_GATE: Final = "run-approval-lead"
+
+#: The fourth environment, which is not a gate a submission is ever classified into. A
+#: dispatch from a branch demotes to it because of its ref and never because of a policy
+#: decision, and it appears in neither
+#: :class:`~edullm_platform.contracts.admission.ApprovalEnvironment` nor
+#: ``phase2_evidence.APPROVAL_ENVIRONMENT_NAMES`` for that reason. Named here because three
+#: things below are only true of this one and spelling the literal at each of them is how the
+#: three drift apart -- which is the fault that produced it in the first place.
+PREVIEW_GATE: Final = "run-approval-preview"
 
 #: The GitHub plans that carry required reviewers on a *private* repository. Spelled the same
 #: way ``operational_inventory.PHASE1_PRIVATE_REPO_GITHUB_PLANS`` spells it, and deliberately
@@ -123,6 +136,25 @@ class DeclaredGate:
     #: compare and reading the absence as ``False`` would claim self-review was considered.
     prevent_self_review: bool | None
 
+    #: The deployment branch policy's named patterns, in the ``custom_branch_policies`` form
+    #: specifically. **This is the field that would have caught the fourth environment
+    #: without anybody looking**, and it is the one setting on which the four disagree: three
+    #: are pinned to ``main`` and the preview gate is ``*``, because being reachable from an
+    #: unmerged branch is the entire reason it exists.
+    #:
+    #: Declared per gate rather than asserted as ``("main",)`` across all of them, which is
+    #: what ``tests/test_phase2_github_evidence.py`` did until 2026-08-06 and what would have
+    #: turned red on the next re-capture. A blanket assertion has no way to say that one
+    #: environment is wide *on purpose*, so the only edit that clears it is the one that
+    #: stops checking the other three.
+    #:
+    #: The two boolean forms are compared beside this on :class:`LiveGate`, not folded into
+    #: it. ``protected_branches`` follows whatever branch protection happens to cover and so
+    #: widens silently the moment a second branch is protected, where
+    #: ``custom_branch_policies`` matches names somebody wrote down; a single "restricted to
+    #: main" summary would lose exactly that distinction.
+    branch_policy_names: tuple[str, ...]
+
     @property
     def reviewers_required(self) -> bool:
         """Whether a job entering this environment must wait for a person.
@@ -150,25 +182,55 @@ DECLARED_GATES: Final[tuple[DeclaredGate, ...]] = (
         reviewer_team_slugs=(),
         reviewer_logins_are_the_roster_admins=False,
         prevent_self_review=None,
+        branch_policy_names=("main",),
     ),
     DeclaredGate(
         name=LEAD_APPROVAL_GATE,
         reviewer_team_slugs=("team-leads",),
         reviewer_logins_are_the_roster_admins=False,
         prevent_self_review=False,
+        branch_policy_names=("main",),
     ),
     DeclaredGate(
         name="run-approval-admin",
         reviewer_team_slugs=(),
         reviewer_logins_are_the_roster_admins=True,
         prevent_self_review=False,
+        branch_policy_names=("main",),
     ),
+    # THE FOURTH, AND EVERY FIELD ON IT DIFFERS FROM ITS SIBLINGS FOR A RECORDED REASON.
+    # Created 2026-08-04T18:45:27Z in the settings UI while #197 was in review, three minutes
+    # before that pull request set `AWS_RUN_PREVIEW_ROLE_ARN`, and merged into `main` as the
+    # environment `submit-run.yml` demotes a branch dispatch to. It is deliberate rather than
+    # a leftover, and it is not somebody's unfinished work.
+    #
+    # `*` and not `main`, which is the whole of it: every role trusted to `submit-run.yml`
+    # pins its subject to `refs/heads/main`, so before this existed a dispatch from a branch
+    # died at the credential step and the submission path was the one path nobody could
+    # exercise before merging it. A branch policy of `main` here would delete that.
+    #
+    # What the wildcard concedes is bounded twice over rather than argued away. The gate has
+    # no reviewer, so anybody who can push a branch can release through it -- and what they
+    # reach is `sbsandbox-intern-edullm-run-preview`, whose inline policy is `batch:SubmitJob`
+    # on the single cheapest CPU queue and two ECR describes, so a branch may burn CPU
+    # minutes and may not burn an H100 hour. It submits outside admission, which is why a
+    # preview job carries no lineage record and can never be cited as a run.
     DeclaredGate(
-        name="run-approval-preview",
+        name=PREVIEW_GATE,
         reviewer_team_slugs=(),
         reviewer_logins_are_the_roster_admins=False,
         prevent_self_review=None,
+        branch_policy_names=("*",),
     ),
+)
+
+#: Every environment name this repository declares. Derived rather than written a second
+#: time: ``phase2_evidence.APPROVAL_ENVIRONMENT_NAMES`` is a *different* set -- the three the
+#: admission role's trust policy enumerates -- and for two days the two were used
+#: interchangeably because they happened to coincide. They stopped coinciding on
+#: 2026-08-04 and nothing said so.
+DECLARED_ENVIRONMENT_NAMES: Final[tuple[str, ...]] = tuple(
+    gate.name for gate in DECLARED_GATES
 )
 
 
@@ -199,6 +261,14 @@ class LiveGate:
     reviewer_logins: tuple[str, ...]
     prevent_self_review: bool | None
     can_admins_bypass: bool
+
+    #: The two forms of deployment branch policy, kept apart for the reason
+    #: :attr:`DeclaredGate.branch_policy_names` gives. The *names* are not here: they come
+    #: from a second endpoint and are compared by :func:`compare_the_branch_policy`, so that
+    #: one function reads one payload and a caller that could not reach the second endpoint
+    #: cannot silently report the first as covering it.
+    protected_branches: bool
+    custom_branch_policies: bool
 
 
 def read_environment(payload: Mapping[str, Any]) -> LiveGate:
@@ -238,6 +308,12 @@ def read_environment(payload: Mapping[str, Any]) -> LiveGate:
     if reviewer_rule is not None and isinstance(reviewer_rule.get("prevent_self_review"), bool):
         prevent_self_review = bool(reviewer_rule["prevent_self_review"])
 
+    # Absent reads as unrestricted here too, and for the same reason the bypass flag does
+    # below: an environment with no `deployment_branch_policy` at all accepts a deployment
+    # from every branch, so the reading that reports is the one that matches GitHub.
+    policy = payload.get("deployment_branch_policy")
+    policy_mapping: Mapping[str, Any] = policy if isinstance(policy, Mapping) else {}
+
     return LiveGate(
         name=str(payload.get("name") or ""),
         has_required_reviewer_rule=reviewer_rule is not None,
@@ -248,6 +324,61 @@ def read_environment(payload: Mapping[str, Any]) -> LiveGate:
         # that reassures. A response missing the field is a response this code does not
         # understand, and defaulting it to False would turn that into a pass.
         can_admins_bypass=bool(payload.get("can_admins_bypass", True)),
+        protected_branches=bool(policy_mapping.get("protected_branches", False)),
+        custom_branch_policies=bool(policy_mapping.get("custom_branch_policies", False)),
+    )
+
+
+def read_branch_policy_names(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    """One ``GET .../environments/{name}/deployment-branch-policies`` body, reduced.
+
+    Only entries of type ``branch`` are read. GitHub also returns ``tag`` entries from the
+    same endpoint, and a tag pattern restricts nothing about which branch may deploy —
+    folding the two together would let a tag rule read as though it were a branch rule and
+    make a wide-open environment look pinned.
+    """
+    listed = payload.get("branch_policies")
+    entries = listed if isinstance(listed, Sequence) and not isinstance(listed, str) else ()
+    return tuple(
+        str(entry["name"])
+        for entry in entries
+        if isinstance(entry, Mapping)
+        and isinstance(entry.get("name"), str)
+        and entry.get("type", "branch") == "branch"
+    )
+
+
+def compare_the_branch_policy(
+    declared: DeclaredGate,
+    live_branch_policy_names: Iterable[str],
+) -> tuple[GateFinding, ...]:
+    """Which branches may deploy to one gate, against which ones this repository says may.
+
+    The setting nothing in this repository read live until 2026-08-06, and the one on which
+    the four environments legitimately disagree. Three are pinned to ``main`` and
+    ``run-approval-preview`` is ``*``; a check that asserted one answer for all four would
+    have to be weakened to accommodate the fourth, and weakening it is how the other three
+    stop being watched.
+
+    What a widened policy costs is not the same on each. On the preview gate ``*`` is the
+    point. On the other three it means a job on an unmerged branch can deploy to a gate whose
+    subject the admission role trusts — the ``job_workflow_ref`` pin to ``refs/heads/main``
+    is what refuses it after that, so this is the first of two doors rather than the only
+    one, and finding it open is a finding whether or not the second held.
+    """
+    live = tuple(sorted(live_branch_policy_names))
+    if live == tuple(sorted(declared.branch_policy_names)):
+        return ()
+    return (
+        GateFinding(
+            "the_branch_policy_moved",
+            f"{declared.name!r} admits deployments from branches {list(live)} and this "
+            f"repository declares {list(declared.branch_policy_names)}. A widened policy "
+            "lets a job on a branch nobody reviewed deploy to this environment and be "
+            "issued its subject claim; a narrowed one silently stops a path that is "
+            "supposed to work, which shows up as a workflow that has no environment to "
+            "enter rather than as an error naming this setting.",
+        ),
     )
 
 
@@ -394,6 +525,27 @@ def compare_gate(
                     "that nobody recorded.",
                 )
             )
+
+    # The form rather than the contents, which :func:`compare_the_branch_policy` reads from
+    # the other endpoint. Both are required of every gate including the preview one: the
+    # patterns differ between them, the form does not. ``protected_branches`` follows
+    # whatever branch protection happens to cover, so an environment on that form widens the
+    # moment somebody protects a second branch — a change nobody would connect to this
+    # control, and one that leaves the named-pattern comparison with nothing to read.
+    if not live.custom_branch_policies or live.protected_branches:
+        findings.append(
+            GateFinding(
+                "the_branch_policy_is_not_the_named_form",
+                f"{declared.name!r} reads custom_branch_policies "
+                f"{live.custom_branch_policies!r} and protected_branches "
+                f"{live.protected_branches!r}, and every gate here must be the named form "
+                "and only the named form. Off both, the environment accepts a deployment "
+                "from any branch at all. On protected_branches, which branches may deploy "
+                "is whatever branch protection happens to cover, so it widens silently the "
+                "moment a second branch is protected and the declared patterns stop being "
+                "the answer to the question.",
+            )
+        )
 
     if live.can_admins_bypass:
         findings.append(

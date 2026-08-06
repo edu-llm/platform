@@ -78,9 +78,22 @@ __all__ = [
     "SecretInventory",
 ]
 
-#: The three names the admission role's trust policy enumerates. A capture naming anything
-#: else is capturing the wrong environments, and a capture missing one of these is
-#: capturing an incomplete gate.
+#: The three names the admission role's trust policy enumerates, and **not** every
+#: environment on this repository. A capture missing one of these is capturing an incomplete
+#: gate, because a subject the trust policy names and GitHub does not carry is a submission
+#: that dies at AssumeRole.
+#:
+#: A capture naming a *fourth* is a different statement and for two days this constant was
+#: read as refusing it. ``run-approval-preview`` was created on 2026-08-04 and is deliberate:
+#: it is the environment ``submit-run.yml`` demotes a branch dispatch to, it carries no
+#: reviewer, and ``tests/test_run_preview_role.py`` requires by name that it stay out of the
+#: admission enumeration -- the preview role exists precisely so a branch reaches something
+#: other than admission. So the two sets are permanently different rather than temporarily
+#: out of step, and what means "every environment this repository declares" is
+#: ``edullm_platform.approval_gate.DECLARED_ENVIRONMENT_NAMES``. Using this one for that
+#: question left an equality assertion that would go red on whoever next refreshed the
+#: evidence, arguing for a repair -- delete the environment, or widen the trust policy to
+#: accept it -- that is worse than what is true.
 APPROVAL_ENVIRONMENT_NAMES: tuple[str, ...] = (
     "run-approval-automatic",
     "run-approval-lead",
