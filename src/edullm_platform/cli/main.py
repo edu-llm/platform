@@ -284,15 +284,15 @@ _PARSER_STYLE: Final[Mapping[str, Any]] = {
 #: The five verbs that work, and the line each shows in ``--help`` and in the orientation a
 #: bare ``edullm`` prints. One table rather than two so those two can never drift.
 BUILT_TODAY: Final = {
-    "check": "price a submission here; writes a first spec if there is none",
+    "check": "price a submission here, and write a first spec if there is none",
     "submit": "dispatch the submission workflow",
     "status": "what your runs are doing",
     "logs": "the last lines a run printed",
     "cancel": "stop a run",
     "add": "teach the platform about a repository, dataset, shape, model or person",
-    "ask": "ask for something for yourself, which produces a time-boxed grant",
+    "ask": "file an ask that a person answers",
     "run": "ship this working tree to a machine and stream the output back",
-    "shell": "open a terminal on a machine of your own, or a notebook on the same one",
+    "shell": "a terminal on a machine of your own, or a notebook on it",
 }
 
 #: What each built verb does, in the sentence its own ``--help`` opens with.
@@ -309,47 +309,46 @@ BUILT_TODAY: Final = {
 #: the retired names carry theirs in :data:`RETIRED` for the same reason.
 WHAT_A_VERB_DOES: Final = {
     "check": (
-        "Prices a submission from this working tree, lists every refusal that can be found "
-        f"without reaching a network, and writes a first {SPEC_PATH} where a registered "
-        "repository has none."
+        "Prices a submission from this working tree and lists every refusal, without "
+        f"reaching a network. Writes a first {SPEC_PATH} where a registered repository has "
+        "none."
     ),
     "submit": (
-        f"Runs the checks check runs and then dispatches {SUBMIT_WORKFLOW}, waiting for the "
-        "run id the compile job mints unless --no-wait says not to."
+        f"Makes the same checks and then dispatches {SUBMIT_WORKFLOW}, waiting for the run "
+        "id the compile job mints unless --no-wait says not to."
     ),
     "status": (
-        "Names your recent submissions, or describes one run and asks AWS about it where "
-        "the answer has moved past what GitHub can say. A run it cannot find among the "
-        "recent submissions is refused rather than asked about, unless --ask-aws says to."
+        "Names your recent submissions, or describes one run and asks AWS where the answer "
+        "has moved past what GitHub can say. A run it cannot find is refused rather than "
+        "asked about, unless --ask-aws says to."
     ),
     "logs": (
-        "Prints the last lines one run printed, read out of the report "
-        f"{CANCEL_WORKFLOW} writes when it is asked to look at a run rather than to stop it. "
-        "A run it cannot find is refused rather than asked about, unless --ask-aws says to."
+        "The last lines one run printed, read out of the report "
+        f"{CANCEL_WORKFLOW} writes when asked to look at a run rather than stop it. A run "
+        "it cannot find is refused rather than asked about, unless --ask-aws says to."
     ),
     "cancel": (
-        f"Stops one admitted run by dispatching {CANCEL_WORKFLOW} with the reason you give, "
-        "which is what the run's history then records instead of a failure."
+        "Stops one admitted run, with the reason you give. The run's history then records "
+        "that reason instead of a failure."
     ),
     "add": (
-        "Teaches the platform about a thing, which produces a change to the reviewed "
-        "configuration rather than a grant to you. A repository is opened as a pull request "
-        "from here. The other kinds are refused with the route they go by instead."
+        "Produces a change to the reviewed configuration rather than a grant to you. A "
+        "repository is opened as a pull request from here, and the other kinds are refused "
+        "with the route they go by."
     ),
     "ask": (
-        "Files one ask on the platform repository, labelled with its kind so that asks can "
-        "be counted, and carries which edullm and which reviewed configuration it was made "
-        "from. It grants nothing by itself. A person answers it."
+        "Files one issue on the platform repository, labelled with its kind and carrying "
+        "which edullm and which reviewed configuration it was made from. It grants nothing. "
+        "A person answers it."
     ),
     "run": (
-        "Starts a machine of your own, copies this directory to it through the working tier, "
-        "runs the command you give after a bare -- and streams the output back. Nothing here "
-        "is checked against the registry and nothing is recorded as a run that can be cited."
+        "Starts a machine of your own, copies this directory to it and runs the command "
+        "after a bare --, streaming the output back. Nothing is checked against the "
+        "registry and nothing is recorded as a run you can cite."
     ),
     "shell": (
-        "Gives you a terminal on a machine of your own, or with --notebook a Jupyter you open "
-        "in a browser on your laptop. The same machine edullm run uses for this project, so "
-        "you can start something and then go and look at what it left."
+        "A terminal on a machine of your own, or with --notebook a Jupyter you open in a "
+        "browser on your laptop. The same machine edullm run uses for this project."
     ),
 }
 
@@ -366,8 +365,8 @@ WHAT_A_VERB_DOES: Final = {
 #: plan, said without spelling a flag that does not exist yet.
 #:
 #: ``RETIRED`` still names ``shell --notebook``, deliberately. That path prints no options
-#: list and says in the same paragraph that neither spelling runs today, which is the whole
-#: of what this page was missing.
+#: list of its own, so naming the replacement spelling there is the whole of what somebody
+#: typing the old verb needs.
 #: What ``docs-frank/reference/decisions.md`` settled on 2026-08-04 and nothing behind exists for
 #: yet. Empty as of the exploration route, which is the point rather than an oversight: every verb
 #: that document names is built. It stays because the next settled-and-unbuilt name has somewhere
@@ -439,9 +438,8 @@ RETIRED: Final = {
         "shell",
         "notebook is not a verb. It folded into a flag: `edullm shell --notebook`.",
         (
-            "One machine, two clients -- an editor over SSH or Jupyter, chosen at the "
-            "point of asking rather than by picking a different verb. shell is not built "
-            "yet, so neither spelling runs today."
+            "One machine and two clients, an editor over SSH or Jupyter, chosen at the "
+            "point of asking rather than by picking a different verb."
         ),
     ),
     "results": (
@@ -500,9 +498,9 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         type=Path,
         help=(
             "the reviewed configuration to check against. Defaults to the copy this "
-            "install carries, which is the configuration as it stood at the release this "
-            "was installed from rather than as it stands on the platform now. Inside a "
-            "platform checkout, --config-dir config is what reads the checkout's."
+            "install carries, which is the platform as it stood at the release you "
+            "installed. Inside a platform checkout, --config-dir config reads the "
+            "checkout's."
         ),
     )
     common.add_argument(
@@ -558,8 +556,8 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         "--reason",
         required=True,
         help=(
-            "why. Recorded on the termination, which is what lets the run's history say it "
-            "was cancelled rather than that it broke."
+            "why. Recorded on the termination, so the run's history says it was cancelled "
+            "rather than that it broke."
         ),
     )
 
@@ -642,9 +640,9 @@ def _add_ask_aws(parser: argparse.ArgumentParser) -> None:
         "--ask-aws",
         action="store_true",
         help=(
-            "ask AWS about a run this cannot find among the recent submissions. Dispatches "
-            f"{CANCEL_WORKFLOW}, which spends a runner and waits for it. A run this does "
-            "find is answered from GitHub either way."
+            "ask AWS about a run this cannot find among your recent submissions. "
+            f"Dispatches {CANCEL_WORKFLOW}, which spends a runner and waits for it. A run "
+            "it does find is answered from GitHub either way."
         ),
     )
 
@@ -664,7 +662,7 @@ def _add_json(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help=(
             "print one JSON document on stdout instead of the paragraphs, whatever the "
-            "outcome. The exit code is unchanged and is still the contract."
+            "outcome. The exit code is unchanged."
         ),
     )
 
@@ -723,8 +721,8 @@ def _orientation() -> str:
         "",
         *_wrapped(
             "Start with check. It prices a submission on this machine and lists every "
-            "refusal, reaching no network and dispatching nothing -- and where a "
-            f"registered repository has no {SPEC_PATH}, it writes a first one."
+            "refusal without reaching a network, and it writes a first "
+            f"{SPEC_PATH} where a registered repository has none."
         ),
         "",
         "  edullm check --help    the flags one submission takes",
@@ -832,8 +830,8 @@ def _interrupted(dispatched: Sequence[str]) -> str:
             "",
             *_wrapped(
                 f"interrupted, and {named} was already dispatched. Ctrl-C did not stop it "
-                "and nothing here tried to. It is running on GitHub, it will finish on its "
-                "own, and edullm status names what it did.",
+                "and nothing here tried to. It is still running on GitHub, and edullm "
+                "status names what it did.",
                 indent="",
             ),
             "",
@@ -855,7 +853,7 @@ def _add_submission_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workload", help="the workload profile, overriding the spec's")
     parser.add_argument("--team", help="the group this run is charged to")
     parser.add_argument(
-        "--wandb-project", help="the Weights and Biases project; defaults to the team"
+        "--wandb-project", help="the Weights and Biases project, defaulting to the team"
     )
     parser.add_argument("--repository", help="overriding what the origin remote says")
     parser.add_argument("--commit", help="overriding HEAD")
@@ -891,7 +889,7 @@ def _add_lane_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--hours",
         type=_whole_hours,
-        help="whole hours before the machine may be stopped; the default is the lane's",
+        help="whole hours before the machine may be stopped. The lane sets the default",
     )
     parser.add_argument(
         "--spot",
@@ -915,8 +913,8 @@ def _whole_hours(text: str) -> int:
         hours = int(text)
     except ValueError:
         raise argparse.ArgumentTypeError(
-            f"{text!r} is not a whole number of hours. A lane machine's lifetime is tagged in "
-            "whole hours, so 4 is fine and 4.5 is not."
+            f"{text!r} is not a whole number. A lane machine's lifetime is tagged in whole "
+            "hours, so 4 works and 4.5 does not."
         ) from None
     if hours < 1:
         raise argparse.ArgumentTypeError(
@@ -979,8 +977,8 @@ def main(
     verb = arguments.verb
     if verb in NOT_BUILT_YET:
         print(
-            f"{verb} is not built yet. It is settled -- it would "
-            f"{NOT_BUILT_YET[verb]} -- and nothing behind it exists. Built today: "
+            f"{verb} is not built yet. It is settled and it would "
+            f"{NOT_BUILT_YET[verb]}, and nothing behind it exists. Built today: "
             f"{', '.join(BUILT_TODAY)}.",
             file=stderr,
         )
@@ -1811,15 +1809,10 @@ def _nothing_to_scaffold(
         return Refusal(
             code="unregistered_repository",
             detail=(
-                f"{repository!r} is not a repository config/repositories.yaml carries, so "
-                f"there is nothing here to submit and no {SPEC_PATH} was written. A "
-                "registration is what gives a repository somewhere to publish an image "
-                "from and a workload profile a submission can name. It is not a change to "
-                "make yourself: it lands across the registry, the workload catalog, the "
-                "submission form, an ECR stack and an IAM role no workflow may deploy. Ask "
-                f"for it by opening an issue on {PLATFORM_REPOSITORY} -- edullm add is the "
-                "verb that will eventually do this and is not built yet. Registered today: "
-                f"{registered}."
+                f"run edullm add repository --reason '<why>' to register {repository!r}, "
+                "which opens the pull request that does it. config/repositories.yaml "
+                f"carries no entry for it, so nothing here can be submitted and no "
+                f"{SPEC_PATH} was written. Registered today: {registered}."
             ),
         )
     if arguments.workload or workloads_registered_for(configuration, repository):
@@ -1827,11 +1820,9 @@ def _nothing_to_scaffold(
     return Refusal(
         code="no_workload_profile_registered",
         detail=(
-            f"{repository!r} is registered and config/workload-catalog.yaml names no workload "
-            f"profile for it, so a first {SPEC_PATH} would have nothing to point at. A "
-            "workload profile fixes the runtime bound, the attempt bound and the checkpoint "
-            "contract for one codebase, so adding one is a pull request against the "
-            "platform -- and until there is one, no run can name this repository at all."
+            f"config/workload-catalog.yaml names no workload profile for {repository!r}, so "
+            f"a first {SPEC_PATH} would have nothing to point at and no run can name this "
+            "repository yet. Adding one is a pull request against the platform."
         ),
     )
 
@@ -2192,16 +2183,17 @@ def _cancel(
                     Refusal(
                         code="nothing_admitted_to_stop",
                         detail=(
-                            f"{facts.run_id} has no Batch job, because {facts.because} "
-                            "Stopping the submission itself is a GitHub operation rather "
-                            "than an AWS one: "
+                            f"{facts.run_id} has no Batch job to stop, so stop the "
+                            "submission on GitHub "
                             + (
-                                f"gh run cancel {facts.submission.workflow_run_id} --repo "
-                                f"{actions.repository}"
+                                f"instead: gh run cancel "
+                                f"{facts.submission.workflow_run_id} --repo "
+                                f"{actions.repository}."
                                 if facts.submission is not None
-                                else "cancel the workflow run on its own page"
+                                else "instead, on the workflow run's own page."
                             )
-                            + ". Left alone, an approval would still start it."
+                            + f" {facts.because} Left alone, an approval would still "
+                            "start it."
                         ),
                     )
                 ]
@@ -2316,9 +2308,9 @@ def _registration_refusals(arguments: argparse.Namespace, facts: GitFacts) -> li
             Refusal(
                 code="not_a_repository",
                 detail=(
-                    "this directory is not inside a git repository, so there is no name to "
-                    "register. Stand in a checkout, or pass --repository with the name "
-                    "GitHub spells it."
+                    "stand in a checkout, or pass --repository with the name GitHub spells. "
+                    "This directory is not inside a git repository, so there is no name to "
+                    "register."
                 ),
             )
         )
@@ -2327,10 +2319,9 @@ def _registration_refusals(arguments: argparse.Namespace, facts: GitFacts) -> li
             Refusal(
                 code="no_origin_remote",
                 detail=(
-                    "this repository has no origin remote, so which GitHub repository it is "
-                    "cannot be read. config/repositories.yaml is keyed on the GitHub name "
-                    "and a clone can be named anything, so this is asked rather than guessed "
-                    "at: pass --repository, or add the remote."
+                    "pass --repository, or add an origin remote. This clone has none, and "
+                    "config/repositories.yaml is keyed on the GitHub name rather than on "
+                    "whatever a clone is called locally."
                 ),
             )
         )
@@ -2339,10 +2330,10 @@ def _registration_refusals(arguments: argparse.Namespace, facts: GitFacts) -> li
             Refusal(
                 code="no_registration_reason",
                 detail=(
-                    "--reason says why this needs a repository of its own rather than a "
-                    "workload profile in one that is already registered. It is written into "
-                    "a comment above the entry and it is the only part of the pull request a "
-                    "reviewer cannot derive, so there is no default for it."
+                    "pass --reason, saying why this needs a repository of its own rather "
+                    "than a workload profile in one already registered. It goes in a "
+                    "comment above the entry and is the only part of the pull request a "
+                    "reviewer cannot derive."
                 ),
             )
         )
@@ -2366,9 +2357,9 @@ def _ask(
         refusal = Refusal(
             code="no_ask_detail",
             detail=(
-                "--detail says what you want and what you have already tried. A title on its "
-                "own costs the person answering a round trip, and here that person is the "
-                "one who merges every configuration change. One or two sentences will do."
+                "pass --detail with what you want and what you have already tried. One or "
+                "two sentences will do, and a title on its own costs the person answering a "
+                "round trip."
             ),
         )
         if arguments.json:
@@ -2582,9 +2573,8 @@ def _malformed_run_id(run_id: str) -> Refusal | None:
         code="run_id_not_well_formed",
         detail=(
             f"{run_id!r} is not a run id. One reads run_ followed by a UUID, and the "
-            f"leading {SHORTEST_RUN_ID} characters of that UUID are enough as long as no "
-            "two of your recent runs share them. edullm status with no argument lists "
-            "yours in the short form."
+            f"leading {SHORTEST_RUN_ID} characters of the UUID are enough where no two of "
+            "your recent runs share them. edullm status lists yours in the short form."
         ),
     )
 
@@ -2620,12 +2610,11 @@ def _unfindable_run_id(facts: RunFacts) -> Refusal:
     return Refusal(
         code="run_id_not_found",
         detail=(
-            f"{facts.because} Whether this one is older than the window or was never minted "
-            "at all is not something that can be told from here, and this does not guess: it "
-            "may well be a real run. Nothing was dispatched and nothing was waited for. Pass "
-            f"--ask-aws to ask anyway, which dispatches {CANCEL_WORKFLOW} for the one "
-            f"identity that may read a Batch job, spends a runner and gives up after "
-            f"{_ceiling_said()}."
+            f"{facts.because} Pass --ask-aws to ask anyway, which dispatches "
+            f"{CANCEL_WORKFLOW} under the one identity that may read a Batch job, spends a "
+            f"runner and gives up after {_ceiling_said()}. Nothing was dispatched here, and "
+            "this may well be a real run. Whether it is older than the window or was never "
+            "minted cannot be told from a laptop."
         ),
     )
 
@@ -2644,9 +2633,9 @@ def _said_resolving(run_id: str, err: TextIO) -> None:
     print(
         "\n".join(
             _wrapped(
-                f"resolving {run_id}. Nothing indexes run ids, so this reads the manifest "
-                "of each recent submission until it knows which one -- a few seconds. An "
-                "id given in full is found in the first one or two.",
+                f"resolving {run_id}, which takes a few seconds. Nothing indexes run ids, "
+                "so this reads the manifest of each recent submission until it knows which "
+                "one. An id given in full is found in the first one or two.",
                 indent="",
             )
         ),
@@ -2768,11 +2757,9 @@ def _preflight(
             Refusal(
                 code="no_run_spec",
                 detail=(
-                    f"there is no {SPEC_PATH} at or above here, and none could be written "
-                    "because this is not a checkout of a registered repository. check "
-                    "writes a first one from inside a checkout; it holds what is a property "
-                    "of the code -- the command, the workload profile and a suggested "
-                    "machine."
+                    f"stand in a checkout of a registered repository, where check writes a "
+                    f"first {SPEC_PATH} for you. There is none at or above here, and this "
+                    "directory is not a checkout it could be written into."
                 ),
             )
         )
@@ -2856,10 +2843,9 @@ def _missing_required(
             Refusal(
                 code="no_experiment",
                 detail=(
-                    "--experiment names how this run groups with its neighbours, and there "
-                    "is no default for it: it is the one field that says which question a "
-                    "run is part of answering. It registers nothing, so any lower-case "
-                    "hyphenated name will do."
+                    "pass --experiment, which names how this run groups with its "
+                    "neighbours. It registers nothing, so any lower-case hyphenated name "
+                    "will do."
                 ),
             )
         )
@@ -2868,9 +2854,8 @@ def _missing_required(
             Refusal(
                 code="no_dataset",
                 detail=(
-                    "--dataset names the corpus this run reads. Pass none where it reads "
-                    "nothing, which is what a check, a tokenization or an evaluation over "
-                    "checkpoints does -- absent and none are different answers and only one "
+                    "pass --dataset with the corpus this run reads, or --dataset none where "
+                    "it reads nothing. Absent and none are different answers and only one "
                     "of them is a statement."
                 ),
             )
@@ -2880,10 +2865,9 @@ def _missing_required(
             Refusal(
                 code="no_compute_profile",
                 detail=(
-                    f"neither --compute nor a suggested_compute in {SPEC_PATH} names a "
-                    "machine. It is the most expensive field on a submission by some "
-                    f"distance -- {_rate_span(configuration)} -- and there is nothing to "
-                    "derive it from, so it is asked rather than defaulted."
+                    f"pass --compute, or set suggested_compute in {SPEC_PATH}. It is the "
+                    f"most expensive field on a submission, at {_rate_span(configuration)}, "
+                    "and there is nothing to derive it from."
                 ),
             )
         )
@@ -2904,8 +2888,8 @@ def _rate_span(configuration: ReviewedConfiguration) -> str:
         if profile.provisioned
     ]
     if not rates:
-        return "the catalog's rates span orders of magnitude"
-    return f"${plain_decimal(min(rates))} an hour against ${plain_decimal(max(rates))}"
+        return "rates spanning orders of magnitude"
+    return f"${plain_decimal(min(rates))} to ${plain_decimal(max(rates))} an hour"
 
 
 def _partial_request(

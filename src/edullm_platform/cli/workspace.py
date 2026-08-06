@@ -257,13 +257,13 @@ def github_interop_diagnostic(
     if not windows:
         return None
     return (
-        f"{', and '.join(windows)} -- a Windows executable on WSL's inherited PATH, and "
-        "edullm cannot use it. gh.exe reads your login from %AppData% rather than "
+        f"install the Linux build inside WSL, which on Ubuntu is `sudo apt install gh "
+        f"git`, or set appendWindowsPath=false under [interop] in /etc/wsl.conf. "
+        f"{', and '.join(windows)}, a Windows executable on WSL's inherited PATH that "
+        "edullm cannot use. gh.exe reads your login from %AppData% rather than "
         "~/.config/gh, so check and submit disagree about who you are, and it cannot write "
-        "to a Linux temporary directory, so status stops resolving run ids. Install the "
-        "Linux build inside WSL -- for Ubuntu, `sudo apt install gh git` -- or set "
-        "appendWindowsPath=false under [interop] in /etc/wsl.conf. Nothing below this line "
-        "is trustworthy until you do."
+        "to a Linux temporary directory, so status stops resolving run ids. Nothing below "
+        "this line is trustworthy until you fix it."
     )
 
 

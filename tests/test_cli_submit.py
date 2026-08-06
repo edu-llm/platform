@@ -360,7 +360,7 @@ def test_how_many_can_release_is_counted_off_the_roster_for_the_gate_that_holds_
     assert f"waiting at {environment}. {expected} people hold the role {environment}" in said
     # The gate's own reviewer list is a GitHub setting in the organization and is in no file
     # here, so the count is the roster's answer and has to be readable as the roster's.
-    assert "GitHub environment setting" in said
+    assert "is a GitHub setting rather than reviewed configuration" in said
 
 
 def test_the_two_gates_are_not_told_the_same_number(

@@ -161,11 +161,15 @@ def test_a_clean_submission_is_cleared_and_priced_from_the_catalog(
     assert "no refusals. edullm submit will dispatch this." in out
     # gpu-1xa10g at $1.006 for olmo-core-train's 24h ceiling and two attempts, which is
     # the arithmetic config/workload-catalog.yaml and config/policy.yaml between them fix.
-    assert "$1.006/hour x 1 node x 24h x 2 attempts x 1 cell = $48.29" in out
+    # THE TOTAL IS ON THE HEADING LINE AND THE ARITHMETIC IS UNDER IT. A reader scanning
+    # for the money finds it in the first line of the block rather than at the end of a
+    # five-factor product.
+    assert "worst case  $48.29" in out
+    assert "$1.006/hour x 1 node x 24h x 2 attempts x 1 cell" in out
     # AUTOMATIC, AND IT PRINTED "routine -> run-approval-lead" UNTIL POLICY v5. Forty-eight
     # dollars in one cell is a tenth of the one bound, so a full day of training on one card
     # is now released by nobody. That is the change a submitter notices first.
-    assert "automatic -- one cell, under $500. Nobody releases this." in out
+    assert "automatic. One cell, under $500, so nobody releases this." in out
     assert f"team              {SUBMITTER_TEAM}" in out
 
 
@@ -197,7 +201,7 @@ def test_a_cheap_single_cell_run_is_told_nobody_releases_it(
     )
 
     assert code == EXIT_OK, out + err
-    assert "automatic -- one cell, under $500. Nobody releases this." in out
+    assert "automatic. One cell, under $500, so nobody releases this." in out
 
 
 def test_a_mistyped_dataset_release_is_refused_with_the_list_it_should_have_named(
@@ -700,7 +704,7 @@ def test_the_orientation_describes_check_without_predicting_it(
     said = " ".join(err.getvalue().split())
 
     assert code == EXIT_UNUSABLE and out.getvalue() == ""
-    assert "where a registered repository has no .edullm/run.yaml, it writes a first" in said
+    assert "writes a first .edullm/run.yaml where a registered repository has none" in said
     assert "here it would" not in said.lower()
     assert runner.calls == []
 

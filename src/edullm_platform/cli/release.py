@@ -125,7 +125,7 @@ class InstalledVersion:
         most installs are in most of the time.
         """
         if self.version is None:
-            return "(not installed -- running from a source tree)"
+            return "(not installed, running from a source tree)"
         detail = [part for part in (self.revision, _short(self.commit)) if part]
         return f"{self.version} ({', '.join(detail)})" if detail else self.version
 
@@ -242,9 +242,9 @@ def staleness_said(
     behind = f"{latest.tag} is the current release{age}, and this is {installed.said()}."
     return (
         f"{behind} The reviewed configuration travels inside the install, so this one is "
-        "checking against a copy that old. Most changes only cost you a refusal that is "
-        "not real; a shape or a dataset withdrawn since then is the direction that costs "
-        "an approval. Submitting anyway -- admission re-checks all of it. To be current:\n"
+        "checking against a copy that old. A shape or a dataset withdrawn since then is "
+        "the direction that costs an approval. Submitting anyway, because admission "
+        "re-checks all of it. To be current:\n"
         "\n"
         f"  {install_command(repository=repository, tag=latest.tag)}"
     )

@@ -29,8 +29,9 @@ configuration changes.
 **AND THERE IS NO EXEMPTION LIST, WHICH IS WHAT DECIDES THE COLLISIONS.** The docstring
 above already argues that an exemption list is where the next hardcoded ceiling hides, so
 a sentence that reads as a bound and is not one gets reworded rather than excused. The word
-half cost exactly one of those: ``edullm add is the verb that will one day do this`` meant
-"eventually" and now says so.
+half cost exactly one of those, in the unregistered-repository refusal, and it was reworded
+rather than exempted. That refusal names ``edullm add repository`` now and says nothing
+about a count.
 """
 
 from __future__ import annotations

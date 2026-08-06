@@ -70,12 +70,10 @@ def routed_to_ask(kind: str) -> Refusal:
     return Refusal(
         code="add_kind_is_not_self_service",
         detail=(
-            f"teaching the platform {kind!r} means {ADD_KINDS[kind]}, and that is not "
-            "something this can open a pull request for. It lands across several reviewed "
-            "files and, for some of them, a stack no workflow may deploy, so the "
-            "decomposition is the platform's rather than yours. edullm ask files it, and "
-            "edullm ask --help prints the kinds it takes. Say what you want rather than how "
-            "it should be built."
+            f"file this with edullm ask, and say what you want rather than how it should be "
+            f"built. Teaching the platform {kind!r} means {ADD_KINDS[kind]}, which lands "
+            "across several reviewed files and a stack no workflow may deploy, so no pull "
+            "request can be opened for it from here."
         ),
     )
 

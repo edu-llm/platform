@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from edullm_platform.cli.intake import SELF_SERVICE_KINDS
 from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED, EXIT_UNUSABLE
 from edullm_platform.cli.spec import load_spec
 from edullm_platform.cli.workspace import CommandResult
@@ -229,9 +230,15 @@ def test_a_repository_nothing_registers_is_refused_rather_than_raising_out_of_ma
     in whatever is open -- met it every time.
 
     A refusal instead, in the vocabulary the other sixteen use, and it has to be the one
-    that does the work: this is the moment somebody decides whether this platform is for
-    them, so it names the repository, says what a registration is, and points at the ask
-    rather than at a pull request nobody outside the platform can reasonably open.
+    that does the work. This is the moment somebody decides whether this platform is for
+    them, so it opens with the command that registers the repository, names the repository
+    it would register, and lists the ones already registered.
+
+    **AND THE COMMAND IT NAMES IS ``edullm add repository``, WHICH IT DID NOT USED TO BE.**
+    This refusal sent people to open an issue and said ``edullm add`` was "not built yet".
+    It is built, ``repository`` is the one kind in ``SELF_SERVICE_KINDS``, and
+    ``register-repository.yml`` edits the five platform files and opens the pull request. So
+    the sentence was sending the one reader who could have self-served into a queue.
     """
     runner = FakeRunner(git_answers(tmp_path, repository="platform"))
 
@@ -240,10 +247,12 @@ def test_a_repository_nothing_registers_is_refused_rather_than_raising_out_of_ma
 
     assert code == EXIT_REFUSED
     assert "refused  unregistered_repository" in out
-    assert "'platform' is not a repository config/repositories.yaml carries" in said
-    assert "It is not a change to make yourself" in said
-    assert "opening an issue on edu-llm/platform" in said
+    assert said.count("edullm add repository") == 1
+    assert "to register 'platform'" in said
+    assert "config/repositories.yaml carries no entry for it" in said
     assert "Registered today: OLMo-core" in said
+    # The verb it names is real and self-service, which is what the old wording denied.
+    assert "repository" in SELF_SERVICE_KINDS
     # Nothing was written, and the generic refusal is not printed beside the specific one:
     # both answer "why is there no spec", and two spellings of one problem send a reader
     # looking for a second problem.
