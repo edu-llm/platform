@@ -453,10 +453,10 @@ def test_a_declared_config_dir_that_is_empty_means_nobody_is_logged_in(
 def test_xdg_is_honoured_on_every_platform_including_windows(system: str) -> None:
     """``go-gh`` guards the ``AppData`` branch on the operating system and does not guard this one.
 
-    Mutation: make ``XDG_CONFIG_HOME`` Unix-only, which is what ``gh help environment``'s
-    older wording suggests and what the source does not do. A Windows researcher carrying the
-    variable in a dotfiles repository has a ``gh`` reading from it, and this would then look
-    under ``%AppData%`` at a directory ``gh`` never wrote.
+    Mutation: make ``XDG_CONFIG_HOME`` Unix-only, which is the intuitive reading of a
+    freedesktop variable and is not what ``ConfigDir`` does. A Windows researcher carrying
+    the variable in a dotfiles repository has a ``gh`` reading from it, and this would then
+    look under ``%AppData%`` at a directory ``gh`` never wrote.
     """
     answer = resolved({"XDG_CONFIG_HOME": "/tmp/xdg", "AppData": APP_DATA}, system=system)
 
@@ -502,6 +502,10 @@ def test_appdata_is_found_under_the_upper_case_spelling_windows_actually_hands_o
 @pytest.mark.parametrize("system", ("Darwin", "Linux"))
 def test_appdata_is_ignored_off_windows(system: str) -> None:
     """The three platforms that work today do not move, and this is the branch that could move them.
+
+    Two parameters rather than three because WSL answers ``Linux`` here, which is the point:
+    the guard reads the operating system this process runs on, not the one the ``gh`` on PATH
+    was built for, so it cannot rescue the WSL failure above and must not try to.
 
     Mutation: drop the ``system`` guard. ``AppData`` is set in a Wine prefix, on a
     cross-compiling runner and in any shell that inherited one, and a macOS laptop would then
