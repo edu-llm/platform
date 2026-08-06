@@ -513,6 +513,7 @@ jobs:
       approval_class: ${{ steps.compile.outputs.approval_class }}
       environment: ${{ steps.compile.outputs.environment }}
       manifest_sha256: ${{ steps.compile.outputs.manifest_sha256 }}
+      maximum_compute_cost_usd: ${{ steps.compile.outputs.maximum_compute_cost_usd }}
     steps:
       # github.sha, never the floating ref the dispatch was aimed at. The submit job
       # checks out the same commit and recomputes the manifest hash on the far side of
@@ -632,6 +633,40 @@ jobs:
           name: published-image
           path: ${{ runner.temp }}/published-image
 
+      # WHAT THE DAY HAS ALREADY COMMITTED WITH NOBODY ASKED, WHICH IS THE ONE THING THIS JOB
+      # CANNOT WORK OUT FROM ITS OWN CHECKOUT. config/policy.yaml carries a daily ceiling on
+      # the automatic class and the ledger for it is the index the job below writes at mint
+      # time, so this fetches that branch read-only. It is the same branch, the same file and
+      # the same reader; what differs is that this side only reads it.
+      #
+      # THIS JOB STILL HOLDS NO CREDENTIAL AND THAT IS UNCHANGED. `contents: read` is what it
+      # had already, the fetch is of a branch in this repository, and nothing here reaches
+      # AWS. Choosing the gate before anything can talk to the account is the property that
+      # makes the gate worth having, and a git fetch does not spend it.
+      #
+      # A FAILURE HERE IS NOT A FAILURE OF THE SUBMISSION, AND IT IS NOT `continue-on-error`
+      # EITHER. That key is refused across this whole file, by a test, because a step allowed
+      # to fail quietly in the job that chooses the gate is how a submission gets past one --
+      # so every command that may fail is guarded here instead, and the step exits zero on
+      # purpose rather than by permission.
+      #
+      # An absent branch, a throttled fetch and a truncated file all leave no run-index.json.
+      # tools/compile_submission.py is then not given --run-index, and the ceiling fails
+      # closed by routing the submission to a team lead. That is this platform's answer to
+      # "the thing that counts today's spend cannot be read". Failing the job instead would
+      # turn a transient fetch into a refused submission.
+      - name: Read what the day has already committed
+        env:
+          INDEX_BRANCH: machine/run-index
+        run: |
+          set -euo pipefail
+          if ! git ls-remote --exit-code --heads origin "${INDEX_BRANCH}" > /dev/null 2>&1; then
+            echo "no index branch yet, so the day has committed nothing this can read" >&2
+            exit 0
+          fi
+          git fetch origin "${INDEX_BRANCH}" --depth=1 || exit 0
+          git show "FETCH_HEAD:run-index.json" > "${RUNNER_TEMP}/run-index.json" || true
+
       - name: Compile the submission
         id: compile
         env:
@@ -641,6 +676,13 @@ jobs:
           RESEARCH_REPOSITORY: ${{ inputs.repository }}
         run: |
           set -euo pipefail
+          # Passed only when it is there. The argument is optional in argparse and is not
+          # optional in effect: where config/policy.yaml sets a ceiling, a compile job given
+          # no index routes the submission to a lead rather than waving it through.
+          day=()
+          if [[ -s "${RUNNER_TEMP}/run-index.json" ]]; then
+            day=(--run-index "${RUNNER_TEMP}/run-index.json")
+          fi
           compile_status=0
           uv run --frozen python tools/compile_submission.py \
             --inputs "${RUNNER_TEMP}/submission-form.json" \
@@ -650,6 +692,7 @@ jobs:
             --repository-url "${SERVER_URL}/${REPOSITORY_OWNER}/${RESEARCH_REPOSITORY}" \
             --output "${RUNNER_TEMP}/compiled-submission.json" \
             --summary "${RUNNER_TEMP}/approver-context.md" \
+            "${day[@]+"${day[@]}"}" \
             --github-output "${GITHUB_OUTPUT}" || compile_status=$?
           # Exit 1 is a refusal on the merits, and it is the whole point of refusing here:
           # a submission naming an unregistered dataset would be denied by admission
@@ -840,6 +883,11 @@ jobs:
           TEAM: ${{ inputs.team }}
           COMPUTE_PROFILE: ${{ inputs.compute_profile }}
           APPROVAL_CLASS: ${{ needs.compile.outputs.approval_class }}
+          # What the compile job worked out this submission may commit, which is what the
+          # next submission's ceiling check reads back. Passed from that job's output rather
+          # than recomputed here: a second implementation of the arithmetic is a second
+          # answer to the figure the ceiling compares against.
+          MAXIMUM_COMPUTE_COST_USD: ${{ needs.compile.outputs.maximum_compute_cost_usd }}
           EXPERIMENT: ${{ inputs.experiment }}
           FANOUT_SIZE: ${{ inputs.fanout_size }}
         run: |

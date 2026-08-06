@@ -60,15 +60,22 @@ ApprovalScopeValue = Annotated[ApprovalScope, BeforeValidator(parse_str_enum(App
 
 
 class PolicyThresholds(ContractModel):
-    """The one number that decides whether anybody is asked about a run.
+    """The two numbers that decide whether anybody is asked about a run.
 
-    IT HELD SEVEN AND IT HOLDS ONE, AND THE SIX THAT WENT ARE NOT A TIDY-UP. Five of them
+    IT HELD SEVEN AND IT HOLDS TWO, AND THE SIX THAT WENT ARE NOT A TIDY-UP. Five of them
     named a ceiling above which a run needed an admin, and under v5 no run needs an admin,
     so a ``routine_maximum_`` bound separated routine from a class nothing lands in. The
     sixth, ``automatic_below_runtime_hours``, bounded the automatic class by declared
     runtime, and a declared runtime is a number the submitter typed rather than a fact
     about the run. Worst-case total is the instrument, and it already carries runtime,
     attempts, cells and the price of the machine.
+
+    THE SECOND IS NEW IN v6 AND IT IS NOT A SIXTH CEILING COMING BACK. Every one of those
+    five asked a question about one request. So does the first field here. The exposure they
+    all miss is the sum: thirty-five requests each correctly under a per-run bound are
+    thirty-five times that bound, and no rule that reads one request at a time can see it.
+    :attr:`automatic_daily_ceiling_usd` is the only field in this model that is not a
+    property of the submission in front of it.
 
     ``config/policy.yaml`` records why each one went, beside the number that replaced it.
     """
@@ -91,6 +98,30 @@ class PolicyThresholds(ContractModel):
     #: field's exported shape while there were seven of them, and
     #: ``tests/test_schema_export.py`` reads it now that there is one.
     automatic_below_cost_usd: PositiveStrictDecimal = Field(gt=0)
+
+    #: HOW MUCH OF A DAY THIS ACCOUNT WILL COMMIT WITH NOBODY ASKED. Once the runs released
+    #: by nobody since midnight UTC have committed this much, the next one is released by a
+    #: team lead instead. Nothing is refused and nothing running is touched; the automatic
+    #: class simply closes for the rest of the day.
+    #:
+    #: AT IT EXACTLY, A LEAD LOOKS, which is the opposite boundary from the field above and
+    #: for the same reason. That one is named ``below`` and excludes its own value because a
+    #: bound drawn one value too wide enlarges the set of runs nobody sees. This one is a
+    #: ceiling on the day and is reached at its own value, so the boundary again lands on the
+    #: side where somebody looks.
+    #:
+    #: OPTIONAL, AND ``None`` MEANS THE MECHANISM IS OFF RATHER THAN INFINITE. A policy
+    #: written before this field existed parses, classifies exactly as it did, and reads as
+    #: what it is: a platform with no aggregate bound. Nineteen decision records were written
+    #: under v2 to v4 and every one of them is parsed back through this model, so a required
+    #: field here would make the audit trail unreadable by the code that wrote it.
+    #:
+    #: NOTHING IN ``classify_request`` READS THIS AND NOTHING THERE MAY. The comparison needs
+    #: today's ledger, that function is re-run inside AWS by a validator which cannot reach
+    #: the ledger, and a rule the two sides derive differently is a run refused after a lead
+    #: released it. :func:`edullm_platform.daily_ceiling.class_under_the_ceiling` is what
+    #: applies it, on the one side that has the reading, and it can only raise a class.
+    automatic_daily_ceiling_usd: PositiveStrictDecimal | None = Field(default=None, gt=0)
 
 
 class RequestFacts(ContractModel):

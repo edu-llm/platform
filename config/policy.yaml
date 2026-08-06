@@ -31,7 +31,24 @@
 # record is a v4-or-earlier fact and a v5 record reading approval_class: routine may be a
 # run that would have needed an admin the day before. Comparing approver counts across the
 # boundary without reading the version compares two different rulebooks.
-policy_version: v5
+#
+# v6 adds the first bound in this file that is not a question about one request. Every
+# threshold v1 to v5 ever carried read the submission in front of it and nothing else,
+# which is the right shape for "is this one run expensive" and cannot see the exposure
+# that is actually there. Thirty-five researchers each submitting one run correctly under
+# automatic_below_cost_usd is thirty-five times that bound, every classification correct,
+# and nobody woken. Measured on 2026-08-06 that is $16,873 against a $5,000 monthly limit.
+#
+# automatic_daily_ceiling_usd is the counterpart. Once the runs released by nobody since
+# midnight UTC have committed it, the next one is released by a team lead. Nothing is
+# refused, nothing running is touched, and the class re-opens at midnight.
+#
+# Bumped for the reason v2 to v5 were, and it changes the reading in the same direction v5
+# did. A v6 record reading approval_class: routine with a lead's name on it may be a
+# submission that was automatic under v5 and reached a person only because the day had
+# already spent its unattended budget. Nothing on the record says which, so comparing
+# automatic counts across this boundary without reading the version compares two rulebooks.
+policy_version: v6
 # ONE BOUND, AND IT IS THE ONLY ONE IN THE TREE. This file used to carry a note saying
 # there was a fifth bound that was not in it, because classify_request also refused to call
 # a request routine when the compute profile it named cost more than
@@ -192,6 +209,69 @@ thresholds:
   # profile was not yet promoted. Follow the release procedure in infra/README.md after
   # this merges, or every run keeps being routed by v4.
   automatic_below_cost_usd: "500"
+  # HOW MUCH OF A DAY THIS ACCOUNT WILL COMMIT WITH NOBODY ASKED, AND IT IS THE ONLY BOUND
+  # HERE THAT IS NOT ABOUT THE SUBMISSION IN FRONT OF IT.
+  #
+  # WHAT IT IS FOR, MEASURED RATHER THAN IMAGINED. The bound above is per submission and
+  # the exposure is a sum. Sixteen hours of gpu-8xl40s in one cell is $482.10, classifies
+  # as automatic, and is released by nobody. Nothing counted how many of those one person
+  # may submit and nothing counted the total across everybody, so thirty-five researchers
+  # submitting one each was $16,873 before anybody had been woken, and the first person to
+  # learn it happened learned it from a Cost Explorer chart. That is not a defect in the
+  # figure above. $482.10 genuinely is a cheap enough single run for the question that
+  # figure asks. It is that nothing was asking the other question.
+  #
+  # WHY A THOUSAND. Four readings, and none of them is a round number picked for looking
+  # like one.
+  #
+  #   tools/spend-limits.yaml holds this account against $5,000 a month, so this is one
+  #   fifth of the month. Five days of a fully consumed ceiling exhausts it, and
+  #   tools/report_spend.py reads as over well before the fifth.
+  #
+  #   It is twice automatic_below_cost_usd, so the class stays open through two runs at the
+  #   very widest shape a submitter can pick. A day that closes it has seen two $500 runs
+  #   nobody looked at, which is a day somebody should be looking.
+  #
+  #   Against the day this platform actually has, it is not close. config/run-history.json
+  #   measures the ordinary submission as a check with a median of five minutes; a
+  #   one-hour gpu-1xa10g worst case is $1.01, so an ordinary day of fifty of them commits
+  #   fifty dollars. Two orders of magnitude of headroom is what stops this being a control
+  #   people learn to click through.
+  #
+  #   And against the exposure it exists for, thirty-five researchers each submitting one
+  #   $482.10 run tomorrow commits at most this figure with nobody asked instead of
+  #   $16,873, with the other thirty-one runs in front of a lead.
+  #
+  # AT IT EXACTLY A LEAD LOOKS, which is the opposite boundary from the bound above and
+  # settled the same way. That one is named `below` and excludes its own value because a
+  # line drawn one value too wide enlarges the set of runs nobody sees. This is a ceiling
+  # reached at its own value, so again the boundary lands on the side where somebody looks.
+  #
+  # WHAT IT COUNTS AND WHAT IT WILL NOT. Only the automatic class, because what it bounds
+  # is spending nobody looked at and a run a lead released has already had the human this
+  # summons. Only the worst case each submission was authorised to commit, because what a
+  # run actually cost arrives from Cost Explorer over the following hours and a ceiling
+  # reading that would notice yesterday. Not anybody's personal total: a per-person daily
+  # ceiling was the obvious shape and it does not close this, because setting it at the
+  # per-run bound leaves thirty-five people one full-bound run each, which is the $16,873
+  # unchanged.
+  #
+  # IT CANNOT STOP A RUNNING JOB. It is consulted once, in the compile job, before a gate is
+  # chosen and before anything reaches AWS, and there is no path from it to a queue or a
+  # container. Killing a training at hour six to protect a forecast destroys more than it
+  # saves, and the way to be certain that never happens is for the mechanism to have no
+  # reach rather than a rule against it.
+  #
+  # AND IT FAILS CLOSED. An index that cannot be fetched, one that will not parse, and one
+  # carrying an entry from today with no figure on it all route to a lead. A control whose
+  # broken state is "carry on" is off exactly on the days the machinery is broken.
+  #
+  # DELETING THIS LINE TURNS THE MECHANISM OFF RATHER THAN SETTING IT TO INFINITY, and the
+  # field is optional so that doing so is a one-line reviewed change rather than an edit to
+  # a model. src/edullm_platform/daily_ceiling.py carries the reasoning in full, including
+  # the concurrency overshoot this does not close and why a lock in the submission path is
+  # the wrong price for closing it.
+  automatic_daily_ceiling_usd: "1000"
 # Which registry-scan severities require a recorded exception before a digest may run.
 # Enforced at admission, not at publish: ECR scans after the push, Phase 1 tags are
 # immutable, and a publish-time block would leave that commit unpublishable for good.

@@ -42,12 +42,26 @@
     },
     "PolicyThresholds": {
       "additionalProperties": false,
-      "description": "The one number that decides whether anybody is asked about a run.\n\nIT HELD SEVEN AND IT HOLDS ONE, AND THE SIX THAT WENT ARE NOT A TIDY-UP. Five of them\nnamed a ceiling above which a run needed an admin, and under v5 no run needs an admin,\nso a ``routine_maximum_`` bound separated routine from a class nothing lands in. The\nsixth, ``automatic_below_runtime_hours``, bounded the automatic class by declared\nruntime, and a declared runtime is a number the submitter typed rather than a fact\nabout the run. Worst-case total is the instrument, and it already carries runtime,\nattempts, cells and the price of the machine.\n\n``config/policy.yaml`` records why each one went, beside the number that replaced it.",
+      "description": "The two numbers that decide whether anybody is asked about a run.\n\nIT HELD SEVEN AND IT HOLDS TWO, AND THE SIX THAT WENT ARE NOT A TIDY-UP. Five of them\nnamed a ceiling above which a run needed an admin, and under v5 no run needs an admin,\nso a ``routine_maximum_`` bound separated routine from a class nothing lands in. The\nsixth, ``automatic_below_runtime_hours``, bounded the automatic class by declared\nruntime, and a declared runtime is a number the submitter typed rather than a fact\nabout the run. Worst-case total is the instrument, and it already carries runtime,\nattempts, cells and the price of the machine.\n\nTHE SECOND IS NEW IN v6 AND IT IS NOT A SIXTH CEILING COMING BACK. Every one of those\nfive asked a question about one request. So does the first field here. The exposure they\nall miss is the sum: thirty-five requests each correctly under a per-run bound are\nthirty-five times that bound, and no rule that reads one request at a time can see it.\n:attr:`automatic_daily_ceiling_usd` is the only field in this model that is not a\nproperty of the submission in front of it.\n\n``config/policy.yaml`` records why each one went, beside the number that replaced it.",
       "properties": {
         "automatic_below_cost_usd": {
           "pattern": "^(?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)$",
           "title": "Automatic Below Cost Usd",
           "type": "string"
+        },
+        "automatic_daily_ceiling_usd": {
+          "anyOf": [
+            {
+              "gt": 0,
+              "pattern": "^(?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Automatic Daily Ceiling Usd"
         }
       },
       "required": [

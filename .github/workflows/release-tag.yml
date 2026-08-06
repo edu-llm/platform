@@ -113,6 +113,7 @@ on:
       - "src/edullm_platform/contracts/validation.py"
       - "src/edullm_platform/contracts/vocabulary.py"
       - "src/edullm_platform/contracts/workload.py"
+      - "src/edullm_platform/daily_ceiling.py"
       - "src/edullm_platform/errors.py"
       - "src/edullm_platform/execution.py"
       - "src/edullm_platform/image_resolution.py"

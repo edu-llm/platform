@@ -25,10 +25,35 @@ resolved against every entry, and a directory listing costs a call per lookup an
 thousand entries. One document is one authenticated read whatever the id looks like, and it
 diffs as one line per submission.
 
-**THE ENTRY IS WHAT GITHUB KNEW AT MINT TIME AND NOTHING ELSE.** No state, no cost, no
-outcome. Those change, and this does not: a run id is minted once. Anything that changes
-belongs to the substrate reading, which has a different cadence and a different writer, and
-mixing the two would mean a state refresh could overwrite a mapping.
+**THE ENTRY IS WHAT GITHUB KNEW AT MINT TIME AND NOTHING ELSE.** No state and no outcome.
+Those change, and this does not: a run id is minted once. Anything that changes belongs to
+the substrate reading, which has a different cadence and a different writer, and mixing the
+two would mean a state refresh could overwrite a mapping.
+
+**THE WORST CASE IS THE ONE FIGURE THAT BELONGS HERE, AND IT IS HERE BECAUSE IT DOES NOT
+CHANGE.** This paragraph used to say "no cost" beside "no state" and the two were being
+grouped by mistake. What a run *actually costs* is a fact that arrives hours later and moves
+until it settles, which is the substrate's business. What a run is *authorised to commit* is
+decided by the compile job in the same breath as the id and never moves again, because it is
+computed off a manifest whose hash is what an approver releases. It is the same figure the
+approver page prints and the same one ``classify_request`` routes on.
+
+Recording it is what lets :mod:`edullm_platform.daily_ceiling` answer "how much has today
+committed with nobody asked" from one authenticated read of one file. Nothing else in reach
+of the compile job can answer that: the lineage store needs a credential that job
+deliberately does not hold, and the workflow run list carries no money at all.
+
+**AND THE FIELD IS OPTIONAL RATHER THAN A FORMAT BUMP, WHICH IS A DECISION AND NOT A
+SHORTCUT.** The version is bumped when an entry stops meaning what it meant, and an added
+field changes the meaning of none of the eleven that were already there. The bump would also
+be actively harmful here: ``tools/publish_run_index.py`` refuses an index it cannot parse, on
+purpose, so declaring format 2 would make the next submission's index job fail against the
+twenty-three entries the branch already holds and force somebody to migrate a file at three
+in the morning. An older reader meeting the new key ignores it and goes on resolving run ids,
+which is the whole of what every other reader wants from this document.
+
+Absent therefore means "minted before this field existed" and never "free". The ceiling reads
+it that way and fails closed on it, which is the one direction that reading may err in.
 """
 
 from __future__ import annotations
@@ -36,6 +61,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Final
 
 __all__ = [
@@ -93,6 +119,17 @@ class MintedRun:
     approval_class: str
     fanout_size: int | None
     minted_at: datetime
+    #: What this submission is authorised to commit, which is the figure the approver page
+    #: prints and the figure the class was chosen against. ``None`` for an entry written
+    #: before the field existed, and never for one written since: an unpriced entry is a
+    #: gap in the reading rather than a run that committed nothing, and
+    #: :mod:`edullm_platform.daily_ceiling` treats it as the first.
+    #:
+    #: A ``Decimal`` carried as text through the document, for the reason
+    #: :mod:`edullm_platform.substrate` gives beside its own money: a ``Decimal`` through a
+    #: JSON float comes back with a tail on it, and this figure is compared against a
+    #: reviewed bound.
+    maximum_compute_cost_usd: Decimal | None = None
 
     def as_entry(self) -> dict[str, Any]:
         return {
@@ -108,11 +145,23 @@ class MintedRun:
             "approval_class": self.approval_class,
             "fanout_size": self.fanout_size,
             "minted_at": self.minted_at.isoformat(),
+            "maximum_compute_cost_usd": (
+                None
+                if self.maximum_compute_cost_usd is None
+                else str(self.maximum_compute_cost_usd)
+            ),
         }
 
     @classmethod
     def of_entry(cls, entry: Mapping[str, Any]) -> MintedRun:
+        # WHY THIS ONE IS `.get` AND THE ELEVEN ABOVE IT ARE NOT. A missing required key is
+        # a document this tree cannot read and stops the tool; a missing cost is an entry
+        # from before the field existed, which every entry on the branch today is. Reading
+        # it as absent is correct and reading absent as zero is the fail-open direction, so
+        # the distinction is kept here and acted on in `daily_ceiling`.
+        priced = entry.get("maximum_compute_cost_usd")
         return cls(
+            maximum_compute_cost_usd=None if priced is None else Decimal(str(priced)),
             run_id=str(entry["run_id"]),
             workflow_run_id=int(entry["workflow_run_id"]),
             workflow_run_url=str(entry["workflow_run_url"]),

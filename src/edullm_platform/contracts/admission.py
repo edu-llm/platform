@@ -84,6 +84,39 @@ class ApprovalEnvironment(StrEnum):
             case ApprovalClass.EXCEPTION:
                 return cls.ADMIN
 
+    def satisfies(self, required: ApprovalEnvironment) -> bool:
+        """Whether passing this gate answers for a run that this class demanded ``required``.
+
+        **EQUALITY, PLUS EXACTLY ONE NAMED RAISE.** Admission asks this of every submission,
+        so the direction is the whole of what stops a run that needed a lead from reaching
+        AWS through a gate that asked nobody. It stays equality for every pair but one.
+
+        The exception is a run derived as automatic that arrived through the lead gate, and
+        it is here because :func:`edullm_platform.daily_ceiling.class_under_the_ceiling`
+        produces exactly that pair and nothing else can. When the day's unattended
+        commitments have crossed the bound in ``config/policy.yaml``, the compile job raises
+        a submission from automatic to routine and sends it to a lead. This validator cannot
+        re-derive that: the ledger is a branch in GitHub rather than anything in AWS, and if
+        it could reach it, it would read a later day-total than the compile job did minutes
+        before and refuse runs on the difference. Under plain equality every run the ceiling
+        routed would be refused after a lead had already released it.
+
+        **NOT A GENERAL ORDERING, WHICH IS THE VERSION OF THIS THAT WAS WRITTEN FIRST.** An
+        ``a >= b`` over a strength rank reads cleaner and quietly relaxes a second thing:
+        a routine submission released by ``run-approval-admin`` is refused today, on purpose,
+        because a run reaching a gate policy did not name means the routing went wrong
+        somewhere and admission is the only thing that would notice. Nothing here needs that
+        relaxation, so nothing here makes it. A raise that has no mechanism behind it is a
+        hole with no author.
+
+        Written as a method rather than a comparison at the call site because a reader of
+        ``a >= b`` on two environments has to work out which way the enum sorts, and getting
+        that backwards is a silent, total bypass no test of the happy path would catch.
+        """
+        if self is required:
+            return True
+        return required is ApprovalEnvironment.AUTOMATIC and self is ApprovalEnvironment.LEAD
+
 
 ApprovalEnvironmentValue = Annotated[
     ApprovalEnvironment, BeforeValidator(parse_str_enum(ApprovalEnvironment))
@@ -174,10 +207,18 @@ class DecisionRecord(ContractModel):
             )
         if self.accepted and self.cost is None:
             raise ValueError("an accepted decision must record what it is expected to cost")
-        if self.accepted and self.approving_environment is not ApprovalEnvironment.for_approval_class(
-            self.approval_class
+        # THE SAME COMPARISON ``admit`` MAKES, SPELLED THROUGH THE SAME METHOD. This is the
+        # last thing between a wrong routing and a durable record claiming it was right, and
+        # the two checks drifting apart is how a record gets written that the validator
+        # would have refused. `satisfies` is the one place the relaxation lives, so it is
+        # relaxed here and nowhere else: a record reading `automatic` with
+        # `run-approval-lead` beside it is a run the daily ceiling raised, and it is a true
+        # record rather than a tolerated one.
+        if self.accepted and not self.approving_environment.satisfies(
+            ApprovalEnvironment.for_approval_class(self.approval_class)
         ):
             raise ValueError(
-                "an accepted decision must have passed the gate its classification demands"
+                "an accepted decision must have passed the gate its classification demands, "
+                "or a stronger one where a mechanism raised it"
             )
         return self

@@ -841,7 +841,7 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # was written to prevent. What is worth keeping from it is the rule rather than the
     # instance: a zip a branch is rewriting is one to leave alone and record, not one to cut
     # from main because the register looks untidy.
-    releases: tuple[PendingRelease, ...] = (
+    #
     # A THIRTEENTH WAS OPENED AND CLEARED WITHIN THE HOUR, AND WHAT IS WORTH KEEPING IS THAT
     # THE THING IT WAS WAITING FOR HAD ALREADY HAPPENED WHEN IT WAS WRITTEN. The janitor's
     # zip carries researcher_lane.py for two tag keys and a role name, and #318 moved that
@@ -892,6 +892,7 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # attempt on a workload profile carrying no checkpoint contract, which is a fact about
     # config/workload-catalog.yaml rather than about the codebase that would have to resume.
     # Two of the six registered repositories pass it and restart from step 0.
+    #
     # ALL THREE WERE CLEARED BY ONE COMMAND ON 2026-08-06, AND THE SHAPE OF THAT IS THE POINT
     # RATHER THAN THE TIDYING. The register held three entries for three unrelated causes: the
     # janitor for a ConfigFile member #351 had to add, and the validator and the notifier for
@@ -914,6 +915,95 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # entry above gave for its own difference is kept in this comment rather than deleted with
     # the entry, because a digest that moved for three reasons is a digest nobody can explain
     # from the register once the register is empty.
+    #
+    # A SEVENTEENTH, AN EIGHTEENTH AND A NINETEENTH, AND THE FIRST OF THEM IS THE ONLY ENTRY
+    # THIS REGISTER HAS HELD WHOSE WINDOW A SUBMITTER MEETS AS A REFUSAL RATHER THAN AS A
+    # WRONG LABEL. Policy v6 gives the day a ceiling on what it will commit with nobody asked,
+    # and the compile job raises a submission from automatic to routine when it is crossed.
+    # The deployed validator cannot re-derive that -- the ledger is a branch in GitHub, not
+    # anything in AWS -- so it is taught instead to accept the lead gate for a run it derives
+    # as automatic, which is `ApprovalEnvironment.satisfies`.
+    #
+    # UNTIL THIS IS RELEASED, EVERY RUN THE CEILING ROUTES IS REFUSED AFTER A LEAD RELEASES
+    # IT. The deployed zip carries the old equality check and config/policy.yaml at v5, so a
+    # raised submission reaches admission, fails `approval_environment_mismatch` and writes a
+    # decision record saying so. Nothing spends money in that window and nothing runs that
+    # should not; what it costs is one lead's click per submission that crosses the ceiling,
+    # and a refusal whose text does not mention the ceiling at all.
+    #
+    # So this record is not the usual "a digest moved and nobody will notice". It is the one
+    # entry here that has to be cleared on the day it is opened, and the ordering is merge,
+    # then `deploy-phase2-admission.yml -f release_lambdas=true` from main, then paste the
+    # version id and digest into infra/admission-validator-release.yaml and
+    # infra/admission-state-machine.yaml and delete the entry.
+    releases: tuple[PendingRelease, ...] = (
+        PendingRelease(
+            function="validator",
+            reason=(
+                "policy v6 adds automatic_daily_ceiling_usd and admission accepts the lead "
+                "gate for a run it derives as automatic, which is the one raise the daily "
+                "ceiling can produce. Until the zip carries both, a submission the ceiling "
+                "routes to a lead is refused with approval_environment_mismatch after the "
+                "lead has released it"
+            ),
+            cleared_by=(
+                "uv run python tools/release_lambda.py --function validator, from main, "
+                "then the version id and digest into infra/admission-validator-release.yaml "
+                "and infra/admission-state-machine.yaml in the same commit as deleting this"
+            ),
+            builds_to="237cc46703bc9145453d6ee6e5ea01feb0d9430f2107d6fded381f83f5988ed7",
+            released="22b3f176ae279e6214f11e8a6e6a1c4e1c7ac3f37fd9e744cfd45316c02e08df",
+            recorded_on=date(2026, 8, 6),
+        ),
+        # THE OTHER TWO ARE THE OPPOSITE KIND OF ENTRY FROM THE ONE ABOVE, AND THE RECORDER
+        # IS HERE FOR THE FIRST TIME SINCE ITS BUILDER NAMES NO FILE UNDER CONFIG/ AND THE
+        # LAST SWEEP SKIPPED IT. Neither the recorder nor the notifier classifies anything,
+        # so neither reads
+        # the ceiling and neither behaves differently by a byte of it. What moved their zips
+        # is that both package `contracts/admission.py` and `contracts/policy.py`, which
+        # gained `satisfies` and `automatic_daily_ceiling_usd`.
+        #
+        # They are recorded anyway, and separately, because the register compares bytes and
+        # is right to. A digest that moved for a reason nobody wrote down is exactly what the
+        # tripwire is for, and "it cannot matter for this function" is the sentence somebody
+        # says just before it does. The difference from the validator entry is only in what
+        # the window costs: nothing, in these two cases, which is why they are cleared with
+        # the same release rather than before it.
+        PendingRelease(
+            function="recorder",
+            reason=(
+                "the lifecycle recorder packages contracts/admission.py and "
+                "contracts/policy.py, both of which policy v6 edits. It classifies nothing "
+                "and reads neither the ceiling nor the gate comparison, so the deployed "
+                "bytes and the tree behave identically inside this window"
+            ),
+            cleared_by=(
+                "uv run python tools/release_lambda.py --function recorder, from main, "
+                "then the version id and digest into infra/lifecycle-recorder-release.yaml "
+                "and infra/batch-events.yaml in the same commit as deleting this"
+            ),
+            builds_to="1c2d5c6d7f7e52f6b4ef07d6c69f2777a08ce94c3e850d0e1f4ad70def1e5b7b",
+            released="11d4c78a8ddc2b22c8a43dd5224d00a3e038f86403a8ba2e50c8f88a6d92c8b1",
+            recorded_on=date(2026, 8, 6),
+        ),
+        PendingRelease(
+            function="notifier",
+            reason=(
+                "the notifier packages contracts/admission.py and contracts/policy.py, both "
+                "of which policy v6 edits, and config/policy.yaml itself, which joined "
+                "NOTIFIER_CONFIG when the approval message started reading it. It reports "
+                "runs that have ended and classifies nothing, so the deployed bytes and the "
+                "tree behave identically inside this window"
+            ),
+            cleared_by=(
+                "uv run python tools/release_lambda.py --function notifier, from main, then "
+                "the version id and digest into infra/notifier-release.yaml and "
+                "infra/notifications.yaml in the same commit as deleting this"
+            ),
+            builds_to="83656e1300caae1808df647518075eb909d5eee4c54e8d23daaf2c5a347abd88",
+            released="d41512d0174986aff63c6e6419bf42d5668db9734dd11f694f30ea627aa1d13b",
+            recorded_on=date(2026, 8, 6),
+        ),
     )
     return one_record_per_function(releases)
 

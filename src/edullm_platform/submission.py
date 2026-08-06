@@ -74,6 +74,7 @@ from edullm_platform.contracts.policy import (
 )
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import CostInputs, WorkloadCatalog, WorkloadProfile
+from edullm_platform.daily_ceiling import CeilingReading, class_under_the_ceiling
 from edullm_platform.errors import (
     DeniedOutrightError,
     ExperimentNotASlugError,
@@ -458,6 +459,15 @@ def compile_submission(
     # one: a caller that never passes this gets the unbuilt-commit refusal rather than a
     # manifest whose image nobody established.
     published_images: Sequence[PublishedImage] = (),
+    # WHAT THE DAY HAS ALREADY COMMITTED WITH NOBODY ASKED, OR ``None`` WHERE NOTHING IS
+    # BOUNDING THE DAY. Read by the compile job out of the run index and passed in for the
+    # reason every other environmental fact is: this function is given loaded configuration
+    # and reads no file. ``edullm check`` passes nothing, because a laptop holds no ledger
+    # and the sentence it would print instead is one about the tool rather than about the
+    # run; the deferred checks the CLI already names are where that belongs.
+    #
+    # It can only raise the class. See daily_ceiling.class_under_the_ceiling.
+    daily_ceiling: CeilingReading | None = None,
 ) -> CompiledSubmission:
     workload = _resolve_workload(
         catalog, inputs.workload_profile, repository=inputs.repository
@@ -672,7 +682,14 @@ def compile_submission(
             f"{', '.join(tripped)}"
         )
 
-    approval_class = classify_request(facts, policy.thresholds)
+    # THE PER-RUN QUESTION FIRST, THEN THE AGGREGATE ONE, AND NEVER THE OTHER WAY ROUND.
+    # `classify_request` is re-derived inside AWS from the manifest and the deployed
+    # thresholds, so it is the floor and it must go on being a pure function of the
+    # submission. The ceiling then reads a ledger that only this side can see and may raise
+    # what that answered. Nothing here can lower a class.
+    approval_class = class_under_the_ceiling(
+        classify_request(facts, policy.thresholds), reading=daily_ceiling
+    )
     return CompiledSubmission(
         run_id=run_id,
         manifest=manifest,
@@ -775,6 +792,48 @@ def _retry_lines(manifest: RunManifest) -> tuple[str, ...]:
     return ("## What the second attempt buys", "", said, "")
 
 
+def _daily_ceiling_lines(
+    submission: CompiledSubmission,
+    *,
+    policy: ApprovalPolicy,
+    reading: CeilingReading | None,
+) -> tuple[str, ...]:
+    """The section that appears only when the day is the reason this request is here.
+
+    Empty for every submission that would have reached a lead anyway, which is most of the
+    ones a lead ever sees. A section printed on all of them would be a paragraph nine people
+    learn to scroll past, and the one submission it exists for is the one where scrolling
+    past it loses the whole point: a request whose worst case is a few dollars, which a
+    reader would otherwise release without asking why they were asked.
+
+    Whether the day is the reason is answered by re-asking ``classify_request``, which is
+    the only exact form of the question. Comparing the cost against the per-run bound was
+    the obvious shortcut and it is wrong on every submission held back by one of the three
+    tests that are not about money: a cheap fan-out, a cheap run on an unreviewed digest and
+    a cheap run whose inputs do not resolve all reach a lead on their own merits, and all
+    three would have been told the day put them there.
+    """
+    if reading is None or not reading.asks_a_lead:
+        return ()
+    if classify_request(submission.facts, policy.thresholds) is not ApprovalClass.AUTOMATIC:
+        return ()
+    return (
+        "## Why this is in front of you",
+        "",
+        reading.said,
+        "",
+        (
+            "**This request is under the per-run bound and would have been released by "
+            "nobody on any other day.** What put it here is the account's daily ceiling on "
+            "spending nobody looks at, in `config/policy.yaml`. You are being asked about "
+            "the day rather than about this run, so the question is whether the account "
+            "should go on committing money unattended today and not whether this figure is "
+            "reasonable. The ceiling resets at midnight UTC."
+        ),
+        "",
+    )
+
+
 def render_approver_context(
     submission: CompiledSubmission,
     *,
@@ -786,6 +845,7 @@ def render_approver_context(
     placement_note: str | None = None,
     scan_note: str | None = None,
     run_history: RunHistory | None = None,
+    daily_ceiling: CeilingReading | None = None,
 ) -> str:
     """What the reviewer reads before deciding, as GitHub step-summary markdown.
 
@@ -892,6 +952,12 @@ def render_approver_context(
         ),
         "",
         *_retry_lines(manifest),
+        # SAID ONLY WHERE IT IS THE REASON, AND THAT IS WHAT MAKES IT WORTH READING. A run
+        # over `automatic_below_cost_usd` was always going to reach a lead and the day has
+        # nothing to do with why. A run under it that reaches one anyway is here because the
+        # account has spent what it will spend unattended today, and an approver who is not
+        # told that reads a $12 request and cannot see what they are actually being asked.
+        *_daily_ceiling_lines(submission, policy=policy, reading=daily_ceiling),
         "## What runs of this shape have taken",
         "",
         history.said,

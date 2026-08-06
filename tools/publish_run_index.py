@@ -22,6 +22,7 @@ import os
 import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 TOOLS_DIRECTORY = Path(__file__).resolve().parent
@@ -94,6 +95,38 @@ def _whole(variable: str) -> int:
     return value
 
 
+def _money(variable: str) -> Decimal:
+    """The worst case, refused rather than defaulted when it is missing or malformed.
+
+    **REQUIRED, WHICH IS THE OPPOSITE OF WHAT THE FIELD ITSELF IS, AND BOTH ARE RIGHT.**
+    ``MintedRun.maximum_compute_cost_usd`` is optional because the branch holds
+    twenty-three entries written before it existed and a reader has to be able to parse
+    them. Writing one without it is a different thing entirely: the compile job computes
+    this figure on every submission and puts it in ``GITHUB_OUTPUT``, so an entry arriving
+    here with no cost means the workflow stopped passing it.
+
+    Defaulting that to absent would be the quiet failure. Every subsequent submission would
+    read a day it could not price, ``daily_ceiling`` would fail closed, and every run on
+    the platform would go to a lead for reasons nothing on the page explains -- a control
+    stuck on rather than off, which is the failure mode people route around. Refusing here
+    puts it in the log of the job that broke it.
+
+    Read as text through ``Decimal`` rather than through ``float``, for the reason the
+    field's own note gives: a ``Decimal`` through a float comes back with a tail on it, and
+    this is compared against a reviewed bound.
+    """
+    text = _required(variable)
+    try:
+        value = Decimal(text)
+    except InvalidOperation:
+        raise RunIndexInputError(
+            f"{variable} must be a decimal amount and carries {text!r}"
+        ) from None
+    if value < 0:
+        raise RunIndexInputError(f"{variable} is negative and carries {text!r}")
+    return value
+
+
 def minted_from_environment(*, minted_at: datetime | None = None) -> MintedRun:
     """One entry, out of what the compile job knows and the runner supplies.
 
@@ -106,6 +139,7 @@ def minted_from_environment(*, minted_at: datetime | None = None) -> MintedRun:
         workflow_run_id=_whole("WORKFLOW_RUN_ID"),
         experiment=os.environ.get("EXPERIMENT", "").strip() or None,
         fanout_size=_optional_whole("FANOUT_SIZE"),
+        maximum_compute_cost_usd=_money("MAXIMUM_COMPUTE_COST_USD"),
         minted_at=minted_at or datetime.now(UTC),
         **fields,
     )
