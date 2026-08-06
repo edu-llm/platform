@@ -18,6 +18,24 @@
 # The build is deterministic, so a rebuild that changed nothing produces the same digest and
 # needs no edit here. Releasing means running the procedure in infra/README.md and updating
 # both fields below in the same commit as the change that caused them to move.
+#
+# NOTHING COMPARED THIS DIGEST TO ANYTHING UNTIL 2026-08-06, AND IT HAD ALREADY DRIFTED. The
+# validator, the recorder and the janitor each carried a test holding their record against a
+# zip built from the tree; this function arrived after all three and got none, so its zip was
+# free to move with nothing going red. It did. It was running 35a2634ce885 against a recorded
+# b55a71d58701 for an unknown period, and then moved again when ResultManifest gained
+# status_reason and container_reason, which reaches this package through
+# notifications/facts.py. The other two functions moved on that same contract, both went red,
+# and both were recorded in the pending register. This one was recorded nowhere, because a
+# register is only as complete as the tripwires that feed it and nothing reads identically to
+# fine.
+#
+# It was found by hand: #294 deployed all three and somebody noticed only two had an entry.
+# What closed it is not a fourth copy of the same test. tests/test_released_zips.py compares
+# every function tools/release_lambda.py can release, parametrized over that table, so the
+# next one is covered on the day it is added to it rather than the day somebody remembers.
+# The same module holds every AWS::Lambda::Function under infra/ to being releasable at all,
+# which is the check that would have caught this function on the day its template landed.
 schema_version: 1
 s3_key: notifier/notifier.zip
 s3_object_version: To1UIH0r1N8yfu0tZ.XfmbIox7es.JW0

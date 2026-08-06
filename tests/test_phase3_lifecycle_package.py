@@ -19,11 +19,20 @@ cost allocation tags have turned out to be unactivatable from a linked account. 
 queue-wait detector reads the same event stream. Neither is worth more than the bytes
 underneath it.
 
-Mirrors ``tests/test_phase2_lambda_package.py`` deliberately: same three assertions, same
-release-record shape, same slow marker on the one that builds. What it does not mirror is
-that file's checks on the wheel platform and on where configuration lands, which are
-properties of ``build_package`` itself and are already asserted once. Asserting them twice
-would make a change to the shared builder fail in two places and be understood in neither.
+**THE DIGEST COMPARISON THAT USED TO BE HERE IS NOW WRITTEN ONCE FOR ALL FOUR FUNCTIONS,
+BECAUSE MIRRORING IS WHAT LEFT THE FOURTH WITHOUT ONE.** This module said it mirrored its
+Phase 2 sibling, the janitor's module said it mirrored this one, and the notifier arrived
+after all three and was mirrored by nobody -- so it was the one function whose zip could move
+with nothing going red, and it drifted for an unknown period before #294 found it by hand.
+``tests/test_released_zips.py`` now parametrizes the comparison over
+``release_lambda.FUNCTIONS``, which is the table a function must be in before a release can
+be cut for it, so a fifth is covered on the day it is added rather than on the day somebody
+copies this file again.
+
+What is left here is what is this recorder's own. It does not mirror the Phase 2 module's
+checks on the wheel platform or on where configuration lands, which are properties of
+``build_package`` itself and are already asserted once; asserting them twice would make a
+change to the shared builder fail in two places and be understood in neither.
 
 The one packaging check that is this function's own is the last one here: that its archive
 carries no configuration whatsoever. That is not a property of the builder -- the builder
@@ -40,8 +49,6 @@ from typing import Any
 
 import pytest
 import yaml
-
-from edullm_platform.pending_amendments import compare_release
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RELEASE_RECORD_PATH = PROJECT_ROOT / "infra" / "lifecycle-recorder-release.yaml"
@@ -95,20 +102,6 @@ def package(tmp_path_factory: pytest.TempPathFactory) -> dict[str, object]:
     )
 
 
-def test_the_template_and_the_record_name_the_same_object() -> None:
-    """Mutation: release the zip and forget the template, or the other way round.
-
-    Either alone deploys nothing. A new object version with no template edit leaves the
-    resource's properties byte-identical, so the change set comes back empty and
-    `deploy --no-fail-on-empty-changeset` reports success over unchanged code.
-    """
-    code = recorder_function()["Code"]
-    recorded = release_record()
-
-    assert code["S3Key"] == recorded["s3_key"]
-    assert code["S3ObjectVersion"] == recorded["s3_object_version"]
-
-
 def test_the_template_runs_the_entry_point_the_builder_packages_for() -> None:
     """Mutation: point Handler at the validator's entry point.
 
@@ -119,47 +112,6 @@ def test_the_template_runs_the_entry_point_the_builder_packages_for() -> None:
     """
     assert recorder_function()["Handler"] == HANDLER_ENTRY_POINT
     assert recorder_function()["Code"]["S3Key"] == ARTIFACT_KEY
-
-
-@pytest.mark.slow
-def test_the_released_zip_is_the_one_this_tree_builds(package: dict[str, object]) -> None:
-    """Mutation: change a contract the recorder imports and do not release it.
-
-    THIS IS THE CHECK THE RECORDER DID NOT HAVE ON 2026-07-31, WHEN ITS ABSENCE WAS FOUND
-    RATHER THAN SUFFERED. The deployed CodeSha256 matched neither this tree nor the tree
-    as it stood that morning, so the function had been running unaccounted-for bytes for
-    an unknown period and every lineage record it wrote in that time was written by code
-    nobody could point at.
-
-    The build is deterministic, so this compares a digest rather than a timestamp: an
-    unchanged tree rebuilds to the recorded digest and needs no edit. It fails only when
-    the packaged bytes have moved and the record has not, which is exactly the window in
-    which the account is writing lineage this tree did not describe.
-
-    Mirrors its Phase 2 sibling in consulting
-    :func:`~edullm_platform.pending_amendments.compare_release`, and for the same reason:
-    the zip is uploaded from `main` and the change reaches `main` by merging past this. The
-    recorder is the function where the escape hatch has to be *most* grudging, because its
-    drift is the quiet one -- a stale validator refuses a submission and somebody reads the
-    refusal, while a stale recorder writes lineage that looks exactly like correct lineage
-    into immutable records. So the terms are the register's, unchanged: a record that names
-    both digests, stops fitting when either moves, and lapses.
-    """
-    recorded = release_record()
-    comparison = compare_release(
-        "recorder", built=str(package["sha256"]), released=str(recorded["sha256"])
-    )
-
-    if comparison.waiting:
-        pytest.skip(comparison.detail)
-
-    assert comparison.holds, (
-        "the zip this tree builds is not the zip that was released. Something the package "
-        "carries has changed -- the handler, the projection, or a contract either imports "
-        "-- and the deployed recorder is still writing lineage with the previous bytes. "
-        "Release it with the procedure in infra/README.md and update "
-        f"infra/lifecycle-recorder-release.yaml in the same commit.\n\n{comparison.detail}"
-    )
 
 
 @pytest.mark.slow

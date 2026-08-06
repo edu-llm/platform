@@ -13,6 +13,15 @@ where the handler looks for it rather than merely somewhere in the archive, and 
 identical inputs produce identical bytes -- which is what lets a rebuild that changed
 nothing avoid minting a new S3 version and a new template edit.
 
+**The digest comparison is no longer here and that is the repair rather than a loss.** This
+module carried the first `test_the_released_zip_is_the_one_this_tree_builds`, the recorder's
+module copied it, the janitor's copied that, and the notifier arrived after all three and got
+none -- so it was the one function whose zip could move with nothing going red, and it did.
+The comparison now runs once over `release_lambda.FUNCTIONS` in
+`tests/test_released_zips.py`, which is the table a function has to be in before a release
+can be cut for it, so the fifth function is covered on the day it is added rather than on the
+day somebody remembers this file. What stays here is what is this function's own.
+
 The build runs `uv pip install` against an index, so it is marked slow and opted out of by
 `-m "not slow"` along with everything else that starts a subprocess.
 """
@@ -27,7 +36,6 @@ from typing import Any
 import pytest
 import yaml
 
-from edullm_platform.pending_amendments import compare_release
 from tools.build_admission_lambda import (
     ADMISSION_CONFIG,
     DEFAULT_PYTHON_PLATFORM,
@@ -167,76 +175,6 @@ def test_identical_inputs_produce_identical_bytes(tmp_path: Path) -> None:
     assert (
         hashlib.sha256((tmp_path / "one.zip").read_bytes()).hexdigest()
         == hashlib.sha256((tmp_path / "two.zip").read_bytes()).hexdigest()
-    )
-
-
-def test_the_template_pins_the_object_the_release_record_names() -> None:
-    """Reads BOTH files. Mutation: edit S3ObjectVersion in one of them and not the other.
-
-    Two files name the deployed object and no reference connects them. Edited apart, the
-    template points at a zip nobody recorded or the record describes a zip nobody deployed,
-    and the digest comparison below then vouches for the wrong bytes -- which is worse than
-    not having it, because it would report a release that did not happen.
-    """
-    code = deployed_code_block()
-    recorded = release_record()
-
-    assert code["S3Key"] == recorded["s3_key"]
-    assert code["S3ObjectVersion"] == recorded["s3_object_version"]
-
-
-@pytest.mark.slow
-def test_the_released_zip_is_the_one_this_tree_builds(package: dict[str, object]) -> None:
-    """Mutation: change config/workload-catalog.yaml and do not release the validator.
-
-    THIS IS THE TEST THAT WAS MISSING WHEN PHASE 4 NEEDED IT. build_admission_lambda copies
-    config/*.yaml into the zip, so the catalog and the execution targets are part of this
-    function's release rather than something it reads at run time. Nothing about editing a
-    config file suggests a Lambda release, and nothing failed when one was skipped: every
-    template was deployed, every test was green, and the first GPU submission was refused
-    with unprovisioned_compute_profile by a validator holding the previous catalog.
-
-    That refusal is the worst shape available here. It is correct for the bytes that
-    produced it, wrong about the account, and it names the compute profile rather than the
-    release -- so it reads as a configuration mistake and sends the reader to the two files
-    that were already right.
-
-    The build is deterministic, so this compares a digest rather than a timestamp: an
-    unchanged tree rebuilds to the recorded digest and needs no edit. It fails only when
-    the packaged bytes have moved and the record has not, which is exactly the window in
-    which the account is running something this tree did not describe.
-
-    **IT USED TO BE UNCLEARABLE BEFORE THE MERGE THAT CAUSED IT, WHICH IS A DIFFERENT
-    PROBLEM FROM BEING RIGHT.** The zip cannot be uploaded until the change is on `main`,
-    because `deploy-phase2-admission.yml` runs from nowhere else; and the change could not
-    merge green while this was red. So every change to a packaged module -- a contract
-    field, a config line, a reworded comment -- was landed by an administrator merging past
-    the required checks. A bypass taken that often is not read, and it is the same bypass
-    that would let a genuinely broken change through.
-
-    So a *recorded* pending release now skips this, on the terms
-    :mod:`edullm_platform.pending_amendments` sets for an undeployed IAM amendment: the
-    record names the function, both digests and the command, it stops fitting the moment
-    either digest moves, and it lapses after
-    :data:`~edullm_platform.pending_amendments.RELEASE_WINDOW`. Nothing else skips it. A
-    digest that has moved with no record behind it fails exactly as it did before, which is
-    the whole value of the check -- it is the only thing that sees a config edit nobody
-    released, and `infra/admission-validator-release.yaml` records what that cost.
-    """
-    recorded = release_record()
-    comparison = compare_release(
-        "validator", built=str(package["sha256"]), released=str(recorded["sha256"])
-    )
-
-    if comparison.waiting:
-        pytest.skip(comparison.detail)
-
-    assert comparison.holds, (
-        "the zip this tree builds is not the zip that was released. Something the package "
-        "carries has changed -- the handler, a contract it imports, or a file under "
-        "config/ -- and the deployed validator is still running the previous bytes. "
-        "Release it with the procedure in infra/README.md and update "
-        f"infra/admission-validator-release.yaml in the same commit.\n\n{comparison.detail}"
     )
 
 
