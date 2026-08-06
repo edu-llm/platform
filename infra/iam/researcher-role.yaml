@@ -163,7 +163,13 @@ Resources:
                   - lifetime
           # Who the working-tier fence and CloudTrail name. No aws:RequestTag test, for the
           # mirror-image reason: this action is not given those keys.
-          - Sid: InternRolesMayNameThePersonAtTheKeyboard
+          #
+          # THE SID IS SHORT ON PURPOSE. It read InternRolesMayNameThePersonAtTheKeyboard,
+          # which is forty alphanumeric characters and therefore the shape of an AWS secret
+          # access key, so role_drift.py's scanner refused the template for carrying a
+          # credential. The scanner is right to be blunt about a forty-character run and this
+          # is the cheaper side to give way on.
+          - Sid: InternRolesMayNameThePerson
             Effect: Allow
             Principal:
               AWS:
