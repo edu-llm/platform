@@ -84,10 +84,15 @@ HISTORY_JOB = "substrate-history"
 ACTIVITY_JOB = "activity-history"
 ASKS_JOB = "open-asks"
 ROSTER_JOB = "roster-against-the-account"
-#: The first job in the file and the one the informational check had never covered. Found by
-#: the sweep below on the morning a tenth job was added, which is what the sweep is for.
+#: Found by the sweep below on the morning a tenth job was added, which is what the sweep is
+#: for. It was the first job in the file until the gate check went in front of it.
 DOCKERFILES_JOB = "registered-dockerfiles"
 LEAD_GATE_JOB = "lead-gate"
+#: The one job here whose subject is a GitHub setting rather than a file or the account. Its
+#: neighbour above is the other half of the same question and the two do not overlap:
+#: `lead-gate` asks who is behind the reviewer slot, from a capture, because that cannot be
+#: read live; this one asks whether the slot is still there at all, and reads it live.
+GATE_JOB = "the-gate-still-exists"
 
 RECONCILE_TOOL = "tools/find_runs_that_saved_nothing.py"
 WANDB_TOOL = "tools/verify_wandb_credential.py"
@@ -99,6 +104,7 @@ CAPTURE_TOOL = "tools/read_substrate.py"
 ACTIVITY_TOOL = "tools/report_activity.py"
 ASKS_TOOL = "tools/report_asks.py"
 LEAD_GATE_TOOL = "tools/report_who_can_open_the_lead_gate.py"
+GATE_TOOL = "tools/verify_the_gate.py"
 
 RECONCILE_STEP = "Reconcile what those runs actually wrote"
 WANDB_STEP = "Ask W&B whether it would accept the stored key"
@@ -116,6 +122,7 @@ ACTIVITY_HISTORY_STEP = "Keep the page on the machine/activity branch"
 ASKS_STEP = "Count the open asks"
 DOCKERFILES_STEP = "Check every registration against the repository it names"
 LEAD_GATE_STEP = "Compare the captured team against the roster, and say how old the capture is"
+GATE_STEP = "Check the approval environments against what this repository declares"
 GUARD_STEP = "Check the audit reader role is deployed"
 
 #: Where a reading is kept, and what it is called there. Both are spelled here because the
@@ -1619,9 +1626,50 @@ def test_the_lead_gate_job_does_not_swallow_the_tool_exit_code(
     assert 'exit "${status}"' in body
 
 
+def test_the_audit_reads_the_approval_gate_out_of_github_every_morning(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: delete this job, which costs nothing anybody would notice.
+
+    It is the only check anywhere that reads the control deciding whether a run waits for a
+    person. Everything else in this repository holds a record against reality; the approval
+    environments are a browser setting, and between the thirty-day capture under
+    ``fixtures/evidence/phase-2/github/`` and its expiry nothing said what they were. Deleted,
+    the suite stays green, every submission keeps working, and the morning somebody converts
+    this repository to private every waiting job proceeds with nobody asked.
+
+    ``lead-gate`` beside it is not a substitute and neither is a substitute for it. That job
+    asks who stands behind the reviewer slot and can only do it from a capture; this one asks
+    whether the slot is there, and can only do that live. The failure each is blind to is the
+    other's subject.
+
+    Also mutation: give it ``id-token: write`` and a role, on the reasoning that a check about
+    the gate belongs with the other account checks. It reads GitHub rather than AWS, both
+    endpoints answer on a public repository with no session at all, and a credential here
+    would be three new ways for the first job in the file to go red about something other than
+    the gate.
+    """
+    job = workflow["jobs"][GATE_JOB]
+    rendered = json.dumps(job)
+    body = step(job, GATE_STEP)["run"]
+
+    assert GATE_TOOL in body
+    assert "permissions" not in job
+    assert ROLE_VARIABLE not in rendered
+    assert "aws-actions/configure-aws-credentials" not in rendered
+    assert GUARD_STEP not in [item.get("name") for item in job["steps"]]
+
+    # The repository comes from the context rather than from the tool's default. The default
+    # is `edu-llm/platform` and it is right, which is exactly why it must not be what runs
+    # here: a fork or a rename would have this job reporting confidently on somebody else's
+    # settings.
+    assert "${{ github.repository }}" in body
+
+
 @pytest.mark.parametrize(
     ("job_id", "step_name"),
     [
+        (GATE_JOB, GATE_STEP),
         (RECONCILE_JOB, RECONCILE_STEP),
         (WANDB_JOB, WANDB_STEP),
         (RELEASE_JOB, RELEASE_STEP),
@@ -1685,6 +1733,7 @@ def test_every_job_in_this_file_is_either_checked_above_or_excused_by_name(
         DOCKERFILES_JOB,
         ROSTER_JOB,
         LEAD_GATE_JOB,
+        GATE_JOB,
     }
     unaccounted = set(workflow["jobs"]) - checked - set(NEEDS_ITS_PREDECESSOR)
 
