@@ -1012,6 +1012,30 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # a submission could spend rather than a submission that cannot run. It costs nothing
     # today because config/run-history.json records no run of open-instruct-scored-rewards
     # under either of its profiles.
+    #
+    # A TWENTY-SECOND, AND IT WIDENS BOTH OF THOSE RATHER THAN THE PAIR IT WAS DRAFTED OVER.
+    # This change was written against a tree whose validator and notifier records were the
+    # attempt_id pair, and it widened those. Every record it was written over has since been
+    # cleared by a release, so re-applying that side wholesale would have resurrected four
+    # windows other people have already shut, each quoting a `released` digest the account no
+    # longer carries. What is here instead is main's list with this change's own cause added
+    # to the two records that are open on it.
+    #
+    # WHAT THE CAUSE IS. config/workload-catalog.yaml gains the edullm-p1-train profile, and
+    # ADMISSION_CONFIG and NOTIFIER_CONFIG both package that file, so the validator's and the
+    # notifier's zips move and the recorder's and the janitor's do not. Both of those records
+    # were opened by the changes above and are extended here rather than joined by new ones,
+    # because `one_record_per_function` refuses two records for one zip and a digest has no
+    # per-cause decomposition.
+    #
+    # NEITHER FUNCTION READS A WORKLOAD PROFILE BY NAME, SO THIS CAUSE IS BYTES AND NO
+    # BEHAVIOUR, WHICH IS NOT TRUE OF THE ONE ABOVE IT. RunManifest.workload_profile is a
+    # plain string and nothing looks it up: a submission is compiled on a runner from main's
+    # catalog and carries its own runtime bound, attempt count and checkpoint contract, and
+    # admission re-derives the class from those fields and from the compute profile's rate.
+    # So a run naming edullm-p1-train is admitted correctly by the deployed validator today.
+    # The catalog entries that would not survive this window are compute profiles, which
+    # admission does look up, and none moved.
     releases: tuple[PendingRelease, ...] = (
         PendingRelease(
             function="validator",
@@ -1020,14 +1044,18 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "verbatim, drops maximum_attempts on open-instruct-scored-rewards-train "
                 "from 2 to 1, so until this is released the deployed copy prices and "
                 "provisions that profile for two attempts of a trainer that restarts from "
-                "step 0. No run of that repository is recorded under either of its profiles"
+                "step 0. No run of that repository is recorded under either of its "
+                "profiles. Extended by a second cause: the same file gains the "
+                "edullm-p1-train workload profile, which the validator does not read "
+                "because it looks up compute profiles rather than workload ones, so that "
+                "half moves the packaged bytes and nothing it decides"
             ),
             cleared_by=(
                 "uv run python tools/release_lambda.py --function validator, from main, "
                 "then the version id and digest into infra/admission-validator-release.yaml "
                 "and infra/admission-state-machine.yaml in the same commit as deleting this"
             ),
-            builds_to="584b52714be7e90beb8eb28b7dc260e1684686b5db81df086bdf036aeacd0ca7",
+            builds_to="2cda942e9518cf23b6042a5b5ab35d550557a0784acfc9c3ee2d593844e9064c",
             released="237cc46703bc9145453d6ee6e5ea01feb0d9430f2107d6fded381f83f5988ed7",
             recorded_on=date(2026, 8, 6),
         ),
@@ -1066,14 +1094,17 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "open-instruct-scored-rewards-train drops there from 2 attempts to 1, so an "
                 "approval request for that profile quotes two attempts and twice the worst "
                 "case this tree would. None has been sent, and that profile has no recorded "
-                "run"
+                "run. Extended a third time: the same file gains the edullm-p1-train "
+                "profile, which nothing the notifier says about a run reads, because it "
+                "names the workload the manifest names, so that half is bytes and no "
+                "behaviour"
             ),
             cleared_by=(
                 "uv run python tools/release_lambda.py --function notifier, from main, then "
                 "the version id and digest into infra/notifier-release.yaml and "
                 "infra/notifications.yaml in the same commit as deleting this"
             ),
-            builds_to="6ddb40ced068f75061c07b3136a867028c67747e6af2cf9791a450ee9accf247",
+            builds_to="d78c4a48482558039e7affc51331ec558e5880f8e48876bafb567fe683ee67b9",
             released="d41512d0174986aff63c6e6419bf42d5668db9734dd11f694f30ea627aa1d13b",
             recorded_on=date(2026, 8, 6),
         ),
