@@ -24,6 +24,21 @@ big.
 figure. That number lives in Weights and Biases and is in no Batch event, so it would need a
 W&B call and a credential this path does not hold. The money and the machine are what the
 event can support, and inventing the rest is worse than leaving it out.
+
+**EVERY VALUE THAT CAME FROM SOMEBODY'S KEYBOARD GOES THROUGH :func:`escaped`, AND IT GOES
+THROUGH IT BEFORE IT IS INTERPOLATED RATHER THAN AFTER THE LINE IS BUILT.** Slack reads
+``&``, ``<`` and ``>`` as control characters, so an experiment named ``<!channel>`` is a
+run that rings every phone in the workspace each time it ends, and a fan-out ending
+sixty-four cells rings them sixty-four times. Nothing about that needs malice: an angle
+bracket in a name is enough, and the same three characters break ordinary rendering in
+duller ways.
+
+The ordering is the part worth guarding. This module builds Slack control sequences of its
+own -- the link in :func:`_how_to_answer` today, user mentions when there is an identity
+map -- and a pass over the finished string would turn those into the entity codes a reader
+sees rather than the link a reader clicks. Escaping each value on the way in leaves the
+sequences this module wrote intact, because they are written after the escaping and never
+pass through it.
 """
 
 from __future__ import annotations
@@ -45,6 +60,7 @@ __all__ = [
     "RUNS_CHANNEL",
     "Message",
     "duration",
+    "escaped",
     "money",
     "plain",
     "render_approval_requested",
@@ -82,6 +98,43 @@ class Message:
 
     channel: str
     text: str
+
+
+#: The whole of what Slack parses, and what each character becomes. Three and no more:
+#: https://docs.slack.dev/messaging/formatting-message-text#escaping, which says in as many
+#: words that only these are decoded again for display, so a fourth would be published as
+#: the entity code rather than as the character somebody typed.
+#:
+#: A translation table rather than three chained ``str.replace`` calls, and the difference is
+#: not style. Chained replacements are order-dependent in the one direction that fails
+#: quietly: ``<`` before ``&`` writes ``&lt;`` and the next pass turns its ampersand into
+#: ``&amp;lt;``, which reaches the channel as the literal text ``&lt;``. ``str.translate``
+#: reads each character once and cannot substitute into its own output, so the ordering
+#: mistake has nowhere to happen.
+SLACK_ENTITIES: Final = str.maketrans({"&": "&amp;", "<": "&lt;", ">": "&gt;"})
+
+
+def escaped(value: str) -> str:
+    """One value, made inert, on its way into a line this module is still assembling.
+
+    CALLED PER FIELD AND NEVER OVER A FINISHED MESSAGE, WHICH IS THE ONE THING TO PRESERVE
+    HERE. The rendered text legitimately holds Slack control sequences this module wrote --
+    ``<url|label>`` below, and mentions once there is a map from a GitHub login to a chat
+    account -- and a pass over the assembled string cannot tell those from an experiment
+    named ``<!channel>``. It would publish the platform's own link as visible entity codes
+    while doing nothing the per-field call has not already done.
+
+    Idempotent it is not, and it is not meant to be: escaping an escaped value writes
+    ``&amp;lt;`` where ``&lt;`` was. So each value passes through here exactly once, at the
+    point it is interpolated, and every helper in this module returns text that has already
+    been through it.
+
+    A no-op for the overwhelming majority of values, which is why it is applied to reviewed
+    configuration as readily as to a submitter's free text. ``gpu-8xa10g`` and ``A10G``
+    carry none of the three characters and come back unchanged, so there is no cost to
+    holding one rule rather than a judgement about each field.
+    """
+    return value.translate(SLACK_ENTITIES)
 
 
 def money(value: Decimal | None) -> str:
@@ -122,11 +175,24 @@ def duration(seconds: int) -> str:
 
 
 def _who(facts: RunEndedFacts) -> str:
-    return facts.person or NOBODY_NAMED
+    """The submitter's display name, which ``config/organization.yaml`` records free.
+
+    ``OrganizationMember.display_name`` carries a length and no pattern, unlike the login
+    beside it, so this is one of the two ways a name a person typed reaches the channel.
+    """
+    return escaped(facts.person) if facts.person else NOBODY_NAMED
 
 
 def _which(facts: RunEndedFacts) -> str:
-    return facts.experiment or NO_EXPERIMENT
+    """The experiment, and the reason every message in this module is escaped at all.
+
+    IT IS READ OFF THE JOB AND NOT OFF ANY RULE. The value is ``WANDB_RUN_GROUP`` from the
+    terminal event's own container environment, which is whatever the job was launched with.
+    ``submission.compile_submission`` holds a new submission to ``SLUG_PATTERN``, and that
+    says nothing about the runs already in the account: a rule added on a Thursday does not
+    reach into a job admitted on the Monday, and this reader answers about both.
+    """
+    return escaped(facts.experiment) if facts.experiment else NO_EXPERIMENT
 
 
 def _where(facts: RunEndedFacts) -> str:
@@ -136,9 +202,9 @@ def _where(facts: RunEndedFacts) -> str:
     the slot a profile usually fills reads as a profile nobody has heard of.
     """
     if facts.compute_profile is not None:
-        return facts.compute_profile
+        return escaped(facts.compute_profile)
     if facts.queue_name is not None:
-        return f"the {facts.queue_name} queue"
+        return f"the {escaped(facts.queue_name)} queue"
     return "a machine this event does not name"
 
 
@@ -311,9 +377,9 @@ def _arithmetic(facts: ApprovalRequestedFacts) -> str:
     """
     if facts.cost is None:
         return (
-            f"No execution target prices {facts.compute_profile}, so nothing here can say "
-            "what this may cost. Admission prices it again and will refuse it if the "
-            "catalog does not carry the machine."
+            f"No execution target prices {escaped(facts.compute_profile)}, so nothing here "
+            "can say what this may cost. Admission prices it again and will refuse it if "
+            "the catalog does not carry the machine."
         )
     cost = facts.cost
     return (
@@ -343,7 +409,7 @@ def _over_the_profile(facts: ApprovalRequestedFacts) -> str:
         return ""
     return (
         f" It asks for {plain(facts.cost.maximum_runtime_hours)}h where "
-        f"{facts.workload_profile} declares {plain(facts.profile_hours)}h."
+        f"{escaped(facts.workload_profile)} declares {plain(facts.profile_hours)}h."
     )
 
 
@@ -391,13 +457,13 @@ def _credible(facts: ApprovalRequestedFacts) -> str:
     over = _count(shape.succeeded, "run")
     if cost.maximum_runtime_hours * SECONDS_AN_HOUR_DECIMAL < shape.median_seconds:
         return (
-            f"{shape.said_of} has taken {took} over {over}, which is longer than the "
-            f"{plain(cost.maximum_runtime_hours)}h bound, so this one is likely to be cut "
-            "off at the bound."
+            f"{escaped(shape.said_of)} has taken {took} over {over}, which is longer than "
+            f"the {plain(cost.maximum_runtime_hours)}h bound, so this one is likely to be "
+            "cut off at the bound."
         )
     multiple = _multiple(cost.maximum_runtime_hours, shape.median_seconds)
     return (
-        f"{shape.said_of} has taken {took} over {over}, and the "
+        f"{escaped(shape.said_of)} has taken {took} over {over}, and the "
         f"{plain(cost.maximum_runtime_hours)}h bound is {multiple} times that."
     )
 
@@ -417,39 +483,40 @@ def _why_this_gate(facts: ApprovalRequestedFacts) -> str:
     """
     if facts.approval_class == "exception":
         return (
-            f"exception, {facts.gate}, because a capacity block is a dated purchase of "
-            "reserved machines and a platform admin is who buys one. No lead is being asked "
-            "for this."
+            f"exception, {escaped(facts.gate)}, because a capacity block is a dated purchase "
+            "of reserved machines and a platform admin is who buys one. No lead is being "
+            "asked for this."
         )
     if facts.approval_class == "automatic":
         return (
-            f"automatic, {facts.gate}, released by nobody. This is here so the channel has "
-            "the record, and it is not waiting on anybody."
+            f"automatic, {escaped(facts.gate)}, released by nobody. This is here so the "
+            "channel has the record, and it is not waiting on anybody."
         )
     if facts.is_a_fanout:
         return (
-            f"routine, {facts.gate}, because a fan-out is never released automatically, "
-            "whatever it costs."
+            f"routine, {escaped(facts.gate)}, because a fan-out is never released "
+            "automatically, whatever it costs."
         )
     if facts.scan_unreviewed:
         return (
-            f"routine, {facts.gate}, because this image digest carries registry findings "
-            "nobody has recorded a review of."
+            f"routine, {escaped(facts.gate)}, because this image digest carries registry "
+            "findings nobody has recorded a review of."
         )
     if facts.cost is None:
         return (
-            f"routine, {facts.gate}, because nothing here could price the machine, and a "
-            "request nobody can price is never released by nobody."
+            f"routine, {escaped(facts.gate)}, because nothing here could price the machine, "
+            "and a request nobody can price is never released by nobody."
         )
     if facts.cost.maximum_compute_cost_usd < facts.automatic_below_cost_usd:
         return (
-            f"routine, {facts.gate}, because one of this request's inputs did not resolve. "
-            "Admission refuses those outright, so releasing it buys a refusal rather than a "
-            "run."
+            f"routine, {escaped(facts.gate)}, because one of this request's inputs did not "
+            "resolve. Admission refuses those outright, so releasing it buys a refusal "
+            "rather than a run."
         )
     return (
-        f"routine, {facts.gate}, because {money(facts.cost.maximum_compute_cost_usd)} is not "
-        f"under the {money(facts.automatic_below_cost_usd)} nobody releases."
+        f"routine, {escaped(facts.gate)}, because "
+        f"{money(facts.cost.maximum_compute_cost_usd)} is not under the "
+        f"{money(facts.automatic_below_cost_usd)} nobody releases."
     )
 
 
@@ -472,11 +539,12 @@ def _routing(facts: ApprovalRequestedFacts) -> str:
     if facts.approval_class == "exception":
         if not facts.admins:
             return "No platform admin is recorded, so nothing here can say who releases it."
-        return f"Any platform admin releases it, which is {', '.join(facts.admins)}."
+        admins = ", ".join(escaped(admin) for admin in facts.admins)
+        return f"Any platform admin releases it, which is {admins}."
     if not facts.leads:
-        return f"Team {facts.team} records no lead. Any team lead may release it."
-    named = ", ".join(facts.leads)
-    return f"Team {facts.team} routes to {named}. Any team lead may release it."
+        return f"Team {escaped(facts.team)} records no lead. Any team lead may release it."
+    named = ", ".join(escaped(lead) for lead in facts.leads)
+    return f"Team {escaped(facts.team)} routes to {named}. Any team lead may release it."
 
 
 def _the_machine(facts: ApprovalRequestedFacts) -> str:
@@ -511,6 +579,12 @@ def _the_machine(facts: ApprovalRequestedFacts) -> str:
     ``schemas/submission-inputs.schema.json`` has no such property and neither does
     ``RunManifest``. A warning inferred from a free-text command would be a guess presented
     as a finding, in the one message where a guess costs somebody's approval.
+
+    THE ESCAPING IS APPLIED HERE AND NOT INSIDE ``device_said``. ``config/accelerators.yaml``
+    holds the card name as a non-empty string and enforces no pattern on it, and the same two
+    functions write the table in ``guides/olmo-core.md``. A card named with an ampersand would
+    have to reach that table as an ampersand and this channel as ``&amp;``, so the encoding
+    belongs to the surface rather than to the reading.
     """
     record = facts.accelerator
     if record is None:
@@ -518,10 +592,10 @@ def _the_machine(facts: ApprovalRequestedFacts) -> str:
     if record.device is None:
         return " · no accelerator"
     if record.devices == 1:
-        return f" · {device_said(record)}, {memory_said(record)}"
+        return f" · {escaped(device_said(record))}, {escaped(memory_said(record))}"
     return (
-        f" · {device_said(record)}, {record.memory_mib_per_device:,} MiB each, "
-        f"{memory_said(record)} total"
+        f" · {escaped(device_said(record))}, {record.memory_mib_per_device:,} MiB each, "
+        f"{escaped(memory_said(record))} total"
     )
 
 
@@ -535,18 +609,72 @@ def _how_to_answer(facts: ApprovalRequestedFacts) -> str:
     lead who types one leaves it somewhere that expires. Naming ``edullm status`` here is
     what makes the reason reachable from a terminal for as long as GitHub holds the run, and
     the notifier posts the decline into this channel, which is where it outlives the run page.
+
+    THE ONE SLACK CONTROL SEQUENCE THIS MODULE BUILDS, AND THE REASON THE ESCAPING IS PER
+    FIELD RATHER THAN OVER THE FINISHED LINE. ``<url|label>`` is Slack's documented form for
+    a link and its angle brackets are ours, written after :func:`escaped` has run over the
+    address inside them. A pass over the assembled message would encode those two brackets
+    along with everything else and publish ``&lt;https://…&gt;`` as text nobody can click,
+    which is a link lost to the fix rather than to the defect.
+
+    The address is escaped even though the platform minted it. It is a GitHub run URL and
+    carries none of the three characters, so this costs nothing and means the rule holds
+    without anybody having to be sure where each value came from.
+
+    The run id is escaped like any other value, because the backticks around it are code
+    formatting and not a control sequence, and because this path is the one that does not
+    check its shape: ``read_run_ended`` holds a job name to ``RUN_ID_REGEX`` before it says
+    anything, and ``read_approval_requested`` takes ``run_id`` off the envelope as free JSON
+    text. Sliced before it is escaped, because the other order can cut an entity in half and
+    leave ``&am`` in front of a lead.
     """
-    where = f"Release or decline at {facts.url}" if facts.url else "Release or decline it in Actions"
+    where = (
+        f"<{escaped(facts.url)}|Release or decline it>"
+        if facts.url
+        else "Release or decline it in Actions"
+    )
     return (
         f"{where}. A decline takes a reason, and that reason is what `edullm status "
-        f"{facts.run_id[:PRINTED_RUN_ID]}` prints back to whoever submitted this."
+        f"{escaped(facts.run_id[:PRINTED_RUN_ID])}` prints back to whoever submitted this."
     )
 
 
+def _experiment(facts: ApprovalRequestedFacts) -> str:
+    """The grouping key, out of the envelope's own JSON and not out of any rule.
+
+    ``compile_submission`` holds a new submission's experiment to ``SLUG_PATTERN`` and
+    ``read_approval_requested`` reads the value back as free text, which is the right way
+    round: this reader answers about documents written before that check existed as well as
+    after it, and a reader that assumed the shape would be the one thing between a typed
+    angle bracket and every phone in the workspace.
+    """
+    return escaped(facts.experiment) if facts.experiment else NO_EXPERIMENT
+
+
+def _named_person(facts: ApprovalRequestedFacts) -> str:
+    """Who is asking, from the roster first and from the envelope second.
+
+    Only the second of the two is held to a pattern. ``GitHubLogin`` admits letters, digits
+    and hyphens; ``OrganizationMember.display_name``, which is what the roster answers with,
+    admits anything at least one character long. Escaped together, because which of the two
+    answered is not a fact this line should have to know.
+    """
+    named = facts.person or facts.submitter
+    return escaped(named) if named else NOBODY_NAMED
+
+
 def render_approval_requested(facts: ApprovalRequestedFacts) -> Message:
-    """One run waiting on a person, as the five lines that decide it."""
+    """One run waiting on a person, as the five lines that decide it.
+
+    FOUR OF THE FIRST LINE'S FIVE FIELDS ARE READ OUT OF THE ENVELOPE AS FREE JSON TEXT.
+    ``read_approval_requested`` takes the manifest as a mapping rather than through
+    ``RunManifest``, deliberately and for a reason its own docstring gives, so the checks
+    that model carries are not in force here and would not exclude these three characters if
+    they were: ``repository``, ``team``, ``compute_profile`` and ``workload_profile`` are
+    each ``Field(min_length=1)`` and nothing more.
+    """
     total = money(None if facts.cost is None else facts.cost.maximum_compute_cost_usd)
-    shape = f"{facts.repository} on {facts.compute_profile}"
+    shape = f"{escaped(facts.repository)} on {escaped(facts.compute_profile)}"
     if facts.is_a_fanout:
         shape += f", {facts.cells} cells"
     return Message(
@@ -554,8 +682,7 @@ def render_approval_requested(facts: ApprovalRequestedFacts) -> Message:
         text="\n".join(
             (
                 (
-                    f"{total} · {facts.experiment or NO_EXPERIMENT} · "
-                    f"{facts.person or facts.submitter or NOBODY_NAMED} · {shape}"
+                    f"{total} · {_experiment(facts)} · {_named_person(facts)} · {shape}"
                     f"{_the_machine(facts)}"
                 ),
                 _arithmetic(facts),
@@ -583,10 +710,18 @@ def _named(job: Ended) -> str:
     A platform run is abbreviated to the whole of its timestamp, which is what every other
     surface prints. A job somebody named by hand keeps the name they gave it, because that is
     the only handle it has.
+
+    The name a person gave it is the one value on this page that did not come from this
+    platform, and it is the one Batch already constrains: ``SubmitJob`` takes letters,
+    digits, hyphens and underscores and refuses the rest, so no job in the account can be
+    called ``<!channel>``. Escaped anyway, because that is a promise another service makes
+    about a field this reads out of its answer, and holding the rule costs a call that
+    changes nothing on every name the account has.
     """
-    identity = job.name[:PRINTED_RUN_ID] if job.is_a_run else job.name
+    identity = escaped(job.name[:PRINTED_RUN_ID] if job.is_a_run else job.name)
     ending = f"exit {job.exit_code}" if job.exit_code is not None else "no exit code"
-    return f"{identity} ({ending}, {duration(job.seconds)} on {job.compute_profile or job.queue})"
+    machine = escaped(job.compute_profile or job.queue)
+    return f"{identity} ({ending}, {duration(job.seconds)} on {machine})"
 
 
 def _budget(facts: OvernightFacts) -> str:
