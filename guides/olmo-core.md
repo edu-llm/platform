@@ -123,9 +123,9 @@ There were four of these and two of them were the other two on a different machi
 | Training on one device | `olmo-core-train` on `gpu-1xa10g` | $1.01/hr |
 | Training on four | `olmo-core-train` on `gpu-4xa10g` | $5.67/hr |
 
-Twenty-four hours is the ceiling for routine approval, not a round number: a longer run would make every training submission an exception and put a second approver in front of all of them. It was twelve, which made an exception of every sweep that ran overnight. `olmo-core-check` carries no checkpoint contract because a twenty-step run has nothing worth resuming.
+Twenty-four hours is the workload profile's own ceiling and it is what Batch enforces on each attempt. It was twelve, and a second ceiling in policy sent anything longer to an admin, so every sweep that ran overnight needed one. Both of those are gone. What decides who releases a run now is its worst-case total and nothing else, and [approval](the-platform.md#approval) has the figure. `olmo-core-check` carries no checkpoint contract because a twenty-step run has nothing worth resuming.
 
-**The check and the training preset differ in what they promise, not in what they cost.** A one-hour check on eight H100s is available to you and bills $55 an hour, and nothing refuses it. What the approver is shown is the machine and its rate, which is the whole of what stands between a mistyped dropdown and a bill.
+**The check and the training preset differ in what they promise, not in what they cost.** A one-hour check on eight A100s bills $21.96 an hour, comes to $21.96, and starts on its own, because what routes a run is the total rather than the rate. The same machine under `olmo-core-train` is $1,053.96 over twenty-four hours at two attempts and goes to a lead. What the approver is shown, when there is one, is the machine and its rate, which is the whole of what stands between a mistyped dropdown and a bill.
 
 ## Running a training job
 
@@ -150,31 +150,35 @@ That is the whole thing. It opens the corpus you picked, reads it at the width t
 
 Three single-GPU profiles exist and they differ only in how much fits on the card.
 
-| Compute profile | Device | Memory | Cost |
-| --- | --- | --- | --- |
-| `gpu-1xt4` | 1 × T4 | 16 GB | $0.53/hr |
-| `gpu-1xl4` | 1 × L4 | 24 GB | $0.80/hr |
-| `gpu-1xa10g` | 1 × A10G | 24 GB | $1.01/hr |
-| `gpu-1xl40s` | 1 × L40S | 48 GB | $1.86/hr |
+| Compute profile | Device | Memory | Cost | Placing |
+| --- | --- | --- | --- | --- |
+| `gpu-1xt4` | 1 × T4 | 16 GB | $0.53/hr | reliably |
+| `gpu-1xl4` | 1 × L4 | 24 GB | $0.80/hr | reliably |
+| `gpu-1xa10g` | 1 × A10G | 24 GB | $1.01/hr | reliably |
+| `gpu-1xl40s` | 1 × L40S | 48 GB | $1.86/hr | after a wait |
 
-`gpu-1xl40s` is the largest single card this account can start, and it is the answer when a recipe you were given fits on one A100 or one H100 elsewhere. Neither of those is sold by AWS as a one-card or four-card instance, only as eight-card `p4d.24xlarge` and `p5.48xlarge`, so there is no `gpu-1xa100` to ask for and there never will be. 48 GB against 80 GB is the trade, and it is usually cheaper than reshaping the recipe.
+`gpu-1xl40s` is the largest single card this account can start, and it is the answer when a recipe you were given fits on one A100 or one H100 elsewhere. A100 is sold only as the eight-card `p4d.24xlarge`, so there is no `gpu-1xa100` to ask for and there never will be. One H100 does exist as `p5.4xlarge` and the catalogue registers `gpu-1xh100` on it, but EC2 has never sold this account a p5 of any size, so it reads `provisioned: false` and asking for it is refused. 48 GB against 80 GB is the trade, and it is usually cheaper than reshaping the recipe.
 
 ## Multi-GPU jobs
 
-| Compute profile | Devices | Memory | Cost |
-| --- | --- | --- | --- |
-| `gpu-4xt4` | 4 × T4 | 64 GB | $3.91/hr |
-| `gpu-4xl4` | 4 × L4 | 96 GB | $4.60/hr |
-| `gpu-4xa10g` | 4 × A10G | 96 GB | $5.67/hr |
-| `gpu-8xt4` | 8 × T4 | 128 GB | $7.82/hr |
-| `gpu-4xl40s` | 4 × L40S | 192 GB | $10.49/hr |
-| `gpu-8xl4` | 8 × L4 | 192 GB | $13.35/hr |
-| `gpu-8xa10g` | 8 × A10G | 192 GB | $16.29/hr |
-| `gpu-8xa100` | 8 × A100 | 320 GB | $21.96/hr |
-| `gpu-8xl40s` | 8 × L40S | 384 GB | $30.13/hr |
-| `gpu-8xh100` | 8 × H100 | 640 GB | $55.04/hr |
+| Compute profile | Devices | Memory | Cost | Placing |
+| --- | --- | --- | --- | --- |
+| `gpu-4xt4` | 4 × T4 | 64 GB | $3.91/hr | reliably |
+| `gpu-4xl4` | 4 × L4 | 96 GB | $4.60/hr | unreliably |
+| `gpu-4xa10g` | 4 × A10G | 96 GB | $5.67/hr | after a wait |
+| `gpu-8xt4` | 8 × T4 | 128 GB | $7.82/hr | reliably |
+| `gpu-4xl40s` | 4 × L40S | 192 GB | $10.49/hr | after a wait |
+| `gpu-8xl4` | 8 × L4 | 192 GB | $13.35/hr | unreliably |
+| `gpu-8xa10g` | 8 × A10G | 192 GB | $16.29/hr | after a wait |
+| `gpu-8xa100` | 8 × A100 | 320 GB | $21.96/hr | after a wait |
+| `gpu-8xl40s` | 8 × L40S | 384 GB | $30.13/hr | unreliably |
+| `gpu-8xh100` | 8 × H100 | 640 GB | $55.04/hr | **refused** |
 
-Memory is the total across the devices, and it is the column to read first because it decides whether the job runs at all. Anything at or above `gpu-8xa100` needs an admin rather than a team lead, since the platform sends every profile over $20/hr that way whatever the run costs in total.
+Memory is the total across the devices, and it is the column to read first because it decides whether the job runs at all. The last column is `places` in `config/capacity.yaml`, measured by asking EC2 for one instance of each shape, and `unreliably` means a probe asked and got nothing back. `edullm check` prints a line saying so above the cost whenever you name a shape that is not `reliably`.
+
+**`gpu-8xh100` is priced and cannot be started, and this is the row that catches people.** EC2 has never once sold this account a p5 of any size, so the catalogue reads `provisioned: false` and a submission naming it is refused with `unprovisioned_compute_profile` before anything is dispatched. Eight A100s is the substitution to reach for, at 320 GB against 640 GB. `gpu-1xh100` is refused for the same reason and is why the single-card table above stops at the L40S.
+
+**No shape here needs an admin, and no rate sends a run anywhere.** This section used to say that everything at or above `gpu-8xa100` went to an admin, because the platform routed every profile over $20 an hour that way whatever the run cost in total. Policy v5 deleted that ceiling and there is no admin tier left to route to. Measured on 2026-08-06, a one-hour single-attempt check on `gpu-8xa100` at $21.96 an hour and one on `gpu-8xl40s` at $30.13 an hour both come back `automatic`, which is released by nobody at all. What routes a run is its worst-case total, and [approval](the-platform.md#approval) has the figure.
 
 **Your command must start one process per device.** Nothing wraps what you type, so the launcher goes in the command:
 
@@ -184,7 +188,7 @@ bash -lc 'python -m torch.distributed.run --nproc-per-node=4 --standalone .edull
 
 Set `--nproc-per-node` to the device count of the shape you picked. `torchrun`, `accelerate launch`, `deepspeed`, `mpirun` and `srun` all work.
 
-**The dtype override is on that line because of which of the ten rows above you can actually get.** `config/capacity.yaml`, measured on 2026-08-04 by asking EC2 for one instance of each, records `gpu-4xt4` and `gpu-8xt4` as the only multi-card shapes that place at an instant. Three more arrive after a wait. Both instant survivors are T4, and **T4 has no bfloat16**; the section below is about that. `.edullm/train_on_corpus.py` builds its data-parallel config in bfloat16, so without the override that command is a bfloat16 run on hardware with no bfloat16, and it dies after the machine is billed. Writing the dtype on the command rather than leaving it in code is also what lets the check below see it, so a wrong answer here is refused at submission instead of on the device. Single-card work is unaffected: `gpu-1xa10g` and `gpu-1xl4` both place and both have the format, which is why the command at the top of this guide carries no dtype.
+**The dtype override is on that line because of which of the ten rows above you can actually get.** `config/capacity.yaml`, measured on 2026-08-04 by asking EC2 for one instance of each, records `gpu-4xt4` and `gpu-8xt4` as the only multi-card shapes that place at an instant. Four more arrive after a wait. Both instant survivors are T4, and **T4 has no bfloat16**; the section below is about that. `.edullm/train_on_corpus.py` builds its data-parallel config in bfloat16, so without the override that command is a bfloat16 run on hardware with no bfloat16, and it dies after the machine is billed. Writing the dtype on the command rather than leaving it in code is also what lets the check below see it, so a wrong answer here is refused at submission instead of on the device. Single-card work is unaffected: `gpu-1xa10g` and `gpu-1xl4` both place and both have the format, which is why the command at the top of this guide carries no dtype.
 
 **That override is a fact about `train_on_corpus.py` and not about the platform.** Most of the `edullm/**` branches launch a training entrypoint of their own, and most of those exit 2 on the line above. The table in the bfloat16 section below says which take it.
 

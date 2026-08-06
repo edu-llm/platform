@@ -16,11 +16,11 @@ If the shell cannot find `edullm` afterwards, compare `uv tool dir --bin` agains
 
 ## You do not need AWS credentials
 
-Sixteen of the thirty-five of us hold no AWS role, and none of us needs one to submit a run. `check`, `submit`, `status`, `logs` and `cancel` drive `git` and `gh` and hold no cloud credential. All five were run with a deliberately broken AWS environment on 2026-08-06 and all five answered normally.
+Sixteen of the thirty-five of us hold no AWS role, and none of us needs one to submit a run. `check`, `submit`, `status`, `logs` and `cancel` drive `git` and `gh` and hold no cloud credential. All five were run on 2026-08-06 with `AWS_PROFILE`, both key variables and both configuration paths pointed at nothing, and all five answered normally. That was checked twice on the day, hours apart, because it is the claim most worth being wrong about.
 
 What you do need is `gh auth login`. That is the whole of it. If `check` refuses with `submitter_unknown`, it could not read who you are and that is the command that fixes it.
 
-Two verbs are the exception and they are not the submission path. `edullm run` and `edullm shell` start a machine of your own, and those assume an AWS identity. If you want one, file `edullm ask --kind access-request`. Nothing else here waits on that.
+Two verbs are the exception and they are not the submission path. `edullm run` and `edullm shell` start a machine of your own, and both need an AWS session. **Nothing off them is a run anybody can cite**, because nothing they do is checked against the registry, priced, released or written to a record, so what comes back is a thing you saw rather than a result. How the sixteen of us get a session is not settled, and the credential broker in the rollout notes has an install command that does not resolve, so no command for it is printed here. File `edullm ask --kind access-request` and read on. Nothing else on this page waits on the answer.
 
 ## Your first job
 
@@ -33,13 +33,15 @@ git checkout edullm/onboarding-smoke
 edullm check --team scratch --experiment day-one --dataset none
 ```
 
+Clone it in full. `git clone --depth 1` fetches only `main` and then the checkout has no branch of that name to switch to.
+
 `check` reaches no network, answers in about a fifth of a second, and lists every refusal at once. Read the ceiling and the approval line out of what it prints rather than out of any document, because both live in reviewed configuration and move. On this branch it prints no refusals, a ceiling of well under a dollar on one T4, and an approval line saying nobody has to release it.
 
 ```
 edullm submit --team scratch --experiment day-one --dataset none
 ```
 
-The run id is minted a couple of minutes later by the compile job, and `submit` is meant to wait for it. On three real submissions tonight it returned in under nine seconds instead, with a workflow link and a line saying the id is still compiling. Either way `edullm status` carries the id once that job has finished.
+The run id is minted a couple of minutes later by the compile job, and `submit` is meant to wait for it. On four real submissions on 2026-08-06 it returned in under nine seconds instead, the last of them in 7.7, with a workflow link and a line saying the id is still compiling. Either way `edullm status` carries the id once that job has finished.
 
 ## Reading it back
 
@@ -49,7 +51,9 @@ edullm status run_019fd5d7-915f     # one run, in full
 edullm logs run_019fd5d7-915f       # the last lines it printed
 ```
 
-`status` with no argument answers from GitHub in about ten seconds. `status` on one run and `logs` reach AWS, which they do by dispatching a workflow and waiting for a runner, so give them one to three minutes. A job sitting at `RUNNABLE` is waiting for a machine and is billing nothing. Do not cancel and resubmit it, because that puts it at the back of the queue.
+`status` with no argument answers from GitHub in ten to twenty seconds. `status` on one run and `logs` reach AWS, which they do by dispatching a workflow and waiting for a runner, so give them one to three minutes. A job sitting at `RUNNABLE` is waiting for a machine and is billing nothing. Do not cancel and resubmit it, because that puts it at the back of the queue.
+
+Both of those print a stretch of the workflow's own job log under the report, runner cleanup lines and all, and one of them prints the workflow's shell source. Read down to the table and stop.
 
 This is what came back on 2026-08-06. Two minutes from `submit` to admitted, five waiting for a card, six seconds running.
 
@@ -64,23 +68,25 @@ median of     20 timed iterations after 3 warm-up
   4096       20.074        69.255     89.329     366,824
 ```
 
-## The notification, and why you will not get one
+## The notification, and how to find out without one
 
-When a run ends the platform composes one line for the `runs` channel. It looks like this.
+When a run ends the platform composes one line for `#edullm-runs`. It looks like this.
 
 ```
 [runs] Aryan Verma · plan-b-phase0-100m-superbpe-eval · $0.02 spent, $2.01 authorised · ran 1m on gpu-1xa10g.
 [runs] Aryan Verma · plan-b-phase0-100m-superbpe-eval · $0.70 spent, nothing produced · died at 42m on gpu-1xa10g, exit 1, whether a checkpoint survived is unknown.
 ```
 
-**Nothing sends them yet.** The slice is deployed and the webhook it posts to has never been supplied, so no message has been read end to end. Until one is, `edullm status` is how you find out your run ended. Poll it, or look at the run page the submit line printed.
+**These are sent.** This section said nothing sent them and that the webhook had never been supplied, which was true for about four hours after it was written. The webhook was created by hand on 2026-08-05, points at `#edullm-runs`, and `infra/README.md` records it under "It already exists". Messages have been posted through the deployed function since. Join the channel.
+
+**Do not poll `edullm status` for it, because the bare form never changes.** It reads GitHub, and what GitHub knows is whether your submission workflow succeeded rather than what your job then did. A run that finished an hour ago still reads `SUBMITTED`. What tells you is the channel, or `edullm status <run-id>`, which names the run to AWS and takes one to three minutes because it spends a runner to do it.
 
 ## Running your own code
 
 Your commit has to have been built into an image before a run can name it, and a push to a branch under `edullm/` is what builds one. So the loop on a repository that has never been submitted from is five steps rather than two.
 
-1. `edullm check`. On a registered repository with no spec it writes a first `.edullm/run.yaml` and then refuses, because the file it just wrote is not committed. That is expected and it says so.
-2. Commit that file. `check` now refuses with `commit_not_pushed` instead.
+1. `edullm check`. On a registered repository with no spec it writes a first `.edullm/run.yaml` and tells you to commit it on a branch. It does not hold the file it just wrote against you. It used to, which was a loop with no way out, and that is fixed.
+2. Commit that file on a branch. `check` refuses with `commit_not_pushed` now, because no remote-tracking branch in your clone contains the commit, so nothing has built an image from it.
 3. Push the branch under `edullm/`. The image build takes three to eight minutes.
 4. `edullm check` again. It should print no refusals.
 5. `edullm submit`.
@@ -92,7 +98,7 @@ Two checks are deferred to submit time and `check` names both, because they need
 | Wall | The way round |
 | --- | --- |
 | No Windows machine has ever finished this. The install used to fail with `Filename too long` for any username over eight characters, and [#291](https://github.com/edu-llm/platform/pull/291) fixed that on 2026-08-06 along with the `gh` lookup, the spec's line endings and redirected output. All of it is untested on real Windows | Follow it anyway and say where it stopped. If the install still fails on a path, point `UV_CACHE_DIR` at something short such as `C:\uv` and try again |
-| No notification is delivered | Poll `edullm status`, as above |
+| `edullm status` with no argument reads `SUBMITTED` for every run, whatever the job did. The state it shows is your submission workflow's rather than your job's, and it never moves again | Watch `#edullm-runs`, or name the run. `edullm status <run-id>` asks AWS and takes one to three minutes |
 | `edullm status <run-id>` prints `Container said` `nothing` for a run that printed plenty. Measured on the run above, which had nine lines waiting | `edullm logs <run-id>` reads the same stream and does show them. Believe that one |
 | `edullm submit` returns before the run id exists, though `--help` says it waits for one and `--no-wait` is the flag that turns that off | Run `edullm status` a couple of minutes later. The id is there |
 | The eval image carries no torch and no vLLM, so only the `mock` provider runs | Nothing yet. GPU evaluation through the platform is not available. eval-inference owns the choice |

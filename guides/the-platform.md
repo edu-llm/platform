@@ -24,7 +24,7 @@ Use `scratch` the first time. It is the bin for work nobody intends to keep, so 
 
 ## Access
 
-Two lists, and you need both. They are separate systems, which is the most confusing thing about getting started here.
+Three lists, and the first two are the ones that gate anything. They are separate systems, which is the most confusing thing about getting started here.
 
 | List | What it gates | If you are missing |
 | --- | --- | --- |
@@ -50,7 +50,9 @@ Ask for all three through the [ask](https://github.com/edu-llm/platform/issues/n
 
 ## Choosing a machine
 
-`compute_profile` is a closed dropdown of every shape with a queue behind it, and it is the most expensive field on the form by two orders of magnitude. The range runs from $0.53 an hour to $55.04. Nothing infers it from what you are running, and nothing refuses a small job on a large machine.
+`compute_profile` is a closed dropdown of every shape with a queue behind it, and it is the most expensive field on the form by a factor of fifty-seven. The range runs from $0.53 an hour to $30.13. Nothing infers it from what you are running, and nothing refuses a small job on a large machine.
+
+**Three shapes are priced in the catalogue and cannot be started.** `gpu-8xh100` and `gpu-1xh100` are the two that catch people, because eight H100s at $55.04 an hour is the number everybody remembers. EC2 has never once sold this account a p5 of either size, so both read `provisioned: false` and naming one is refused as `unprovisioned_compute_profile` before anything is dispatched. `gpu-1xa10g-sagemaker` is the third and nothing was ever built for it. The full list with the column that says so is in [training a model](olmo-core.md#multi-gpu-jobs).
 
 | You are | Pick |
 | --- | --- |
@@ -65,9 +67,24 @@ Your image is unaffected by this field. It is built from your commit for one arc
 
 ## Approval
 
-**A run estimated under 5 USD that asks for under an hour starts on its own.** No lead, no wait. It is still recorded and still attributed to you, and you still have to be on the roster and running registered code. What you skip is the queue, not the checks. Both halves have to hold: four hours at 50 cents waits, and one hour at 8 USD waits. So does any fan-out, whatever it costs, because a sweep is worth a person's eyes on the total before sixty-four machines start.
+There are two answers, and `edullm check` prints which one you got before you submit anything.
+
+| What `check` prints | Who releases it |
+| --- | --- |
+| `automatic` | Nobody. It starts when you submit it |
+| `routine` | Any of the eight team leads |
+
+**One cell, under $500 worst case, and nobody releases it.** No lead, no wait. It is still recorded and still attributed to you, and you still have to be on the roster and running registered code. What you skip is the queue, not the checks.
+
+**There is no hour bound.** Forty-eight hours on one A10G is $48.29 and starts on its own. The rule reads the worst-case total, which already multiplies the rate by the hours by the attempts by the cells, so a long run is an expensive one and expensive is what the bound catches. The figure lives at `automatic_below_cost_usd` in `config/policy.yaml`, and it is strictly under. $499.70 starts on its own and $500.23 waits.
+
+**A fan-out never starts on its own, whatever it costs.** Four cells of a twenty-step check is $2.10 and still goes to a lead, because four cells is four machines starting at once and the total does not carry that. So does an image whose registry scan findings nobody has read yet.
+
+**Do not quote that $500 anywhere.** It is reviewed configuration and it has already moved once, from $5. Run `edullm check --json` and read `approval_class` beside the cost it was decided on, because that is the copy your own install is being judged against.
 
 Everything else waits for a person. Any of the eight team leads can release any group's run, so you are not blocked on one individual. But nobody is paged, so if a run has been waiting, ask.
+
+**There is no admin tier and no rate ceiling.** A third class called `exception` exists in the code and no submission reaches it. It is kept for capacity blocks, which nothing has built. Eight A100s at $21.96 an hour for one hour is $21.96, and it starts on its own like anything else under the bound. If a page or a refusal sends you to find an admin, that page is out of date.
 
 If you are approving, it is not a formality. Before you release a run you are shown its cost, its machine, the team it is booked to, whether the submitter will be attributed, and whether it waived any check.
 
@@ -184,15 +201,17 @@ The same loop without the Actions UI. One binary:
 uv tool install --force git+https://github.com/edu-llm/platform
 ```
 
-You need [uv](https://docs.astral.sh/uv/) and a `gh` that is logged in with `gh auth login`. That is the whole of it for the five verbs below: `edullm` drives `git` and `gh` rather than holding a credential of its own, so it can do what you can do and nothing more, and there is no AWS account anywhere in this.
+You need [uv](https://docs.astral.sh/uv/) and a `gh` that is logged in with `gh auth login`. That is the whole of it for the five verbs below. `check`, `submit`, `status`, `logs` and `cancel` drive `git` and `gh` rather than holding a credential of their own, so they can do what you can do and nothing more, and there is no AWS account anywhere in this. All five were run on 2026-08-06 with `AWS_PROFILE`, both key variables and both configuration paths pointed at nothing, and all five answered normally.
 
-**Two verbs are not like that and this is the one place that is said.** `edullm run` and `edullm shell` start a machine of your own, which means they need an AWS session on your laptop as well, and the [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html) beside the AWS CLI. The session comes from the broker and from nowhere else:
+**Two verbs are not like that and this is the one place that is said.** `edullm run` and `edullm shell` start a machine of your own, which means they need an AWS session on your laptop as well, and the [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html) beside the AWS CLI. The session comes from the broker and from nowhere else.
 
 ```
 sb-aws-creds login
 ```
 
-There are no long-lived AWS keys in this account and creating one is refused, so that command, followed by the approval it opens in your browser, is the way. Without it both verbs stop before they start anything and say the same thing. The two are also the exploration route rather than the submission path: nothing they do is checked, priced, approved or recorded as citable, so reach for `check` and `submit` for anything that is meant to count.
+There are no long-lived AWS keys in this account and creating one is refused, so that command, followed by the approval it opens in your browser, is the way. Without it both verbs stop before they start anything and say the same thing.
+
+**Getting `sb-aws-creds` onto your laptop in the first place is the part that is not settled.** `npm view sb-aws-creds` answered 404 on 2026-08-06, so it is not on the public registry and no install line is printed here rather than one that fails. If you do not already have it, file `edullm ask --kind access-request` and it will be answered with whatever the route turns out to be. **Nothing on the submission path waits on that.** [A machine of your own](#a-machine-of-your-own) is what the two verbs are and are not for.
 
 Then, from a checkout of the repository you work in:
 
@@ -202,31 +221,68 @@ edullm check --experiment onboarding --dataset none --team scratch
 
 **`check` is the half that happens on your laptop, and it is the one to lean on.** It writes a first `.edullm/run.yaml` if the repository has none, then prices what you are about to submit and lists every refusal. They are the same refusals admission makes, decided against the reviewed configuration your install carries. It opens no connection and answers in about a fifth of a second, so it is a thing to run while you are still editing rather than once at the end. It works on a login node with no egress.
 
+This is what it printed from a clone of OLMo-core on 2026-08-06, with the first line naming the configuration directory cut.
+
 ```
-worst case
-  $0.526/hour x 1 node x 24h x 2 attempts x 1 cell = $25.25
-  This is the ceiling, not an estimate. It is also what routes the run, so lowering
-  --hours is what moves a short run under the automatic bound.
+manifest
+  repository        OLMo-core
+  commit            9ea6d144f89c
+  image             resolved at submit, from the commit above
+  workload          olmo-core-check      1h ceiling, 1 attempt, no checkpoint contract
+  compute           gpu-1xt4             g4dn.xlarge, 1 GPU, $0.526/hour
+  dataset           none
+  team              scratch              named on the command line
+  experiment        onboarding
+  wandb project     scratch
+
+worst case  $0.53
+  $0.526/hour x 1 node x 1h x 1 attempt x 1 cell
+  A ceiling rather than an estimate, and what routes the run. Lowering --hours
+  is what moves a run under the automatic bound.
+
+what it has taken
+  5 succeeded runs of this workload, on this machine, on this dataset took a
+  median of 24s, between 0s and 25s. 3 more runs failed and are not in that
+  figure. Measured on 2026-08-06 over 201 run(s) recorded by this platform.
 
 approval
-  routine -> run-approval-lead
+  automatic. One cell, under $500, so nobody releases this.
+
+not checked here, because both need the container registry
+  no_published_image
+    Whether this commit published an image. A push to edullm/** builds one,
+    and the submission workflow holds the credential that asks the registry.
+  image_scan_findings_unreviewed
+    Whether the registry's scan findings for that image have been read.
+    Decided where the findings are, and admission re-derives it after
+    approval.
 
 no refusals. edullm submit will dispatch this.
 ```
 
+**Read the ceiling and the approval line out of your own run rather than out of the block above.** Both come from reviewed configuration and both have moved this week. `what it has taken` moves faster still, because it is measured over every run the platform has recorded, and it is the only figure here that is an observation rather than a bound.
+
+Nine verbs. `edullm` on its own prints the list and `edullm <verb> --help` prints what one takes.
+
 | Verb | What it does |
 | --- | --- |
 | `edullm check` | Prices a submission here and lists every refusal. Dispatches nothing |
-| `edullm submit` | Dispatches it, then waits and prints the run id and where it is parked |
+| `edullm submit` | Dispatches it. `--help` says it waits for the run id and it does not, see below |
 | `edullm status` | Your recent runs. Give it a run id for one of them |
 | `edullm logs <run-id>` | The last lines that run printed |
 | `edullm cancel <run-id> --reason ...` | Stops it. The reason is required, and is recorded |
+| `edullm add` | Teaches the platform a repository, dataset, shape, model or person. Opens a configuration pull request |
+| `edullm ask` | Files one issue a person answers. It grants nothing itself |
 | `edullm run --project p --compute c -- <command>` | A machine of your own, this directory on it, output streamed back. Needs an AWS session |
 | `edullm shell --project p --compute c` | A terminal on that same machine, or a notebook with `--notebook`. Needs an AWS session |
 
-The flags are the fields the form asks for, and `check` and `submit` take the same ones. The command, the workload profile and a suggested machine are properties of the code, so they live in `.edullm/run.yaml` and travel with it in git; what a run costs today is typed on the command line, because one commit run by two people belongs to two teams.
+The flags are the fields the form asks for, and `check` and `submit` take the same ones. The command, the workload profile and a suggested machine are properties of the code, so they live in `.edullm/run.yaml` and travel with it in git. What a run costs today is typed on the command line, because one commit run by two people belongs to two teams.
 
-`status`, `logs` and `cancel` reach AWS, and the only identity allowed to read a Batch job lives in `cancel-run.yml`, so those three dispatch that workflow and wait for a runner. Tens of seconds, not a moment. `check` and `submit` do not.
+**`edullm submit` returns before your run has an id.** Its own `--help` says it waits for the one the compile job mints unless `--no-wait` says otherwise. Measured on 2026-08-06 it came back in 7.7 seconds with a workflow link and a line saying the id is still compiling. The compile job takes about two minutes and `edullm status` carries the id after that.
+
+**`edullm status` with a run id reaches AWS, and without one it does not.** The bare form reads GitHub, takes about ten seconds and costs nothing, so you may call it in a loop. Naming a run, or `logs`, or `cancel`, dispatches `cancel-run.yml`, which holds the only identity allowed to read a Batch job, and then waits for a runner. Give those one to three minutes.
+
+**The bare form never says a run finished.** It reports `DISPATCHED` while the submission workflow is running and `SUBMITTED` once that workflow succeeded, and neither moves again however the job ends. A run that succeeded an hour ago still reads `SUBMITTED`. To learn what a job did you have to name it, which is the form that spends a runner.
 
 ### Setting a team once
 
@@ -243,6 +299,24 @@ The file holds one team id on its first line and nothing else. There is no comma
 This is yours and it is local. It is not reviewed configuration, it is read by nothing but your own `edullm`, and it does not travel with your code. `edullm check` prints the team it used and names this file on the same line, so a transcript still says where the team came from, and `--team` on the command line beats it for one run.
 
 **It fills the field in and it gets you nothing.** A default naming a group the roster does not put you on is refused exactly as typing that group would be, and one naming a group that does not exist is refused as an unregistered team. It saves keystrokes and changes no outcome.
+
+## A machine of your own
+
+`edullm run` and `edullm shell` are the other half of the tool and they are not the submission path. `run` copies the directory you are standing in onto an EC2 instance of your own and streams back the output of the command after a bare `--`. `shell` opens a terminal on that same machine, or a Jupyter notebook on it with `--notebook`. Both verbs call it **the lane**, which is the word their help text and their refusals use, and it means a machine you hold rather than a job the platform queues for you.
+
+**Nothing off the lane is a run anybody can cite, and that is the distinction this whole platform is built to draw.** A submitted run is checked against the registry, priced, released and written to a lineage record before it starts, and one run id then names the job, its outputs, its checkpoints and its Weights and Biases run, never rewritten. That is what lets a number in a paper be traced back to the commit, the corpus and the machine that produced it. The lane does none of it. What comes off the lane is a thing you saw. Use it to find out whether a script runs at all, then submit the version that has to count.
+
+**The lane needs an AWS session, and `check` and `submit` do not.** With no credential it refuses before any machine is asked for.
+
+```
+AWS would not say who you are, so no machine was asked for. The lane needs an
+AWS session the way the recorded path needs gh: log in the way you normally do
+and run this again.
+```
+
+`edullm shell` needs one more thing, the AWS Session Manager plugin on your own laptop, and refuses with `session_plugin_missing` when it is not on `PATH`.
+
+**How the sixteen of us holding no AWS role get a session is not settled yet.** There is a credential broker in the rollout notes whose install command does not resolve, so no command for it is printed here rather than one that fails. File `edullm ask --kind access-request` and it will be answered with whatever the route turns out to be. **Nothing on the submission path waits on this.** You can produce a citable run today with `gh auth login` and nothing else.
 
 ## Keeping edullm current
 

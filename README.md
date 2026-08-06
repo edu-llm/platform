@@ -24,11 +24,13 @@ Working through Cursor, Claude Code or Codex rather than typing the commands you
 
 ## What it does
 
-You get CPU and GPU machines from a single T4 up to eight H100s, without touching AWS. Picking a workload profile fixes the machine, the time limit, the retry limit and the checkpointing together, so there is one decision rather than four.
+You get CPU and GPU machines from a single T4 up to eight A100s, without touching AWS. Picking a workload profile fixes the time limit, the retry limit and the checkpointing together. **It does not fix the machine.** `compute_profile` is a field of its own beside it, and it is the one that decides what a run costs.
 
 Several corpora are published, frozen and consistently tokenised. Your job is handed the exact corpus, version and tokeniser that its record names, so a result cannot quietly disagree with the thing that produced it.
 
-Every run is released by a person who is shown what it will cost, and is booked to a research group. Every run is also recorded: one run id names the job, its outputs and its Weights and Biases run, written before the job starts and never rewritten.
+An expensive run, or a sweep of any size, is released by a team lead who is shown what it will cost. A cheap single run starts on its own. [Using the platform](guides/the-platform.md#approval) has the figure that draws the line, and it is worth reading from the tool rather than from here.
+
+Either way the run is booked to a research group and recorded. One run id names the job, its outputs and its Weights and Biases run, written before the job starts and never rewritten, and that record is what makes a run one you can cite.
 
 And commands that contradict the run you asked for are refused when you submit, rather than twelve hours and a bill later. Four GPUs with a single process is one of them, and so is a promised checkpoint written nowhere anyone can reach.
 
