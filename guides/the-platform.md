@@ -116,36 +116,23 @@ A waiver lands in the run's manifest and the approving lead is told which check 
 
 ## The corpora
 
-| `dataset_release` | Train tokens | Objects |
-| --- | --- | --- |
-| `math-frontload-100m-v1` | 0.1B | 3 |
-| `formal-proof-premises-500m-v3` | 0.5B | 12 |
-| `fineweb-edu-750m-v2` | 0.7B | 15 |
-| `fineweb-edu-1b-v6` | 1.0B | 4 |
-| `fineweb2-phase0-equal-bpe-2b-v1` | 2.0B | 12 |
-| `fineweb2-phase0-equal-superbpe-2b-v1` | 2.0B | 12 |
-| `refhq-instruct-v3` | 3.9B | 29 |
-| `refhq-regmix-5p5b-v2` | 5.5B | 24 |
-| `regmix-10b-v1` | 10.0B | 41 |
-| `frontload-cl-10b-v1` | 10.1B | 53 |
-| `fineweb2-unimax-bpe-20b-v1` | 21.0B | 166 |
-| `fineweb2-unimax-superbpe-20b-v1` | 18.9B | 151 |
-| `olmo-original-30b-v1` | 31.3B | 120 |
-| `olmo-127b-v1` | 126.5B | 474 |
-| `olmo-150b-dolma2-v1` | 157.2B | 6,851 |
-| `reservoir-dolma2-v1` | 250.2B | 10,010 |
+```
+edullm data                       the list, smallest first
+edullm data reservoir-dolma2-v1   one of them in full
+edullm data --all                 every registered name, inputs to a corpus included
+```
 
-All are frozen and nothing you run can write to them. Most use the dolma2 tokenizer, which the training image has built in. The exceptions are: `fineweb-edu-1b-v6` and `fineweb-edu-750m-v2` (SmolLM2 from Hub), `formal-proof-premises-500m-v3` (vendored Qwen2.5 from Hub), and the four `fineweb2-*` Plan B releases (gigatoken BPE / SuperBPE, configured in the image with no Hub fetch). Hub outages refuse only the SmolLM2 and Qwen corpora; Plan B and dolma2 start without it.
+**There used to be a table here and it is gone on purpose.** It carried sixteen rows of names and token counts, every number correct on the day somebody typed it and held by nothing afterwards: add a corpus and a test went red, re-seal one at a new size and nothing anywhere noticed. `edullm data` prints the same facts out of the registry the CLI already carries plus a committed measurement, it says when that measurement was taken, and it reaches no network, so it costs a fraction of a second and works for everybody on the roster whether or not they hold an AWS role.
 
-Two more things about `formal-proof-premises-500m-v3` are worth knowing before you report a number from it. Its shards are `uint32` rather than the usual `uint16`, which the loader must take from the manifest and never infer; and ATP/TPTP traces carry most of its token mass, so a single loss over the whole corpus is mostly measuring two of its six sources. The Plan B `fineweb2-*` shards are also `uint32` (100k-vocab gigatoken).
+**It also prints the column a table cannot.** Registered is not the same as runnable. Five registered corpora are current, in a trainable family, and refused by nothing this platform checks — and a run naming one compiles, classifies routine, spends an approval, allocates the machine, and then the container cannot build a tokenizer for the tokens it just resolved and exits 69. `edullm data` names those five and says which tokenizer each is waiting on. Nothing else does.
 
-**`reservoir-dolma2-v1` is 977 GB and its licence needs reading before you publish anything trained on it.** Its licence field says the basis is unknown, and its own notes say more: stackexchange and finewiki are CC-BY-SA-4.0, finewiki additionally GFDL, and the two together are 7.13 per cent of its train tokens. Share-alike is a condition on redistributing a model, not just an unanswered question, so it is worth knowing before the run rather than after.
+The rest of what a chooser needs is on the same page: train tokens, the tokenizer, whether the shards are `uint16` or `uint32`, and the licence. Two of those are the ones people get wrong. The dtype is a silent wrong answer rather than a crash — a `uint32` shard read at OLMo-core's `uint16` default decodes into ids the embedding accepts, so you get a loss curve rather than an exception, which is why the loader takes it from the manifest and never infers it. And the licence is not decorative: `reservoir-dolma2-v1` declares its basis as unknown while its own notes record CC-BY-SA-4.0 over stackexchange and finewiki, finewiki additionally GFDL, 7.13 per cent of its train tokens. Share-alike is a condition on redistributing a model rather than an open question. `edullm data reservoir-dolma2-v1` says so before the run rather than after.
 
-**`formal-proof-premises-500m-v2` came off this list on 2026-08-06 and v3 replaced it.** v3 supersedes v2 in the corpus's own sealed metadata, so naming v2 now is refused by `edullm check` and by the compile job, both before the approval gate, with a refusal that names v3. A run resuming from a checkpoint written against v2 is the case that refusal is meant to be liftable for; the route is a reviewed line in `config/datasets.yaml` rather than a flag on the command.
-
-**More corpora are published than are offered here, and the reason is never the corpus.** `lean4-mathlib-bytes-v3` and `math-memory-full-v1` are sealed, frozen and readable, and they are tokenized with raw UTF-8 bytes, which OLMo-core has no tokenizer for. They stay in the registry and off this list until it does, because a run that resolved one would reach a container that cannot build a model for the tokens it just read. `fineweb-edu-1b-v6` was in that state until somebody wrote the one line naming its tokenizer, which is the difference between a missing upstream feature and a job nobody had done.
+All the corpora are frozen and nothing you run can write to them. Most use the dolma2 tokenizer, which the training image has built in. `fineweb-edu-1b-v6` and `fineweb-edu-750m-v2` use SmolLM2 and `formal-proof-premises-500m-v3` a vendored Qwen2.5, both fetched from the Hub at container start, so a Hub outage refuses those three and leaves the dolma2 and Plan B gigatoken corpora starting without it.
 
 **Size costs nothing up front.** Shards are memory-mapped from S3 as the loader reaches them, so a 157B corpus starts as quickly as a 5B one and reads only what your step count needs. Pick by what you are training, not by what you can afford to download.
+
+**A corpus that is not registered is a person's job rather than a command.** `edullm add dataset` refuses, and it is right to: the entry pins a manifest digest and a payload profile read off the corpus's own sealed `dataset.json`, which means opening a bucket, which means an AWS role the CLI holds none of. File it with `edullm ask --kind dataset-request`.
 
 ## Container environment
 
@@ -224,6 +211,8 @@ sb-aws-creds login
 
 There are no long-lived AWS keys in this account and creating one is refused, so that command, followed by the approval it opens in your browser, is the way. Without it both verbs stop before they start anything and say the same thing.
 
+**The plugin and the session are two prerequisites and they are checked in that order, the plugin first.** Settling the session and not the plugin means meeting the plugin's refusal on the next attempt, having thought you were finished, so do both before you try either verb. No install command for the plugin is written here on purpose: AWS publishes four and which one you want depends on your operating system and your processor, so the refusal prints the single line for the machine you are actually on. A guide cannot know that, and a second copy of an install command is a second thing to keep true.
+
 **Getting `sb-aws-creds` onto your laptop in the first place is the part that is not settled.** `npm view sb-aws-creds` answered 404 on 2026-08-06, so it is not on the public registry and no install line is printed here rather than one that fails. If you do not already have it, file `edullm ask --kind access-request` and it will be answered with whatever the route turns out to be. **Nothing on the submission path waits on that.** [A machine of your own](#a-machine-of-your-own) is what the two verbs are and are not for.
 
 Then, from a checkout of the repository you work in:
@@ -234,11 +223,12 @@ edullm check --experiment onboarding --dataset none --team scratch
 
 **`check` is the half that happens on your laptop, and it is the one to lean on.** It writes a first `.edullm/run.yaml` if the repository has none, then prices what you are about to submit and lists every refusal. They are the same refusals admission makes, decided against the reviewed configuration your install carries. It opens no connection and answers in about a fifth of a second, so it is a thing to run while you are still editing rather than once at the end. It works on a login node with no egress.
 
-This is what it printed from a clone of OLMo-core on 2026-08-06, with the first line naming the configuration directory cut.
+This is what it printed from a clone of OLMo-core on 2026-08-06, with the last line naming the configuration directory cut.
 
 ```
 manifest
   repository        OLMo-core
+  branch            edullm/an-arm
   commit            9ea6d144f89c
   image             resolved at submit, from the commit above
   workload          olmo-core-check      1h ceiling, 1 attempt, no checkpoint contract
@@ -345,14 +335,22 @@ This is yours and it is local. It is not reviewed configuration, it is read by n
 ```
 AWS would not say who you are, so no machine was asked for. The lane needs an
 AWS session the way the recorded path needs gh: run `sb-aws-creds login`,
-complete the browser approval it opens, and run this again. What AWS said:
-aws: [ERROR]: An error occurred (NoCredentials): Unable to locate credentials.
-You can configure credentials by running "aws login".
+complete the browser approval it opens, and run this again. Everything else
+these verbs want on your laptop is already there: this found the broker and
+the Session Manager plugin on your PATH and resolved a profile before it asked
+AWS anything, so a session is the last of it and there is no wall behind this.
+If your shell has no `sb-aws-creds` at all, that broker is a private package
+with no public install line, and `edullm ask --kind access-request` is the
+route to it. What AWS said: aws: [ERROR]: An error occurred (NoCredentials):
+Unable to locate credentials. You can configure credentials by running "aws
+login".
 ```
 
-`edullm shell` needs one more thing, the AWS Session Manager plugin on your own laptop, and refuses with `session_plugin_missing` when it is not on `PATH`.
+`edullm stop` and `edullm studio` print the same thing without the sentence about the plugin, because neither opens a session and neither needs one.
 
-**How the sixteen of us holding no AWS role get that broker is still not settled**, and the reason the rollout note's install line fails is worth knowing rather than retrying. `sb-aws-creds` is a private package published out of another repository, so `npm install -g sb-aws-creds` answers 404 and always will, and no amount of re-running it changes that. On a laptop that already has it, `sb-aws-creds login` is the whole of it. On one that does not, `edullm ask --kind access-request` is the route, and it will be answered with whatever the distribution turns out to be. **Nothing on the submission path waits on this.** You can produce a citable run today with `gh auth login` and nothing else.
+**`edullm run` and `edullm shell` make three local checks before they ask AWS anything, and they are in the order a newcomer fails them.** First the credential broker itself: without `sb-aws-creds` on `PATH` nothing later can work, because the session the third check selects is minted by it, and the refusal for it deliberately prints no install command because there is none that works. Second the AWS Session Manager plugin, refused as `session_plugin_missing`; that refusal names the install command for the operating system and the processor you are on rather than sending you to a documentation page, because AWS publishes four of them and only one of them is yours. On Windows it also says the two things that make a successful install look like a failure: the installer needs Administrator rights, and Windows usually will not give the new `PATH` entry to the shell that ran it, so open a fresh PowerShell or Command Prompt window before trying again. The plugin supports those two shells only. Third a profile the broker wrote, which the CLI now finds for you, so `AWS_PROFILE` no longer has to be set in every terminal.
+
+**How the fifteen of us holding no AWS role get that broker is still not settled**, and the reason the rollout note's install line fails is worth knowing rather than retrying. `sb-aws-creds` is a private package published out of another repository, so `npm install -g sb-aws-creds` answers 404 and always will, and no amount of re-running it changes that. On a laptop that already has it, `sb-aws-creds login` is the whole of it. On one that does not, `edullm ask --kind access-request` is the route, and it will be answered with whatever the distribution turns out to be. **Nothing on the submission path waits on this.** You can produce a citable run today with `gh auth login` and nothing else.
 
 ## Ending a machine
 

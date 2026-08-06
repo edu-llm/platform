@@ -30,6 +30,7 @@ from read_launch_events import (
     LaunchEventParseError,
     parse_event,
 )
+from visibility_board import RUN_ID_TAG
 
 from edullm_platform.capture_tooling import CaptureFailedError
 
@@ -72,9 +73,7 @@ def test_a_run_id_tag_on_the_launch_is_carried_through() -> None:
         "CloudTrailEvent": json.dumps(
             {
                 "userIdentity": {
-                    "sessionContext": {
-                        "sessionIssuer": {"userName": "Intern-amy.lin-sbsandbox"}
-                    }
+                    "sessionContext": {"sessionIssuer": {"userName": "Intern-amy.lin-sbsandbox"}}
                 },
                 "requestParameters": {
                     "tagSpecificationSet": {
@@ -190,16 +189,106 @@ def test_an_event_with_no_readable_time_is_refused_too() -> None:
         )
 
 
-def test_the_three_event_names_are_the_ones_that_start_compute() -> None:
+def test_the_four_event_names_are_the_ones_that_start_compute() -> None:
     """Mutation: add or drop an event name without deciding what a launch is.
 
     `PurchaseCapacityBlock` is deliberately not here: the mismatch list staying blind to
     capacity purchases is a recorded decision, and adding it silently would change a decision
     rather than implement one. A capacity purchase is an API call with a price and no
     instance behind it, so there is no launch for this to join.
+
+    `CreateApp` is here because Studio became the exploration surface, and every entry carries
+    the service that has to have issued it -- see the case below, which is the whole reason the
+    mapping is a mapping.
     """
-    assert LAUNCH_EVENT_NAMES == ("RunInstances", "CreateFleet", "SubmitJob")
+    assert LAUNCH_EVENT_NAMES == {
+        "RunInstances": "ec2.amazonaws.com",
+        "CreateFleet": "ec2.amazonaws.com",
+        "SubmitJob": "batch.amazonaws.com",
+        "CreateApp": "sagemaker.amazonaws.com",
+    }
     assert "PurchaseCapacityBlock" not in LAUNCH_EVENT_NAMES
+
+
+def test_an_amplify_create_app_is_not_a_launch_and_a_sagemaker_one_is() -> None:
+    """THE ONE THAT MATTERS HERE. Mutation: match on the event name and not the source.
+
+    Both of these are real shapes out of this account's own trail on the same
+    ``lookup-events`` call: Studio starting a JupyterLab app on 2026-08-03, and Amplify
+    creating a static site on 2026-08-06. An event name is not unique across AWS, and the two
+    services that share this one are a service that starts an instance and a service that does
+    not -- so a reader keyed on the name alone reports a web deploy as compute and inflates
+    the denominator with events no run can ever reconcile.
+    """
+    studio = {
+        "EventId": "e1",
+        "EventName": "CreateApp",
+        "EventSource": "sagemaker.amazonaws.com",
+        "CloudTrailEvent": json.dumps(
+            {
+                "eventSource": "sagemaker.amazonaws.com",
+                "eventTime": "2026-08-03T22:22:31Z",
+                "requestParameters": {"domainId": "d-example", "spaceName": "frank"},
+            }
+        ),
+    }
+    amplify = {
+        "EventId": "e2",
+        "EventName": "CreateApp",
+        "EventSource": "amplify.amazonaws.com",
+        "CloudTrailEvent": json.dumps(
+            {
+                "eventSource": "amplify.amazonaws.com",
+                "eventTime": "2026-08-06T16:05:55Z",
+                "requestParameters": {"name": "calc-readiness-demo"},
+            }
+        ),
+    }
+
+    assert read_launch_events.is_a_launch(studio)
+    assert not read_launch_events.is_a_launch(amplify)
+    # The envelope is absent on some fixtures and the body always carries it, so both are read
+    # and a record with only the inner spelling is still understood.
+    assert (
+        read_launch_events.event_source_of({k: v for k, v in studio.items() if k != "EventSource"})
+        == "sagemaker.amazonaws.com"
+    )
+    # Neither spelling present is not a launch, which is the safe direction: an event nobody
+    # can identify counted as compute is a person reported for something they did not do.
+    assert not read_launch_events.is_a_launch({"EventName": "CreateApp"})
+
+
+def test_a_sagemaker_tag_list_is_read_as_tags() -> None:
+    """Mutation: keep only the Batch object shape and the EC2 tagSpecificationSet shape.
+
+    SageMaker writes ``requestParameters.tags`` as a list of ``key``/``value`` objects, which
+    is neither of the other two. A Studio app carries no run id whatever the shape, so this
+    changes no verdict today; what it changes is that a launch this reads reports the project
+    it was tagged with rather than no tags at all.
+    """
+    event = read_launch_events.parse_event(
+        {
+            "EventId": "e3",
+            "EventName": "CreateApp",
+            "EventSource": "sagemaker.amazonaws.com",
+            "CloudTrailEvent": json.dumps(
+                {
+                    "eventTime": "2026-08-06T12:00:00Z",
+                    "userIdentity": {
+                        "sessionContext": {
+                            "sessionIssuer": {"userName": "Intern-amy.lin-sbsandbox"}
+                        }
+                    },
+                    "requestParameters": {
+                        "tags": [{"key": RUN_ID_TAG, "value": "run_019fcf3c-9878"}]
+                    },
+                }
+            ),
+        }
+    )
+
+    assert event.run_id == "run_019fcf3c-9878"
+    assert event.role_name == "Intern-amy.lin-sbsandbox"
 
 
 def test_every_event_name_is_asked_for_and_every_page_of_each_is_read(
@@ -207,28 +296,35 @@ def test_every_event_name_is_asked_for_and_every_page_of_each_is_read(
 ) -> None:
     """Mutation: stop at the first page, or ask for one event name and filter.
 
-    `lookup-events` takes a single lookup attribute, so three names is three calls. And a
+    `lookup-events` takes a single lookup attribute, so four names is four calls. And a
     reader that stopped at the first page would under-report the denominator on exactly the
     busy morning somebody is reading it for -- which is worse than under-reporting the list,
     because the denominator is what says the list is short.
+
+    Each page answers with an event of the name that was asked for, issued by the service
+    :data:`LAUNCH_EVENT_NAMES` pairs with it, so every one of them is a launch and the count
+    below measures paging rather than filtering.
     """
     calls: list[list[str]] = []
 
     def answering(arguments: Any, *, profile: Any = None, region: Any = None) -> Any:
         recorded = [str(argument) for argument in arguments]
         calls.append(recorded)
+        asked_for = recorded[recorded.index("--lookup-attributes") + 1].split("AttributeValue=")[1]
         body = json.dumps(
             {
+                "eventSource": LAUNCH_EVENT_NAMES[asked_for],
                 "userIdentity": {
                     "sessionContext": {"sessionIssuer": {"userName": "Intern-amy.lin-sbsandbox"}}
-                }
+                },
             }
         )
         page = {
             "Events": [
                 {
                     "EventId": f"e{len(calls)}",
-                    "EventName": "RunInstances",
+                    "EventName": asked_for,
+                    "EventSource": LAUNCH_EVENT_NAMES[asked_for],
                     "EventTime": "2026-08-04T09:00:00Z",
                     "CloudTrailEvent": body,
                 }

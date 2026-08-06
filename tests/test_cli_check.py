@@ -243,6 +243,12 @@ def test_check_names_the_configuration_that_answered_whichever_way_it_went(
     Mutation: print it only when the check passes. A stale validator's damage is a refusal
     that is wrong, so the reader who most needs to know which files decided is the one
     reading a refusal -- and that reader is also the common case.
+
+    **THE LAST LINE RATHER THAN THE FIRST, AND THE POSITION IS ASSERTED BOTH WAYS.** It led
+    every check for a while, which made ninety characters of somebody else's ``site-packages``
+    path the opening of the first thing a researcher ever read from this tool, above the
+    price they came for. What it catches is real and rare and its reader knows to look for
+    it. The second assertion is what stops it drifting back to the top.
     """
     root, runner = checkout(tmp_path, compute="gpu-1xa10g")
     elsewhere = tmp_path / "another-config"
@@ -263,7 +269,8 @@ def test_check_names_the_configuration_that_answered_whichever_way_it_went(
     )
 
     assert code == (EXIT_REFUSED if refused else EXIT_OK), out + err
-    assert out.startswith(f"checked against {elsewhere}\n\n")
+    assert out.endswith(f"\n\nchecked against {elsewhere}\n")
+    assert not out.startswith("checked against ")
     # No colour and no escape, here as everywhere: a piped check and a terminal check are
     # the same bytes, which is what makes a pasted transcript what the next person sees.
     assert "\x1b" not in out
@@ -787,6 +794,52 @@ def test_a_mistyped_dataset_release_is_refused_with_the_list_it_should_have_name
     assert err == ""
 
 
+def test_the_dataset_refusal_names_the_verb_that_says_which_of_the_names_will_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**A LIST OF NAMES IS NOT AN ANSWER, AND THIS ONE WAS THE DOCUMENTED WAY TO GET IT.**
+
+    Mutation: print the names and stop, which is what it did, and which the submission skill
+    told an agent to rely on: "the detail lists what is registered".
+
+    The list is honest about what a submission may name and silent about everything a chooser
+    needs. No size, no tokenizer, no licence, and -- the one that costs a machine -- no sign
+    that some of the names in it reach a container which exits 69 after the approval has been
+    spent. A submitter who has just been refused is the reader most likely to take the next
+    name off it.
+
+    So the refusal names ``edullm data``, which is the only thing that answers, and it says
+    what a person does when the corpus they want is not registered at all. That second half
+    has to describe what actually happens: ``edullm add dataset`` opens no pull request, and
+    a refusal implying otherwise sends its reader to a second refusal.
+
+    The repository refusal has named its own verb since 2026-08-06 and this is the same
+    correction for the field beside it.
+    """
+    root, runner = checkout(tmp_path)
+
+    code, out, _ = invoke(
+        ["check", "--dataset", "no-such-corpus-v9", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+    said = " ".join(out.split())
+
+    assert code == EXIT_REFUSED
+    assert "edullm data" in said, (
+        "the refusal lists names and points at no verb, so a submitter correcting a typo has "
+        "no way to learn which of the names it offered will actually start"
+    )
+    assert "edullm ask --kind dataset-request" in said, (
+        "the refusal says nothing about getting a new corpus registered, which is the other "
+        "half of why somebody meets it"
+    )
+    assert "edullm add dataset" not in said, (
+        "that verb refuses, so naming it here sends a refused reader to a second refusal"
+    )
+
+
 def test_a_corpus_that_is_registered_and_is_not_one_is_refused_as_itself(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -886,6 +939,274 @@ def test_the_unregistered_refusal_suggests_no_name_the_next_check_refuses(
         "no usable corpus is suggested at all, so the comparison above is between two empty "
         "sets and the refusal could say anything"
     )
+
+
+def test_the_first_invocation_anybody_makes_is_priced_rather_than_only_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**THE VERB SAYS IT PRICES A SUBMISSION AND PRINTED NO PRICE ON THE FIRST TRY.**
+
+    ``edullm check`` in a registered checkout, by somebody the roster puts on two groups,
+    with no ``--experiment`` and no ``--dataset``: three refusals, and nothing else at all.
+    ``edullm --help`` describes this verb as "price a submission here", and the number it
+    exists for was absent with no sentence saying why. Measured on 2026-08-06, on the first
+    command a researcher runs.
+
+    Mutation: print the manifest, the cost and the history only when nothing is refused,
+    which is the shipped behaviour and is what this case is written against. Two things were
+    wrong and both are asserted here. ``render_preflight`` returned the refusal list in place
+    of every block above it, and ``_preflight`` returned before it had resolved anything at
+    all -- so even with the renderer fixed there was no cost to print.
+
+    **NONE OF THE THREE REFUSED FIELDS IS A FACTOR IN THE PRICE, WHICH IS WHY THIS IS
+    ANSWERABLE RATHER THAN A GUESS.** The worst case is the compute profile's rate times its
+    nodes times the runtime bound times the attempt bound times the cells, and ``.edullm/
+    run.yaml`` and ``config/`` between them fix all five. The team, the experiment and the
+    dataset decide who is billed and what is read, not what an hour costs.
+
+    The figure is asserted rather than merely its presence: $1.006 for ``gpu-1xa10g`` over
+    ``olmo-core-train``'s twenty-four hours and two attempts, which is the same arithmetic
+    ``test_a_clean_check_prices_the_run_and_says_who_releases_it`` holds the cleared path to.
+    A price that appeared and disagreed with the cleared path's would be worse than none.
+    """
+    root, runner = checkout(tmp_path, compute="gpu-1xa10g")
+
+    code, out, err = invoke(
+        ["check"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+        login=SUBMITTER_ON_TWO_TEAMS,
+    )
+    said = " ".join(out.split())
+
+    assert code == EXIT_REFUSED, out + err
+    assert "worst case  $48.29" in out, out
+    assert "$1.006/hour x 1 node x 24h x 2 attempts x 1 cell" in out
+    # What was refused is still refused, and all three of them.
+    for code_said in ("team_is_ambiguous", "no_experiment", "no_dataset"):
+        assert f"refused  {code_said}" in out
+    # And the blocks that make a price worth reading came with it.
+    assert "what it has taken" in out
+    assert "olmo-core-train" in said and "gpu-1xa10g" in said
+    # The gate is not guessed at. It reads facts a half-described run has not supplied, and
+    # saying so is the difference between an unanswered question and a dropped one.
+    assert "not decided here" in said
+    assert "run-approval-" not in out, out
+
+
+def test_a_refused_check_says_which_tree_and_which_commit_it_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: print the repository and the commit only on the cleared path.
+
+    A refusal is the moment somebody most needs to know the tool read the checkout they are
+    standing in. It named neither, so a researcher meeting one had no way to tell a real
+    refusal from a check that had resolved the wrong tree -- and the walkthroughs that find
+    these defects happen on a branch rather than on ``main``, which is the case where the
+    doubt is reasonable.
+
+    The branch is asserted beside the two because it is the one of the three a person
+    recognises. A commit is twelve characters nobody reads back, and a repository is the same
+    for every run they will ever make.
+    """
+    root, runner = checkout(tmp_path, compute="gpu-1xa10g")
+
+    code, out, err = invoke(
+        ["check"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+        login=SUBMITTER_ON_TWO_TEAMS,
+    )
+
+    assert code == EXIT_REFUSED, out + err
+    assert "repository        OLMo-core" in out
+    assert "branch            edullm/an-arm" in out
+    assert f"commit            {COMMIT[:12]}" in out
+    # And the fields nobody filled in are reported as absent rather than as empty values, so
+    # a reader can tell "the tool got nothing" from "the tool found an empty string".
+    assert "dataset           not given" in out
+    assert "experiment        not given" in out
+
+
+def test_the_three_fields_nobody_named_are_one_question_with_one_line_to_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: one stanza per missing field, which is the shipped form.
+
+    Team, experiment and dataset are all "tell me about this run". Printed as three refusals
+    under three codes they read as three things being wrong with a checkout that is fine, and
+    a reader who concludes they have three problems goes looking for three fixes. What is
+    true is that the tool has not been told what the run is.
+
+    **THE EXPLANATIONS ARE NOT FLATTENED AWAY, AND THAT IS HALF THE ASSERTION.** "Absent and
+    none are different answers and only one of them is a statement" is not a thing anybody
+    works out from a usage string, and neither is which groups the roster puts them on. The
+    block gathers them under one heading with one line to copy and keeps every sentence.
+
+    The copyable line has to carry all three flags and be one a reader may run unchanged, so
+    the dataset example is ``none`` rather than a corpus picked for them: naming a corpus is
+    exactly the guess the refusal above it says the tool must not make.
+    """
+    root, runner = checkout(tmp_path, compute="gpu-1xa10g")
+
+    code, out, err = invoke(
+        ["check"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+        login=SUBMITTER_ON_TWO_TEAMS,
+    )
+    said = " ".join(out.split())
+
+    assert code == EXIT_REFUSED, out + err
+    # One heading, and it counts fields rather than refusals.
+    assert "3 fields nothing has answered" in said
+    assert "3 refusals" not in said, out
+    # One line, carrying every flag, and a team the roster really puts this person on.
+    copyable = next(
+        line.strip() for line in out.splitlines() if line.strip().startswith("edullm check ")
+    )
+    assert "--team input-core" in copyable
+    assert "--experiment " in copyable
+    assert "--dataset none" in copyable
+    # And every reason survives, word for word.
+    assert "Absent and none are different answers" in said
+    assert "The roster puts alphaxia2100 on more than one group" in said
+    assert "It registers nothing, so any lower-case hyphenated name will do" in said
+
+
+def test_untracked_files_that_cannot_reach_the_image_are_not_refused_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**A WORD DOCUMENT IN NO COMMIT REFUSED A SUBMISSION, UNDER A REASON ABOUT EDITS.**
+
+    ``git status --porcelain`` reports a changed tracked file and an untracked one in one
+    list, this read that list, and every entry got the sentence written for the first: what
+    would run is the last commit rather than what is on your laptop. That is exactly right
+    for an edit somebody believes is in the run. There is no version of it that is true of a
+    file in no commit, which was never going to be in the image, so there is no gap between
+    what the submitter thinks will run and what will.
+
+    The evidence is ``.github/workflows/build-research-image.yml``, where the publish job
+    checks the tree out at the verified commit and hands *that* to ``docker build``. Nothing
+    on a laptop reaches the image by any route.
+
+    Mutation: refuse for any dirty entry, which is the shipped behaviour. Untracked files are
+    close to universal -- everybody has scratch lying around -- so it refuses a large share
+    of researchers on their first invocation for something that cannot matter, and what they
+    learn is that the gate is noise. That is more expensive than the thing it prevented,
+    which is nothing.
+
+    The three paths are the ones a tester met on 2026-08-06: a Python script under ``docs``,
+    a plan document and a ``.docx``. None of them is named by the command and none is the
+    build recipe.
+    """
+    theirs = (
+        "docs/_generate_tokenizer_eval_plan_docx.py",
+        "docs/superpowers/plans/2026-07-23-post-training-tokenizer-adaptation.md",
+        "docs/tokenizer-evaluation-plan.docx",
+    )
+    write_spec(tmp_path, compute="gpu-1xa10g")
+    runner = FakeRunner(git_answers(tmp_path, untracked=theirs))
+
+    code, out, err = invoke(
+        ["check", "--dataset", "none", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "uncommitted_changes" not in out
+    # SEEN AND SAID, RATHER THAN PASSED OVER IN SILENCE. A tree with three untracked files in
+    # it that is called clean is a tool that either did not look or is not saying, and both
+    # send somebody to read the source. The line is the reason rather than a warning.
+    assert "untracked         3 files in no commit, so none of them reach the image" in out
+
+
+def test_an_untracked_file_the_command_names_is_refused_before_the_container_dies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The case on the other side, and the reason "ignore untracked entirely" is wrong too.
+
+    An untracked file cannot make the container run something *else*, which is why the tree
+    check no longer refuses for one on its own. It can make the container unable to run at
+    all: the image is built from the commit, so a file in no commit is not in it, and a
+    command naming one starts a machine, fails looking for a path, and reports that minutes
+    later from inside AWS with a worse message than this.
+
+    Mutation: drop the untracked question altogether, on the argument that the image is built
+    from the commit. It is the same argument and it stops one step short. What decides the
+    shape is what the run would actually do, and this run would go looking for a file nothing
+    published.
+
+    Asked of the command as text rather than by parsing it, because what a spec carries is a
+    shell line and a path in it may be quoted, an argument, or behind ``bash -lc``. A module
+    that committed code imports and nobody committed is the case this cannot reach; it would
+    need the codebase parsed and the answer would be a guess, and the sharp instance of it is
+    the entrypoint, which the command names.
+    """
+    write_spec(tmp_path, compute="gpu-1xa10g")
+    runner = FakeRunner(
+        git_answers(
+            tmp_path, untracked=(".edullm/train_on_corpus.py", "scratch/notes.docx")
+        )
+    )
+
+    code, out, err = invoke(
+        ["check", "--dataset", "none", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+    said = " ".join(out.split())
+
+    assert code == EXIT_REFUSED, out + err
+    assert "refused  untracked_file_the_run_needs" in out
+    assert ".edullm/train_on_corpus.py" in said
+    # And the file beside it, which the run would never open, is counted rather than named in
+    # the refusal. A refusal listing both would send somebody to commit a Word document.
+    assert "scratch/notes.docx" not in said.split("refused")[1]
+    assert "untracked         1 file in no commit" in out
+
+
+def test_a_tracked_file_you_changed_is_still_refused_and_says_it_is_tracked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: narrow the tree check to untracked paths, or drop the word "tracked".
+
+    This is the case the refusal was always right about and the narrowing must not touch. A
+    submission names a commit, the image is built from it, and an edit somebody has not
+    committed is a difference between what they believe will run and what will. Refusing is
+    doing them a favour.
+
+    The sentence now says the paths are tracked files. That is the half that was missing when
+    one refusal answered two facts: a reader whose ``.docx`` was named by this reasoning had
+    been told something false about their own tree, and naming the case is what stops the two
+    being conflated again by somebody reading the message rather than the code.
+    """
+    write_spec(tmp_path, compute="gpu-1xa10g")
+    runner = FakeRunner(
+        git_answers(tmp_path, dirty=("src/olmo_core/train.py",), untracked=("notes.docx",))
+    )
+
+    code, out, err = invoke(
+        ["check", "--dataset", "none", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+    said = " ".join(out.split())
+
+    assert code == EXIT_REFUSED, out + err
+    assert "refused  uncommitted_changes" in out
+    assert "src/olmo_core/train.py" in said
+    assert "a tracked file you have changed" in said
+    # The untracked file is not in the refusal, and is not silently forgotten either.
+    assert "notes.docx" not in said.split("refused")[1]
+    assert "untracked         1 file in no commit" in out
 
 
 def test_four_cards_and_a_command_that_starts_one_process_is_refused_by_name(
@@ -1126,11 +1447,11 @@ def test_somebody_the_roster_has_never_heard_of_is_told_that_and_nothing_else(
     profile sends somebody who is not on the roster to correct a field that was never what
     stood in the way.
 
-    The count is the second line rather than the first now, and the line above it is the one
-    thing allowed there: which reviewed configuration produced the refusal. Everything
-    ``render_refusals`` argues about the count coming before the reasons still holds -- a
-    reader learns nothing was dispatched before they learn why -- and a false refusal from a
-    stale packaged copy is the case where the reader has to know which files answered.
+    **AND IT IS THE ONLY REFUSAL, WHICH IS WHAT "AND NOTHING ELSE" MEANS HERE.** What the
+    blocks above it say is a different question: they are readings of the tree and of the
+    catalog, they were established, and the count line is what a reader learns before the
+    reasons. Everything ``render_refusals`` argues about that ordering still holds inside the
+    refusal section.
     """
     root, runner = checkout(tmp_path)
 
@@ -1141,12 +1462,12 @@ def test_somebody_the_roster_has_never_heard_of_is_told_that_and_nothing_else(
         monkeypatch=monkeypatch,
         login="somebody-who-does-not-work-here",
     )
-    first, blank, rest = out.split("\n", 2)
+    refusals = out.split("1 refusal. Nothing was dispatched.\n")
 
     assert code == EXIT_REFUSED
-    assert first.startswith("checked against ") and blank == ""
-    assert rest.startswith("1 refusal. Nothing was dispatched.")
-    assert "refused  submitter_not_in_roster" in out
+    assert len(refusals) == 2, out
+    assert refusals[1].lstrip().startswith("refused  submitter_not_in_roster")
+    assert out.count("refused  ") == 1, out
 
 
 def test_a_workload_written_for_another_repository_names_the_ones_written_for_this_one(

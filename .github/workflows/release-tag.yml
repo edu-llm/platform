@@ -113,6 +113,7 @@ on:
       - "src/edullm_platform/contracts/validation.py"
       - "src/edullm_platform/contracts/vocabulary.py"
       - "src/edullm_platform/contracts/workload.py"
+      - "src/edullm_platform/corpora.py"
       - "src/edullm_platform/daily_ceiling.py"
       - "src/edullm_platform/errors.py"
       - "src/edullm_platform/execution.py"
@@ -125,6 +126,7 @@ on:
       - "src/edullm_platform/reviewed_configuration.py"
       - "src/edullm_platform/run_history.py"
       - "src/edullm_platform/submission.py"
+      - "src/edullm_platform/tokenizers.py"
       - "config/datasets.yaml"
       - "config/image-exceptions.yaml"
       - "config/organization.yaml"
@@ -163,6 +165,54 @@ jobs:
     name: tag and release
     runs-on: ubuntu-latest
     steps:
+      # WHO MAY CUT A RELEASE BY HAND, ENUMERATED RATHER THAN MATCHED, AND THE SAME STEP THE
+      # THREE DEPLOY WORKFLOWS OPEN WITH. This file had no guard at all, which was the last
+      # unguarded dispatch button in the repository holding a write. Thirty-six people hold
+      # write, the dispatch handle above exists for repairing missed releases, and this job
+      # runs with `contents: write` and ends in `git tag` and `gh release create`. Neither
+      # tags nor releases are protected here -- no rulesets, no tag protection -- so a
+      # dispatch is a published tag, and a published tag is the one thing in this file that
+      # cannot be undone. It is also the thing every installed CLI compares its own version
+      # against, so a release cut by somebody who did not mean to tells the field it is
+      # current or that it is behind, and both are wrong.
+      #
+      # Only the dispatch path is guarded, exactly as in the deploy workflows and for the
+      # same reason. A push to main has already been through the required checks, including
+      # the one that refuses a change to these paths declaring a version no release has, and
+      # the person who clicks merge need not be an admin. Guarding the push would strand
+      # every merge that earns a release.
+      #
+      # It fails rather than skipping. A job-level `if` that evaluates false reports the job
+      # as skipped, which reads as success in the checks list and says nothing.
+      #
+      # First in the job, before the checkout, so a refused dispatch does no work. The list
+      # is checked against config/organization.yaml by tests/test_deploy_authorization.py,
+      # which holds this file to the same roster the three deploy workflows are held to. The
+      # wording differs from theirs by one sentence, because theirs names deploying and a
+      # release is not one; the module asserts the shape and the roster rather than the
+      # sentence, and asserts separately that the three deploy files still agree word for
+      # word with each other.
+      #
+      # This is not the tag ceiling. refuse-a-tag-above-the-ceiling.yml goes red on a
+      # hand-pushed v5 and is a different control on a different event; nothing here
+      # disturbs it, and neither covers the other -- that one cannot see a dispatch and this
+      # one cannot see a tag pushed from a laptop.
+      - name: Refuse a hand-started release from somebody who may not make one
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          case "${ACTOR}" in
+            philote-dev|BritishAmericqn) ;;
+            *)
+              echo "release_dispatch_not_authorized:${ACTOR}" >&2
+              echo "Cutting a release by hand is limited to the repository admins." >&2
+              echo "Open a pull request that bumps project.version instead: a merge to main releases it." >&2
+              exit 1
+              ;;
+          esac
+
       # fetch-depth: 0 for two reasons, and the shallow default defeats both. The decision
       # below is "does this tag already exist", and a shallow fetch brings no tags at all --
       # which would read as "no tag exists" every time and try to cut one that is already

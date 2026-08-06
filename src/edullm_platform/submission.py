@@ -291,7 +291,7 @@ def require_registered_repository(
 
     So this is asked first, out of the same registry, and it leads with the command that
     clears it. ``edullm add repository`` is the one kind in ``cli.intake.SELF_SERVICE_KINDS``
-    and ``register-repository.yml`` edits the platform files and opens the pull request, so
+    and ``register-repository.yml`` edits the platform files and prepares the pull request, so
     the reader who meets this can serve themselves. Naming only the registry file, as this
     refusal did until 2026-08-06, sent that reader off to hand-edit five files instead.
 
@@ -311,7 +311,7 @@ def require_registered_repository(
     registered = ", ".join(entry.repository for entry in repositories.repositories)
     raise UnregisteredRepositoryError(
         f"run edullm add repository --reason '<why>' to register {repository!r}, which "
-        f"opens the pull request that does it. config/repositories.yaml carries no entry "
+        f"prepares the pull request that does it. config/repositories.yaml carries no entry "
         f"for it, so admission would refuse this run with unregistered_repository whoever "
         f"released it. That pull request also carries the ECR repository the images go to, "
         f"created when it merges, and the place on the publisher role that writes them, "

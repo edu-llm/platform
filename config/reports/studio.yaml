@@ -1,0 +1,107 @@
+# The Studio domain edullm studio reaches, and what a shape on it costs per hour.
+#
+# UNDER config/reports/ RATHER THAN config/, for the reason config/reports/working-tier.yaml
+# writes out at length. The nine files docs-frank/reference/system-overview.md names as the
+# control plane are what a submission is judged against, and nothing here judges a submission:
+# Studio is the exploration surface and edullm studio prices it, admits nobody and records no
+# lineage. A tenth file in config/ would either contradict that document or cut a release every
+# time AWS moves a list price.
+#
+# THE CONSEQUENCE IS THE ONE THAT FILE NAMES AND IT IS SHARPER HERE. An installed edullm reads
+# the copy packaged at the release it was installed from, and no release is cut when this file
+# moves, so a corrected rate reaches people on their next re-install. Every number below is a
+# price quoted before somebody spends money, so a stale one under-quotes rather than refuses --
+# which is why the rates are list prices and the verb says so in as many words.
+#
+# LIST PRICES, READ OFF THE PRICING API AND NOT OFF A BILL. On 2026-08-06 this account was
+# billed $0.611212 for a JupyterLab ml.g4dn.xlarge hour against the $0.7364 below, which is an
+# organisation discount applied above this account. A discount is a fact about a contract that
+# can lapse, and a quote that assumes one is a quote that is wrong in the expensive direction.
+# The list price is a ceiling and every number here is reproducible from:
+#
+#   aws pricing get-products --service-code AmazonSageMaker --region us-east-1 \
+#     --filters Type=TERM_MATCH,Field=instanceName,Value=<instance_type> \
+#               Type=TERM_MATCH,Field=regionCode,Value=us-east-1
+#
+# and reading the USE1-Studio:JupyterLab-<instance_type> usage type.
+#
+# KEYED BY THE INSTANCE TYPE AND NOT BY A PROFILE NAME, WHICH IS A CHOICE AGAINST THE OBVIOUS
+# ONE. config/workload-catalog.yaml names shapes gpu-1xt4, gpu-4xa10g and so on, and reusing
+# those names here would read as consistency and would be a trap: the catalog's gpu-1xt4 is
+# g4dn.xlarge at $0.5260 and Studio's ml.g4dn.xlarge is $0.7364, so one name would carry two
+# prices for the same silicon and a reader comparing the two surfaces would compare the wrong
+# pair. The ml. prefix is SageMaker's own and is not the EC2 type; they are separate catalogs
+# with separate rate cards, and keying on the string AWS bills against keeps that visible.
+schema_version: 1
+
+# The domain edullm studio signs people in to. Created by hand on 2026-08-03 and not by any
+# template in infra/, which is why this is a recorded id rather than a stack output: nothing in
+# this repository deploys it and nothing may, so a verb that derived it would be deriving it
+# from a stack that does not exist. `aws sagemaker list-domains` is what confirms it.
+#
+# ONE DOMAIN AND THE VERB REFUSES A SECOND. A domain is the sign-in boundary and the EFS volume
+# every user profile mounts, so two of them are two populations who cannot see each other's
+# files; choosing between them is not a thing a CLI should do silently.
+domain_id: d-bxqz8jfqjjnu
+
+# What a space's own volume is sized at when the verb creates one. Fifty is the size the one
+# space anybody has used in anger carries, and Studio bills it whether or not an app is running
+# -- it is the persistent disk that is the whole reason Studio beats the lane for exploration,
+# and it is also the charge --stop does not stop. At the rate below this is $5.60 a month per
+# person and it is the floor under pointing thirty-five people here.
+volume_gib: 50
+
+# What a gigabyte-month of that volume costs, as USE1-Studio:VolumeUsage.gp3. A list price for
+# the same reason the instance rates are: this account was billed $0.09296 against it, which is
+# the same organisation discount, and a quote that assumed the discount would be wrong in the
+# expensive direction on the day it lapses.
+volume_gib_month_usd: "0.112"
+
+# The shape a bare `edullm studio` starts. ml.t3.medium and deliberately the smallest thing on
+# the list: exploration is reading a notebook and poking at a dataframe far more often than it
+# is holding a model, the difference between this and the GPU below is fifteen times the money,
+# and the person who needs the GPU knows they need it and can pass --instance-type. A default
+# that guessed generously would bill everybody for the one case.
+default_instance_type: ml.t3.medium
+
+# Where the domain is, which is the region segment of every ARN the verb composes. A field
+# rather than the caller's configured region: an ARN built from whatever region a laptop
+# happens to be pointed at names an image that does not exist, and the failure reads as a
+# missing image rather than as a misconfigured shell.
+region: us-east-1
+
+# Every shape the verb will start, and nothing else. An allow-list rather than a pass-through
+# for the reason infra/iam/researcher-role.yaml gives about instance types at greater length: a
+# shape that is not priced here is a shape the verb cannot quote, and starting something it
+# cannot quote is exactly the failure `edullm studio` exists to prevent. Four is not a policy
+# about what people may have; it is what somebody has costed. Adding a fifth is an edit here.
+#
+# THE IMAGE IS A NAME AND NOT AN ARN, AND THAT IS FORCED RATHER THAN PREFERRED. CreateApp
+# refuses a JupyterLab app with no image ARN outright -- "SageMaker Image ARN is required for
+# App with type [JupyterLab]" -- and the ARN's account segment is Amazon's own image account,
+# not this one. Writing those twelve digits here would be a 12-digit literal in the tracked
+# tree, which tests/test_evidence.py refuses across the whole repository and is right to: a
+# guard that has to judge whose account an id belongs to is a guard nobody can trust.
+#
+# So the account is resolved at run time from the public SSM parameter
+# /aws/service/sagemaker-distribution/ecr-account-id, which is regional and is AWS's to
+# publish. That is the same arrangement `edullm run` uses for its AMI, and it has the same
+# second benefit: the value follows AWS rather than being a number in a file somebody has to
+# notice has moved. Read it with `aws ssm get-parameter` if you want to see it.
+shapes:
+  - instance_type: ml.t3.medium
+    image_name: sagemaker-distribution-cpu
+    hourly_rate_usd: "0.05"
+    accelerator: cpu
+  - instance_type: ml.m5.xlarge
+    image_name: sagemaker-distribution-cpu
+    hourly_rate_usd: "0.23"
+    accelerator: cpu
+  - instance_type: ml.g4dn.xlarge
+    image_name: sagemaker-distribution-gpu
+    hourly_rate_usd: "0.7364"
+    accelerator: gpu
+  - instance_type: ml.g5.xlarge
+    image_name: sagemaker-distribution-gpu
+    hourly_rate_usd: "1.41"
+    accelerator: gpu

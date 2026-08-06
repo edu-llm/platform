@@ -93,7 +93,7 @@ concurrency:
 
 jobs:
   register:
-    name: Write the registration and open a pull request
+    name: Write the registration and push it to a branch
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # THE TOKEN IS DECLARED ON THE JOB RATHER THAN ON THE STEP THAT NEEDS IT, AND THAT IS NOT
@@ -112,10 +112,11 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     permissions:
-      # Enough to push a branch and open a pull request against it, and nothing else. No
-      # `id-token: write`, for the reason at the top of this file.
+      # Enough to push a branch, and nothing else. No `id-token: write`, for the reason at
+      # the top of this file, and no `pull-requests: write`: the organization refuses that
+      # call whatever this asks for, and a grant nothing can use reads as one this workflow
+      # depends on. What replaces it is a link a person clicks, in the last step.
       contents: write
-      pull-requests: write
     steps:
       # `main` explicitly rather than whatever ref the dispatch chose. A registration is an
       # addition to the tip, and branching from an unrelated feature branch would put its
@@ -227,18 +228,114 @@ jobs:
           git add --pathspec-from-file "${RUNNER_TEMP}/paths.txt"
           git commit --file "${RUNNER_TEMP}/message.txt"
 
-      - name: Open the pull request
+      # THE BRANCH IS PUSHED AND THE PULL REQUEST IS HANDED TO A PERSON TO OPEN. That is one
+      # click rather than none, and the click is not the part worth optimising.
+      #
+      # This step used to end in `gh pr create`, and on the only dispatch this workflow has
+      # ever had, on 2026-08-04, it wrote the registration, pushed
+      # `register/open-instruct-scored-rewards`, and died on:
+      #
+      #     GitHub Actions is not permitted to create or approve pull requests
+      #     (createPullRequest)
+      #
+      # The branch landed and the pull request did not, so the workflow did nine tenths of its
+      # job and reported total failure. The repository checkbox that would allow it is greyed
+      # out because the organization sets `can_approve_pull_request_reviews: false` and a
+      # repository cannot widen what the organization caps.
+      #
+      # THE SETTING IS NOT BEING TURNED ON, AND THAT IS A DECISION RATHER THAN A DELAY. It is
+      # one switch reading "create *and* approve". Turning it on so that this one step can
+      # finish would also let a workflow in any of the seven repositories submit an approving
+      # review, and requiring a human review is what protects the reviewed configuration
+      # files this workflow edits. It would weaken the review gate across seven repositories
+      # to save one click in one workflow that runs a few times a year.
+      #
+      # AND THE BODY DOES NOT FIT IN THE URL. That was the thing worth measuring rather than
+      # assuming. A compare URL can prefill the body as a query parameter, `gh` refuses to
+      # open one over 8192 bytes because that is where servers start answering `414 URI Too
+      # Long`, and a real registration body is around eleven thousand characters before it is
+      # percent-encoded -- so the prefilled URL comes out at about fifteen kilobytes, which is
+      # not close. Truncating it would put a body into a pull request that stops mid-sentence
+      # and reads as complete, and the body is where the claims that were checked, the claims
+      # nothing can check and the follow-ups are recorded.
+      #
+      # So the length is measured here rather than asserted, and the body goes wherever it
+      # fits: into the URL when it will go, and otherwise into the job summary whole, in a
+      # block that copies in one gesture, with the two numbers printed beside it so nobody
+      # has to wonder whether something was dropped. The title always fits.
+      - name: Push the branch and hand the pull request to a person
         env:
-          GH_TOKEN: ${{ github.token }}
+          PLATFORM_REPOSITORY: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
         run: |
           set -euo pipefail
           read -r branch < "${RUNNER_TEMP}/branch.txt"
-          read -r title < "${RUNNER_TEMP}/title.txt"
 
           git push --set-upstream origin "${branch}"
 
-          gh pr create \
-            --base main \
-            --head "${branch}" \
-            --title "${title}" \
-            --body-file "${RUNNER_TEMP}/body.md"
+          BRANCH="${branch}" python - <<'PY'
+          import os
+          from pathlib import Path
+          from urllib.parse import quote
+
+          # What `gh` itself refuses to open a browser at, and for the same reason: a query
+          # string is a GET, servers cap the request line at eight kilobytes by default, and
+          # over that GitHub answers `414 URI Too Long` rather than truncating.
+          URL_BYTES_A_SERVER_WILL_ACCEPT = 8192
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          branch = os.environ["BRANCH"]
+          title = (temp / "title.txt").read_text(encoding="utf-8").strip()
+          body = (temp / "body.md").read_text(encoding="utf-8")
+
+          compare = f"{os.environ['SERVER_URL']}/{os.environ['PLATFORM_REPOSITORY']}/compare/"
+          # `safe=""` so that a `/` or a `&` in the body is encoded rather than read as
+          # structure. The branch keeps its slash, which is a path segment and not data.
+          prefilled = (
+              f"{compare}{quote(branch)}?expand=1"
+              f"&title={quote(title, safe='')}&body={quote(body, safe='')}"
+          )
+          without_body = f"{compare}{quote(branch)}?expand=1&title={quote(title, safe='')}"
+
+          measured = len(prefilled.encode("utf-8"))
+          fits = measured <= URL_BYTES_A_SERVER_WILL_ACCEPT
+          url = prefilled if fits else without_body
+
+          lines = [
+              "## Open the pull request",
+              "",
+              "The branch is pushed and the registration is committed to it. This workflow",
+              "cannot open the pull request itself: the organization forbids Actions from",
+              "creating one, and the setting that would allow it also allows approving one.",
+              "",
+              f"**[Open the pull request for `{branch}`]({url})**",
+              "",
+          ]
+          if fits:
+              lines += ["The title and body are filled in. Read them and press Create.", ""]
+          else:
+              lines += [
+                  f"The title is filled in. The body is {len(body)} characters, which makes"
+                  f" that URL {measured} bytes against the {URL_BYTES_A_SERVER_WILL_ACCEPT}"
+                  " a server will accept, so it is here instead rather than cut short."
+                  " Copy it into the description:",
+                  "",
+                  "````markdown",
+                  body.rstrip("\n"),
+                  "````",
+                  "",
+              ]
+          Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text(
+              "\n".join(lines) + "\n", encoding="utf-8"
+          )
+          # ::notice:: puts it at the top of the run page, where somebody who followed a link
+          # out of `edullm add repository` is standing.
+          print(f"::notice::Open the pull request: {url}")
+          print(url)
+          if not fits:
+              print(
+                  f"the body is {len(body)} characters and a prefilled URL would be"
+                  f" {measured} bytes, over the {URL_BYTES_A_SERVER_WILL_ACCEPT} a server"
+                  " accepts, so it is in this run's summary to copy rather than truncated"
+              )
+          PY

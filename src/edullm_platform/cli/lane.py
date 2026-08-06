@@ -23,10 +23,11 @@ import random
 import re
 import shlex
 from collections.abc import Mapping, Sequence
+from configparser import ConfigParser, Error, MissingSectionHeaderError
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Final, Literal
 
 from pydantic import Field
@@ -56,11 +57,20 @@ from edullm_platform.researcher_lane import (
 from edullm_platform.reviewed_configuration import ConfigFile, load_config_file
 
 __all__ = [
+    "ACCESS_REQUEST_COMMAND",
+    "ARM_MACHINES",
+    "AWS_BROKER",
     "AWS_LOGIN_COMMAND",
+    "AWS_PROFILE_COMMAND",
+    "AWS_PROFILE_VARIABLE",
+    "CREDENTIAL_PROCESS_KEY",
+    "GPU_AMI_FAMILY",
     "GPU_AMI_PARAMETER",
     "LANE_INSTANCE_PROFILE",
     "LANE_TAG_KEY",
+    "MACOS",
     "PLATFORM_NETWORK_NAME",
+    "PLUGIN_DOWNLOADS",
     "SCRATCH_BUCKET",
     "SESSION_PLUGIN",
     "STOPPABLE_STATES",
@@ -71,12 +81,19 @@ __all__ = [
     "LaneRequest",
     "LaneSubnet",
     "RanFor",
+    "ResolvedProfile",
     "WorkingTierSettings",
     "ZoneAttempt",
     "agent_online_argv",
+    "ambiguous_profile_refusal",
     "another_zone_may_answer",
     "assume_lane_argv",
+    "aws_config_path",
+    "broker_profiles",
+    "carry_back_script",
+    "chosen_profile_said",
     "command_line",
+    "command_not_found_said",
     "credentials_environment",
     "default_compute_profile",
     "expires_at",
@@ -85,13 +102,16 @@ __all__ = [
     "find_machine_argv",
     "find_subnets_argv",
     "instance_type_for",
+    "interactive_script",
     "lane_machines",
     "lane_refusals",
     "lane_subnets",
     "load_working_tier_settings",
     "machine_already_running",
     "machine_for_project",
+    "missing_broker_refusal",
     "missing_plugin_refusal",
+    "no_broker_profile_refusal",
     "no_machine_to_stop",
     "no_zone_had_this_shape",
     "notebook_forward_argv",
@@ -99,12 +119,15 @@ __all__ = [
     "placement_said",
     "placement_verdict",
     "placement_warning",
+    "plugin_install_commands",
     "priced_as",
     "ran_for",
     "ran_for_said",
+    "read_aws_config",
     "refusal_code",
     "remote_command_argv",
     "remote_script",
+    "resolve_aws_profile",
     "run_instances_argv",
     "shell_session_argv",
     "ssh_proxy_command",
@@ -112,7 +135,9 @@ __all__ = [
     "terminate_argv",
     "under_a_shell",
     "what_stopping_did",
+    "what_the_machine_carries",
     "whose_machine_refusals",
+    "work_directory",
     "working_prefix",
     "working_uri",
     "zones_offering",
@@ -135,14 +160,29 @@ SCRATCH_BUCKET: Final = "edullm-scratch"
 #: a launch that fails after a machine has already been priced.
 LANE_INSTANCE_PROFILE: Final = "edullm-lane-instance"
 
+#: Which of Amazon's deep-learning images the lane launches into, as its parameter path spells
+#: it. ``base`` is Amazon's own word for the one that carries the driver, the CUDA toolkits, EFA
+#: and OpenMPI and **no framework at all**, and that word is load-bearing rather than
+#: descriptive: :func:`what_the_machine_carries` tells every researcher there is no torch here,
+#: and that sentence is a lie the moment this names a ``pytorch-`` family instead.
+#: ``tests/test_lane_environment.py`` fails if it does, so repointing the lane at a framework
+#: image is an edit to that sentence in the same commit.
+#:
+#: MEASURED ON 2026-08-06, on ami-0326665395a428ccf out of this parameter, from a g4dn.xlarge in
+#: this account. No ``/opt/conda``, no ``/opt/pytorch``, no ``bin/activate`` anywhere on the root
+#: filesystem, and no directory named ``torch`` on it either. ``/opt/dlami`` holds one thing and
+#: it is an NVMe helper. The only interpreter is Ubuntu's ``/usr/bin/python3``, 3.10.12, whose
+#: site-packages is the distro's own -- cloud-init, ansible, boto3. So the hypothesis that torch
+#: was sitting in an environment nothing activated is false: there is no environment, and there
+#: is nothing to activate.
+GPU_AMI_FAMILY: Final = "base-oss-nvidia-driver-gpu-ubuntu-22.04"
+
 #: Where the lane's image comes from, resolved at launch rather than pinned. The parameter is
 #: Amazon's and it moves; on 2026-08-05 it answered ami-0326665395a428ccf, which is the image the
 #: one instance in the platform's VPC that Systems Manager reports as Online is running. Reading
 #: the parameter is what keeps a lane machine on a current driver without anybody editing a
 #: template, and it costs one ssm:GetParameter the boundary does not deny.
-GPU_AMI_PARAMETER: Final = (
-    "/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id"
-)
+GPU_AMI_PARAMETER: Final = f"/aws/service/deeplearning/ami/x86_64/{GPU_AMI_FAMILY}/latest/ami-id"
 
 #: The Name tag prefix and the group name ``infra/batch-network.yaml`` gives the platform's VPC.
 #: Read rather than pinned, so a redeploy that moves an id moves the lane with it.
@@ -1612,6 +1652,13 @@ def run_instances_argv(
 #: install and it is not optional: every session below goes through it.
 SESSION_PLUGIN: Final = "session-manager-plugin"
 
+#: The binary that issues every human AWS credential in this organization.
+#:
+#: Named as a constant of its own rather than spelled into the three commands below, because
+#: it is now also the thing :func:`missing_broker_refusal` looks for on PATH, and a name that
+#: appeared in four string literals would be four places to miss on a rename.
+AWS_BROKER: Final = "sb-aws-creds"
+
 #: How a person in this organization gets an AWS session, spelled out rather than alluded to.
 #:
 #: There is one way and no second one. The sandbox issues no long-lived keys and refuses the
@@ -1622,16 +1669,56 @@ SESSION_PLUGIN: Final = "session-manager-plugin"
 #:
 #: Held to ``guides/the-platform.md`` by ``tests/test_guides.py``, so the guide and the
 #: refusal cannot name two different commands.
-AWS_LOGIN_COMMAND: Final = "sb-aws-creds login"
+AWS_LOGIN_COMMAND: Final = f"{AWS_BROKER} login"
+
+#: What writes the profile the lane then resolves. The second of the broker's two steps.
+AWS_PROFILE_COMMAND: Final = f"{AWS_BROKER} install-profiles"
+
+#: Where somebody who cannot get the broker is sent, spelled the way ``cli/intake.py`` spells
+#: the kind. ``guides/day-one.md`` and ``guides/the-platform.md`` already route here, so this
+#: refusal joins a path that exists rather than inventing one.
+ACCESS_REQUEST_COMMAND: Final = "edullm ask --kind access-request"
+
+#: The environment variable the AWS CLI and every SDK read to pick a profile, and the one
+#: this resolution steps aside for entirely.
+AWS_PROFILE_VARIABLE: Final = "AWS_PROFILE"
 
 
-def shell_session_argv(instance_id: str) -> tuple[str, ...]:
-    """A shell on the machine, with no document named.
+def shell_session_argv(instance_id: str, *, uri: str, project: str) -> tuple[str, ...]:
+    """A shell on the machine, standing in the work directory with the machine's own environment.
 
-    The default is the account's own session preference, which is what somebody asking for a
-    shell means. Nothing is opened, nothing is forwarded and no key exists.
+    **THE DEFAULT SESSION DOCUMENT IS WHAT THIS USED TO NAME, AND WHAT IT GIVES IS NOT A SHELL
+    ANYBODY WOULD CHOOSE.** Measured against this account on 2026-08-06, through
+    ``edullm shell`` itself: the account's session preference runs ``sh``, not bash; it is not a
+    login shell, so ``PATH`` carries no CUDA and ``LD_LIBRARY_PATH`` is unset; and it lands the
+    researcher in ``/var/snap/amazon-ssm-agent/13349``, the agent's own working directory, where
+    none of their files are. ``edullm run`` puts the tree in ``/work/<project>``. So the two
+    verbs disagreed about the shell, the environment and the directory, and the person who
+    debugs in one and scripts with the other got neither the same tools nor the same files.
+
+    ``AWS-StartInteractiveCommand`` is the document that fixes all three, and the objection to
+    it recorded here -- that it "would run one command and exit, which is the other verb" -- is
+    answered by what the command is. :func:`interactive_script` ends in ``exec bash -i``, so the
+    one command it runs is the shell, and what the researcher sits at afterwards is bash with a
+    prompt, in ``/work/<project>``, on the same ``PATH`` and ``LD_LIBRARY_PATH``
+    :func:`under_a_shell` gives ``run``. Verified interactively on this account on 2026-08-06.
+
+    The document is not denied by anything: the researcher role's ``AllowResearchWorkingSet``
+    permits the action and none of the denies below it names a session document.
     """
-    return ("aws", "ssm", "start-session", "--target", instance_id)
+    return (
+        "aws",
+        "ssm",
+        "start-session",
+        "--target",
+        instance_id,
+        "--document-name",
+        "AWS-StartInteractiveCommand",
+        "--parameters",
+        _session_parameters(
+            {"command": [under_a_shell(interactive_script(uri=uri, project=project))]}
+        ),
+    )
 
 
 def _session_parameters(values: Mapping[str, object]) -> str:
@@ -1709,8 +1796,30 @@ def under_a_shell(script: str) -> str:
     double quote, of its own, and a researcher's command is arbitrary text that may contain
     either kind; ``'`` inside a single-quoted word is the one case a hand-rolled wrapper always
     gets wrong, and it is what ``git commit -m 'don't'`` produces.
+
+    **``-l`` AND NOT ``-c`` ALONE, WHICH IS WHAT SHIPPED AND WHAT HANDED EVERY RESEARCHER LESS
+    THAN THE MACHINE.** A non-login shell reads no ``/etc/profile``, so it reads none of
+    ``/etc/profile.d`` either -- and ``/etc/profile.d/dlami.sh`` is where the deep-learning image
+    states how it is meant to be used. Measured on this account on 2026-08-06, on the same
+    instance one second apart: without ``-l`` the command ran on the bare default ``PATH`` with
+    ``LD_LIBRARY_PATH`` unset and no ``nvcc``; with it, ``PATH`` carried
+    ``/usr/local/cuda-13.2/bin``, ``/usr/local/cuda-12.9/bin``, ``/opt/amazon/efa/bin`` and
+    ``/opt/amazon/openmpi/bin``, and ``LD_LIBRARY_PATH`` carried the matching CUDA, CUPTI and
+    OpenMPI library directories. An extension compiled against the toolkit, anything loading a
+    CUDA library by name, and ``nvcc`` itself all worked in the second and not the first.
+
+    **THIS IS NOT ACTIVATING AN ENVIRONMENT ON SOMEBODY'S BEHALF, WHICH IS THE OBJECTION IT
+    LOOKS LIKE IT SHOULD MEET.** Nothing here chooses an interpreter, a virtualenv or a package
+    set; a login shell is the machine as the people who built the image configured it, and it is
+    already what a person gets when they sit down at :func:`shell_session_argv`. The choice was
+    never whether to impose an environment, it was whether ``run`` would be given the same one
+    as ``shell``, and it was not.
+
+    Nothing printed on the way in, measured on the same instance: the first line of output is
+    the researcher's. Ubuntu's ``~/.bashrc`` returns immediately when it is not interactive, so
+    the login path costs a few milliseconds and reaches no user configuration that could print.
     """
-    return f"bash -c {shlex.quote(script)}"
+    return f"bash -lc {shlex.quote(script)}"
 
 
 def remote_command_argv(instance_id: str, *, command: str) -> tuple[str, ...]:
@@ -1801,28 +1910,439 @@ def ssh_proxy_command(instance_id: str, *, system: str) -> str:
     return f'ProxyCommand sh -c "{session}"'
 
 
-def missing_plugin_refusal() -> Refusal:
-    """What to say when the laptop has the AWS CLI and not the piece that carries a session."""
+#: Where AWS publishes every build of the plugin. One base, because the five installers below
+#: differ only in the last two segments, and a second copy of the host is a URL that can rot in
+#: one place and not the other.
+PLUGIN_DOWNLOADS: Final = "https://s3.amazonaws.com/session-manager-downloads/plugin/latest"
+
+#: What :func:`platform.system` answers on a Mac, compared case-folded for the reason
+#: :data:`edullm_platform.cli.workspace.WINDOWS` is: it is the only comparison an injected
+#: value cannot get subtly wrong.
+MACOS: Final = "darwin"
+
+#: What :func:`platform.machine` answers on a 64-bit ARM laptop. Two spellings and not one:
+#: Darwin says ``arm64`` and Linux says ``aarch64`` for the same silicon, and a check for
+#: either alone hands half the ARM machines here an x86 package that installs and then will
+#: not run.
+ARM_MACHINES: Final = frozenset({"arm64", "aarch64"})
+
+
+def _is_arm(machine: str) -> bool:
+    return machine.strip().casefold() in ARM_MACHINES
+
+
+def plugin_install_commands(*, system: str, machine: str, has_dpkg: bool = False) -> tuple[str, ...]:
+    """What AWS documents installing the plugin on this exact machine, verbatim.
+
+    **THESE ARE COPIED FROM AWS AND NOT COMPOSED, WHICH IS THE PROPERTY THAT MATTERS ABOUT
+    THEM.** Every line below is character for character what the Systems Manager user guide
+    gives under *Install the Session Manager plugin* for that operating system, read on
+    2026-08-06: the ``.exe`` for Windows, the signed ``.pkg`` and its two commands for macOS,
+    the ``.deb`` and ``dpkg`` for Debian and Ubuntu, and the ``.rpm`` one-liner for Amazon
+    Linux and RHEL. Nothing here is a package manager AWS does not document -- in particular
+    **no Homebrew formula is named**, because AWS documents none and a formula invented here
+    would be a guess printed to somebody with no way to check it.
+
+    **RETURNED AS LINES RATHER THAN AS PROSE, AND THAT IS WHAT MAKES THEM USABLE.**
+    ``presentation.render_refusals`` wraps a detail with ``textwrap.wrap``, so a shell command
+    carried inside one arrives broken across four indented lines -- copyable only by
+    reassembling it, which is most of the work this whole change exists to remove. A URL
+    survives that treatment because it is one token and ``break_long_words`` is off; ``curl
+    "..." -o "..."`` does not. So the caller prints these as they are, one per line, beneath
+    the wrapped paragraph.
+
+    **THE ARCHITECTURE IS READ AND NOT OFFERED.** AWS publishes an x86 and an ARM build of
+    every one of these and the process already knows which it is, so printing both would be
+    handing the reader a decision that has been made.
+
+    ``has_dpkg`` is measured by the caller for the reason every other input to this module is:
+    this file runs no process, so it cannot ask a Linux box which packaging it uses. Debian
+    and Ubuntu get the ``.deb``; everything else gets the ``.rpm``, which is the only other
+    family AWS publishes a package for.
+    """
+    named = system.strip().casefold()
+    if named == WINDOWS:
+        return (f"{PLUGIN_DOWNLOADS}/windows/SessionManagerPluginSetup.exe",)
+    if named == MACOS:
+        build = "mac_arm64" if _is_arm(machine) else "mac"
+        return (
+            (
+                f'curl "{PLUGIN_DOWNLOADS}/{build}/session-manager-plugin.pkg"'
+                ' -o "session-manager-plugin.pkg"'
+            ),
+            "sudo installer -pkg session-manager-plugin.pkg -target /",
+            (
+                "sudo ln -s /usr/local/sessionmanagerplugin/bin/session-manager-plugin"
+                " /usr/local/bin/session-manager-plugin"
+            ),
+        )
+    if has_dpkg:
+        build = "ubuntu_arm64" if _is_arm(machine) else "ubuntu_64bit"
+        return (
+            (
+                f'curl "{PLUGIN_DOWNLOADS}/{build}/session-manager-plugin.deb"'
+                ' -o "session-manager-plugin.deb"'
+            ),
+            "sudo dpkg -i session-manager-plugin.deb",
+        )
+    build = "linux_arm64" if _is_arm(machine) else "linux_64bit"
+    return (f"sudo dnf install -y {PLUGIN_DOWNLOADS}/{build}/session-manager-plugin.rpm",)
+
+
+def _plugin_install_said(system: str) -> str:
+    """The sentence in front of the commands, which is only long on the platform that needs it.
+
+    **WINDOWS GETS THREE CLAUSES NOBODY ELSE GETS AND EVERY ONE OF THEM IS AWS'S OWN
+    WARNING.** The installer needs Administrator rights. Windows usually does not hand the
+    new ``PATH`` entry to the shell that ran it, which AWS carries a whole troubleshooting
+    topic for -- so the most likely event after a successful install is this same refusal in
+    the same window, and somebody not told that reads a working installation as a broken one.
+    And AWS supports the plugin under PowerShell and the Command shell only.
+
+    **THE SHELL CLAUSE IS KEPT RATHER THAN DROPPED AS TRIVIA, AND THE REASON IS THAT IT
+    SHARES A SYMPTOM WITH THE ONE ABOVE IT.** Both present as a plugin that is installed and
+    still will not work, from different causes and with different repairs, in a population
+    that has every reason to be sitting in Git Bash: this binary drives ``git`` and ``gh``,
+    so a Git Bash window is exactly where somebody already is when they type the verb.
+    Naming one of two causes for one symptom sends half the readers to the wrong fix.
+
+    Nowhere else gets a caveat, because AWS documents none for them and prose nobody needs is
+    prose that pushes the commands off the screen.
+    """
+    if system.strip().casefold() == WINDOWS:
+        return (
+            "Download and run AWS's installer, which needs Administrator rights and installs "
+            "to %PROGRAMFILES%\\Amazon\\SessionManagerPlugin\\bin\\. Then run this again from "
+            "a new PowerShell or Command Prompt window rather than the one you installed "
+            "from: Windows usually does not give the new PATH entry to the shell that ran the "
+            "installer, which is the likeliest way a working install goes on looking like "
+            "this refusal. AWS supports the plugin under PowerShell and the Command shell "
+            "only, so run edullm from one of those rather than from Git Bash."
+        )
+    return "AWS documents this for the machine you are on, and it is the whole of it."
+
+
+def missing_plugin_refusal(*, system: str, machine: str, has_dpkg: bool = False) -> Refusal:
+    """What to say when the laptop has the AWS CLI and not the piece that carries a session.
+
+    **THIS PRINTED "INSTALL IT FROM THE AWS DOCUMENTATION" UNTIL 2026-08-06, WHICH IS A
+    SEARCH ENGINE WITH EXTRA STEPS.** It named the cause, said nothing was billing, and then
+    asked somebody on their first morning to go and find a page. The process knows which
+    operating system and which silicon it is on, so it can name the one command that person
+    needs rather than the five AWS publishes, and it does.
+
+    **THE ORDERING SENTENCE IS HERE BECAUSE SOMEBODY WHO CLEARS THIS WALL IS NOT FINISHED.**
+    ``cli/main.py``'s ``_lane_session`` checks three local things before it asks AWS who you
+    are, because all three answer without the network: the broker binary, then this plugin,
+    then a profile the broker wrote. So this refusal is the second of the three and the
+    profile is the third, which means somebody who installs the plugin and believes they are
+    done is about to meet another wall. Naming the next one here costs a sentence.
+
+    **AND THE COUNT MOVED ON 2026-08-06 RATHER THAN BEING WRONG FROM THE START.** This said
+    two prerequisites and named itself the first, which was true while the plugin was the
+    first thing checked. The broker check now precedes it, so reaching this refusal at all is
+    proof the broker is already on PATH -- and a newcomer told they are at the first of two
+    walls when they are at the second of three has been given a count they will discover is
+    wrong at the next step, which is the specific thing this sentence exists to prevent.
+
+    **THE COMMANDS ARE NOT IN THE DETAIL, AND THAT IS THE ONE THING TO NOT TIDY BACK.**
+    ``render_refusals`` wraps this string, which breaks a shell command across four indented
+    lines. :func:`plugin_install_commands` hands the caller the lines to print underneath
+    unwrapped instead, so there is exactly one copy of each command and it is pasteable.
+
+    ``system`` and ``machine`` are handed in rather than read, which is the arrangement
+    ``cli/workspace.py`` already uses for ``platform.system()``: it is what lets all five
+    installers be asserted from one laptop, and Windows is the one this repository has never
+    been able to test on.
+    """
     return Refusal(
         code="session_plugin_missing",
         detail=(
             f"{SESSION_PLUGIN} is not on PATH. A lane session is a Systems Manager session rather "
             "than SSH, which is what means there is no key to hold and no port open on the "
-            "machine, and the plugin is the piece of that which runs on your laptop. Install it "
-            "from the AWS documentation for the Session Manager plugin, then run this again. "
-            "Nothing was started and nothing is billing."
+            "machine, and the plugin is the piece of that which runs on your laptop. Nothing was "
+            "started and nothing is billing. There are three prerequisites and this is the "
+            f"second of them: {AWS_BROKER} is already on PATH, and a profile it wrote is what "
+            f"this checks next, so `{AWS_LOGIN_COMMAND}` and `{AWS_PROFILE_COMMAND}` are the "
+            "steps after this one rather than alternatives to it. "
+            + _plugin_install_said(system)
         ),
     )
 
 
-def remote_script(*, uri: str, project: str, command: str) -> str:
-    """What runs on the machine for one ``edullm run``, as one line of shell.
+def missing_broker_refusal() -> Refusal:
+    """What to say when the laptop has no credential broker at all.
 
-    Three acts and the middle one is the researcher's. Sync the tree down, run what was asked,
-    sync back whatever it wrote. The status is captured between the second and the third, so a
-    command that failed still gets its output carried up, and it is printed last on a line the
-    verb parses, because ``start-session`` exits with the plugin's status rather than the remote
-    command's.
+    **THIS REFUSAL PRINTS NO INSTALL COMMAND, AND THAT IS THE WHOLE POINT OF IT RATHER THAN AN
+    OMISSION TO TIDY UP LATER.** ``sb-aws-creds`` cannot be installed by the person reading
+    this. It is marked ``"private": true`` in its own ``package.json``, so it has never been
+    publishable to npm and ``npm view sb-aws-creds`` answers 404; it is built out of
+    ``superbuilders/devops-dashboard``, which is a private repository in an organization the
+    eduLLM roster is not a member of, so ``git clone`` answers 404 as well. Every working
+    install in this organization -- roughly twenty of them -- came from a tarball handed over
+    by somebody who already had one. That was traced on this laptop on 2026-08-06 from the
+    symlink ``npm install -g`` left, the Safari quarantine attribute on the tarball, and the
+    absence of any private registry in ``~/.npmrc``.
+
+    So the honest refusal is the one below: it says the thing cannot be self-served and routes
+    to the ask queue, which is where ``guides/day-one.md`` and ``guides/the-platform.md``
+    already send anybody who needs AWS. **An install line here would be worse than no line at
+    all** -- it would send fifteen people to a 404 and cost each of them the afternoon this
+    refusal exists to save, which is exactly the failure being corrected. The README inside the
+    tarball demonstrates the hazard: it names ``pipx install git+...`` for a package that is
+    Node and TypeScript, so even the copy shipped beside the binary is wrong.
+
+    **IT IS THE FIRST WALL BECAUSE IT PRECEDES BOTH OTHERS.** The Session Manager plugin and an
+    AWS session are the other two prerequisites, and neither is reachable without this: the
+    session comes from the broker, and there is nothing else in this account that issues one.
+    Somebody without it who is checked against the plugin first installs the plugin, gets past
+    that wall, and meets a shell "command not found" from ``credential_process`` -- which is
+    not a refusal, names nothing, and is where the fifteen have been landing.
+    """
+    return Refusal(
+        code="aws_broker_missing",
+        detail=(
+            f"{AWS_BROKER} is not on PATH, and it is the first of three things a lane session "
+            "needs. Every AWS credential a person holds in this organization comes from that "
+            "broker -- there are no long-lived keys in this account and creating one is refused "
+            "-- so nothing below this point can work without it. Nothing was started and nothing "
+            "is billing. It cannot be installed from here: the package is private, it is not on "
+            "npm, and it is built out of a repository this roster cannot read, so every working "
+            f"copy was passed on by somebody who had one. Run `{ACCESS_REQUEST_COMMAND}` and say "
+            "you need the AWS credential broker; that is the queue this is answered from, and it "
+            "is the same one the guides send you to."
+        ),
+    )
+
+
+#: The key an ``~/.aws/config`` profile carries when something other than a stored key answers
+#: for it. The broker's managed block writes one per profile and writes no role ARN beside it.
+CREDENTIAL_PROCESS_KEY: Final = "credential_process"
+
+
+def broker_profiles(config: str) -> tuple[str, ...]:
+    """Every profile in an ``~/.aws/config`` whose credentials the broker mints, in file order.
+
+    **THE BROKER'S OWN ``credential_process`` LINE IS THE DISCRIMINATOR, AND THE ROLE ARN IS
+    NOT, BECAUSE THE ROLE ARN IS NOT IN THE FILE.** This is the one place the obvious design
+    and the actual bytes on disk disagree, so it is written down rather than left to be
+    rediscovered. ``sb-aws-creds install-profiles`` prints ``[sbsandbox] ->
+    arn:aws:iam::<account>:role/Intern-<person>-sbsandbox`` to its own stdout and then writes a
+    managed block containing three lines per profile -- the section header, a
+    ``credential_process``, and a region. No ARN and no account reach the file, so a resolver
+    keying on ``role/Intern-*`` would match nothing that the broker has ever written. Read off
+    the installed 0.2.1 build's ``dist/aws_config.js`` and off this laptop's own config.
+
+    **AND THE ACCOUNT COULD NOT BE COMPARED AGAINST EVEN IF IT WERE THERE.** A twelve-digit
+    account ID is a secret by this repository's own reckoning -- it is in
+    ``evidence.SECRET_PATTERNS`` and ``scan_for_secrets`` refuses it -- so there is no literal
+    to test against, and the tests use ``123456789012`` precisely because the real one may not
+    be written down here. The account arrives at runtime from ``sts:GetCallerIdentity``, which
+    is the call this resolution exists to make possible and therefore cannot precede.
+
+    **WHAT IS LOST BY KEYING ON THE BROKER INSTEAD IS NOTHING THE RULES ASKED FOR.** The hazard
+    named is a profile belonging to somebody's other employer, and no such profile invokes this
+    binary: the broker is this organization's and mints for this organization's accounts only.
+    The remaining imprecision is between two profiles the broker itself manages -- ``sbsandbox``
+    and, for engineers who have one, ``sbproduction`` -- and that case is answered by asking
+    rather than by choosing, which is what :func:`resolve_aws_profile` does with anything other
+    than exactly one candidate.
+
+    Parsed rather than pattern-matched over the whole file, so that a ``credential_process``
+    inside one profile cannot be attributed to the section above it. ``strict=False`` because
+    a duplicated section is the AWS CLI's problem to report and not a reason for this to raise,
+    and interpolation is off because ``%`` is an ordinary character in a shell command.
+    """
+    parser = ConfigParser(interpolation=None, strict=False)
+    try:
+        parser.read_string(config)
+    except MissingSectionHeaderError:
+        return ()
+    except Error:
+        return ()
+    found = []
+    for section in parser.sections():
+        process = parser.get(section, CREDENTIAL_PROCESS_KEY, fallback="")
+        if not process.strip():
+            continue
+        # THE PROGRAM AND NOT A SUBSTRING. ``shlex`` so that a quoted path with a space in it
+        # reads as one token, and the basename so that a broker invoked by absolute path -- an
+        # npm global install is a symlink somebody may well have spelled out -- is still the
+        # broker. A bare ``in`` test would also match a wrapper script merely mentioning it.
+        try:
+            program = shlex.split(process)[0]
+        except (ValueError, IndexError):
+            continue
+        if PurePath(program).name.casefold().removesuffix(".exe") != AWS_BROKER:
+            continue
+        # ``[profile x]`` everywhere except ``[default]``, which the AWS CLI spells bare and
+        # which is a profile a person did not pick and this must therefore not pick either.
+        name = section.split(maxsplit=1)
+        if len(name) == 2 and name[0] == "profile":
+            found.append(name[1].strip())
+    return tuple(found)
+
+
+def chosen_profile_said(profile: str, *, path: Path) -> str:
+    """The one line that says which credentials this is about to use, and where it read them.
+
+    **PRINTED ON EVERY RESOLUTION, WHICH IS THE POINT RATHER THAN A COURTESY.** Choosing a
+    credential is not the thing to avoid; choosing one silently is. A person with an AWS
+    profile for other work needs to be able to see, in the line above the machine that starts
+    billing, that this reached for the platform's one and not for theirs.
+
+    A path and no colour, matching ``presentation.config_source_said``, so a piped run and a
+    terminal run stay the same bytes.
+    """
+    return f"using AWS profile {profile}, the one {path} has from {AWS_BROKER}"
+
+
+def no_broker_profile_refusal(*, path: Path) -> Refusal:
+    """What to say when the broker is installed and has written no profile yet.
+
+    The gap between the broker's two steps. ``login`` puts a refresh token in the keychain and
+    writes nothing to ``~/.aws/config``; ``install-profiles`` is what writes the profile, and
+    somebody who ran the first and not the second has a working credential that no AWS client
+    can find.
+
+    **``AWS_PROFILE`` IS NAMED AS THE WAY PAST THIS AND THAT IS DELIBERATE.** Not everybody who
+    reaches an AWS session reaches it through the broker's managed block -- an administrator on
+    Identity Center does not -- and a refusal with no override would be this resolution
+    breaking a setup it does not understand. Setting the variable is honoured ahead of
+    everything here.
+    """
+    return Refusal(
+        code="no_broker_profile",
+        detail=(
+            f"{AWS_PROFILE_VARIABLE} is not set and {path} has no profile from {AWS_BROKER}, so "
+            "there is no credential to reach the lane with. Nothing was started and nothing is "
+            f"billing. There are two steps and this is the second: `{AWS_LOGIN_COMMAND}` puts a "
+            f"token in your keychain and writes no profile, and `{AWS_PROFILE_COMMAND}` is what "
+            f"writes one. Run both, then run this again. If your AWS session comes from "
+            f"somewhere other than {AWS_BROKER}, set {AWS_PROFILE_VARIABLE} to the profile you "
+            "want and this uses it untouched."
+        ),
+    )
+
+
+def ambiguous_profile_refusal(profiles: Sequence[str], *, path: Path) -> Refusal:
+    """What to say when the broker manages more than one profile and none of them is the ask.
+
+    **NAMED AND NOT CHOSEN BETWEEN.** These are all the platform's own credentials, so there is
+    no unsafe answer here, only an expensive one: picking ``sbproduction`` for somebody who
+    meant ``sbsandbox`` starts a machine on the wrong account's bill and reports success. The
+    file does not say which account each label reaches -- see :func:`broker_profiles` for why
+    -- so there is nothing here that could break the tie, and inventing a precedence rule from
+    the label spelling would be a guess that reads like a fact.
+    """
+    named = ", ".join(profiles)
+    return Refusal(
+        code="aws_profile_is_ambiguous",
+        detail=(
+            f"{AWS_PROFILE_VARIABLE} is not set and {path} has {len(profiles)} profiles from "
+            f"{AWS_BROKER}, so which one this should spend is yours to say rather than this "
+            f"binary's to assume: {named}. Nothing was started and nothing is billing. Set "
+            f"{AWS_PROFILE_VARIABLE} to one of them, or pass it for the one command, and run "
+            "this again."
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class ResolvedProfile:
+    """Which AWS profile the lane will use, and what to print about having decided that.
+
+    Three fields rather than a union, because two of the three outcomes carry something to
+    print and the caller's branch is the same shape for all of them: print whatever is here,
+    then stop if there is a refusal.
+
+    ``profile`` is ``None`` both when the person set ``AWS_PROFILE`` themselves -- there is
+    nothing to add to their environment, and nothing to tell them they do not already know --
+    and when this refused. ``said`` and ``refusal`` are never both set.
+    """
+
+    profile: str | None
+    said: str | None
+    refusal: Refusal | None
+
+
+def resolve_aws_profile(config: str, *, declared: str | None, path: Path) -> ResolvedProfile:
+    """Which profile the two lane verbs run under when nobody named one.
+
+    **THE THIRD STEP THAT USED TO BE A PERSON'S AND IS NOW THIS FUNCTION'S.** Reaching the lane
+    took three: ``login``, ``install-profiles``, and then ``AWS_PROFILE=sbsandbox`` in front of
+    every command or ``--profile`` on every command. The refusal named only the first, and the
+    third is per-terminal -- so somebody got through it once, opened a new tab the next
+    morning, and met an identical refusal with no memory of what had answered it.
+
+    **A DECLARED ``AWS_PROFILE`` IS NEVER OVERRIDDEN AND NEVER SECOND-GUESSED.** Not checked
+    against the broker's block, not warned about, not reported. A person who set it has said
+    which credential they want more explicitly than anything this could infer, and the one
+    thing worse than choosing silently is overruling a choice that was made out loud.
+
+    **A BLANK ONE IS NOT A CHOICE.** ``AWS_PROFILE=`` is what an unset variable looks like to
+    the AWS CLI, which falls back to ``default``, so honouring the empty string as a declaration
+    would leave this resolving nothing while the CLI resolved something else.
+    """
+    if declared is not None and declared.strip():
+        return ResolvedProfile(profile=None, said=None, refusal=None)
+    candidates = broker_profiles(config)
+    if not candidates:
+        return ResolvedProfile(
+            profile=None, said=None, refusal=no_broker_profile_refusal(path=path)
+        )
+    if len(candidates) > 1:
+        return ResolvedProfile(
+            profile=None, said=None, refusal=ambiguous_profile_refusal(candidates, path=path)
+        )
+    only = candidates[0]
+    return ResolvedProfile(profile=only, said=chosen_profile_said(only, path=path), refusal=None)
+
+
+def aws_config_path(environ: Mapping[str, str], *, home: Path) -> Path:
+    """Where the AWS CLI reads its config, honouring the one variable that moves it.
+
+    ``AWS_CONFIG_FILE`` rather than the fixed path, because the AWS SDKs honour it, the broker
+    honours it -- ``dist/aws_config.js`` reads the same variable before writing -- and a
+    resolution that read a different file from the one the CLI is about to read would refuse
+    over a profile that is present, or choose one the CLI cannot see.
+    """
+    declared = environ.get("AWS_CONFIG_FILE", "").strip()
+    return Path(declared) if declared else home / ".aws" / "config"
+
+
+def read_aws_config(path: Path) -> str:
+    """The config file's text, or nothing where there is none to read.
+
+    A missing file is the ordinary state of a laptop that has never run the broker's second
+    step, and an unreadable one is answered the same way: as no profiles, which
+    :func:`resolve_aws_profile` turns into the refusal that names the step. Raising here would
+    put a traceback in front of the newcomer this whole path is for.
+    """
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def work_directory(project: str) -> str:
+    """Where one project's tree lives on the machine, for whichever verb is asking.
+
+    One function rather than two f-strings, because the two verbs used to compose this
+    separately and only one of them composed it at all: ``run`` put the tree here and ``shell``
+    left the researcher wherever the Systems Manager agent happened to be standing.
+    """
+    return f"/work/{project}"
+
+
+def _landing(*, uri: str, project: str) -> str:
+    """Somewhere to stand and the tree to stand in, which is the half both verbs share.
+
+    **IT IS SHARED BECAUSE THE TWO VERBS HAVE TO AGREE AND DID NOT.** A person who debugs in
+    ``edullm shell`` and then scripts the same thing with ``edullm run`` must find the same
+    files in the same place, and until this was one function ``shell`` synced nothing and stood
+    in the agent's own directory. Everything that differs between the verbs is appended after
+    this by the caller: the researcher's command and a sentinel for one, a shell for the other.
 
     **THE DIRECTORY IS MADE WITH ``sudo`` AND HANDED OVER, AND A PLAIN ``mkdir -p`` HERE DOES
     NOT WORK.** A Session Manager session runs as ``ssm-user``, who cannot create a directory at
@@ -1836,12 +2356,138 @@ def remote_script(*, uri: str, project: str, command: str) -> str:
     leaves the directory owned by the session rather than by root, so the sync back and anything
     ``edullm shell`` does later in the same place need no further privilege.
     """
-    directory = f"/work/{project}"
+    directory = work_directory(project)
     return (
         f'set -u; sudo install -d -o "$(id -u)" -g "$(id -g)" {directory}; '
         f"aws s3 sync {uri} {directory} --only-show-errors; "
-        f"cd {directory}; "
+        f"cd {directory}"
+    )
+
+
+def what_the_machine_carries() -> str:
+    """What is on a lane machine before the researcher puts anything there, said once, up front.
+
+    **THE FIRST ``edullm run`` ANYBODY EVER MADE DIED ON THIS AND THE OUTPUT SAID NOTHING ABOUT
+    IT.** It asked for ``torch.cuda.get_device_name(0)``, got ``python: command not found``, and
+    the follow-up found the driver healthy, ``/opt/dlami`` present and ``import torch`` failing.
+    The reasonable inference from those three -- deep-learning image, working GPU, no torch --
+    is that torch is in an environment nothing activated, and it is wrong. There is no
+    environment. :data:`GPU_AMI_FAMILY` carries the measurement.
+
+    **SO THE DECISION IS TO SAY IT RATHER THAN TO FIX IT, AND THE ALTERNATIVES ARE WORTH THE
+    LINES.** Amazon publishes framework images beside this one --
+    ``oss-nvidia-driver-gpu-pytorch-2.12-ubuntu-24.04`` and a dozen others were in this
+    account's parameter store on 2026-08-06 -- and pointing the lane at one is a two-character
+    edit. It buys an ``import torch`` that works and costs three things. It pins a torch build
+    nobody declared, which is worse than none: an empty machine fails in the first second and a
+    wrong-version machine fails in the third hour. Its torch lives in a virtualenv, so the lane
+    would be activating an environment on the researcher's behalf after all, which is the act
+    this was trying to avoid. And it blurs the one line the exploration route is built on --
+    that nothing here is reproducible or citable -- by making the lane look like it ships a
+    recipe. The base image ships tools; the researcher's own repository ships the recipe, and on
+    the recorded path an image is built from their commit for exactly that reason.
+
+    Installing torch on their behalf at launch was never a candidate: it is the same
+    version-nobody-declared problem, paid for in minutes of GPU time on every machine, for a
+    package plenty of work here does not want.
+
+    So: the fact, the reason nothing acts on it, and what to do instead. Printed by both verbs,
+    from here, so they cannot come to say two different things about one machine.
+    """
+    return (
+        f"This machine is Amazon's {GPU_AMI_FAMILY} image: the NVIDIA driver and the CUDA "
+        "toolkits, and no Python framework. There is no conda environment, no virtualenv and "
+        "no torch on it, and nothing here installs one -- a framework this platform chose "
+        "would be a version your repository never declared. python3 is the interpreter. What "
+        "you install stays as long as the machine does, and both verbs reach the same machine."
+    )
+
+
+def command_not_found_said() -> str:
+    """What 127 means, and the one spelling that causes nearly all of them here.
+
+    **THIS IS THE WHOLE OF WHAT THIS REPOSITORY DOES ABOUT ``python`` NOT EXISTING, AND LEAVING
+    THE MACHINE ALONE IS THE DECISION RATHER THAN THE ABSENCE OF ONE.** Ubuntu 22.04 ships no
+    unversioned ``python`` on purpose, and ``python-is-python3`` is a package a person installs
+    for themselves. Three reasons not to install it, or to drop a symlink, from the lane.
+
+    It is the same act as activating somebody's environment for them, which is the one this
+    platform declined a function above -- a change to the machine, made silently, on every
+    launch, that a researcher shipping their own interpreter would not expect.
+
+    It cannot be made true where it matters. The recorded path runs in an image built from the
+    researcher's own repository, and ``config/repositories.yaml`` shows both base images in use:
+    ``docker.io/library/python``, which has a ``python``, and ``docker.io/nvidia/cuda``, which
+    has neither ``python`` nor ``python3`` until a Dockerfile installs one. A lane that always
+    had ``python`` would teach a habit that half the registered repositories break, and it is
+    the *submission* that is expensive to have break.
+
+    And it fixes a message rather than a machine. Somebody meets ``python: command not found``
+    once; what failed them was that the message said nothing about where they were. This says
+    it, costs nothing on the runs where it does not happen, and leaves ``python3`` meaning on a
+    lane machine exactly what it means on every other Ubuntu box they will ever touch.
+    """
+    return (
+        "127 is what a shell returns when it cannot find the command, so this is more likely a "
+        "program the machine does not have than a program of yours that failed. The usual one "
+        "is python: Ubuntu's interpreter is python3, there is no unversioned python, and "
+        "nothing here makes one -- a python that exists only on a lane machine is a habit the "
+        "next machine breaks."
+    )
+
+
+def remote_script(*, uri: str, project: str, command: str) -> str:
+    """What runs on the machine for one ``edullm run``, as one line of shell.
+
+    Three acts and the middle one is the researcher's. Sync the tree down, run what was asked,
+    sync back whatever it wrote. The status is captured between the second and the third, so a
+    command that failed still gets its output carried up, and it is printed last on a line the
+    verb parses, because ``start-session`` exits with the plugin's status rather than the remote
+    command's.
+
+    The first act is :func:`_landing` and is the same one ``edullm shell`` performs.
+    """
+    directory = work_directory(project)
+    return (
+        f"{_landing(uri=uri, project=project)}; "
         f"({command}); status=$?; "
         f"aws s3 sync {directory} {uri} --only-show-errors; "
         f'echo "edullm-exit:$status"'
     )
+
+
+def interactive_script(*, uri: str, project: str) -> str:
+    """What runs on the machine for one ``edullm shell``: the same landing, then a shell.
+
+    ``exec`` rather than a call, so the shell the researcher types into is the process the
+    session is attached to. Without it, leaving with Ctrl-D returns to the wrapper, which then
+    exits anyway, and the session closes on a shell exiting a shell -- an extra process for no
+    behaviour, and one more thing between the terminal and the person.
+
+    ``bash -i`` and not ``bash -l``, because :func:`under_a_shell` has already made the wrapper
+    a login shell and the interactive child inherits its environment. A second login would
+    source ``/etc/profile.d/dlami.sh`` twice and put every CUDA directory on ``PATH`` twice,
+    which is harmless and looks like a bug to the first person who prints it. ``-i`` still reads
+    ``~/.bashrc``, which is where the prompt, the colours and the completions are.
+    """
+    return f"{_landing(uri=uri, project=project)}; exec bash -i"
+
+
+def carry_back_script(*, uri: str, project: str) -> str:
+    """The work directory back into the working tier, after a shell session has ended.
+
+    **WITHOUT THIS, MOVING ``edullm shell`` INTO ``/work/<project>`` WOULD BE A TRAP RATHER THAN
+    A FIX.** The verb prints that what the researcher keeps goes to the working tier and
+    survives the machine, and the directory it now stands them in is the one ``run`` carries
+    there -- so a person who works for an hour in the shell, leaves, and lets the machine expire
+    would reasonably have believed their work was safe. ``run`` syncs back the moment its
+    command returns; a shell has no such moment until the person leaves, and this is that
+    moment.
+
+    Guarded on the directory existing, because a session that never opened -- the agent gone,
+    the plugin refused, the person interrupting the launch -- leaves nothing to carry, and
+    ``aws s3 sync`` on a path that is not there is an error message in front of somebody whose
+    session already failed for a different reason.
+    """
+    directory = work_directory(project)
+    return f"if [ -d {directory} ]; then aws s3 sync {directory} {uri} --only-show-errors; fi"

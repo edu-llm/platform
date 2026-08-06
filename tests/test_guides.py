@@ -36,7 +36,9 @@ import yaml
 
 from edullm_platform.cli.actions import ADMITTED, DECLINED, submission_state
 from edullm_platform.config import load_yaml
+from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.corpora import corpora
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 GUIDES_DIR = PROJECT_ROOT / "guides"
@@ -120,6 +122,11 @@ def to_cents(rate: Decimal) -> str:
 @pytest.fixture(scope="module")
 def platform_guide() -> str:
     return PLATFORM_GUIDE_PATH.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def day_one_guide() -> str:
+    return DAY_ONE_GUIDE_PATH.read_text(encoding="utf-8")
 
 
 @pytest.fixture(scope="module")
@@ -526,21 +533,56 @@ def test_the_tmp_trap_is_named_wherever_the_guide_puts_it(olmo_core_guide: str) 
     )
 
 
-def test_every_corpus_the_guide_tabulates_is_one_the_form_offers(
+def test_the_guide_sends_a_reader_to_the_verb_rather_than_tabulating_the_corpora(
     platform_guide: str, workflow: dict[str, Any]
 ) -> None:
-    """The table is a promise in the same way the dropdown is.
+    """**THE TABLE THIS REPLACES WAS CORRECT AND THAT WAS ITS WHOLE PROBLEM.**
 
-    Read against the form rather than the registry, because the registry may hold a corpus no
-    workload can construct a tokenizer for — the guide should name what a person can pick.
+    Mutation: put the table back, or leave a shorter one behind as a convenience.
+
+    Sixteen rows of name and token count, every number right on the day it was typed. What
+    held them was this test, and this test only compared the *names* against the submission
+    form's dropdown -- so adding a corpus went red and somebody typed a row, and re-sealing
+    one at a new size went green for ever. The numbers were held by nothing, in the one place
+    a researcher would read them.
+
+    A table also cannot carry the column that matters. Five registered corpora are current
+    and refused by nothing and reach a container that exits 69, and which five is a join over
+    ``config/datasets.yaml`` and ``edullm_platform.tokenizers.TOKENIZERS`` that changes on its
+    own the day OLMo-core grows a tokenizer. A page cannot recompute itself.
+
+    So the assertion moves with the answer: the section names the verb, and no row of the
+    shape the table used to have survives anywhere on the page. Both halves are needed --
+    naming the verb while leaving the rows would be two answers, which is how they disagree.
     """
-    tabulated = set(
-        re.findall(r"^\| `([a-z0-9][a-z0-9.-]*)` \| [\d.]+B \|", platform_guide, re.MULTILINE)
+    tabulated = re.findall(
+        r"^\| `([a-z0-9][a-z0-9.-]*)` \| [\d.]+B \|", platform_guide, re.MULTILINE
     )
-    offered = set(form_inputs(workflow)["dataset_release"]["options"]) - {"none"}
+    heading = "## The corpora"
 
-    assert tabulated, "the guide names no corpus, so either the table or this pattern moved"
-    assert tabulated == offered
+    assert heading in platform_guide, "the guide no longer tells anybody what corpora exist"
+    section = platform_guide.split(heading, 1)[1].split("\n## ", 1)[0]
+    assert "edullm data" in section, (
+        "the corpora section names no verb, so a reader has nowhere to go; edullm data is "
+        "the only route to the list that carries a size, a tokenizer and a licence"
+    )
+    assert not tabulated, (
+        f"the guide tabulates {tabulated} again. Those numbers are held by nothing here, "
+        "which is what the table was deleted for, and a second answer beside edullm data is "
+        "how the two come to disagree"
+    )
+    # And the verb it names is one a reader can actually pick a corpus off, which is the
+    # promise the dropdown comparison used to make. Asked of the registry through the same
+    # join the verb uses, rather than of the form, because the verb's whole point is that it
+    # answers for the registered corpora the form cannot show.
+    offered = set(form_inputs(workflow)["dataset_release"]["options"]) - {"none"}
+    registry = load_yaml(PROJECT_ROOT / "config" / "datasets.yaml", DatasetRegistry)
+    runnable = {row.reference_id for row in corpora(registry) if row.runnability.will_run}
+
+    assert runnable == offered, (
+        "edullm data and the submission form disagree about which corpora will run, so the "
+        "page the guide now points at is not the page the form is offering"
+    )
 
 
 def test_the_guide_sends_a_reader_who_wants_to_stop_a_run_to_the_button(
@@ -708,6 +750,63 @@ def test_the_guide_and_the_refusal_name_the_same_way_to_get_a_session(
         f"the guide does not name {AWS_LOGIN_COMMAND!r}, which is what edullm prints when "
         "a lane verb finds no AWS session"
     )
+
+
+def test_both_guides_name_both_prerequisites_and_which_is_checked_first(
+    platform_guide: str, day_one_guide: str
+) -> None:
+    """**A REFUSAL IS SOMETHING YOU HIT AND A GUIDE IS SOMETHING THAT STOPS YOU HITTING IT.**
+    Mutation: drop the plugin from either guide, or drop the word "first".
+
+    Two people walked the CLI on 2026-08-06, one on macOS and one on Windows, and the first
+    `edullm run` either of them ever attempted refused twice on two different prerequisites.
+    Neither guide named both, and `guides/day-one.md` named neither. That is the larger half
+    of the defect, because the refusals are where somebody already blocked finds out and the
+    guides are where somebody preparing could have avoided it.
+
+    **THE ORDER IS THE FACT AND NOT MERELY THE PAIR.** `cli/main.py`'s `_lane_session`
+    checks the plugin before it calls `sts:GetCallerIdentity`, so a person who settles the
+    session and not the plugin meets the plugin's refusal on the next attempt, having
+    believed they were finished. Both guides have to say which comes first.
+
+    **WHAT IS DELIBERATELY NOT ASSERTED IS AN INSTALL COMMAND IN EITHER GUIDE.** AWS
+    publishes five and which one a reader wants depends on their operating system and their
+    processor. A guide cannot know that and the refusal can, so the commands live in
+    `lane.plugin_install_commands` alone. Two copies of an install line is two things to keep
+    true against a URL AWS owns.
+    """
+    from edullm_platform.cli.lane import AWS_LOGIN_COMMAND, SESSION_PLUGIN
+
+    for name, guide in (("the-platform.md", platform_guide), ("day-one.md", day_one_guide)):
+        readable = guide.replace(SESSION_PLUGIN, "Session Manager plugin")
+        assert "Session Manager plugin" in readable, (
+            f"{name} does not mention the Session Manager plugin, which is the first of the "
+            "two things edullm run refuses without"
+        )
+        assert AWS_LOGIN_COMMAND in guide, f"{name} does not name the way to get a session"
+        assert "first" in guide, (
+            f"{name} does not say which of the two prerequisites is checked first, so a "
+            "reader who fixes them in the other order meets a second refusal"
+        )
+
+
+def test_no_guide_carries_a_plugin_install_command_the_refusal_already_prints(
+    platform_guide: str, day_one_guide: str
+) -> None:
+    """Mutation: paste the macOS or Windows installer into either guide.
+
+    The refusal knows the operating system and the processor and prints the one line that
+    reader needs. A guide knows neither, so a copy there is either all five of AWS's
+    installers or the wrong one, and in both cases it is a second thing to keep true when
+    AWS moves a URL. This is the assertion behind that choice rather than a note about it.
+    """
+    from edullm_platform.cli.lane import PLUGIN_DOWNLOADS
+
+    for name, guide in (("the-platform.md", platform_guide), ("day-one.md", day_one_guide)):
+        assert PLUGIN_DOWNLOADS not in guide, (
+            f"{name} carries an installer URL. The refusal prints the one for the machine "
+            "the reader is actually on, and this copy will rot separately"
+        )
 
 
 def test_the_guide_does_not_promise_a_size_that_costs_a_download(platform_guide: str) -> None:
@@ -1163,6 +1262,12 @@ def test_the_lane_refusal_the_reference_quotes_is_the_one_the_lane_composes() ->
 
     The AWS line is quoted too. It is the reason the paragraph is four lines rather than two
     and it is what somebody searches for.
+
+    ``opens_a_session=True`` is the ``run`` and ``shell`` form, which is the one the page
+    quotes and the one the two people walking the CLI met. ``edullm stop`` composes the same
+    paragraph with a different sentence about the plugin, because it checks for none, and
+    the page says so in prose beneath rather than quoting a second block nobody would
+    diff against the first.
     """
     from edullm_platform.cli.main import _no_aws_session
 
@@ -1170,7 +1275,11 @@ def test_the_lane_refusal_the_reference_quotes_is_the_one_the_lane_composes() ->
         "aws: [ERROR]: An error occurred (NoCredentials): Unable to locate credentials.\n"
         'You can configure credentials by running "aws login".'
     )
-    composed = [line for line in _no_aws_session(said).splitlines() if line.strip()]
+    composed = [
+        line
+        for line in _no_aws_session(said, opens_a_session=True).splitlines()
+        if line.strip()
+    ]
     page = PLATFORM_GUIDE_PATH.read_text(encoding="utf-8")
     quoted = {line for block in fenced_blocks(page) for line in block.splitlines()}
 

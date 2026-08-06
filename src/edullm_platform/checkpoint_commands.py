@@ -223,6 +223,17 @@ def unverified_resume_note(
     match and neither of the other two applies. The one second attempt this platform reliably
     spends is therefore the one on the run that could not finish in its bound, which is
     exactly the run for which starting again from nothing cannot help.
+
+    **AND THAT DERIVATION IS FOR A READER OF THIS MODULE RATHER THAN FOR A SUBMITTER.** The
+    sentence used to carry it: "because Batch retries a failure matching none of its rules
+    and an attempt stopped at its runtime bound reports no container exit code for the rules
+    to match". It is true, it is written out here and again in ``config/policy.yaml``, and
+    it answers an objection only somebody who already knows ``EvaluateOnExit`` can raise. A
+    submitter deciding ``--attempts`` needs the finding, which is that the retry they are
+    paying for lands on the run that ran out of time and gets the same bound again; the
+    mechanism behind it changes nothing they can do. The finding stayed and the derivation
+    went, which is a fifth of the paragraph a first-time reader was spending on Batch's
+    retry semantics.
     """
     if maximum_attempts <= 1:
         return None
@@ -250,10 +261,8 @@ def unverified_resume_note(
         "codebase, and a trainer that writes to that prefix and never loads back from it "
         "passes both -- which two of the six registered repositories were measured doing on "
         "2026-08-06. The attempt a retry is actually spent on is the one that ran out of "
-        "time, because Batch retries a failure matching none of its rules and an attempt "
-        "stopped at its runtime bound reports no container exit code for the rules to match. "
-        "That attempt gets the same bound again, starting wherever the program resumes from, "
-        "which is the beginning if it resumes from nowhere."
+        "time, and it gets the same bound again, starting wherever the program resumes from "
+        "-- which is the beginning if it resumes from nowhere."
     )
 
 

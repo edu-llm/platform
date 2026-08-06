@@ -35,6 +35,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any, NamedTuple
+from urllib.parse import quote
 
 import pytest
 import yaml
@@ -47,6 +48,7 @@ from workflow_support import (
     write_stub,
 )
 
+from edullm_platform.cli.actions import registration_compare_url
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
 
@@ -853,7 +855,10 @@ def test_the_workflow_reaches_no_aws_account_at_all(
     text = WORKFLOW_PATH.read_text(encoding="utf-8")
 
     assert workflow["permissions"] == {"contents": "read"}
-    assert job["permissions"] == {"contents": "write", "pull-requests": "write"}
+    # `pull-requests: write` came off with the `gh pr create` it was for. The organization
+    # refuses that call whatever this workflow asks for, so the grant bought nothing and read
+    # as a dependency the file had. Pushing the branch is the whole of what it writes.
+    assert job["permissions"] == {"contents": "write"}
     assert "id-token" not in job["permissions"]
     assert "aws-actions/configure-aws-credentials" not in text
     assert "AWS_INFRA_DEPLOYER_ROLE_ARN" not in text
@@ -927,7 +932,37 @@ def test_the_dispatch_form_defaults_and_the_tool_defaults_are_the_same_values() 
     assert parser["base_image_digest"] is None
 
 
-def test_the_two_shell_steps_run_end_to_end_and_open_the_pull_request_they_describe(
+def _handover(
+    tree: Path, tmp_path: Path, record: dict[str, Any], stub_bin: Path
+) -> tuple[str, str]:
+    """Run the two shell steps and give back what the second one printed and summarised."""
+    summary = tmp_path / "summary.md"
+    summary.write_text("", encoding="utf-8")
+    environment = {
+        "HOME": str(tmp_path),
+        "RUNNER_TEMP": str(tmp_path),
+        "RECORD": str(tree / "registration.json"),
+        "GH_TOKEN": "stub",
+        "GITHUB_STEP_SUMMARY": str(summary),
+        "PLATFORM_REPOSITORY": "edu-llm/platform",
+        "SERVER_URL": "https://github.com",
+    }
+    job = next(iter(load_workflow(WORKFLOW_PATH)["jobs"].values()))
+    printed = ""
+    for name in (
+        "Commit the registration to a branch of its own",
+        "Push the branch and hand the pull request to a person",
+    ):
+        outcome = run_step_script(
+            step(job, name)["run"], cwd=tree, env=environment, stub_bin=stub_bin
+        )
+        assert outcome.returncode == 0, f"{name}: {outcome.stdout}{outcome.stderr}"
+        printed = outcome.stdout
+    assert record["branch"] in printed
+    return printed, summary.read_text(encoding="utf-8")
+
+
+def test_the_two_shell_steps_run_end_to_end_and_hand_over_the_pull_request_they_describe(
     tree: Path, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     """BOTH STEPS EXECUTED RATHER THAN READ, WHICH IS THE ONLY WAY THREE OF THESE SHOW UP.
@@ -944,8 +979,15 @@ def test_the_two_shell_steps_run_end_to_end_and_open_the_pull_request_they_descr
     an empty index. And the two steps share state only through files under ``RUNNER_TEMP``,
     so the second one works or does not entirely on whether the first wrote what it reads.
 
-    ``gh`` is stubbed and ``origin`` is a bare repository on disk. What is being checked is
-    the shell, not GitHub.
+    ``origin`` is a bare repository on disk. What is being checked is the shell, not GitHub.
+
+    **And since the pull request is handed over rather than opened, what the second step
+    produces is a link and a body rather than a call.** The only dispatch this workflow has
+    ever had pushed its branch and then died on ``GitHub Actions is not permitted to create
+    or approve pull requests``, which is an organization setting that is staying on. So the
+    assertions below are that the branch reached the remote, that the compare URL names it,
+    and that the body reached the job summary whole -- the last of those because it does not
+    fit in the URL and the failure worth catching is a body quietly cut to make it fit.
     """
     # The three files are committed before the registration is written, so what the step
     # meets is the state a dispatch meets, a clean checkout of main with three modified
@@ -968,23 +1010,8 @@ def test_the_two_shell_steps_run_end_to_end_and_open_the_pull_request_they_descr
 
     stub_bin = tmp_path / "bin"
     write_stub(stub_bin, "python", f'exec {shlex.quote(sys.executable)} "$@"')
-    write_stub(stub_bin, "gh", f'printf "%s\\n" "$@" > {shlex.quote(str(tmp_path))}/gh.txt')
 
-    environment = {
-        "HOME": str(tmp_path),
-        "RUNNER_TEMP": str(tmp_path),
-        "RECORD": str(tree / "registration.json"),
-        "GH_TOKEN": "stub",
-    }
-    job = next(iter(load_workflow(WORKFLOW_PATH)["jobs"].values()))
-    for name in ("Commit the registration to a branch of its own", "Open the pull request"):
-        outcome = run_step_script(
-            step(job, name)["run"],
-            cwd=tree,
-            env=environment,
-            stub_bin=stub_bin,
-        )
-        assert outcome.returncode == 0, f"{name}: {outcome.stdout}{outcome.stderr}"
+    printed, summary = _handover(tree, tmp_path, record, stub_bin)
 
     committed = subprocess.run(
         ["git", "-C", str(tree), "show", "--name-only", "--format=%s", "HEAD"],
@@ -998,13 +1025,6 @@ def test_the_two_shell_steps_run_end_to_end_and_open_the_pull_request_they_descr
     assert "stray.txt" not in committed
     assert "registration.json" not in committed
 
-    arguments = (tmp_path / "gh.txt").read_text(encoding="utf-8").splitlines()
-    assert arguments[:2] == ["pr", "create"]
-    assert arguments[arguments.index("--base") + 1] == "main"
-    assert arguments[arguments.index("--head") + 1] == record["branch"]
-    assert arguments[arguments.index("--title") + 1] == record["pull_request_title"]
-    body = Path(arguments[arguments.index("--body-file") + 1])
-    assert body.read_text(encoding="utf-8") == record["pull_request_body"]
     assert (
         subprocess.run(
             ["git", "-C", str(remote), "rev-parse", "--verify", record["branch"]],
@@ -1012,7 +1032,77 @@ def test_the_two_shell_steps_run_end_to_end_and_open_the_pull_request_they_descr
             check=False,
         ).returncode
         == 0
-    ), "the branch was never pushed, so gh pr create would have had no head to open against"
+    ), "the branch was never pushed, so the compare URL would open against nothing"
+
+    compare = f"https://github.com/edu-llm/platform/compare/{record['branch']}?expand=1"
+    assert compare in printed
+    assert compare in summary
+    assert quote(record["pull_request_title"], safe="") in printed
+
+    # The body is around eleven thousand characters, so it cannot be in the link and the
+    # whole of it has to be somewhere. Compared entire rather than by a first line, because
+    # the mutation worth catching is a truncation that still looks like a body.
+    assert record["pull_request_body"].rstrip("\n") in summary
+    assert quote(record["pull_request_body"], safe="") not in printed
+
+
+def test_the_url_the_cli_prints_names_the_branch_this_tool_pushes(
+    tree: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: rename the branch here and leave ``edullm add repository`` saying the old one.
+
+    The two are a copy of one string with nothing connecting them, which is deliberate --
+    ``tools/`` is not importable from an installed CLI, and the alternative is a second API
+    call to read a branch name that is a pure function of the repository being registered.
+    This is the test that makes the copy safe, the same way ``PLATFORM_REPOSITORY`` is.
+    """
+    record = run(tree, capsys).record
+
+    url = registration_compare_url(record["repository"], platform_repository="edu-llm/platform")
+
+    assert url == f"https://github.com/edu-llm/platform/compare/{record['branch']}?expand=1"
+
+
+def test_a_body_too_long_for_a_url_is_neither_carried_nor_cut(
+    tree: Path, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The measurement, made rather than assumed, and the two directions around it.
+
+    A compare URL can prefill the body, and for a registration it cannot: eleven thousand
+    characters percent-encode into roughly fifteen kilobytes of URL against the eight
+    thousand a server will take before answering ``414 URI Too Long``. The step therefore
+    measures rather than guesses, and this pins both sides of that -- a short body rides in
+    the link, and the real one does not and is not shortened to.
+    """
+    subprocess.run(["git", "init", "--quiet", "--initial-branch=main", str(tree)], check=True)
+    for name, value in (("user.email", "t@example.invalid"), ("user.name", "t")):
+        subprocess.run(["git", "-C", str(tree), "config", name, value], check=True)
+    subprocess.run(["git", "-C", str(tree), "add", "--all"], check=True)
+    subprocess.run(["git", "-C", str(tree), "commit", "--quiet", "--message", "before"], check=True)
+
+    record = run(tree, capsys).record
+    assert len(record["pull_request_body"]) > 8192, (
+        "this test is only interesting while a registration body is too long for a URL"
+    )
+    (tree / "registration.json").write_text(json.dumps(record), encoding="utf-8")
+
+    remote = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "--quiet", "--bare", str(remote)], check=True)
+    subprocess.run(["git", "-C", str(tree), "remote", "add", "origin", str(remote)], check=True)
+
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "python", f'exec {shlex.quote(sys.executable)} "$@"')
+
+    short = "Registers one repository. Nothing else."
+    record_with_a_short_body = {**record, "pull_request_body": short}
+    (tree / "registration.json").write_text(json.dumps(record_with_a_short_body), encoding="utf-8")
+    printed, summary = _handover(tree, tmp_path, record, stub_bin)
+
+    assert f"body={quote(short, safe='')}" in printed
+    assert "Read them and press Create" in summary
+    # Not repeated underneath the link it is already in. The long case is the one that has to
+    # put it somewhere, and this is the assertion that says the two cases really do differ.
+    assert "````markdown" not in summary
 
 
 def test_the_commit_message_is_one_imperative_sentence_with_no_trailing_period(

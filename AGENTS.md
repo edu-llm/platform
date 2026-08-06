@@ -48,19 +48,35 @@ far behind the install is. Re-install with `--force`, which is the upgrade for b
 | `edullm status` | Names your recent submissions, or describes one run. |
 | `edullm logs` | The last lines one run printed. |
 | `edullm cancel` | Stops one admitted run, with a reason that goes on the record. |
+| `edullm data` | The registered corpora, with size, tokenizer, shard dtype and licence, and which of them a run can actually start. Reaches no network. Name one for the detail. |
 | `edullm add` | Teaches the platform about a repository, dataset, shape, model or person. Produces a configuration pull request. |
 | `edullm ask` | Files one ask for something you need yourself. Produces an issue somebody answers. |
 | `edullm run` | Ships this working tree to a machine of your own and streams the output of the command after a bare `--` back. Ungated, and no run anybody can cite. |
 | `edullm shell` | A terminal on that same machine, or a notebook on it with `--notebook`. |
 | `edullm stop` | Ends the machine those two started, and says what it ran up and where your files are. |
+| `edullm studio` | Opens your own SageMaker Studio space and prints a sign-in URL, or `--stop` ends its compute and keeps the disk. |
 
 Every verb in `BUILT_TODAY` is here and all of them are built. A bare `edullm` prints the list,
 and `edullm <verb> --help` prints what that verb takes.
 
-The last three are the exploration route and they are not the submission path. Nothing they do
+The last four are the exploration route and they are not the submission path. Nothing they do
 is checked against the registry, priced, approved or written to a lineage record, so what
 comes off them is a thing you saw rather than a result anybody can cite. Reach for `check` and
 `submit` for anything that is meant to count.
+
+**Studio is where exploration goes, and `edullm run` is what the lane still wins.** The two
+overlapped and Studio won most of the argument: it uses the same instance types, it clones a
+repository, its disk survives, it needs no Session Manager plugin and a notebook on it reads as
+a document. Reproducibility never argued for the lane here, because nobody re-runs a prototype
+and the run somebody cites goes through `submit`. What has no Studio equivalent is `edullm
+run` -- ship a working tree to a GPU, run one command, stream it back, discard the machine --
+and `edullm shell` onto the exact shape you are about to submit to.
+
+**Nothing stops a Studio app except `edullm studio --stop`.** The domain carries no
+idle-shutdown setting, so an app left running overnight bills every hour of it, and this has
+already happened here across three nights on a GPU shape. The verb prints its rate and says
+this before it starts anything; do not quote a Studio rate from memory or from a document,
+because `edullm studio` reads it from reviewed configuration and the numbers move.
 
 **`edullm stop` terminates rather than stopping, and that is worth knowing before you type it.**
 The machine's own disk goes with it. The scratch prefix survives, `edullm run` syncs that prefix
@@ -68,6 +84,24 @@ down before your command and back up after it, and a new machine for the same pr
 where the old one left off. Stopping instead would leave a machine no verb here can find and
 nothing reclaims, billing its volume for ever. It reaches only a machine tagged with your own
 source identity, and there is deliberately no flag that names an instance id.
+
+## Never pick a corpus off a refusal
+
+`edullm data` is the list. Every other route to it is worse and two of them are actively
+misleading. The `unregistered_dataset` refusal prints names and nothing else, so it cannot
+tell you that some of the names in it reach a container which exits 69 after the machine has
+been paid for. The dropdown on the submission form is names only and needs the Actions UI.
+And a table in a guide is a table somebody typed.
+
+Registered is not runnable, and the gap is not small. A corpus whose tokenizer this platform
+can resolve and the training image cannot build is refused by nothing here: it compiles,
+classifies routine, spends an approval and allocates the machine. `edullm data` is the only
+thing that says so before the money is spent, and `edullm data --json` puts it under
+`verdict` for a script to branch on.
+
+Registering a corpus that does not exist yet is a person's job rather than a command.
+`edullm add dataset` refuses, because the entry pins facts out of the sealed bucket that need
+an AWS role this binary does not hold. File it with `edullm ask --kind dataset-request`.
 
 ## Start with `check`, always
 

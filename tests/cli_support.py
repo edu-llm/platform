@@ -39,9 +39,10 @@ from pathlib import Path
 
 import pytest
 
-from edullm_platform.cli.lane import SESSION_PLUGIN
+from edullm_platform.cli.lane import AWS_BROKER, SESSION_PLUGIN
 from edullm_platform.cli.main import main
 from edullm_platform.cli.preferences import DEFAULT_TEAM_FILE, PREFERENCES_DIRECTORY
+from edullm_platform.cli.studio import IMAGE_ACCOUNT_PARAMETER
 from edullm_platform.cli.workspace import CommandResult
 from edullm_platform.researcher_lane import EXPIRES_AT_TAG_KEY, PROJECT_TAG_KEY
 
@@ -63,7 +64,7 @@ COMMIT = "8076c077533eb79742f4ed22aade439df123a593"
 #: A command that satisfies both command guards on a one-device profile: it names a program,
 #: it keeps its quoting through a shell wrapper, and the checkpoint directory expands.
 TRAINING_COMMAND = (
-    "bash -lc 'python .edullm/train_on_corpus.py \"$EDULLM_RUN_ID\" "
+    'bash -lc \'python .edullm/train_on_corpus.py "$EDULLM_RUN_ID" '
     '--save-folder "$EDULLM_CHECKPOINT_DIR"\''
 )
 
@@ -81,7 +82,12 @@ class FakeRunner:
     differently from ``git rev-parse --show-toplevel``.
     """
 
-    def __init__(self, answers: Mapping[tuple[str, ...], CommandResult | Callable[[tuple[str, ...]], CommandResult]]) -> None:
+    def __init__(
+        self,
+        answers: Mapping[
+            tuple[str, ...], CommandResult | Callable[[tuple[str, ...]], CommandResult]
+        ],
+    ) -> None:
         self._answers = dict(answers)
         self.calls: list[tuple[str, ...]] = []
         #: Beside ``calls`` rather than zipped into it, because a case about the lane wants the
@@ -140,6 +146,19 @@ class FakeRunner:
             if argv[: len(prefix)] == tuple(prefix)
         ]
 
+    def environment_for(self, *prefix: str) -> list[dict[str, str]]:
+        """What each matching call was given on top of the ambient environment.
+
+        The companion to :meth:`ran` for the two calls a lane verb makes as the person rather
+        than as the lane: an empty mapping here means the call inherited whatever the shell
+        had, which is the state a resolved profile is supposed to replace.
+        """
+        return [
+            environment
+            for argv, environment in zip(self.calls, self.environments, strict=True)
+            if argv[: len(prefix)] == tuple(prefix)
+        ]
+
 
 def ok(stdout: str = "") -> CommandResult:
     return CommandResult(returncode=0, stdout=stdout, stderr="")
@@ -155,18 +174,24 @@ def git_answers(
     repository: str = "OLMo-core",
     commit: str = COMMIT,
     dirty: Iterable[str] = (),
+    untracked: Iterable[str] = (),
     pushed: bool = True,
 ) -> dict[tuple[str, ...], CommandResult]:
-    """What ``read_git_facts`` asks git, answered as a clean pushed checkout by default."""
+    """What ``read_git_facts`` asks git, answered as a clean pushed checkout by default.
+
+    ``dirty`` is tracked files somebody has changed and ``untracked`` is files in no commit,
+    and they are two arguments because the tool now answers them differently: the first is a
+    gap between the laptop and the image and the second cannot be. One argument spelling both
+    as ``M`` is what let a refusal written for the first arrive at the second.
+    """
     return {
         ("git", "rev-parse", "--show-toplevel"): ok(f"{root}\n"),
         ("git", "rev-parse", "HEAD"): ok(f"{commit}\n"),
         ("git", "rev-parse", "--abbrev-ref", "HEAD"): ok("edullm/an-arm\n"),
-        ("git", "remote", "get-url", "origin"): ok(
-            f"git@github.com:edu-llm/{repository}.git\n"
-        ),
+        ("git", "remote", "get-url", "origin"): ok(f"git@github.com:edu-llm/{repository}.git\n"),
         ("git", "status", "--porcelain"): ok(
             "".join(f" M {path}\n" for path in dirty)
+            + "".join(f"?? {path}\n" for path in untracked)
         ),
         ("git", "branch", "--remotes", "--contains"): ok(
             "  origin/edullm/an-arm\n" if pushed else ""
@@ -178,6 +203,27 @@ def git_answers(
 #: tests/test_evidence.py scans the tracked tree for anything shaped like a real one and allows
 #: exactly this. Twelve zeroes is rejected there, so a fixture cannot quietly use one.
 FAKE_ACCOUNT = "123456789012"
+
+#: What ``sb-aws-creds install-profiles`` leaves in ``~/.aws/config``, copied off a laptop it had
+#: been run on rather than composed. Three lines per profile and no role ARN among them, which is
+#: the fact :func:`edullm_platform.cli.lane.broker_profiles` is built around.
+#:
+#: ``sbsandbox`` is a literal here and it is safe to be one: the broker's own client carries that
+#: label as the one the intern route provisions, and its ``self-provision-sandbox`` call is
+#: documented as hardcoding that target server-side, so it is an account label rather than
+#: anything derived from a person. Nothing in the resolver reads the spelling, which is the
+#: property that matters -- this fixture could name the profile anything and the code would behave
+#: the same, because what identifies it is the broker on the ``credential_process`` line.
+ONE_BROKER_PROFILE = """\
+# >>> sb-aws-creds (managed) >>>
+# Generated by sb-aws-creds. Do not edit by hand.
+
+[profile sbsandbox]
+credential_process = sb-aws-creds credential_process --profile sbsandbox
+region = us-east-1
+
+# <<< sb-aws-creds (managed) <<<
+"""
 
 LANE_INSTANCE = "i-0000000000000aaaa"
 
@@ -204,9 +250,7 @@ LANE_ZONES_OFFERING = tuple(zone for zone in LANE_ZONES if zone != LANE_ZONE_FOR
 
 #: A fake subnet id per zone, shaped like a real one and distinct per zone so a test can read
 #: which zone a launch was aimed at out of the argv.
-LANE_SUBNETS = {
-    zone: f"subnet-0000000000000{index:02d}b" for index, zone in enumerate(LANE_ZONES)
-}
+LANE_SUBNETS = {zone: f"subnet-0000000000000{index:02d}b" for index, zone in enumerate(LANE_ZONES)}
 
 #: What EC2 says when a zone has none of a shape to sell, in the words it actually uses. Copied
 #: from a ``p5.4xlarge`` refused in ``us-east-1a`` on 2026-08-06, including the trailing list of
@@ -419,9 +463,7 @@ def lane_answers(
         ),
         ("aws", "ssm", "get-parameter"): ok("ami-000000000000000aa\n"),
         ("aws", "ec2", "describe-subnets"): ok(
-            json.dumps(
-                [{"subnet": LANE_SUBNETS[zone], "zone": zone} for zone in LANE_ZONES]
-            )
+            json.dumps([{"subnet": LANE_SUBNETS[zone], "zone": zone} for zone in LANE_ZONES])
         ),
         ("aws", "ec2", "describe-instance-type-offerings"): ok(
             json.dumps(list(LANE_ZONES_OFFERING if offerings is None else offerings))
@@ -437,6 +479,88 @@ def lane_answers(
         ("aws", "ssm", "describe-instance-information"): ok(f"{agent}\n"),
         ("aws", "s3", "sync"): ok(""),
         ("aws", "ssm", "start-session"): ok(f"hello from the machine{sentinel}"),
+    }
+
+
+#: What ``create-presigned-domain-url`` hands back, minus the token, which is what makes it a
+#: URL somebody could paste into a browser and not a credential sitting in a fixture.
+STUDIO_URL = "https://studio-d-example.studio.us-east-1.sagemaker.aws/auth?token=not-a-token"
+
+#: What the public SSM parameter answers with, standing in for Amazon's image account.
+#:
+#: NOT THE REAL TWELVE DIGITS, AND NOT BECAUSE THEY ARE SECRET. ``tests/test_evidence.py``
+#: refuses every 12-digit run in the tracked tree and does not judge whose account an id is,
+#: which is why the verb reads this from SSM rather than carrying it. A fixture holding the
+#: real value would put back the literal the design exists to avoid.
+STUDIO_IMAGE_ACCOUNT = "00image00acct"
+
+
+def studio_answers(
+    *,
+    app_status: str | None = None,
+    space_exists: bool = True,
+    profile_exists: bool = True,
+    instance_type: str = "ml.t3.medium",
+    image_account: str | None = STUDIO_IMAGE_ACCOUNT,
+) -> dict[tuple[str, ...], CommandResult | Callable[[tuple[str, ...]], CommandResult]]:
+    """Every SageMaker call ``edullm studio`` makes, answered as a laptop holding a session.
+
+    Separate from :func:`lane_answers` even though the verb enters the lane, because the two
+    describe different surfaces and merging them would make every lane test carry a Studio
+    domain it never reaches. ``a_platform`` merges both, which is the arrangement that keeps
+    each one about the thing it is about.
+
+    ``app_status`` of ``None`` is the ordinary state: a space with no app on it, so
+    ``describe-app`` fails the way it does for a space that has never been started. The
+    defaults are a person who has been here before -- profile and space already made -- because
+    that is every invocation after the first, and the first is expressed by passing ``False``.
+
+    ``image_account`` of ``None`` is the public SSM parameter refusing, which is the one
+    failure that stops a start before anything is created.
+
+    **THE SSM ANSWER SHARES A PREFIX WITH ``lane_answers``' AMI LOOKUP AND MUST WIN.**
+    ``FakeRunner`` matches on the longest declared prefix, and both are
+    ``("aws", "ssm", "get-parameter")``, so this entry is keyed on the parameter name as well.
+    Merged after the lane's, which is why ``a_platform`` updates in that order.
+    """
+    described = (
+        failed("An error occurred (ResourceNotFound) when calling the DescribeApp operation")
+        if app_status is None
+        else ok(
+            json.dumps(
+                {
+                    "AppName": "default",
+                    "Status": app_status,
+                    "ResourceSpec": {"InstanceType": instance_type},
+                }
+            )
+        )
+    )
+    return {
+        # Longer than ``lane_answers``' bare ``get-parameter`` on purpose: ``FakeRunner`` takes
+        # the longest matching prefix, so naming the parameter is what keeps the AMI lookup and
+        # this one from answering each other.
+        ("aws", "ssm", "get-parameter", "--name", IMAGE_ACCOUNT_PARAMETER): (
+            failed("An error occurred (ParameterNotFound)")
+            if image_account is None
+            else ok(f"{image_account}\n")
+        ),
+        ("aws", "sagemaker", "describe-app"): described,
+        ("aws", "sagemaker", "describe-user-profile"): (
+            ok(json.dumps({"UserProfileName": "caiiris"}))
+            if profile_exists
+            else failed("An error occurred (ResourceNotFound)")
+        ),
+        ("aws", "sagemaker", "create-user-profile"): ok(json.dumps({"UserProfileArn": "arn:x"})),
+        ("aws", "sagemaker", "describe-space"): (
+            ok(json.dumps({"SpaceName": "caiiris"}))
+            if space_exists
+            else failed("An error occurred (ResourceNotFound)")
+        ),
+        ("aws", "sagemaker", "create-space"): ok(json.dumps({"SpaceArn": "arn:x"})),
+        ("aws", "sagemaker", "create-app"): ok(json.dumps({"AppArn": "arn:x"})),
+        ("aws", "sagemaker", "delete-app"): ok(""),
+        ("aws", "sagemaker", "create-presigned-domain-url"): ok(f"{STUDIO_URL}\n"),
     }
 
 
@@ -497,6 +621,9 @@ def invoke(
     login: str | None = SUBMITTER,
     config_dir: Path = CONFIG_DIR,
     plugin: bool = True,
+    broker: bool = True,
+    aws_config: str | None = ONE_BROKER_PROFILE,
+    aws_profile: str | None = None,
 ) -> tuple[int, str, str]:
     """Run the CLI as a person would, with both streams captured and no ambient identity.
 
@@ -522,13 +649,28 @@ def invoke(
     configuration answered, and a case asserting that has to be able to point it somewhere it
     can recognise in the output.
 
-    ``plugin`` puts a Session Manager plugin on PATH, or keeps one off it, and is the same kind
-    of measure as the two directories above. The lane verbs check for it with ``shutil.which``,
-    which reads the developer's own laptop: without this, whether the lane cases pass would
-    depend on whether that laptop has the plugin installed, and the case that asserts the
-    refusal would fail on a laptop that does. PATH is prepended rather than replaced, because
-    the runner is a fake and the ``git`` this suite does not shell out to is still wanted by
-    anything that looks.
+    ``plugin`` and ``broker`` put a Session Manager plugin and a credential broker on PATH, or
+    keep one off it, and are the same kind of measure as the two directories above. The lane
+    verbs check for both with ``shutil.which``, which reads the developer's own laptop: without
+    this, whether the lane cases pass would depend on what that laptop has installed, and the
+    cases asserting the two refusals would fail on a laptop that has them. **The owner's laptop
+    is exactly such a laptop for the broker**, which makes this the difference between a suite
+    that is hermetic and one that passes here and fails everywhere else. PATH is prepended
+    rather than replaced where both are wanted, because the runner is a fake and the ``git``
+    this suite does not shell out to is still wanted by anything that looks.
+
+    ``aws_config`` is the third of those and it is the one that reaches outside the temporary
+    directory if it is left alone. ``resolve_aws_profile`` reads ``~/.aws/config`` unless
+    ``AWS_CONFIG_FILE`` says otherwise, so an unset variable points every lane case at the
+    developer's real profiles: green on a laptop that has run ``sb-aws-creds install-profiles``,
+    red in CI, and both for reasons having nothing to do with the change under test. ``None``
+    means no file at all, which is the state of a laptop that has never run the broker's second
+    step.
+
+    ``aws_profile`` is the one a person exported for themselves, and it defaults to nothing being
+    set rather than to whatever the maintainer running the suite has. Exporting it is what
+    reaching the lane took before the resolution existed, so a maintainer who still has it in
+    their shell would otherwise send every lane case down the branch that resolves nothing.
     """
     # THE PROCESS GOES WHERE THE CALLER SAYS THE PERSON IS STANDING. The header says what one
     # line of this bought and what its absence cost. It is deliberately not conditional: a
@@ -539,16 +681,34 @@ def invoke(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home(cwd)))
     tools = cwd / "_tools"
     tools.mkdir(exist_ok=True)
-    if plugin:
-        stub = tools / SESSION_PLUGIN
+    for wanted, name in ((plugin, SESSION_PLUGIN), (broker, AWS_BROKER)):
+        if not wanted:
+            continue
+        stub = tools / name
         stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         stub.chmod(0o755)
+    if plugin and broker:
         monkeypatch.setenv("PATH", f"{tools}{os.pathsep}{os.environ['PATH']}")
     else:
-        # THE WHOLE PATH AND NOT A PREPEND, because a prepend cannot hide a plugin that is
+        # THE WHOLE PATH AND NOT A PREPEND, because a prepend cannot hide a tool that is
         # further along it. Nothing under test shells out for real -- the runner is a fake --
         # so an empty PATH answers the one question this branch is asking.
         monkeypatch.setenv("PATH", str(tools))
+    # NAMED WHETHER OR NOT IT EXISTS. Pointing the variable at a path with no file behind it is
+    # what makes "this laptop has no profiles" a state a case can ask for; leaving the variable
+    # unset would fall back to the developer's own home directory instead.
+    written = cwd / "_aws-config"
+    if aws_config is None:
+        written.unlink(missing_ok=True)
+    else:
+        written.write_text(aws_config, encoding="utf-8")
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(written))
+    # NEVER INHERITED. A maintainer with AWS_PROFILE exported -- which is what reaching the lane
+    # took before this -- would otherwise take every case down the branch that resolves nothing.
+    if aws_profile is None:
+        monkeypatch.delenv("AWS_PROFILE", raising=False)
+    else:
+        monkeypatch.setenv("AWS_PROFILE", aws_profile)
     if login is None:
         monkeypatch.delenv("EDULLM_GITHUB_LOGIN", raising=False)
     else:

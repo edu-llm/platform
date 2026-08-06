@@ -67,6 +67,7 @@ __all__ = [
     "PLATFORM_REPOSITORY",
     "PRINTED_RUN_ID",
     "REGISTER_WORKFLOW",
+    "REGISTRATION_BRANCH_PREFIX",
     "SUBMIT_WORKFLOW",
     "Admitted",
     "AmbiguousRunIdError",
@@ -80,6 +81,7 @@ __all__ = [
     "declined_at_the_gate",
     "elapsed_said",
     "read_run_facts",
+    "registration_compare_url",
     "report_ceiling_seconds",
     "submit_ceiling_seconds",
 ]
@@ -106,11 +108,33 @@ CANCEL_WORKFLOW: Final = "cancel-run.yml"
 #: and ``tests/test_phase2_submit_run_workflow.py`` compares it against the form.
 EDULLM_VERSION_FIELD: Final = "edullm_version"
 
-#: The workflow that edits five platform files, runs a local verification and opens the
-#: registration pull request. Named here with the other two rather than in ``intake.py``,
+#: The workflow that edits five platform files, runs a local verification and pushes the
+#: registration to a branch. Named here with the other two rather than in ``intake.py``,
 #: because this module is the one place that knows what this binary drives, and
 #: ``tests/test_cli_add.py`` reads the directory to hold the spelling to a file that exists.
 REGISTER_WORKFLOW: Final = "register-repository.yml"
+
+#: The branch that workflow pushes, derived rather than discovered, which is the only reason
+#: this binary can name the pull request at all. The organization forbids Actions from
+#: opening one, so the run pushes a branch and prints a compare URL -- and a person following
+#: a link out of this binary is at a terminal rather than in a workflow log. The branch name
+#: is a function of the repository being registered, so saying the same URL here costs no
+#: second call to GitHub. ``tests/test_register_repository.py`` holds it equal to the branch
+#: that tool actually records, which is where the workflow gets it -- the same seam-test
+#: arrangement ``PLATFORM_REPOSITORY`` and ``ADMISSION_JOB`` sit on.
+REGISTRATION_BRANCH_PREFIX: Final = "register/"
+
+
+def registration_compare_url(repository: str, *, platform_repository: str) -> str:
+    """Where somebody opens the registration pull request, once the run has pushed.
+
+    The title and body are not carried. Both are composed inside the run out of the diff it
+    wrote, so this binary does not have them and reading them back would mean asking GitHub
+    for the job summary -- a second call, for a body that does not fit in a URL anyway. The
+    run prints them where it prints this.
+    """
+    branch = f"{REGISTRATION_BRANCH_PREFIX}{repository.lower()}"
+    return f"https://github.com/{platform_repository}/compare/{branch}?expand=1"
 
 #: The artifact ``submit-run.yml``'s compile job uploads. It is written before the approval
 #: gate, so it is readable while a run is still waiting for somebody to tap -- which is the
@@ -182,11 +206,21 @@ class CompileOutcome:
     ``compiled is None`` covers two of them and they need different sentences: a run that
     finished without publishing, where waiting longer is pointless, and a ceiling reached on
     a job still running, where ``edullm status`` will carry the answer shortly.
+
+    ``status`` is the third fact and it was being read and thrown away. The poll below asks
+    the run endpoint on every attempt to learn whether the run has finished, and that same
+    answer already says whether the run is ``queued`` or ``in_progress``. Queued and
+    compiling are different facts -- one is a runner this account has not been given yet and
+    the other is work in progress -- and a submitter waiting on a backed-up queue who is told
+    "compiling" concludes their run has started.
     """
 
     compiled: dict[str, Any] | None
     #: The workflow run reached a conclusion and no submission was published under it.
     published_nothing: bool
+    #: The run's own status the last time it was read: ``queued``, ``in_progress``,
+    #: ``completed``, or ``None`` where the answer carried no status at all.
+    status: str | None = None
 
 
 class GithubUnreachableError(RuntimeError):
@@ -508,18 +542,27 @@ class PlatformActions:
         compiling. The artifact is published by a job inside this run, so a run that has
         reached ``completed`` without one is never going to have one -- and that is reported
         as what is known rather than as a refusal, because a cancelled run arrives here too.
+
+        **AND THE STATUS IT READS IS CARRIED OUT RATHER THAN COMPARED AND DROPPED.** The
+        endpoint answers ``queued`` before a runner picks the run up and ``in_progress``
+        after, so the difference between a queue and a compile costs nothing extra to know.
+        It was being narrowed to one boolean here, and the sentence the caller printed on
+        the ceiling said "compiling" for both.
         """
+        status: str | None = None
         for attempt in range(attempts):
             if attempt:
                 self._said_waiting(waiting, elapsed_already + attempt * interval)
                 self._sleep(interval)
             compiled = self.compiled_submission(workflow_run_id)
             if compiled is not None:
-                return CompileOutcome(compiled=compiled, published_nothing=False)
+                return CompileOutcome(compiled=compiled, published_nothing=False, status=status)
             run = self._api(f"repos/{self._repository}/actions/runs/{workflow_run_id}")
-            if run.get("status") == "completed":
-                return CompileOutcome(compiled=None, published_nothing=True)
-        return CompileOutcome(compiled=None, published_nothing=False)
+            answered = run.get("status")
+            status = answered if isinstance(answered, str) else None
+            if status == "completed":
+                return CompileOutcome(compiled=None, published_nothing=True, status=status)
+        return CompileOutcome(compiled=None, published_nothing=False, status=status)
 
     def compiled_submission(self, workflow_run_id: int) -> dict[str, Any] | None:
         """What the compile job recorded, read out of the artifact it uploaded.

@@ -26,7 +26,9 @@ import re
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
+from workflow_support import only_job, run_step_script, step, write_stub
 
 from tools.watch_submission_health import (
     EXIT_DISAGREES,
@@ -638,3 +640,90 @@ def test_the_watcher_can_be_pointed_at_a_window_by_hand() -> None:
     """How both directions were proved against the real seven, so it stays available."""
     inputs = workflow()[True]["workflow_dispatch"]["inputs"]
     assert set(inputs) == {"since", "until"}
+
+
+def telling_somebody() -> str:
+    """The body of the step that carries the verdict to a person."""
+    return str(step(only_job(workflow()), "Tell somebody")["run"])
+
+
+#: A ``gh`` that answers the way GitHub did on 2026-08-06 at 11:16:08Z: the issue is filed and
+#: its URL comes back on stdout, and a caller that goes looking for that issue again finds
+#: nothing, because the search index it would have to ask has not caught up yet. The empty
+#: answer is the point of the stub and not an oversight in it.
+GH_DURING_THE_INDEXING_LAG = """
+case "${1:-} ${2:-}" in
+  "issue list")
+    exit 0
+    ;;
+  "issue create")
+    echo "https://github.com/edu-llm/platform/issues/381"
+    ;;
+  "issue comment")
+    reference="${3:-}"
+    if [[ -z "${reference}" || "${reference}" == --* ]]; then
+      echo "invalid issue format: \\"${reference}\\"" >&2
+      exit 1
+    fi
+    printf '%s' "${reference}" > "${STUB_STATE}/commented-on.txt"
+    ;;
+  *)
+    echo "the step ran a gh command this stub does not know about: $*" >&2
+    exit 64
+    ;;
+esac
+"""
+
+
+@pytest.fixture(name="telling")
+def _telling(tmp_path: Path) -> Any:
+    """The step, its verdict file and a ``gh`` that is blind to what it has just filed."""
+    (tmp_path / "verdict.txt").write_text("six submissions, one defect\n", encoding="utf-8")
+    state = tmp_path / "state"
+    state.mkdir()
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "gh", GH_DURING_THE_INDEXING_LAG)
+    return run_step_script(
+        telling_somebody(),
+        cwd=tmp_path,
+        env={
+            "GH_TOKEN": "not-a-token",
+            "TITLE": "Submissions are failing for a reason no submitter can fix",
+            "STUB_STATE": str(state),
+        },
+        stub_bin=stub_bin,
+    ), state
+
+
+def test_the_verdict_reaches_the_issue_that_was_just_filed(telling: Any) -> None:
+    """THE RUN THAT DID ITS JOB AND THEN REPORTED ITSELF BROKEN, REPLAYED.
+
+    Run 31096537986 filed issue #381 at 11:16:08Z, printed its URL, and half a second later
+    ended with ``invalid issue format: ""``. It had thrown the URL away and asked
+    ``gh issue list --search`` for the number back, and search is an index GitHub populates
+    asynchronously, so a half-second-old issue is not in it. The 11:54Z run found the same
+    issue through the same search without difficulty, which is what dates the window.
+
+    Retrying the search would have been a patch on the symptom. The reference is on stdout
+    and is never worth looking up, so this pins the outcome rather than the lookup: the
+    verdict lands on the issue this run filed, with a ``gh`` that cannot answer any question
+    about it.
+    """
+    result, state = telling
+    assert result.returncode == 0, result.stderr
+    commented_on = (state / "commented-on.txt").read_text(encoding="utf-8")
+    assert commented_on == "https://github.com/edu-llm/platform/issues/381"
+
+
+def test_nothing_here_asks_the_search_index_about_an_issue(telling: Any) -> None:
+    """The dedupe was reading that same index, which is the twin of the failure above.
+
+    Nobody had hit it because it needs two runs inside the indexing window, and this workflow
+    fires on every submission: two finishing a minute apart would both have seen an empty
+    index and both filed, which is the duplicate storm the dedupe exists to prevent. The
+    exact-title match that replaces it is also narrower than ``in:title``, which was a
+    full-text search that would equally have matched an issue quoting this title back.
+    """
+    script = telling_somebody()
+    assert "--search" not in script
+    assert "select(.title == env.TITLE)" in script

@@ -177,7 +177,7 @@ The `detail` names the field and usually the file. These are the ones you will m
 | `unregistered_repository` | The platform does not carry this codebase. Go to **When the platform does not carry this codebase** below |
 | `unregistered_workload_profile` | The `detail` lists the registered ones. Pass `--workload` with one of those |
 | `workload_profile_repository_mismatch` | That workload belongs to another repository. The `detail` lists the ones this repository has |
-| `unregistered_dataset` | The `detail` lists what is registered. Never invent a release id |
+| `unregistered_dataset` | Run `edullm data` and pick one off it. Never invent a release id |
 | `retired_dataset_release` | The corpus is registered and withdrawn. The `detail` names the version its owner calls current |
 | `dataset_is_not_a_corpus` | This resolves to a tokenizer or another input rather than to something a run trains on |
 | `unprovisioned_compute_profile` | The shape is priced and has no compute environment behind it, so no job on it can start. Pick another `--compute` |
@@ -191,6 +191,32 @@ file to change.
 
 **Never pass `--force` to get past a refusal.** Every refusal it skips is one admission
 makes again from inside AWS, so it buys a queue wait rather than an outcome.
+
+### Picking the corpus, which has its own verb
+
+```bash
+edullm data                  # the list, smallest first
+edullm data <reference-id>   # one of them in full
+edullm data --json           # the same under `corpora`
+```
+
+Reaches no network, exits 0, and carries what a chooser needs per corpus: train tokens, the
+tokenizer, whether the shards are `uint16` or `uint32`, the licence, and whether a run naming
+it will start.
+
+**That last one is not the same as registered, and the gap costs a machine.** Some registered
+corpora are current, in a trainable family and refused by nothing this platform checks, and a
+run naming one compiles, classifies routine, spends an approval, allocates the machine, and
+then the container cannot build a tokenizer for the tokens it just resolved and exits 69.
+`--json` puts that under `verdict` per entry, as `runs`, `refused` or `exits_69`. Branch on
+it before you submit.
+
+Never find the corpora by naming a bad one and reading the refusal. That list is names only.
+
+A corpus nothing registers is a person's job rather than a command: the entry pins a manifest
+digest and a payload profile read off the sealed bucket, which needs an AWS role this binary
+does not hold. `edullm add dataset` says so and refuses. File it with
+`edullm ask --kind dataset-request`.
 
 ## 3. Three things a clean check does not promise
 

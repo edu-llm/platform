@@ -1084,17 +1084,95 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # noisy and never wrong in the direction that costs money. The tree is the permissive side
     # and it is the side under review, so nobody meets this until the release, and what they
     # meet before it is a false alarm rather than a missed reclaim.
+    #
+    # A NINTH, AND IT IS THE FIRST ENTRY IN THIS REGISTER WHOSE WINDOW IS A LIVE HAZARD RATHER
+    # THAN A WRONG LABEL, A REFUSAL OR BYTES WITH NO BEHAVIOUR BEHIND THEM. The notifier
+    # interpolates the experiment into the run-ended message and escapes nothing, and Slack
+    # reads `<`, `>` and `&` as control characters, so a run whose experiment is named
+    # `<!channel>` notifies every member of the workspace each time it ends and a fan-out
+    # notifies them once per cell. `messages.escaped` closes it per field, on the way in, and
+    # `tests/test_notification_escaping.py` holds both halves of that.
+    #
+    # THE HAZARD STANDS UNTIL THE RELEASE AND THE DEPLOY, AND THAT IS WORTH SAYING PLAINLY
+    # RATHER THAN LEAVING TO BE INFERRED FROM THE SHAPE OF THE RECORD. Every entry above
+    # describes an account that is behind on something harmless or on something strict. This
+    # one describes an account that goes on being able to ring every phone in the workspace for
+    # as long as it stands, so it is the one entry here that is worth releasing on its own
+    # rather than folding into whatever `--function all` next sweeps up. The run-ended message
+    # is the one being delivered today; the approval message has no caller yet, so the half of
+    # this change that touches it is not reachable in the account either way.
+    #
+    # WHAT MOVED THE ZIP IS ONE MODULE AND NOTHING ELSE, CHECKED RATHER THAN ASSUMED. A build
+    # of origin/main produces d78c4a48 exactly, which is what infra/notifier-release.yaml
+    # records, so no earlier change is riding along and this difference is entirely
+    # notifications/messages.py. No file under config/ moved, so the other three zips are
+    # untouched and the janitor's entry below is unaffected.
+    #
+    # AND IT IS EXTENDED RATHER THAN JOINED, WHICH IS THE FOURTEENTH ENTRY'S FINDING ARRIVING
+    # FOR THE THIRD TIME IN TWO DAYS. `edullm studio` adds config/reports/studio.yaml, adding a
+    # reviewed configuration file means adding a ConfigFile member because
+    # tests/test_config_resolution.py holds the vocabulary and the contents of config/ level in
+    # both directions, researcher_lane.py imports that enum, and this zip carries
+    # researcher_lane.py for two tag keys and a role name. So a new line in a StrEnum moves a
+    # Lambda digest again, and the coupling the fourteenth entry named as the finding is still
+    # the finding: the vocabulary reaches three zips through a module none of them reads it in.
+    #
+    # NOTHING THE JANITOR DOES CHANGES BY A BYTE OF IT. janitor_handler.py imports
+    # WARNING_TAG_KEY and LaneSettings and builds its settings in `_settings_from_environment`,
+    # so it never opens a configuration file and never reaches the enum member that moved. The
+    # sweep is unaware Studio exists, which is also the honest statement of what this verb does
+    # not get: no janitor arm, no ExpiresAt, and `--stop` as the only thing that stops an app.
+    #
+    # AND THEN A THIRD CAUSE ON THE SAME RECORD, FROM THE SAME COUPLING, IN THE SAME DAY.
+    # `edullm data` adds config/reports/corpora.json, which is a reviewed configuration file,
+    # which is a ConfigFile member, which researcher_lane.py imports and this zip carries. So
+    # the digest moved a third time for a report the sweep has no reader for. Three arrivals of
+    # one finding is no longer an incident recurring: the vocabulary reaches three zips through
+    # a module none of them reads it in, and every new report under config/ will go on moving
+    # them until that import is broken. That is the thing to fix, and it is not this merge.
+    #
+    # ONE RECORD AND NOT THREE, WHICH IS THE ONLY SHAPE `one_record_per_function` PERMITS AND
+    # ALSO THE TRUE ONE. A zip is built from the working tree rather than from a change, so a
+    # digest has no per-cause decomposition and whoever runs the line below ships all three
+    # whether they meant to or not. The first cause is the one with behaviour in it and is
+    # still the reason to cut the release; the other two are bytes.
+    #
+    # THE DIGEST HERE IS THE MERGED TREE'S AND MATCHES NEITHER BRANCH'S. #408 recorded
+    # d9cb4a6f for studio alone and #409 recorded 318e4531 for data alone. Both were right
+    # about the tree they were built on and both are wrong about this one, which is the
+    # ordinary arithmetic of integrating two changes that move one artifact and the reason
+    # this was rebuilt rather than chosen between.
     releases: tuple[PendingRelease, ...] = (
+        PendingRelease(
+            function="notifier",
+            reason=(
+                "the run-ended message interpolated the submitter's experiment into Slack "
+                "without escaping it, so a run named <!channel> notified the whole workspace "
+                "every time it ended. messages.escaped now converts the three characters "
+                "Slack parses, per field and before the line is assembled so the link the "
+                "approval message builds survives."
+            ),
+            cleared_by=f"uv run python {RELEASE_COMMAND} --function notifier",
+            builds_to="15058807c08d7bddefbfa7413ee737a3ecd910de0955f4e6879cf0b2ddf75d8d",
+            released="d78c4a48482558039e7affc51331ec558e5880f8e48876bafb567fe683ee67b9",
+            recorded_on=date(2026, 8, 6),
+        ),
         PendingRelease(
             function="janitor",
             reason=(
                 "edullm stop lets a researcher end their own machine inside the window "
                 "between this sweep's describe and its stop, and the handler now reads the "
                 "two EC2 codes that mean the machine is already off the clock as an outcome "
-                "rather than as a refusal that fails the invocation."
+                "rather than as a refusal that fails the invocation. The digest then moved "
+                "twice more for causes with no behaviour behind them at all: edullm studio "
+                "and edullm data each add a reviewed configuration file and therefore a "
+                "ConfigFile member, which researcher_lane.py imports and this zip carries, so "
+                "a line in a StrEnum moved a Lambda for two reports the sweep never reads. "
+                "The fourteenth entry in this register recorded that coupling as the finding "
+                "rather than a one-off, and this is its third and fourth arrival."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function janitor",
-            builds_to="7f9040edf6156ce9ffa84219503b16cb5b5cedf875074ee7ff8e18136e735e37",
+            builds_to="05a5cc589472e7d95800da952b740f438002ec0cd4e094ad0e71173d1e016339",
             released="e07efe963ec9cadb79f7345a14d9074c125e359a588e0661f99db687a757e96a",
             recorded_on=date(2026, 8, 6),
         ),
