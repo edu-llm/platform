@@ -48,6 +48,7 @@ far behind the install is. Re-install with `--force`, which is the upgrade for b
 | `edullm status` | Names your recent submissions, or describes one run. |
 | `edullm logs` | The last lines one run printed. |
 | `edullm cancel` | Stops one admitted run, with a reason that goes on the record. |
+| `edullm data` | The registered corpora, with size, tokenizer, shard dtype and licence, and which of them a run can actually start. Reaches no network. Name one for the detail. |
 | `edullm add` | Teaches the platform about a repository, dataset, shape, model or person. Produces a configuration pull request. |
 | `edullm ask` | Files one ask for something you need yourself. Produces an issue somebody answers. |
 | `edullm run` | Ships this working tree to a machine of your own and streams the output of the command after a bare `--` back. Ungated, and no run anybody can cite. |
@@ -68,6 +69,24 @@ down before your command and back up after it, and a new machine for the same pr
 where the old one left off. Stopping instead would leave a machine no verb here can find and
 nothing reclaims, billing its volume for ever. It reaches only a machine tagged with your own
 source identity, and there is deliberately no flag that names an instance id.
+
+## Never pick a corpus off a refusal
+
+`edullm data` is the list. Every other route to it is worse and two of them are actively
+misleading. The `unregistered_dataset` refusal prints names and nothing else, so it cannot
+tell you that some of the names in it reach a container which exits 69 after the machine has
+been paid for. The dropdown on the submission form is names only and needs the Actions UI.
+And a table in a guide is a table somebody typed.
+
+Registered is not runnable, and the gap is not small. A corpus whose tokenizer this platform
+can resolve and the training image cannot build is refused by nothing here: it compiles,
+classifies routine, spends an approval and allocates the machine. `edullm data` is the only
+thing that says so before the money is spent, and `edullm data --json` puts it under
+`verdict` for a script to branch on.
+
+Registering a corpus that does not exist yet is a person's job rather than a command.
+`edullm add dataset` refuses, because the entry pins facts out of the sealed bucket that need
+an AWS role this binary does not hold. File it with `edullm ask --kind dataset-request`.
 
 ## Start with `check`, always
 

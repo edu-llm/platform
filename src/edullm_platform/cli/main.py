@@ -164,7 +164,9 @@ from edullm_platform.cli.lane import (
 )
 from edullm_platform.cli.machine import (
     check_document,
+    corpora_document,
     emit,
+    one_corpus_document,
     refusal_document,
     status_document,
     status_listing_document,
@@ -183,6 +185,8 @@ from edullm_platform.cli.preflight import (
 from edullm_platform.cli.presentation import (
     approvers_said,
     plain_decimal,
+    render_corpora,
+    render_one_corpus,
     render_preflight,
     render_refusals,
     render_run_facts,
@@ -214,6 +218,13 @@ from edullm_platform.cli.workspace import (
 )
 from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.contracts.identity import RUN_ID_REGEX
+from edullm_platform.corpora import (
+    Corpus,
+    CorpusUnknownError,
+    corpora,
+    load_corpora_snapshot,
+    one_corpus,
+)
 from edullm_platform.researcher_lane import load_lane_settings
 
 __all__ = [
@@ -324,6 +335,7 @@ BUILT_TODAY: Final = {
     "status": "what your runs are doing",
     "logs": "the last lines a run printed",
     "cancel": "stop a run",
+    "data": "the corpora a run may name, and which of them will actually run",
     "add": "teach the platform about a repository, dataset, shape, model or person",
     "ask": "file an ask that a person answers",
     "run": "ship this working tree to a machine and stream the output back",
@@ -366,6 +378,11 @@ WHAT_A_VERB_DOES: Final = {
     "cancel": (
         "Stops one admitted run, with the reason you give. The run's history then records "
         "that reason instead of a failure."
+    ),
+    "data": (
+        "Lists the registered corpora with their size, tokenizer, shard dtype and licence, "
+        "and says which of them a run can actually name and start. Reaches no network. Name "
+        "one to see it in full."
     ),
     "add": (
         "Produces a change to the reviewed configuration rather than a grant to you. A "
@@ -621,6 +638,25 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         ),
     )
 
+    data = verb_parser("data", WHAT_A_VERB_DOES["data"])
+    data.add_argument(
+        "reference_id",
+        nargs="?",
+        help="one corpus, in full; omit for the list",
+    )
+    # NOT A FILTER AND NOT A PAGE SIZE. The default view already names every corpus that
+    # will not run and every one that is superseded, so what this adds is the registered
+    # names that are inputs to a corpus rather than corpora -- the tokenizers, the vendor
+    # mirror and the one text corpus. A submission naming any of them is refused before it
+    # costs anything, which is why they are not in front of somebody choosing.
+    data.add_argument(
+        "--all",
+        action="store_true",
+        dest="everything",
+        help="every registered name, inputs to a corpus included, in one table",
+    )
+    _add_json(data)
+
     add = verb_parser("add", WHAT_A_VERB_DOES["add"])
     # A POSITIONAL WITH `choices` RATHER THAN A FLAG, BECAUSE A MISTYPED KIND AND A KIND THAT
     # GOES THROUGH A PERSON ARE DIFFERENT FACTS. argparse answers the first with the list for
@@ -684,6 +720,7 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         "status": status,
         "logs": logs,
         "cancel": cancel,
+        "data": data,
         "add": add,
         "ask": ask,
         "run": run,
@@ -1140,6 +1177,8 @@ def main(
                 err=stderr,
                 dispatched=dispatched,
             )
+        if verb == "data":
+            return _data(arguments, out=stdout, err=stderr)
         if verb == "add":
             return _add(
                 arguments,
@@ -2716,6 +2755,82 @@ def _cancel(
         out=out,
         err=err,
     )
+
+
+# ---------------------------------------------------------------------------------------
+# data
+# ---------------------------------------------------------------------------------------
+
+
+def _data(arguments: argparse.Namespace, *, out: TextIO, err: TextIO) -> int:
+    """What corpora exist, what is in each, and which of them a run can actually start.
+
+    **REACHES NO NETWORK, HOLDS NO CREDENTIAL, AND EXITS 0 UNLESS A NAME WAS WRONG.** It
+    judges no submission, so there is nothing here for the merits to refuse. Naming a corpus
+    the registry does not carry is exit 1, because that is a claim about an input somebody
+    typed and it is the one thing this verb can be wrong about.
+
+    **WHY THIS VERB EXISTS AT ALL, IN ONE PARAGRAPH.** Before it there were three ways to
+    find out what corpora there are, and the documented one was to name a bad dataset and
+    read the refusal. That list is names and nothing else: no size, no tokenizer, no licence,
+    and no indication that five of the names in it reach a container which exits 69. The
+    other two are a hand-typed table in a guide whose numbers nothing holds, and a dropdown
+    in the Actions UI, which is the thing this binary exists to avoid opening.
+
+    **AND WHY IT DOES NOT WALK THE BUCKET.** The sealed tier is a registry with manifests.
+    Listing ``s3://edullm-data/pretrain/reservoir-dolma2/v1/`` returns ten thousand shard
+    names and answers none of the questions above; the facts a chooser wants are in three
+    files that are already digest-pinned. Fifteen of the thirty-five people on the roster
+    hold no AWS role, so a verb that read the bucket would be the only verb in the set that
+    works for some people and refuses others.
+    """
+    configuration = _configuration(arguments)
+    snapshot = load_corpora_snapshot(configuration.directory)
+    rows = corpora(configuration.datasets, snapshot=snapshot)
+
+    if arguments.reference_id is None:
+        if arguments.json:
+            emit(corpora_document(rows, snapshot=snapshot), out=out)
+        else:
+            said = render_corpora(rows, snapshot=snapshot, everything=arguments.everything)
+            print(said, end="", file=out)
+        return EXIT_OK
+
+    try:
+        row = one_corpus(arguments.reference_id, configuration.datasets, snapshot=snapshot)
+    except CorpusUnknownError:
+        refusal = _no_such_corpus(arguments.reference_id, rows)
+        if arguments.json:
+            emit(refusal_document("data", [refusal]), out=out)
+        else:
+            print(render_refusals([refusal]), end="", file=err)
+        return EXIT_REFUSED
+    if arguments.json:
+        emit(one_corpus_document(row, snapshot=snapshot), out=out)
+    else:
+        print(render_one_corpus(row, snapshot=snapshot), end="", file=out)
+    return EXIT_OK
+
+
+def _no_such_corpus(reference_id: str, rows: Sequence[Corpus]) -> Refusal:
+    """A name the registry does not carry, answered with the nearest one that it does.
+
+    **IT SUGGESTS AND IT DOES NOT LIST**, which is the opposite of what the
+    ``unregistered_dataset`` refusal does, and the two are right for different reasons. That
+    one is met by somebody who has already filled in a submission, so the alternatives are
+    what they need. This one is met by somebody who is *browsing*, and the whole list is one
+    command away with no argument at all -- so printing twenty-nine names in front of
+    somebody who mistyped one is answering a question they did not ask.
+
+    ``get_close_matches`` at the cutoff :func:`_no_such_verb` uses on verbs, so a near miss
+    on a corpus and a near miss on a verb are near by the same measure.
+    """
+    registered = sorted(row.reference_id for row in rows)
+    near = get_close_matches(reference_id, registered, n=1, cutoff=0.6)
+    detail = f"{reference_id!r} is not a corpus config/datasets.yaml carries."
+    if near:
+        detail += f" Did you mean {near[0]}?"
+    return Refusal(code="unregistered_dataset", detail=detail + " edullm data lists them all.")
 
 
 # ---------------------------------------------------------------------------------------

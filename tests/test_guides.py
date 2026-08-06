@@ -36,7 +36,9 @@ import yaml
 
 from edullm_platform.cli.actions import ADMITTED, DECLINED, submission_state
 from edullm_platform.config import load_yaml
+from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.corpora import corpora
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 GUIDES_DIR = PROJECT_ROOT / "guides"
@@ -526,21 +528,56 @@ def test_the_tmp_trap_is_named_wherever_the_guide_puts_it(olmo_core_guide: str) 
     )
 
 
-def test_every_corpus_the_guide_tabulates_is_one_the_form_offers(
+def test_the_guide_sends_a_reader_to_the_verb_rather_than_tabulating_the_corpora(
     platform_guide: str, workflow: dict[str, Any]
 ) -> None:
-    """The table is a promise in the same way the dropdown is.
+    """**THE TABLE THIS REPLACES WAS CORRECT AND THAT WAS ITS WHOLE PROBLEM.**
 
-    Read against the form rather than the registry, because the registry may hold a corpus no
-    workload can construct a tokenizer for — the guide should name what a person can pick.
+    Mutation: put the table back, or leave a shorter one behind as a convenience.
+
+    Sixteen rows of name and token count, every number right on the day it was typed. What
+    held them was this test, and this test only compared the *names* against the submission
+    form's dropdown -- so adding a corpus went red and somebody typed a row, and re-sealing
+    one at a new size went green for ever. The numbers were held by nothing, in the one place
+    a researcher would read them.
+
+    A table also cannot carry the column that matters. Five registered corpora are current
+    and refused by nothing and reach a container that exits 69, and which five is a join over
+    ``config/datasets.yaml`` and ``edullm_platform.tokenizers.TOKENIZERS`` that changes on its
+    own the day OLMo-core grows a tokenizer. A page cannot recompute itself.
+
+    So the assertion moves with the answer: the section names the verb, and no row of the
+    shape the table used to have survives anywhere on the page. Both halves are needed --
+    naming the verb while leaving the rows would be two answers, which is how they disagree.
     """
-    tabulated = set(
-        re.findall(r"^\| `([a-z0-9][a-z0-9.-]*)` \| [\d.]+B \|", platform_guide, re.MULTILINE)
+    tabulated = re.findall(
+        r"^\| `([a-z0-9][a-z0-9.-]*)` \| [\d.]+B \|", platform_guide, re.MULTILINE
     )
-    offered = set(form_inputs(workflow)["dataset_release"]["options"]) - {"none"}
+    heading = "## The corpora"
 
-    assert tabulated, "the guide names no corpus, so either the table or this pattern moved"
-    assert tabulated == offered
+    assert heading in platform_guide, "the guide no longer tells anybody what corpora exist"
+    section = platform_guide.split(heading, 1)[1].split("\n## ", 1)[0]
+    assert "edullm data" in section, (
+        "the corpora section names no verb, so a reader has nowhere to go; edullm data is "
+        "the only route to the list that carries a size, a tokenizer and a licence"
+    )
+    assert not tabulated, (
+        f"the guide tabulates {tabulated} again. Those numbers are held by nothing here, "
+        "which is what the table was deleted for, and a second answer beside edullm data is "
+        "how the two come to disagree"
+    )
+    # And the verb it names is one a reader can actually pick a corpus off, which is the
+    # promise the dropdown comparison used to make. Asked of the registry through the same
+    # join the verb uses, rather than of the form, because the verb's whole point is that it
+    # answers for the registered corpora the form cannot show.
+    offered = set(form_inputs(workflow)["dataset_release"]["options"]) - {"none"}
+    registry = load_yaml(PROJECT_ROOT / "config" / "datasets.yaml", DatasetRegistry)
+    runnable = {row.reference_id for row in corpora(registry) if row.runnability.will_run}
+
+    assert runnable == offered, (
+        "edullm data and the submission form disagree about which corpora will run, so the "
+        "page the guide now points at is not the page the form is offering"
+    )
 
 
 def test_the_guide_sends_a_reader_who_wants_to_stop_a_run_to_the_button(

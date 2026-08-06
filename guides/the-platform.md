@@ -116,36 +116,23 @@ A waiver lands in the run's manifest and the approving lead is told which check 
 
 ## The corpora
 
-| `dataset_release` | Train tokens | Objects |
-| --- | --- | --- |
-| `math-frontload-100m-v1` | 0.1B | 3 |
-| `formal-proof-premises-500m-v3` | 0.5B | 12 |
-| `fineweb-edu-750m-v2` | 0.7B | 15 |
-| `fineweb-edu-1b-v6` | 1.0B | 4 |
-| `fineweb2-phase0-equal-bpe-2b-v1` | 2.0B | 12 |
-| `fineweb2-phase0-equal-superbpe-2b-v1` | 2.0B | 12 |
-| `refhq-instruct-v3` | 3.9B | 29 |
-| `refhq-regmix-5p5b-v2` | 5.5B | 24 |
-| `regmix-10b-v1` | 10.0B | 41 |
-| `frontload-cl-10b-v1` | 10.1B | 53 |
-| `fineweb2-unimax-bpe-20b-v1` | 21.0B | 166 |
-| `fineweb2-unimax-superbpe-20b-v1` | 18.9B | 151 |
-| `olmo-original-30b-v1` | 31.3B | 120 |
-| `olmo-127b-v1` | 126.5B | 474 |
-| `olmo-150b-dolma2-v1` | 157.2B | 6,851 |
-| `reservoir-dolma2-v1` | 250.2B | 10,010 |
+```
+edullm data                       the list, smallest first
+edullm data reservoir-dolma2-v1   one of them in full
+edullm data --all                 every registered name, inputs to a corpus included
+```
 
-All are frozen and nothing you run can write to them. Most use the dolma2 tokenizer, which the training image has built in. The exceptions are: `fineweb-edu-1b-v6` and `fineweb-edu-750m-v2` (SmolLM2 from Hub), `formal-proof-premises-500m-v3` (vendored Qwen2.5 from Hub), and the four `fineweb2-*` Plan B releases (gigatoken BPE / SuperBPE, configured in the image with no Hub fetch). Hub outages refuse only the SmolLM2 and Qwen corpora; Plan B and dolma2 start without it.
+**There used to be a table here and it is gone on purpose.** It carried sixteen rows of names and token counts, every number correct on the day somebody typed it and held by nothing afterwards: add a corpus and a test went red, re-seal one at a new size and nothing anywhere noticed. `edullm data` prints the same facts out of the registry the CLI already carries plus a committed measurement, it says when that measurement was taken, and it reaches no network, so it costs a fraction of a second and works for everybody on the roster whether or not they hold an AWS role.
 
-Two more things about `formal-proof-premises-500m-v3` are worth knowing before you report a number from it. Its shards are `uint32` rather than the usual `uint16`, which the loader must take from the manifest and never infer; and ATP/TPTP traces carry most of its token mass, so a single loss over the whole corpus is mostly measuring two of its six sources. The Plan B `fineweb2-*` shards are also `uint32` (100k-vocab gigatoken).
+**It also prints the column a table cannot.** Registered is not the same as runnable. Five registered corpora are current, in a trainable family, and refused by nothing this platform checks — and a run naming one compiles, classifies routine, spends an approval, allocates the machine, and then the container cannot build a tokenizer for the tokens it just resolved and exits 69. `edullm data` names those five and says which tokenizer each is waiting on. Nothing else does.
 
-**`reservoir-dolma2-v1` is 977 GB and its licence needs reading before you publish anything trained on it.** Its licence field says the basis is unknown, and its own notes say more: stackexchange and finewiki are CC-BY-SA-4.0, finewiki additionally GFDL, and the two together are 7.13 per cent of its train tokens. Share-alike is a condition on redistributing a model, not just an unanswered question, so it is worth knowing before the run rather than after.
+The rest of what a chooser needs is on the same page: train tokens, the tokenizer, whether the shards are `uint16` or `uint32`, and the licence. Two of those are the ones people get wrong. The dtype is a silent wrong answer rather than a crash — a `uint32` shard read at OLMo-core's `uint16` default decodes into ids the embedding accepts, so you get a loss curve rather than an exception, which is why the loader takes it from the manifest and never infers it. And the licence is not decorative: `reservoir-dolma2-v1` declares its basis as unknown while its own notes record CC-BY-SA-4.0 over stackexchange and finewiki, finewiki additionally GFDL, 7.13 per cent of its train tokens. Share-alike is a condition on redistributing a model rather than an open question. `edullm data reservoir-dolma2-v1` says so before the run rather than after.
 
-**`formal-proof-premises-500m-v2` came off this list on 2026-08-06 and v3 replaced it.** v3 supersedes v2 in the corpus's own sealed metadata, so naming v2 now is refused by `edullm check` and by the compile job, both before the approval gate, with a refusal that names v3. A run resuming from a checkpoint written against v2 is the case that refusal is meant to be liftable for; the route is a reviewed line in `config/datasets.yaml` rather than a flag on the command.
-
-**More corpora are published than are offered here, and the reason is never the corpus.** `lean4-mathlib-bytes-v3` and `math-memory-full-v1` are sealed, frozen and readable, and they are tokenized with raw UTF-8 bytes, which OLMo-core has no tokenizer for. They stay in the registry and off this list until it does, because a run that resolved one would reach a container that cannot build a model for the tokens it just read. `fineweb-edu-1b-v6` was in that state until somebody wrote the one line naming its tokenizer, which is the difference between a missing upstream feature and a job nobody had done.
+All the corpora are frozen and nothing you run can write to them. Most use the dolma2 tokenizer, which the training image has built in. `fineweb-edu-1b-v6` and `fineweb-edu-750m-v2` use SmolLM2 and `formal-proof-premises-500m-v3` a vendored Qwen2.5, both fetched from the Hub at container start, so a Hub outage refuses those three and leaves the dolma2 and Plan B gigatoken corpora starting without it.
 
 **Size costs nothing up front.** Shards are memory-mapped from S3 as the loader reaches them, so a 157B corpus starts as quickly as a 5B one and reads only what your step count needs. Pick by what you are training, not by what you can afford to download.
+
+**A corpus that is not registered is a person's job rather than a command.** `edullm add dataset` refuses, and it is right to: the entry pins a manifest digest and a payload profile read off the corpus's own sealed `dataset.json`, which means opening a bucket, which means an AWS role the CLI holds none of. File it with `edullm ask --kind dataset-request`.
 
 ## Container environment
 

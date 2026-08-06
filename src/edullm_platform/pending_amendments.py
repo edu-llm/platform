@@ -1084,6 +1084,23 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # noisy and never wrong in the direction that costs money. The tree is the permissive side
     # and it is the side under review, so nobody meets this until the release, and what they
     # meet before it is a false alarm rather than a missed reclaim.
+    #
+    # THE EIGHTH GREW A SECOND CAUSE RATHER THAN BECOMING A NINTH, WHICH IS THE ONE SHAPE THIS
+    # REGISTER PERMITS: one function, one record, and a difference described in full. `edullm
+    # data` added a reviewed configuration file, which means a ConfigFile member, and
+    # researcher_lane.py imports that enum for two tag keys and a role name -- so a line in a
+    # StrEnum moved this zip. That is the fourteenth entry's path exactly, and the entry that
+    # opened for it said the coupling was the finding rather than the incident.
+    #
+    # NOTHING THE JANITOR DOES CAN DIFFER ACROSS EITHER HALF OF THIS RECORD'S SECOND CAUSE.
+    # janitor_handler.py imports WARNING_TAG_KEY and LaneSettings and builds its settings in
+    # `_settings_from_environment`, so it never calls the function that reads a config file at
+    # all, and the member added is a report the sweep has no reader for. The first cause is
+    # the one with behaviour in it, and it is still the reason to cut the release.
+    #
+    # BOTH ARE CLEARED BY ONE COMMAND, WHICH IS THE ONLY WAY A ZIP CAN BE CLEARED: it is built
+    # from the working tree rather than from a change, so whoever runs the line below ships
+    # both causes whether they meant to or not. Two causes, one release.
     releases: tuple[PendingRelease, ...] = (
         PendingRelease(
             function="janitor",
@@ -1091,10 +1108,13 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "edullm stop lets a researcher end their own machine inside the window "
                 "between this sweep's describe and its stop, and the handler now reads the "
                 "two EC2 codes that mean the machine is already off the clock as an outcome "
-                "rather than as a refusal that fails the invocation."
+                "rather than as a refusal that fails the invocation. Beside that, edullm "
+                "data added config/reports/corpora.json and therefore a ConfigFile member, "
+                "which researcher_lane.py imports and this zip carries, so the digest moved "
+                "again for a report the sweep never reads."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function janitor",
-            builds_to="7f9040edf6156ce9ffa84219503b16cb5b5cedf875074ee7ff8e18136e735e37",
+            builds_to="318e45316941845d626e75253caed199157abb2328352382c45cbfe2ca206a82",
             released="e07efe963ec9cadb79f7345a14d9074c125e359a588e0661f99db687a757e96a",
             recorded_on=date(2026, 8, 6),
         ),

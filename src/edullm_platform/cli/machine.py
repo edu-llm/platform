@@ -52,14 +52,17 @@ from edullm_platform.cli.lane import placement_said
 from edullm_platform.cli.preflight import DEFERRED_TO_SUBMIT, Preflight, Refusal
 from edullm_platform.cli.presentation import plain_decimal
 from edullm_platform.cli.release import installed_version
+from edullm_platform.corpora import CorporaSnapshot, Corpus
 from edullm_platform.placement import PlacementRecord
 from edullm_platform.run_history import RUNGS
 
 __all__ = [
     "FORMAT_VERSION",
     "check_document",
+    "corpora_document",
     "emit",
     "envelope",
+    "one_corpus_document",
     "refusal_document",
     "status_document",
     "status_listing_document",
@@ -363,6 +366,77 @@ def status_listing_document(runs: Sequence[SubmissionRun]) -> dict[str, Any]:
         "runs": [_submission_of(run) for run in runs],
         "refused": False,
         "refusals": [],
+    }
+
+
+def corpora_document(
+    rows: Sequence[Corpus], *, snapshot: CorporaSnapshot | None
+) -> dict[str, Any]:
+    """Every registered corpus, whatever the human view is showing.
+
+    **``--all`` DOES NOT CHANGE THIS DOCUMENT AND THAT IS DELIBERATE.** The flag decides what
+    a person is shown, and grouping is a reading aid; a caller filtering on ``runs`` should
+    not have to know that a flag exists before its filter is over the whole registry. The
+    verdict is a field, so every split the prose makes is one a caller can make itself.
+
+    ``measured`` is ``None`` for a corpus the reading did not cover, rather than a block of
+    nulls, so "nothing was measured" and "measured and found absent" stay distinguishable.
+    """
+    return {
+        **envelope("data"),
+        "measured_at": None if snapshot is None else snapshot.measured_at.isoformat(),
+        "measured_from": None if snapshot is None else snapshot.measured_from,
+        "corpora": [_corpus_of(row) for row in rows],
+        "refused": False,
+        "refusals": [],
+    }
+
+
+def one_corpus_document(row: Corpus, *, snapshot: CorporaSnapshot | None) -> dict[str, Any]:
+    """One corpus under ``corpora``, so the two documents are one shape read two ways.
+
+    A caller written against the listing works against the detail with no branch, which is
+    the same promise ``check_document`` makes by carrying ``run_id`` as ``None``.
+    """
+    return {**corpora_document([row], snapshot=snapshot)}
+
+
+def _corpus_of(row: Corpus) -> dict[str, Any]:
+    """The registry's facts, the computed verdict, and the reading, kept apart.
+
+    THREE BLOCKS BECAUSE THEY HAVE THREE LIFETIMES. ``registry`` moves when somebody merges a
+    pull request. ``runnability`` is computed on every printing out of the registry and the
+    tokenizer map, so it is never older than the install. ``measured`` is as old as the
+    packaged reading, which is what ``measured_at`` beside it is for. A caller that could not
+    tell them apart would trust a token count as far as it trusts a verdict.
+    """
+    reference = row.reference
+    measurement = row.measurement
+    return {
+        "reference_id": row.reference_id,
+        "dataset_id": reference.dataset_id,
+        "version": reference.version,
+        "uri": reference.uri,
+        "tokenizer": reference.tokenizer,
+        "payload_profile": reference.payload_profile,
+        "manifest_sha256": reference.manifest_sha256,
+        "retired": reference.retired,
+        "current_versions": list(row.current_versions),
+        "runs": row.runnability.will_run,
+        "verdict": row.runnability.verdict,
+        "said": row.runnability.said,
+        "measured": None
+        if measurement is None
+        else {
+            "train_tokens": measurement.train_tokens,
+            "train_tokens_exact": measurement.train_tokens_exact,
+            "shard_dtype": measurement.shard_dtype,
+            "size_bytes": measurement.size_bytes,
+            "licence": measurement.licence,
+            "share_alike": measurement.share_alike,
+            "purpose": measurement.purpose,
+            "note": measurement.note,
+        },
     }
 
 
