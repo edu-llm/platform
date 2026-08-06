@@ -59,6 +59,17 @@ from tests.cli_support import (
     write_spec,
 )
 
+#: The whole approval line an automatic submission earns, unwrapped. Written out rather
+#: than interpolated from the policy file, because two cases below assert it and a constant
+#: built the way ``presentation.py`` builds it would agree with whatever that file says.
+#: The figures are the reviewed ones and ``test_cli_no_hardcoded_bounds.py`` holds the
+#: source side to reading them rather than spelling them.
+AUTOMATIC_SAID = (
+    "automatic by the per-run rule: one cell, under $500. A team lead releases it instead "
+    "once runs since midnight UTC have committed the day's $1000 automatic ceiling, and "
+    "check reaches no network to know whether they have."
+)
+
 #: A command that starts one process per device on an eight-card shape, so a case about
 #: something else is not also a case about ``process_per_device``.
 EIGHT_PROCESS_COMMAND = (
@@ -302,7 +313,10 @@ def test_a_clean_submission_is_cleared_and_priced_from_the_catalog(
     # AUTOMATIC, AND IT PRINTED "routine -> run-approval-lead" UNTIL POLICY v5. Forty-eight
     # dollars in one cell is a tenth of the one bound, so a full day of training on one card
     # is now released by nobody. That is the change a submitter notices first.
-    assert "automatic. One cell, under $500, so nobody releases this." in out
+    #
+    # Whitespace-normalised, the way the refusal assertions in this file are, because the
+    # clause wraps and a line break is not a thing this is asserting about.
+    assert AUTOMATIC_SAID in " ".join(out.split())
     assert f"team              {SUBMITTER_TEAM}" in out
 
 
@@ -707,15 +721,22 @@ def test_the_refused_runtime_carries_a_code_a_caller_can_match_on(
     assert err == ""
 
 
-def test_a_cheap_single_cell_run_is_told_nobody_releases_it(
+def test_a_cheap_single_cell_run_is_told_the_rule_and_not_the_outcome(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The automatic class, with the bound printed as the policy file states it.
+    """The automatic class, with both bounds printed as the policy file states them.
 
     Mutation: write ``$500`` into ``presentation.py`` rather than interpolating
     ``automatic_below_cost_usd``. ``test_cli_no_hardcoded_bounds.py`` is what normally
     catches that; this catches the half of it that reads the wrong field, because the value
     printed here has to be the one ``classify_request`` compared against.
+
+    **THE NAME OF THIS TEST WAS THE DEFECT.** It was
+    ``..._is_told_nobody_releases_it``, and that is what the line said, and it is an
+    outcome ``check`` cannot establish: the day's ceiling is read off the run index by the
+    compile job, and this verb reaches no network. A submitter was told automatic on
+    2026-08-06 and their run parked at ``run-approval-lead``. What is asserted now is the
+    rule plus the clause saying the rule is not the whole answer.
     """
     root, runner = checkout(tmp_path, workload="olmo-core-check", compute="gpu-1xt4")
 
@@ -735,7 +756,7 @@ def test_a_cheap_single_cell_run_is_told_nobody_releases_it(
     )
 
     assert code == EXIT_OK, out + err
-    assert "automatic. One cell, under $500, so nobody releases this." in out
+    assert AUTOMATIC_SAID in " ".join(out.split())
 
 
 def test_a_mistyped_dataset_release_is_refused_with_the_list_it_should_have_named(

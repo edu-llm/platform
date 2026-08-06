@@ -52,7 +52,7 @@ from edullm_platform.contracts.authorization import (
 )
 from edullm_platform.contracts.base import serialize_decimal
 from edullm_platform.contracts.inventory import OrganizationInventory
-from edullm_platform.contracts.policy import ApprovalClass, ApprovalPolicy
+from edullm_platform.contracts.policy import ApprovalClass, ApprovalPolicy, PolicyThresholds
 from edullm_platform.contracts.workload import ComputeProfile, WorkloadProfile
 from edullm_platform.execution import CONTAINER_SHAPES
 
@@ -417,10 +417,7 @@ def _approval_block(
     limits = policy.thresholds
     lines = ["approval"]
     if approval_class is ApprovalClass.AUTOMATIC:
-        lines.append(
-            f"  automatic. One cell, under ${plain_decimal(limits.automatic_below_cost_usd)}, "
-            "so nobody releases this."
-        )
+        lines.extend(f"  {line}" for line in _wrap(_automatic_said(limits)))
         return "\n".join(lines)
 
     lines.append(f"  {approval_class.value} -> {preflight.approving_environment.value}")
@@ -431,6 +428,39 @@ def _approval_block(
         )
     )
     return "\n".join(lines)
+
+
+def _automatic_said(limits: PolicyThresholds) -> str:
+    """What the per-run rule gives, and the one thing that can still overrule it.
+
+    **THIS SAID "SO NOBODY RELEASES THIS", WHICH IS AN OUTCOME AND NOT THE RULE.** The rule
+    was right and the outcome was not: on 2026-08-06 a submitter was told automatic and
+    their run parked at ``run-approval-lead``, because
+    :func:`~edullm_platform.daily_ceiling.class_under_the_ceiling` raises an automatic
+    submission to a lead once the runs released by nobody since midnight UTC have committed
+    :attr:`~edullm_platform.contracts.policy.PolicyThresholds.automatic_daily_ceiling_usd`.
+
+    ``check`` cannot see that and is not going to be taught to. The day is read off the run
+    index, which is behind a credential the compile job holds and this verb deliberately
+    does not -- reaching no network is what makes it free, local and instant, and a figure
+    fetched here would be re-read at compile time anyway. So the clause says a lead may
+    release it and declines to say whether one will.
+
+    Silent when no ceiling is configured. That is the mechanism switched off rather than a
+    day that could not be read, and the sentence above is exactly true without it.
+    """
+    rule = (
+        "automatic by the per-run rule: one cell, under "
+        f"${plain_decimal(limits.automatic_below_cost_usd)}."
+    )
+    ceiling = limits.automatic_daily_ceiling_usd
+    if ceiling is None:
+        return f"{rule} Nobody releases this."
+    return (
+        f"{rule} A team lead releases it instead once runs since midnight UTC have "
+        f"committed the day's ${plain_decimal(ceiling)} automatic ceiling, and check "
+        "reaches no network to know whether they have."
+    )
 
 
 def _why_not_automatic(

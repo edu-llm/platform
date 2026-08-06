@@ -71,14 +71,16 @@ Your image is unaffected by this field. It is built from your commit for one arc
 
 ## Approval
 
-There are two answers, and `edullm check` prints which one you got before you submit anything.
+There are two answers, and `edullm check` prints which one the per-run rule gives before you submit anything.
 
 | What `check` prints | Who releases it |
 | --- | --- |
-| `automatic` | Nobody. It starts when you submit it |
+| `automatic` | Nobody, unless the day's ceiling below has been reached |
 | `routine` | Any of the eight team leads |
 
-**One cell, under $500 worst case, and nobody releases it.** No lead, no wait. It is still recorded and still attributed to you, and you still have to be on the roster and running registered code. What you skip is the queue, not the checks.
+**One cell, under $500 worst case, and nobody releases it.** No lead, no wait, unless the day's ceiling below has been reached. It is still recorded and still attributed to you, and you still have to be on the roster and running registered code. What you skip is the queue, not the checks.
+
+**A day-level ceiling can still send an automatic run to a lead, and `check` cannot see it.** The rule above reads one submission at a time, so thirty-five people each submitting just under the bound commit thirty-five times it with nobody asked. `automatic_daily_ceiling_usd` in `config/policy.yaml` bounds what one UTC day may commit that way; past it, a run the per-run rule called automatic is released by a team lead instead. Nothing is refused, nothing already running is touched, and the class re-opens at midnight. `check` reaches no network, so it prints the rule and stops short of the outcome -- the figure is in the block it printed above, and the compile job is the thing that actually reads the day.
 
 **No hour bound decides this.** `olmo-core-train` at its full twenty-four hours and two attempts on one A10G is $48.29 and starts on its own. The rule reads the worst-case total, which already multiplies the rate by the hours by the attempts by the cells, so a long run is an expensive one and expensive is what the bound catches. The figure lives at `automatic_below_cost_usd` in `config/policy.yaml`, and it is strictly under. $499.70 starts on its own and $500.23 waits.
 
@@ -255,7 +257,9 @@ what it has taken
   figure. Measured on 2026-08-06 over 201 run(s) recorded by this platform.
 
 approval
-  automatic. One cell, under $500, so nobody releases this.
+  automatic by the per-run rule: one cell, under $500. A team lead releases it
+  instead once runs since midnight UTC have committed the day's $1000
+  automatic ceiling, and check reaches no network to know whether they have.
 
 not checked here, because each of these needs the container registry
   no_published_image

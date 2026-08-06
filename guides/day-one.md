@@ -53,7 +53,7 @@ edullm check --team scratch --experiment day-one --dataset none
 
 Clone it in full. `git clone --depth 1` fetches only `main` and then the checkout has no branch of that name to switch to.
 
-`check` reaches no network, answers in about a fifth of a second, and lists every refusal at once. Read the ceiling and the approval line out of what it prints rather than out of any document, because both live in reviewed configuration and move. On this branch it prints no refusals, a ceiling of well under a dollar on one T4, and an approval line saying nobody has to release it.
+`check` reaches no network, answers in about a fifth of a second, and lists every refusal at once. Read the ceiling and the approval line out of what it prints rather than out of any document, because both live in reviewed configuration and move. On this branch it prints no refusals, a ceiling of well under a dollar on one T4, and an approval line saying the per-run rule asks nobody to release it -- followed by the one thing that line cannot settle, which is that a day-level ceiling can still send it to a team lead. Reaching no network is also why it cannot know: what the day has already committed is read later, by the compile job.
 
 ```
 edullm submit --team scratch --experiment day-one --dataset none

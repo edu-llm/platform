@@ -1036,79 +1036,37 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # So a run naming edullm-p1-train is admitted correctly by the deployed validator today.
     # The catalog entries that would not survive this window are compute profiles, which
     # admission does look up, and none moved.
-    releases: tuple[PendingRelease, ...] = (
-        PendingRelease(
-            function="validator",
-            reason=(
-                "config/workload-catalog.yaml, which build_admission_lambda packages "
-                "verbatim, drops maximum_attempts on open-instruct-scored-rewards-train "
-                "from 2 to 1, so until this is released the deployed copy prices and "
-                "provisions that profile for two attempts of a trainer that restarts from "
-                "step 0. No run of that repository is recorded under either of its "
-                "profiles. Extended by a second cause: the same file gains the "
-                "edullm-p1-train workload profile, which the validator does not read "
-                "because it looks up compute profiles rather than workload ones, so that "
-                "half moves the packaged bytes and nothing it decides"
-            ),
-            cleared_by=(
-                "uv run python tools/release_lambda.py --function validator, from main, "
-                "then the version id and digest into infra/admission-validator-release.yaml "
-                "and infra/admission-state-machine.yaml in the same commit as deleting this"
-            ),
-            builds_to="2cda942e9518cf23b6042a5b5ab35d550557a0784acfc9c3ee2d593844e9064c",
-            released="237cc46703bc9145453d6ee6e5ea01feb0d9430f2107d6fded381f83f5988ed7",
-            recorded_on=date(2026, 8, 6),
-        ),
-        PendingRelease(
-            function="recorder",
-            reason=(
-                "the lifecycle recorder packages contracts/admission.py and "
-                "contracts/policy.py, both of which policy v6 edits. It classifies nothing "
-                "and reads neither the ceiling nor the gate comparison, so the deployed "
-                "bytes and the tree behave identically inside this window"
-            ),
-            cleared_by=(
-                "uv run python tools/release_lambda.py --function recorder, from main, "
-                "then the version id and digest into infra/lifecycle-recorder-release.yaml "
-                "and infra/batch-events.yaml in the same commit as deleting this"
-            ),
-            builds_to="1c2d5c6d7f7e52f6b4ef07d6c69f2777a08ce94c3e850d0e1f4ad70def1e5b7b",
-            released="11d4c78a8ddc2b22c8a43dd5224d00a3e038f86403a8ba2e50c8f88a6d92c8b1",
-            recorded_on=date(2026, 8, 6),
-        ),
-        PendingRelease(
-            function="notifier",
-            reason=(
-                "the notifier packages contracts/admission.py and contracts/policy.py, both "
-                "of which policy v6 edits, and config/policy.yaml itself, which joined "
-                "NOTIFIER_CONFIG when the approval message started reading it. It reports "
-                "runs that have ended and classifies nothing, so the deployed bytes and the "
-                "tree behave identically inside this window. Extended the same day by a "
-                "second change: the approval request now ends its first line with the memory "
-                "on the machine it is asking somebody to pay for -- `8 x A10G, 22,888 MiB "
-                "each, 183,104 MiB total` -- which puts config/accelerators.yaml and "
-                "edullm_platform/accelerators.py in this package for the first time. That "
-                "half does change what the account sends, and until the release is cut it "
-                "sends the same five lines without the clause. Extended again by a third: "
-                "config/workload-catalog.yaml is also in NOTIFIER_CONFIG, and "
-                "open-instruct-scored-rewards-train drops there from 2 attempts to 1, so an "
-                "approval request for that profile quotes two attempts and twice the worst "
-                "case this tree would. None has been sent, and that profile has no recorded "
-                "run. Extended a third time: the same file gains the edullm-p1-train "
-                "profile, which nothing the notifier says about a run reads, because it "
-                "names the workload the manifest names, so that half is bytes and no "
-                "behaviour"
-            ),
-            cleared_by=(
-                "uv run python tools/release_lambda.py --function notifier, from main, then "
-                "the version id and digest into infra/notifier-release.yaml and "
-                "infra/notifications.yaml in the same commit as deleting this"
-            ),
-            builds_to="d78c4a48482558039e7affc51331ec558e5880f8e48876bafb567fe683ee67b9",
-            released="d41512d0174986aff63c6e6419bf42d5668db9734dd11f694f30ea627aa1d13b",
-            recorded_on=date(2026, 8, 6),
-        ),
-    )
+    # ALL THREE WERE CLEARED ON 2026-08-06 BY ONE `--function all`, AND THE JANITOR WAS
+    # SKIPPED BY THE TOOL RATHER THAN BY ANYBODY DECIDING TO SKIP IT. The validator was
+    # uploaded as object version Ss.xSF15xYJdzaXxrXaG0gNfT0lNOGUv, the recorder as
+    # VW_zBa_zGntjWyICmJPsFdUwdf_HStdZ and the notifier as 3lqptMfT1E224SaFA3gKYYWES5Dr7.iI,
+    # all cut from 307c18b, and each function's template and release record name the digest
+    # its build produced.
+    #
+    # THE RECORDER'S ENTRY WAS THE ONE WORTH RE-DERIVING RATHER THAN INHERITING, AND THE
+    # RE-DERIVATION MOVED THE ARGUMENT WITHOUT MOVING THE CONCLUSION. It said the recorder
+    # packages contracts/admission.py and contracts/policy.py. It packages only the second:
+    # the zip carries sixteen modules and `ApprovalEnvironment.satisfies`, which is the half
+    # of policy v6 that could have mattered to anything reading a decision back, is not among
+    # them. What is left is one optional field defaulting to None on a model this function
+    # never loads from configuration, in the one zip of the four that carries no
+    # configuration at all. So the window was as harmless as the entry claimed, for a
+    # narrower reason than the entry gave.
+    #
+    # IT WAS RELEASED ANYWAY, AND THE COSTS ARE WHY RATHER THAN TIDINESS. Building the zip at
+    # each of the last twenty-four commits of main shows this digest moving exactly at
+    # 92c8516 and not once in the ten commits since, so the difference was fully described
+    # and small -- which is the moment to close one, not a reason to leave it. Against that,
+    # deferring is not free: a standing entry turns the one tripwire covering this function
+    # into a skip until it lapses, and `explains` compares both digests, so whoever next
+    # touches any of those sixteen modules inherits this same derivation under whatever time
+    # pressure they are under. And the marginal deploy was zero this morning. The notifier's
+    # release edits infra/notifications.yaml, which fires deploy-phase3-batch.yml, and that
+    # workflow applies infra/batch-events.yaml in the same run whether or not this digest
+    # moved. Deferring would have saved one put-object and spent the failure this function's
+    # release record names as its own: lineage written by code nobody can point at, which
+    # reads exactly like lineage written by the right code and has no later reader.
+    releases: tuple[PendingRelease, ...] = ()
     return one_record_per_function(releases)
 
 
