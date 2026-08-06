@@ -936,6 +936,32 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # then `deploy-phase2-admission.yml -f release_lambdas=true` from main, then paste the
     # version id and digest into infra/admission-validator-release.yaml and
     # infra/admission-state-machine.yaml and delete the entry.
+    #
+    # TWO OF THOSE THREE NOW CARRY A SECOND CAUSE, WHICH IS WHY NO TWENTIETH ENTRY WAS ADDED.
+    # `one_record_per_function` refuses two records for one zip, and it is right to: a digest
+    # has no per-cause decomposition, so a second record for the validator would describe the
+    # same bytes as the first and whichever was read first would decide which difference
+    # counted. The second cause is maximum_attempts on open-instruct-scored-rewards-train
+    # dropping from 2 to 1 -- grpo_fast.py:477 gates its checkpoint load on os.path.exists
+    # against the s3:// URI this platform hands it, so a second attempt restarted from step 0
+    # at full price. config/workload-catalog.yaml is in ADMISSION_CONFIG and in
+    # NOTIFIER_CONFIG and in neither of the other two builders, so it reaches exactly the
+    # validator and the notifier; the recorder's entry below is untouched by it and its
+    # digest is the same either way.
+    #
+    # ISOLATED RATHER THAN ASSUMED, AND ON THIS BASE RATHER THAN THE ONE IT WAS WRITTEN
+    # AGAINST. With the catalog restored and the rest of that change left edited, the
+    # validator builds to 237cc46703bc and the notifier to 83656e1300ca, which are the
+    # digests policy v6 recorded on its own. So the two figures below are v6 plus one line of
+    # reviewed configuration and nothing else, and the recorder's 1c2d5c6d7f7e is unmoved.
+    #
+    # WHAT IT ADDS TO THE VALIDATOR'S WINDOW AND WHAT IT DOES NOT. The entry above is urgent
+    # because a lead's release is refused inside its window. This one is not: the deployed
+    # copy prices and provisions that profile for two attempts, and the notifier quotes them,
+    # which is money a submission could spend rather than a submission that cannot run. It
+    # costs nothing today because config/run-history.json records no run of
+    # open-instruct-scored-rewards under either of its profiles. The release that clears the
+    # ceiling clears this with it, because a zip is built from a tree rather than a change.
     releases: tuple[PendingRelease, ...] = (
         PendingRelease(
             function="validator",
@@ -944,14 +970,19 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "gate for a run it derives as automatic, which is the one raise the daily "
                 "ceiling can produce. Until the zip carries both, a submission the ceiling "
                 "routes to a lead is refused with approval_environment_mismatch after the "
-                "lead has released it"
+                "lead has released it. And config/workload-catalog.yaml, which "
+                "build_admission_lambda packages verbatim, drops maximum_attempts on "
+                "open-instruct-scored-rewards-train from 2 to 1, so until this is released "
+                "the deployed copy prices and provisions that profile for two attempts of a "
+                "trainer that restarts from step 0. No run of that repository is recorded "
+                "under either of its profiles"
             ),
             cleared_by=(
                 "uv run python tools/release_lambda.py --function validator, from main, "
                 "then the version id and digest into infra/admission-validator-release.yaml "
                 "and infra/admission-state-machine.yaml in the same commit as deleting this"
             ),
-            builds_to="237cc46703bc9145453d6ee6e5ea01feb0d9430f2107d6fded381f83f5988ed7",
+            builds_to="584b52714be7e90beb8eb28b7dc260e1684686b5db81df086bdf036aeacd0ca7",
             released="22b3f176ae279e6214f11e8a6e6a1c4e1c7ac3f37fd9e744cfd45316c02e08df",
             recorded_on=date(2026, 8, 6),
         ),
@@ -993,14 +1024,19 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "of which policy v6 edits, and config/policy.yaml itself, which joined "
                 "NOTIFIER_CONFIG when the approval message started reading it. It reports "
                 "runs that have ended and classifies nothing, so the deployed bytes and the "
-                "tree behave identically inside this window"
+                "tree behave identically inside this window. The one thing it does read is "
+                "config/workload-catalog.yaml, also in NOTIFIER_CONFIG, where "
+                "open-instruct-scored-rewards-train drops from 2 attempts to 1: an approval "
+                "request for that profile quotes two attempts and twice the worst case this "
+                "tree would until the release is cut. None has been sent, and that profile "
+                "has no recorded run"
             ),
             cleared_by=(
                 "uv run python tools/release_lambda.py --function notifier, from main, then "
                 "the version id and digest into infra/notifier-release.yaml and "
                 "infra/notifications.yaml in the same commit as deleting this"
             ),
-            builds_to="83656e1300caae1808df647518075eb909d5eee4c54e8d23daaf2c5a347abd88",
+            builds_to="1e3b1e8f727c3ea582d805a3ec94aa92a4de6bcf7de5052ab9ba49819829bc20",
             released="d41512d0174986aff63c6e6419bf42d5668db9734dd11f694f30ea627aa1d13b",
             recorded_on=date(2026, 8, 6),
         ),

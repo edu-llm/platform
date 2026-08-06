@@ -316,20 +316,42 @@ def _manifest_block(preflight: Preflight) -> str:
 
 
 def _cost_block(preflight: Preflight) -> str:
+    """The ceiling, the five factors under it, and the lever for each factor that has one.
+
+    THE ATTEMPT FACTOR GETS A LINE BECAUSE THE SUBMITTER IS THE ONE WHO CAN STILL MOVE IT.
+    :func:`~edullm_platform.checkpoint_commands.unverified_resume_note` says the same thing
+    at length on the approver page and under ``retries`` in ``check --json``, and the person
+    reading it there is deciding about somebody else's run with an approval already asked
+    for. Here it is being read by whoever chose the count, before anything is dispatched,
+    which makes ``--attempts`` a lever rather than a survey -- so this is the fact and the
+    lever and none of the argument behind them.
+    """
     cost = preflight.cost
     if cost is None:
         return ""
     cells = "cell" if cost.cells == 1 else "cells"
     attempts = "attempt" if cost.maximum_attempts == 1 else "attempts"
     nodes = "node" if cost.nodes == 1 else "nodes"
-    return (
-        f"worst case  ${plain_decimal(cost.maximum_compute_cost_usd)}\n"
-        f"  ${plain_decimal(cost.hourly_rate_usd)}/hour x {cost.nodes} {nodes} x "
-        f"{plain_decimal(cost.maximum_runtime_hours)}h x {cost.maximum_attempts} {attempts} x "
-        f"{cost.cells} {cells}\n"
-        "  A ceiling rather than an estimate, and what routes the run. Lowering --hours\n"
-        "  is what moves a run under the automatic bound."
-    )
+    lines = [
+        f"worst case  ${plain_decimal(cost.maximum_compute_cost_usd)}",
+        (
+            f"  ${plain_decimal(cost.hourly_rate_usd)}/hour x {cost.nodes} {nodes} x "
+            f"{plain_decimal(cost.maximum_runtime_hours)}h x {cost.maximum_attempts} "
+            f"{attempts} x {cost.cells} {cells}"
+        ),
+        "  A ceiling rather than an estimate, and what routes the run. Lowering --hours",
+        "  is what moves a run under the automatic bound.",
+    ]
+    if cost.maximum_attempts > 1:
+        lines.extend(
+            f"  {line}"
+            for line in _wrap(
+                "Lower --attempts to 1 if this program does not resume. Nothing here "
+                "checks that it does, and an attempt that starts over costs what the "
+                "first one did."
+            )
+        )
+    return "\n".join(lines)
 
 
 def _history_block(preflight: Preflight) -> str:
