@@ -186,7 +186,7 @@ class DeniedOutrightError(SubmissionRefusedError):
 
 
 class NoPublishedImageError(SubmissionRefusedError):
-    """The one refusal here a laptop cannot make, and it shares its name with the deferral.
+    """A refusal a laptop cannot make, and it shares its name with the deferral.
 
     ``preflight.DEFERRED_TO_SUBMIT`` names this check as deferred rather than passed, under
     this code, because asking the registry needs a credential the binary does not hold. The
@@ -198,10 +198,26 @@ class NoPublishedImageError(SubmissionRefusedError):
 
 
 class ImageNotPublishedFromTheCommitError(SubmissionRefusedError):
+    """The one refusal on this path no submission from the binary can reach.
+
+    It is raised only where the form carries an ``image_digest`` override, and ``edullm
+    submit`` leaves that field off entirely -- which is what makes the workflow derive the
+    image from the commit. So it is reachable from the Actions form and not from here, and
+    ``tests/test_check_refuses_what_compile_refuses.py`` records that as the reason rather
+    than deferring a condition a reader of ``check`` cannot meet.
+    """
+
     reason_code: ClassVar[str] = "image_not_published_from_the_commit"
 
 
 class AmbiguousImageError(SubmissionRefusedError):
+    """The other half of the image deferral, for the same reason and under its own code.
+
+    A tie between two images pushed at one instant is a fact about the registry, so a laptop
+    can no more see it than it can see whether anything was published at all.
+    ``preflight.DEFERRED_TO_SUBMIT`` names both.
+    """
+
     reason_code: ClassVar[str] = "image_is_ambiguous"
 
 

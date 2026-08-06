@@ -39,11 +39,12 @@ from edullm_platform.cli.main import (
     build_parser_and_verbs,
     main,
 )
-from edullm_platform.cli.preflight import Preflight
+from edullm_platform.cli.preflight import DEFERRED_TO_SUBMIT, Preflight
 from edullm_platform.cli.presentation import config_source_said
 from edullm_platform.cli.workspace import CommandResult
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
+from edullm_platform.launchers import TENSOR_PARALLEL_OPTION, TENSOR_PARALLEL_SHORT_FORM
 from edullm_platform.placement import CAPACITY_FILENAME, PLACES_UNRELIABLY
 from tests.cli_support import (
     COMMIT,
@@ -864,6 +865,43 @@ def test_bfloat16_on_the_only_eight_card_shape_that_places_is_refused_by_name(
     assert "may not place" not in out
 
 
+def test_the_tensor_parallel_spelling_the_harness_ignores_is_refused_here_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second instance of "``check`` passes what ``compile`` refuses", closed.
+
+    ``require_a_tensor_parallel_flag_vllm_reads`` was called by ``compile_submission`` and by
+    nothing on this side, so a sweep spelling the option the way the harness accepts and
+    discards cleared ``edullm check`` and was refused after the dispatch. This case is the
+    submission that did it: one device asked for on a one-device shape, so
+    ``process_per_device`` has nothing to say and the spelling is the only thing wrong.
+
+    Mutation: drop the call from ``_check_command``. That is what shipped, and what it costs
+    is the queue wait plus a submitter who was told their submission was good.
+    """
+    write_spec(
+        tmp_path,
+        workload="olmo-eval-sweep",
+        compute="gpu-1xa10g",
+        command=(
+            f"olmo-eval run --harness default -o provider.kind=vllm_server "
+            f"-o {TENSOR_PARALLEL_SHORT_FORM}=1 -t arc_challenge -O /tmp/out"
+        ),
+    )
+    runner = FakeRunner(git_answers(tmp_path, repository="olmo-eval-full"))
+
+    code, out, _ = invoke(
+        ["check", "--dataset", "none", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_REFUSED
+    assert "refused  tensor_parallel_flag_ignored" in out
+    assert TENSOR_PARALLEL_OPTION in out
+
+
 def test_a_fanout_is_told_that_no_size_of_one_releases_itself(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1069,7 +1107,7 @@ def test_an_experiment_that_cannot_group_is_refused_with_the_shape_that_can(
     assert "refused  experiment_not_a_slug" in out
 
 
-def test_the_two_checks_a_laptop_cannot_make_are_named_rather_than_passed_over(
+def test_the_checks_a_laptop_cannot_make_are_named_rather_than_passed_over(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The honesty this verb rests on.
@@ -1078,6 +1116,11 @@ def test_the_two_checks_a_laptop_cannot_make_are_named_rather_than_passed_over(
     of a submitter who read a clean preflight as a guarantee and met
     ``image_scan_findings_unreviewed`` from inside the submission -- and read it as a
     security problem in his own image rather than as a scan that had not finished.
+
+    Read out of ``DEFERRED_TO_SUBMIT`` rather than listed here, because which questions are
+    deferred is decided there and held complete by
+    ``tests/test_check_refuses_what_compile_refuses.py``. What this asserts is that a reader
+    of the output meets all of them.
     """
     root, runner = checkout(tmp_path, workload="olmo-core-check", compute="gpu-1xt4")
 
@@ -1089,9 +1132,9 @@ def test_the_two_checks_a_laptop_cannot_make_are_named_rather_than_passed_over(
     )
 
     assert code == EXIT_OK, out + err
-    assert "not checked here, because both need the container registry" in out
-    assert "no_published_image" in out
-    assert "image_scan_findings_unreviewed" in out
+    assert "not checked here, because each of these needs the container registry" in out
+    for code_deferred, _ in DEFERRED_TO_SUBMIT:
+        assert code_deferred in out
 
 
 @pytest.mark.parametrize("retired", ["dry-run", "new"])

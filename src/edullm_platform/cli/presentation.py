@@ -411,7 +411,7 @@ def _why_not_automatic(
 
 
 def _deferred_block() -> str:
-    lines = ["not checked here, because both need the container registry"]
+    lines = ["not checked here, because each of these needs the container registry"]
     for code, detail in DEFERRED_TO_SUBMIT:
         lines.append(f"  {code}")
         lines.extend(f"    {line}" for line in _wrap(detail, width=74))
