@@ -8,10 +8,12 @@ which is the only property that makes writing the file without asking safe:
   one. Where there is more than one, the training entry wins over the check entry, because
   a scaffold is written by somebody about to submit work rather than about to smoke-test
   the platform, and ``check`` prints the alternatives either way.
-- ``suggested_compute`` is the cheapest provisioned profile that could carry that workload:
-  a CPU profile where the workload keeps no checkpoint contract, the cheapest provisioned
-  GPU where it does. Cheapest rather than largest because the suggestion's job is to be
-  edited, and the direction a wrong default should fail is the one that costs less.
+- ``suggested_compute`` is the cheapest provisioned profile that could carry that workload
+  *and run it*: a CPU profile where the workload keeps no checkpoint contract, and where it
+  does, the cheapest provisioned GPU whose card has bfloat16. Cheapest rather than largest
+  because the suggestion's job is to be edited, and the direction a wrong default should
+  fail is the one that costs less -- but a shape the workload cannot run is not the cheaper
+  direction, which is what :func:`_can_run_what_a_trainer_defaults_to` is about.
 - ``command`` is the reviewed default the submission form itself carries, unless the
   repository has an entry point under ``.edullm/`` -- in which case it is that, wrapped so
   the checkpoint directory expands and launched so that every device the profile bills for
@@ -34,6 +36,7 @@ from edullm_platform.cli.configuration import ReviewedConfiguration
 from edullm_platform.cli.spec import SPEC_PATH, RunSpec, render_spec
 from edullm_platform.contracts.workload import ComputeProfile, WorkloadProfile
 from edullm_platform.execution import CONTAINER_SHAPES
+from edullm_platform.precision import gpu_of
 
 __all__ = ["FIRST_RUN_COMMAND", "scaffold_spec", "workloads_registered_for"]
 
@@ -101,14 +104,16 @@ def scaffold_spec(
     # a Windows researcher produces a file that differs from everybody else's before they
     # have typed anything and nothing tells them.
     path.write_text(
-        render_spec(spec, notes=_notes(configuration, repository)),
+        render_spec(spec, notes=_notes(configuration, repository, compute=compute)),
         encoding="utf-8",
         newline="\n",
     )
     return path
 
 
-def _notes(configuration: ReviewedConfiguration, repository: str) -> tuple[str, ...]:
+def _notes(
+    configuration: ReviewedConfiguration, repository: str, *, compute: ComputeProfile | None
+) -> tuple[str, ...]:
     """The header, which says what was guessed and what the alternatives were.
 
     Comments rather than prose printed once to a terminal, because the file outlives the
@@ -126,6 +131,42 @@ def _notes(configuration: ReviewedConfiguration, repository: str) -> tuple[str, 
         "#",
         f"# Workload profiles registered for {repository}: {offered or 'none'}.",
         "# edullm check prices this and lists every refusal, without dispatching anything.",
+        *_a_card_without_bfloat16(compute),
+    )
+
+
+def _a_card_without_bfloat16(compute: ComputeProfile | None) -> tuple[str, ...]:
+    """Said in the file only where the shape written into it has no bfloat16.
+
+    Unreachable from the default, which is the point of it. ``_pick_compute`` no longer
+    suggests a card without bfloat16, so the only way one reaches this file is
+    ``edullm check --compute gpu-1xt4`` on the invocation that scaffolds -- somebody who
+    chose the shape rather than accepted it, and the one reader for whom the sentence is
+    news rather than clutter.
+
+    It names the two spellings because the guard that would refuse this reads the words of
+    the command, and a trainer that fixes its precision in code writes none of them. Putting
+    one in the command is what moves the failure from a billed instance to a free refusal.
+
+    **AND THIS WILL NOT PUT IT THERE UNASKED, WHICH IS THE SAME RULE THE REST OF THE MODULE
+    KEEPS.** The flag a program accepts is a fact about that program: ``--param-dtype`` is
+    real in OLMo-core's entry point and would be an unrecognised argument in somebody
+    else's, so a scaffold that wrote it into every command would turn a default that runs
+    into a default that cannot start, for every repository but one. Nothing in the catalog
+    declares a workload's precision, so there is nothing here to read -- and a sentence in
+    the file the researcher is about to edit is the honest version of what this knows.
+    """
+    if compute is None or _can_run_what_a_trainer_defaults_to(compute):
+        return ()
+    gpu = gpu_of(compute)
+    card = "its card" if gpu is None else f"the {gpu.model} is {gpu.architecture.name} and"
+    return (
+        "#",
+        f"# {compute.name}: {card} has no bfloat16 in the hardware. A trainer that asks",
+        "# for the format dies on the first kernel needing it, once the machine is billed.",
+        "# edullm check reads the words of the command and cannot see a dtype set in code,",
+        "# so write the dtype in and be refused for free instead:",
+        "#   train_module.dp_config.param_dtype=bfloat16   or   --param-dtype bfloat16",
     )
 
 
@@ -158,7 +199,44 @@ def _pick_compute(
         return None
     wanted = "gpu" if workload is not None and workload.checkpoint is not None else "cpu"
     matching = [entry for entry in provisioned if entry.accelerator == wanted] or provisioned
-    return min(matching, key=lambda entry: (entry.hourly_rate_usd, entry.name))
+    runnable = [entry for entry in matching if _can_run_what_a_trainer_defaults_to(entry)]
+    return min(runnable or matching, key=lambda entry: (entry.hourly_rate_usd, entry.name))
+
+
+def _can_run_what_a_trainer_defaults_to(profile: ComputeProfile) -> bool:
+    """Whether this shape's card has bfloat16, which a default may not assume away.
+
+    **THE CHEAPEST GPU IN THE CATALOG IS THE ONE THAT CANNOT RUN THE WORKLOAD THIS SCAFFOLD
+    PAIRS IT WITH.** ``gpu-1xt4`` is a T4, ``olmo-core-train`` runs
+    ``.edullm/train_on_corpus.py``, and that program builds its data-parallel config in
+    bfloat16 unless told otherwise -- so the pair priced out at the cheapest rate in the
+    catalog was a run that dies on the first kernel needing the format. Nothing in front of
+    it says so: the dtype is set in code rather than in argv, which is the one thing
+    :mod:`edullm_platform.precision` documents that it cannot see, so ``check`` returned no
+    refusals and classified the run ``automatic``. The failure arrived after a machine had
+    been obtained and billed for.
+
+    So "cheapest" is read over the shapes that can run the thing, and the capability comes
+    from :func:`~edullm_platform.precision.gpu_of` rather than from a list of profile names
+    here. That module keys on the EC2 instance family the catalog already declares, so a
+    shape promoted, renamed or demoted in ``config/workload-catalog.yaml`` is answered here
+    without an edit, and the fact that Turing has no bfloat16 stays written once.
+
+    A CPU profile has no card and passes: bfloat16 on a CPU is slow rather than absent, and
+    a workload with no checkpoint contract is not the training case this is about. A GPU
+    family :data:`~edullm_platform.precision.GPUS_BY_INSTANCE_FAMILY` does not carry has no
+    recorded answer and does not pass, which is the opposite reading from ``gpu_of``'s own
+    caller and is right for the opposite reason: that one decides whether to *refuse* a
+    submission somebody wrote, where a guess is worse than nothing, and this one decides
+    what to *suggest* to somebody who wrote nothing, where the unknown card is exactly what
+    a default should not reach for. ``tests/test_bfloat16_guard.py`` keeps the case
+    unreachable in a shipped catalog either way, and the caller falls back to the whole set
+    so a catalog of nothing but unknown families still yields a suggestion.
+    """
+    if profile.accelerator != "gpu":
+        return True
+    gpu = gpu_of(profile)
+    return gpu is not None and gpu.architecture.supports_bfloat16
 
 
 def _pick_command(
