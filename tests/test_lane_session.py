@@ -9,6 +9,8 @@ be built for any of that.
 
 from __future__ import annotations
 
+import json
+import shlex
 from pathlib import Path
 
 from edullm_platform.cli.lane import (
@@ -21,6 +23,7 @@ from edullm_platform.cli.lane import (
     remote_script,
     shell_session_argv,
     ssh_proxy_command,
+    under_a_shell,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -72,7 +75,67 @@ def test_a_remote_command_streams_rather_than_returning_at_the_end() -> None:
     argv = remote_command_argv(INSTANCE, command="echo hello")
 
     assert "AWS-StartNonInteractiveCommand" in argv
-    assert '"command":["echo hello"]' in " ".join(argv)
+    assert json.loads(argv[-1]) == {"command": ["bash -c 'echo hello'"]}
+
+
+def test_the_parameters_document_is_serialised_rather_than_interpolated() -> None:
+    """**THE DEFECT THAT MADE edullm run FAIL ON EVERY COMMAND IT WAS EVER GIVEN.**
+    Mutation: build the document with an f-string again.
+
+    remote_script ends in ``echo "edullm-exit:$status"``, so the document always carries a double
+    quote, and interpolating it into ``{"command":["..."]}`` produced something that is not JSON.
+    The AWS CLI refused it, the verb reported that the session had ended without saying what the
+    command did, and that sentence names neither the quote nor this file.
+
+    A researcher's own command carries the same hazard and carries it further, because
+    ``python -c "print(1)"`` is a thing people type. Parsed rather than matched, because a
+    substring assertion is exactly what missed this.
+    """
+    script = remote_script(uri="s3://a/b/", project="p", command='python -c "print(1)"')
+    argv = remote_command_argv(INSTANCE, command=script)
+
+    assert json.loads(argv[-1])["command"] == [under_a_shell(script)]
+
+
+def test_a_command_is_wrapped_for_a_shell_because_the_document_runs_none() -> None:
+    """**THE SECOND REASON edullm run NEVER WORKED, AND IT IS INVISIBLE FROM THE ARGV.**
+    Mutation: pass the script straight through.
+
+    AWS-StartNonInteractiveCommand splits the command the way a shell splits a line and then
+    executes the first token with the rest as its arguments. Nothing interprets ``;``, ``$?`` or
+    ``(``. Handed remote_script directly it ran ``echo`` with the whole of the rest of the
+    pipeline as arguments, printed them back as one line and exited 0, so the machine did none of
+    the work and the sentinel never appeared. Measured against the account on 2026-08-06.
+
+    Mutation: wrap with ``f"bash -c '{script}'"``. A single quote in the researcher's own command
+    closes the wrapper early and the tail of their command is then read as shell of its own,
+    which ``git commit -m 'don't'`` produces.
+    """
+    assert under_a_shell("echo a; echo b") == "bash -c 'echo a; echo b'"
+
+    wrapped = under_a_shell("""echo "it's" quoted""")
+    assert shlex.split(wrapped)[:2] == ["bash", "-c"]
+    assert shlex.split(wrapped)[2] == """echo "it's" quoted"""
+
+
+def test_the_work_directory_is_made_with_privilege_and_handed_to_the_session() -> None:
+    """**THE THIRD REASON A RUN CAME BACK SAYING NOTHING USEFUL.**
+    Mutation: go back to a plain ``mkdir -p``.
+
+    A Session Manager session runs as ``ssm-user``, who cannot create a directory at the
+    filesystem root. Without privilege the first act failed Permission denied, the sync down had
+    nowhere to land, the ``cd`` failed and the sync back reported a path that does not exist --
+    and the researcher's command ran anyway, in whatever directory the session started in, and
+    returned 0. A run that half-works and reports success is worse than one that refuses.
+
+    Mutation: create it as root and leave it owned by root, which is what ``sudo mkdir -p``
+    alone does. The sync back afterwards runs as the session and cannot write into it.
+    """
+    script = remote_script(uri="s3://a/b/", project="p", command="true")
+
+    assert "sudo install -d" in script
+    assert '-o "$(id -u)" -g "$(id -g)" /work/p' in script
+    assert script.index("install -d") < script.index("aws s3 sync s3://a/b/")
 
 
 def test_the_remote_script_syncs_the_tree_down_before_it_runs_anything() -> None:

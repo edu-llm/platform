@@ -18,7 +18,9 @@ machine, you do what you like, nothing is checked and nothing is recorded as cit
 
 from __future__ import annotations
 
+import json
 import re
+import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -73,6 +75,7 @@ __all__ = [
     "run_instances_argv",
     "shell_session_argv",
     "ssh_proxy_command",
+    "under_a_shell",
     "working_prefix",
     "working_uri",
 ]
@@ -516,6 +519,20 @@ def shell_session_argv(instance_id: str) -> tuple[str, ...]:
     return ("aws", "ssm", "start-session", "--target", instance_id)
 
 
+def _session_parameters(values: Mapping[str, object]) -> str:
+    """A ``--parameters`` document, serialised rather than interpolated.
+
+    **EVERY SESSION PARAMETER GOES THROUGH HERE AND NONE IS BUILT WITH AN F-STRING.** One was,
+    and it is the defect that made ``edullm run`` fail on every command it was ever given:
+    ``remote_script`` ends in ``echo "edullm-exit:$status"``, the two quotes went into the
+    document unescaped, and what reached the AWS CLI was not JSON. The verb then reported that
+    the session had ended without saying what the command did, which is true and names neither
+    the quote nor the file. A researcher's own command carries the same hazard and carries it
+    further, because ``python -c "print(1)"`` is a thing people type.
+    """
+    return json.dumps(values, separators=(",", ":"))
+
+
 def notebook_forward_argv(
     instance_id: str, *, settings: WorkingTierSettings, local_port: int
 ) -> tuple[str, ...]:
@@ -535,8 +552,33 @@ def notebook_forward_argv(
         "--document-name",
         "AWS-StartPortForwardingSession",
         "--parameters",
-        (f'{{"portNumber":["{settings.notebook_port}"],"localPortNumber":["{local_port}"]}}'),
+        _session_parameters(
+            {
+                "portNumber": [str(settings.notebook_port)],
+                "localPortNumber": [str(local_port)],
+            }
+        ),
     )
+
+
+def under_a_shell(script: str) -> str:
+    """One line of shell, as something ``AWS-StartNonInteractiveCommand`` will actually run.
+
+    **THAT DOCUMENT RUNS NO SHELL, WHICH IS THE SECOND REASON ``edullm run`` NEVER WORKED.** It
+    splits the command it is given the way a shell splits a line, honouring quotes, and then
+    executes the first token with the rest as its arguments. Nothing interprets ``;``, ``$?``,
+    ``(`` or a redirection. Handed ``remote_script``'s line directly it ran ``echo`` with the
+    whole of the rest of the pipeline as arguments to it, printed them back as one line, and
+    exited 0 -- so the sentinel never appeared, the machine did none of the work, and the verb
+    reported only that the session had ended without saying what the command did. Measured
+    against this account on 2026-08-06.
+
+    ``shlex.quote`` and not an f-string with quotes around it. The script already contains a
+    double quote, of its own, and a researcher's command is arbitrary text that may contain
+    either kind; ``'`` inside a single-quoted word is the one case a hand-rolled wrapper always
+    gets wrong, and it is what ``git commit -m 'don't'`` produces.
+    """
+    return f"bash -c {shlex.quote(script)}"
 
 
 def remote_command_argv(instance_id: str, *, command: str) -> tuple[str, ...]:
@@ -555,7 +597,7 @@ def remote_command_argv(instance_id: str, *, command: str) -> tuple[str, ...]:
         "--document-name",
         "AWS-StartNonInteractiveCommand",
         "--parameters",
-        f'{{"command":["{command}"]}}',
+        _session_parameters({"command": [under_a_shell(command)]}),
     )
 
 
@@ -616,10 +658,22 @@ def remote_script(*, uri: str, project: str, command: str) -> str:
     command that failed still gets its output carried up, and it is printed last on a line the
     verb parses, because ``start-session`` exits with the plugin's status rather than the remote
     command's.
+
+    **THE DIRECTORY IS MADE WITH ``sudo`` AND HANDED OVER, AND A PLAIN ``mkdir -p`` HERE DOES
+    NOT WORK.** A Session Manager session runs as ``ssm-user``, who cannot create a directory at
+    the filesystem root, so the first act failed ``Permission denied``, the sync down had
+    nowhere to land, the ``cd`` failed, and the sync back reported a path that does not exist --
+    while the researcher's own command ran anyway, in whatever directory the session started in,
+    and returned 0. A run that half-works and says it succeeded is worse than one that refuses.
+    ``ssm-user`` is in the AMI's sudoers with no password, which is what the agent puts there.
+
+    ``install -d`` rather than ``mkdir`` and a ``chown``: one call, it makes the parents, and it
+    leaves the directory owned by the session rather than by root, so the sync back and anything
+    ``edullm shell`` does later in the same place need no further privilege.
     """
     directory = f"/work/{project}"
     return (
-        f"set -u; mkdir -p {directory}; "
+        f"set -u; sudo install -d -o \"$(id -u)\" -g \"$(id -g)\" {directory}; "
         f"aws s3 sync {uri} {directory} --only-show-errors; "
         f"cd {directory}; "
         f"({command}); status=$?; "
