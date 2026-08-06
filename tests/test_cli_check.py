@@ -310,6 +310,113 @@ def test_the_document_says_nothing_rather_than_nothing_known_for_a_shape_that_pl
     assert json.loads(out)["placement"] is None
 
 
+def test_hours_above_the_profile_s_own_bound_is_refused_and_the_conflict_is_named(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE LAST BOUND ON RUNTIME IN THE TREE, AND NOTHING WAS ENFORCING IT.
+
+    ``config/policy.yaml`` retired ``routine_maximum_runtime_hours`` at v5 and said in as
+    many words why that was safe: "the workload profiles in config/workload-catalog.yaml
+    still declare their own runtime ceilings and those are what a submission is bounded by".
+    They were not. ``--hours 10000`` against ``olmo-core-train``'s twenty-four was accepted
+    with no refusal and no warning, priced at $10,520, and routed to a team lead as routine.
+
+    Mutation: print the conflict as a warning instead. It was the other candidate and it
+    loses on what stands behind it. There is no second ceiling anywhere -- the policy one is
+    gone and the compile step never compares the two numbers -- so a warning leaves a
+    mistyped flag with nothing between it and $10,520 but a lead reading a figure with no
+    sign that the profile said twenty-four. Lowering ``--hours`` is the flag's documented
+    use and is untouched; only going above the profile is refused.
+
+    Both numbers are asserted, because a refusal that named only the bound would leave the
+    reader to work out which of their flags produced it.
+    """
+    root, runner = checkout(tmp_path, workload="olmo-core-train", compute="gpu-1xt4")
+
+    code, out, err = invoke(
+        ["check", "--dataset", "none", "--experiment", "an-experiment", "--hours", "10000"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+    said = " ".join(out.split())
+
+    assert code == EXIT_REFUSED, out + err
+    assert "refused  runtime_above_the_workload_bound" in out
+    assert "10000h against the 24h 'olmo-core-train' declares" in said
+    # The two ways out, and the second is what makes this a bound rather than a wall: the
+    # ceiling is a line in a reviewed file and moving it is a pull request.
+    assert "--hours" in said
+    assert "config/workload-catalog.yaml" in said
+    # Nothing was priced at the figure that was refused, which is what a reader would
+    # otherwise take as the answer.
+    assert "10520" not in out
+
+
+@pytest.mark.parametrize("hours", ["24", "0.5", "23.9"])
+def test_hours_at_or_below_the_profile_s_bound_is_the_flag_working_as_documented(
+    hours: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: refuse at the bound as well as above it, or refuse any ``--hours`` at all.
+
+    Lowering the runtime is the whole documented use of this flag: ``check --help`` offers
+    it as an override of the workload's bound, and the cost block says in as many words that
+    lowering it is what moves a run under the automatic bound. A refusal that reached those
+    would take a working flag away from everybody to stop a typo.
+
+    The boundary value is included because an off-by-one here is the difference between a
+    profile that declares twenty-four hours and one that permits twenty-three.
+    """
+    root, runner = checkout(tmp_path, workload="olmo-core-train", compute="gpu-1xt4")
+
+    code, out, err = invoke(
+        ["check", "--dataset", "none", "--experiment", "an-experiment", "--hours", hours],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "runtime_above_the_workload_bound" not in out
+    assert f"{hours}h x" in out
+
+
+def test_the_refused_runtime_carries_a_code_a_caller_can_match_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: refuse in prose, the way this rule would arrive if it were a warning.
+
+    ``AGENTS.md`` tells an agent to branch on ``refusals[].code`` and never on the detail,
+    and this is the refusal an agent sweeping ``--hours`` is likeliest to meet. The exit
+    code is asserted beside it because 1 is the one that means "something has to change",
+    and an agent that retried a 3 here would loop.
+    """
+    root, runner = checkout(tmp_path, workload="olmo-core-train", compute="gpu-1xt4")
+
+    code, out, err = invoke(
+        [
+            "check",
+            "--dataset",
+            "none",
+            "--experiment",
+            "an-experiment",
+            "--hours",
+            "10000",
+            "--json",
+        ],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+    document = json.loads(out)
+
+    assert code == EXIT_REFUSED, out + err
+    assert "runtime_above_the_workload_bound" in [
+        refusal["code"] for refusal in document["refusals"]
+    ]
+    assert err == ""
+
+
 def test_a_cheap_single_cell_run_is_told_nobody_releases_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
