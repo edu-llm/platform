@@ -224,6 +224,8 @@ sb-aws-creds login
 
 There are no long-lived AWS keys in this account and creating one is refused, so that command, followed by the approval it opens in your browser, is the way. Without it both verbs stop before they start anything and say the same thing.
 
+**The plugin and the session are two prerequisites and they are checked in that order, the plugin first.** Settling the session and not the plugin means meeting the plugin's refusal on the next attempt, having thought you were finished, so do both before you try either verb. No install command for the plugin is written here on purpose: AWS publishes four and which one you want depends on your operating system and your processor, so the refusal prints the single line for the machine you are actually on. A guide cannot know that, and a second copy of an install command is a second thing to keep true.
+
 **Getting `sb-aws-creds` onto your laptop in the first place is the part that is not settled.** `npm view sb-aws-creds` answered 404 on 2026-08-06, so it is not on the public registry and no install line is printed here rather than one that fails. If you do not already have it, file `edullm ask --kind access-request` and it will be answered with whatever the route turns out to be. **Nothing on the submission path waits on that.** [A machine of your own](#a-machine-of-your-own) is what the two verbs are and are not for.
 
 Then, from a checkout of the repository you work in:
@@ -345,14 +347,20 @@ This is yours and it is local. It is not reviewed configuration, it is read by n
 ```
 AWS would not say who you are, so no machine was asked for. The lane needs an
 AWS session the way the recorded path needs gh: run `sb-aws-creds login`,
-complete the browser approval it opens, and run this again. What AWS said:
-aws: [ERROR]: An error occurred (NoCredentials): Unable to locate credentials.
-You can configure credentials by running "aws login".
+complete the browser approval it opens, and run this again. That is the second
+and last of the two things these verbs want on your laptop, and the Session
+Manager plugin is the first, which this already found on your PATH. If your
+shell has no `sb-aws-creds` at all, that broker is a private package with no
+public install line, and `edullm ask --kind access-request` is the route to
+it. What AWS said: aws: [ERROR]: An error occurred (NoCredentials): Unable to
+locate credentials. You can configure credentials by running "aws login".
 ```
 
-`edullm shell` needs one more thing, the AWS Session Manager plugin on your own laptop, and refuses with `session_plugin_missing` when it is not on `PATH`.
+`edullm stop` prints the same thing without the sentence about the plugin, because it opens no session and does not need one.
 
-**How the sixteen of us holding no AWS role get that broker is still not settled**, and the reason the rollout note's install line fails is worth knowing rather than retrying. `sb-aws-creds` is a private package published out of another repository, so `npm install -g sb-aws-creds` answers 404 and always will, and no amount of re-running it changes that. On a laptop that already has it, `sb-aws-creds login` is the whole of it. On one that does not, `edullm ask --kind access-request` is the route, and it will be answered with whatever the distribution turns out to be. **Nothing on the submission path waits on this.** You can produce a citable run today with `gh auth login` and nothing else.
+`edullm run` and `edullm shell` need one more thing, the AWS Session Manager plugin on your own laptop, and refuse with `session_plugin_missing` when it is not on `PATH`. **That is checked first, before the session above, so it is the wall you meet first and the session is the one behind it.** The refusal names the install command for the operating system and the processor you are on rather than sending you to a documentation page, because AWS publishes four of them and only one of them is yours. On Windows it also says the two things that make a successful install look like a failure: the installer needs Administrator rights, and Windows usually will not give the new `PATH` entry to the shell that ran it, so open a fresh PowerShell or Command Prompt window before trying again. The plugin supports those two shells only.
+
+**How the fifteen of us holding no AWS role get that broker is still not settled**, and the reason the rollout note's install line fails is worth knowing rather than retrying. `sb-aws-creds` is a private package published out of another repository, so `npm install -g sb-aws-creds` answers 404 and always will, and no amount of re-running it changes that. On a laptop that already has it, `sb-aws-creds login` is the whole of it. On one that does not, `edullm ask --kind access-request` is the route, and it will be answered with whatever the distribution turns out to be. **Nothing on the submission path waits on this.** You can produce a citable run today with `gh auth login` and nothing else.
 
 ## Ending a machine
 

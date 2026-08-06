@@ -56,11 +56,14 @@ from edullm_platform.researcher_lane import (
 from edullm_platform.reviewed_configuration import ConfigFile, load_config_file
 
 __all__ = [
+    "ARM_MACHINES",
     "AWS_LOGIN_COMMAND",
     "GPU_AMI_PARAMETER",
     "LANE_INSTANCE_PROFILE",
     "LANE_TAG_KEY",
+    "MACOS",
     "PLATFORM_NETWORK_NAME",
+    "PLUGIN_DOWNLOADS",
     "SCRATCH_BUCKET",
     "SESSION_PLUGIN",
     "STOPPABLE_STATES",
@@ -99,6 +102,7 @@ __all__ = [
     "placement_said",
     "placement_verdict",
     "placement_warning",
+    "plugin_install_commands",
     "priced_as",
     "ran_for",
     "ran_for_said",
@@ -1801,16 +1805,156 @@ def ssh_proxy_command(instance_id: str, *, system: str) -> str:
     return f'ProxyCommand sh -c "{session}"'
 
 
-def missing_plugin_refusal() -> Refusal:
-    """What to say when the laptop has the AWS CLI and not the piece that carries a session."""
+#: Where AWS publishes every build of the plugin. One base, because the five installers below
+#: differ only in the last two segments, and a second copy of the host is a URL that can rot in
+#: one place and not the other.
+PLUGIN_DOWNLOADS: Final = "https://s3.amazonaws.com/session-manager-downloads/plugin/latest"
+
+#: What :func:`platform.system` answers on a Mac, compared case-folded for the reason
+#: :data:`edullm_platform.cli.workspace.WINDOWS` is: it is the only comparison an injected
+#: value cannot get subtly wrong.
+MACOS: Final = "darwin"
+
+#: What :func:`platform.machine` answers on a 64-bit ARM laptop. Two spellings and not one:
+#: Darwin says ``arm64`` and Linux says ``aarch64`` for the same silicon, and a check for
+#: either alone hands half the ARM machines here an x86 package that installs and then will
+#: not run.
+ARM_MACHINES: Final = frozenset({"arm64", "aarch64"})
+
+
+def _is_arm(machine: str) -> bool:
+    return machine.strip().casefold() in ARM_MACHINES
+
+
+def plugin_install_commands(*, system: str, machine: str, has_dpkg: bool = False) -> tuple[str, ...]:
+    """What AWS documents installing the plugin on this exact machine, verbatim.
+
+    **THESE ARE COPIED FROM AWS AND NOT COMPOSED, WHICH IS THE PROPERTY THAT MATTERS ABOUT
+    THEM.** Every line below is character for character what the Systems Manager user guide
+    gives under *Install the Session Manager plugin* for that operating system, read on
+    2026-08-06: the ``.exe`` for Windows, the signed ``.pkg`` and its two commands for macOS,
+    the ``.deb`` and ``dpkg`` for Debian and Ubuntu, and the ``.rpm`` one-liner for Amazon
+    Linux and RHEL. Nothing here is a package manager AWS does not document -- in particular
+    **no Homebrew formula is named**, because AWS documents none and a formula invented here
+    would be a guess printed to somebody with no way to check it.
+
+    **RETURNED AS LINES RATHER THAN AS PROSE, AND THAT IS WHAT MAKES THEM USABLE.**
+    ``presentation.render_refusals`` wraps a detail with ``textwrap.wrap``, so a shell command
+    carried inside one arrives broken across four indented lines -- copyable only by
+    reassembling it, which is most of the work this whole change exists to remove. A URL
+    survives that treatment because it is one token and ``break_long_words`` is off; ``curl
+    "..." -o "..."`` does not. So the caller prints these as they are, one per line, beneath
+    the wrapped paragraph.
+
+    **THE ARCHITECTURE IS READ AND NOT OFFERED.** AWS publishes an x86 and an ARM build of
+    every one of these and the process already knows which it is, so printing both would be
+    handing the reader a decision that has been made.
+
+    ``has_dpkg`` is measured by the caller for the reason every other input to this module is:
+    this file runs no process, so it cannot ask a Linux box which packaging it uses. Debian
+    and Ubuntu get the ``.deb``; everything else gets the ``.rpm``, which is the only other
+    family AWS publishes a package for.
+    """
+    named = system.strip().casefold()
+    if named == WINDOWS:
+        return (f"{PLUGIN_DOWNLOADS}/windows/SessionManagerPluginSetup.exe",)
+    if named == MACOS:
+        build = "mac_arm64" if _is_arm(machine) else "mac"
+        return (
+            (
+                f'curl "{PLUGIN_DOWNLOADS}/{build}/session-manager-plugin.pkg"'
+                ' -o "session-manager-plugin.pkg"'
+            ),
+            "sudo installer -pkg session-manager-plugin.pkg -target /",
+            (
+                "sudo ln -s /usr/local/sessionmanagerplugin/bin/session-manager-plugin"
+                " /usr/local/bin/session-manager-plugin"
+            ),
+        )
+    if has_dpkg:
+        build = "ubuntu_arm64" if _is_arm(machine) else "ubuntu_64bit"
+        return (
+            (
+                f'curl "{PLUGIN_DOWNLOADS}/{build}/session-manager-plugin.deb"'
+                ' -o "session-manager-plugin.deb"'
+            ),
+            "sudo dpkg -i session-manager-plugin.deb",
+        )
+    build = "linux_arm64" if _is_arm(machine) else "linux_64bit"
+    return (f"sudo dnf install -y {PLUGIN_DOWNLOADS}/{build}/session-manager-plugin.rpm",)
+
+
+def _plugin_install_said(system: str) -> str:
+    """The sentence in front of the commands, which is only long on the platform that needs it.
+
+    **WINDOWS GETS THREE CLAUSES NOBODY ELSE GETS AND EVERY ONE OF THEM IS AWS'S OWN
+    WARNING.** The installer needs Administrator rights. Windows usually does not hand the
+    new ``PATH`` entry to the shell that ran it, which AWS carries a whole troubleshooting
+    topic for -- so the most likely event after a successful install is this same refusal in
+    the same window, and somebody not told that reads a working installation as a broken one.
+    And AWS supports the plugin under PowerShell and the Command shell only.
+
+    **THE SHELL CLAUSE IS KEPT RATHER THAN DROPPED AS TRIVIA, AND THE REASON IS THAT IT
+    SHARES A SYMPTOM WITH THE ONE ABOVE IT.** Both present as a plugin that is installed and
+    still will not work, from different causes and with different repairs, in a population
+    that has every reason to be sitting in Git Bash: this binary drives ``git`` and ``gh``,
+    so a Git Bash window is exactly where somebody already is when they type the verb.
+    Naming one of two causes for one symptom sends half the readers to the wrong fix.
+
+    Nowhere else gets a caveat, because AWS documents none for them and prose nobody needs is
+    prose that pushes the commands off the screen.
+    """
+    if system.strip().casefold() == WINDOWS:
+        return (
+            "Download and run AWS's installer, which needs Administrator rights and installs "
+            "to %PROGRAMFILES%\\Amazon\\SessionManagerPlugin\\bin\\. Then run this again from "
+            "a new PowerShell or Command Prompt window rather than the one you installed "
+            "from: Windows usually does not give the new PATH entry to the shell that ran the "
+            "installer, which is the likeliest way a working install goes on looking like "
+            "this refusal. AWS supports the plugin under PowerShell and the Command shell "
+            "only, so run edullm from one of those rather than from Git Bash."
+        )
+    return "AWS documents this for the machine you are on, and it is the whole of it."
+
+
+def missing_plugin_refusal(*, system: str, machine: str, has_dpkg: bool = False) -> Refusal:
+    """What to say when the laptop has the AWS CLI and not the piece that carries a session.
+
+    **THIS PRINTED "INSTALL IT FROM THE AWS DOCUMENTATION" UNTIL 2026-08-06, WHICH IS A
+    SEARCH ENGINE WITH EXTRA STEPS.** It named the cause, said nothing was billing, and then
+    asked somebody on their first morning to go and find a page. The process knows which
+    operating system and which silicon it is on, so it can name the one command that person
+    needs rather than the five AWS publishes, and it does.
+
+    **THE ORDERING SENTENCE IS HERE AND NOT IN THE OTHER REFUSAL, AND THAT IS THE POINT OF
+    PUTTING IT IN THIS ONE.** ``cli/main.py``'s ``_lane_session`` checks the plugin before it
+    asks AWS who you are, because the plugin check is local and this binary answers locally
+    before it reaches out. So this refusal is the first of the two a newcomer meets and the
+    credentials one is the second, which means somebody who installs the plugin and believes
+    they are finished is about to meet another wall. Naming the next one here costs a
+    sentence. The reverse would be pointless: reaching ``_no_aws_session`` at all is proof
+    the plugin is already on PATH.
+
+    **THE COMMANDS ARE NOT IN THE DETAIL, AND THAT IS THE ONE THING TO NOT TIDY BACK.**
+    ``render_refusals`` wraps this string, which breaks a shell command across four indented
+    lines. :func:`plugin_install_commands` hands the caller the lines to print underneath
+    unwrapped instead, so there is exactly one copy of each command and it is pasteable.
+
+    ``system`` and ``machine`` are handed in rather than read, which is the arrangement
+    ``cli/workspace.py`` already uses for ``platform.system()``: it is what lets all five
+    installers be asserted from one laptop, and Windows is the one this repository has never
+    been able to test on.
+    """
     return Refusal(
         code="session_plugin_missing",
         detail=(
             f"{SESSION_PLUGIN} is not on PATH. A lane session is a Systems Manager session rather "
             "than SSH, which is what means there is no key to hold and no port open on the "
-            "machine, and the plugin is the piece of that which runs on your laptop. Install it "
-            "from the AWS documentation for the Session Manager plugin, then run this again. "
-            "Nothing was started and nothing is billing."
+            "machine, and the plugin is the piece of that which runs on your laptop. Nothing was "
+            "started and nothing is billing. There are two prerequisites and this is the first "
+            f"of them: an AWS session is what this checks next, so `{AWS_LOGIN_COMMAND}` is the "
+            "step after this one rather than an alternative to it. "
+            + _plugin_install_said(system)
         ),
     )
 
