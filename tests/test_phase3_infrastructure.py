@@ -1294,9 +1294,35 @@ def test_the_event_rule_matches_the_job_queue_the_compute_stack_creates() -> Non
     assert pattern["detail-type"] == ["Batch Job State Change"]
 
 
-def rule_job_name_prefixes() -> list[str]:
+def rule_job_name_wildcards() -> list[str]:
     pattern = properties_of(EVENTS_PATH, "AWS::Events::Rule")["EventPattern"]
-    return [entry["prefix"] for entry in pattern["detail"]["jobName"]]
+    return [entry["wildcard"] for entry in pattern["detail"]["jobName"]]
+
+
+def wildcard_admits(wildcard: str, name: str) -> bool:
+    """Whether a ``*``-only glob matches this whole string.
+
+    NOT A REIMPLEMENTATION OF EVENTBRIDGE, AND THE DIFFERENCE MATTERS. The authoritative
+    matcher is EventBridge's own, reached through ``TestEventPattern`` by
+    ``tools/verify_lifecycle_event_scope.py`` against the deployed rule. This exists so the
+    suite can hold the committed pattern against run ids without a network call, and it is
+    confined to the one construct the pattern uses. A glob whose only metacharacter is ``*``
+    matches exactly when its literal segments occur in order, with the first anchored at the
+    start and the last at the end, and a leftmost scan settles that because ``*`` matches
+    anything including nothing.
+    """
+    segments = wildcard.split("*")
+    if not name.startswith(segments[0]):
+        return False
+    if not name.endswith(segments[-1]):
+        return False
+    at = len(segments[0])
+    for segment in segments[1:-1]:
+        found = name.find(segment, at)
+        if found < 0:
+            return False
+        at = found + len(segment)
+    return at <= len(name) - len(segments[-1])
 
 
 def test_the_rule_is_scoped_to_what_this_platform_submitted_and_not_to_the_queue() -> None:
@@ -1324,32 +1350,85 @@ def test_the_rule_is_scoped_to_what_this_platform_submitted_and_not_to_the_queue
         "the rule is scoped to the job queues alone again, so every utility job on a shared "
         "queue is being handed to the lifecycle recorder and the notifier"
     )
-    assert rule_job_name_prefixes() != []
+    assert rule_job_name_wildcards() != []
 
 
 def test_the_rule_admits_exactly_the_names_this_platform_gives_its_jobs(
     submit_request: dict[str, Any],
 ) -> None:
-    """Reads THREE files. Mutation: change the prefix in the template, or ``JobName`` in
-    ``execution.py``, or ``RUN_ID_PREFIX`` in ``contracts/identity.py``.
+    """Reads THREE files. Mutation: change the wildcard in the template, or ``JobName`` in
+    ``execution.py``, or ``RUN_ID_PREFIX`` or ``UUID7_VERSION`` in ``contracts/identity.py``.
 
     Nothing connects the three. ``execution.py`` names every Batch job after the run,
-    ``contracts/identity.py`` says what a run id begins with, and the pattern is a literal in
-    YAML that no CloudFormation reference reaches. Narrowing this rule is only safe while all
-    three agree, and the way they can stop agreeing is silent in the worst direction: a prefix
-    that no run id starts with deploys perfectly, matches nothing, and writes no lifecycle
-    event, attempt or result ever again. That is the same half-working failure the queue
-    rename above produces, reached by a different edit.
+    ``contracts/identity.py`` says what a run id is, and the pattern is a literal in YAML that
+    no CloudFormation reference reaches. Narrowing this rule is only safe while all three
+    agree, and the way they can stop agreeing is silent in the worst direction. A pattern no
+    run id satisfies deploys perfectly, matches nothing, and writes no lifecycle event,
+    attempt or result ever again, which is the same half-working failure the queue rename
+    above produces reached by a different edit.
 
-    So the prefix is compared against the constant rather than against ``"run_"``, and against
-    a job name a real submission produces rather than against a hand-written one.
+    So the wildcard is built here from the two constants rather than typed out, and it is
+    tried against a job name a real submission produces rather than a hand-written one. The
+    version nibble is what makes the match certain rather than likely: it is the head of the
+    third group of every UUIDv7, so a hyphen precedes it and two more follow.
     """
-    from edullm_platform.contracts.identity import RUN_ID_PREFIX
+    from edullm_platform.contracts.identity import RUN_ID_PREFIX, UUID7_VERSION
 
-    prefixes = rule_job_name_prefixes()
+    wildcards = rule_job_name_wildcards()
 
-    assert prefixes == [RUN_ID_PREFIX]
-    assert submit_request["JobName"].startswith(prefixes[0])
+    assert wildcards == [f"{RUN_ID_PREFIX}*-*-{UUID7_VERSION}*-*-*"]
+    assert wildcard_admits(wildcards[0], submit_request["JobName"])
+
+
+def test_the_glob_the_two_tests_above_lean_on_anchors_both_ends() -> None:
+    """Mutation: drop either anchor from ``wildcard_admits``, or make the last scan unbounded.
+
+    The two tests above are only worth what this helper is worth, and against the committed
+    pattern both anchors are free. It begins with a literal and ends with ``*``, so a helper
+    that ignored the tail would agree with a correct one on every string either test tries.
+    That is a branch no assertion reaches, which is the shape this whole change is about, so
+    it is reached here instead against patterns the rule does not use.
+
+    The last case is the one a naive scan gets wrong. ``a*a`` must not match ``a``, because
+    the two literals cannot be the same character.
+    """
+    assert wildcard_admits("run_*-*-7*-*-*", "run_019fd520-999e-70d8-9003-1833aaa15247")
+    assert not wildcard_admits("run_*", "arun_x"), "the head anchor is gone"
+    assert not wildcard_admits("*-done", "x-done-and-more"), "the tail anchor is gone"
+    assert wildcard_admits("*-done", "x-done")
+    assert not wildcard_admits("a*a", "a"), "two literals were satisfied by one character"
+    assert wildcard_admits("a*a", "aa")
+    assert wildcard_admits("*", "anything at all")
+
+
+def test_no_run_id_this_platform_can_mint_is_excluded_by_the_rule() -> None:
+    """Mutation: move the ``7`` in the wildcard one group left, to ``run_*-7*-*-*-*``.
+
+    That mutation is the whole risk of narrowing past a prefix, and it is invisible in every
+    other way. It deploys, it is a plausible-looking pattern, and it matches no run id at all,
+    so every run completes in Batch and nothing is ever written to lineage again. Nothing
+    errors and no alarm fires, because two of the three alarms on this path watch queues that
+    would simply go quiet.
+
+    A single example cannot catch it, because a single example can be the one that happens to
+    match. This mints run ids the way the platform does and tries every one, and it also tries
+    the shapes around a run id that must not be admitted.
+    """
+    from edullm_platform.contracts.identity import new_run_id
+
+    wildcard = rule_job_name_wildcards()[0]
+
+    minted = [new_run_id() for _ in range(500)]
+    excluded = [one for one in minted if not wildcard_admits(wildcard, one)]
+
+    assert excluded == [], f"the rule would not deliver {len(excluded)} of 500 minted run ids"
+    # The UUIDv4 that got through the plain `run_` prefix on 2026-08-01, and two other shapes
+    # that are not this platform's. Named here because the wildcard is the only thing between
+    # them and the recorder, and because a wildcard loosened until everything passes is the
+    # same as no wildcard.
+    assert not wildcard_admits(wildcard, "run_db0f3291-e538-4860-ae87-4266c5f2b36a")
+    assert not wildcard_admits(wildcard, "run_not-a-uuid")
+    assert not wildcard_admits(wildcard, "probe-mem")
 
 
 def test_the_recorder_still_refuses_a_name_the_narrowed_rule_would_admit() -> None:
@@ -1370,7 +1449,9 @@ def test_the_recorder_still_refuses_a_name_the_narrowed_rule_would_admit() -> No
     from edullm_platform.contracts.identity import RUN_ID_PREFIX
     from edullm_platform.lifecycle_projection import UnreadableBatchEventError
 
-    admitted_by_the_rule = f"{RUN_ID_PREFIX}not-a-uuid"
+    # The right shape and the wrong alphabet. EventBridge has no way to say hexadecimal, so
+    # this passes the rule, and `RUN_ID_REGEX` refuses it.
+    admitted_by_the_rule = f"{RUN_ID_PREFIX}zzzzzzzz-zzzz-7zzz-zzzz-zzzzzzzzzzzz"
     envelope = {
         "source": "aws.batch",
         "detail-type": "Batch Job State Change",
@@ -1384,7 +1465,7 @@ def test_the_recorder_still_refuses_a_name_the_narrowed_rule_would_admit() -> No
         },
     }
 
-    assert admitted_by_the_rule.startswith(rule_job_name_prefixes()[0])
+    assert wildcard_admits(rule_job_name_wildcards()[0], admitted_by_the_rule)
     with pytest.raises(UnreadableBatchEventError, match="not a run id"):
         project_batch_event(envelope)
 

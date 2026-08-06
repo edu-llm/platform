@@ -120,14 +120,15 @@ def test_the_tool_agrees_with_the_recorder_about_the_names_the_rule_admits(
 ) -> None:
     """Mutation: return ``not job_name.startswith("run_")`` from ``unreadable_by_the_recorder``.
 
-    The rule matches a prefix and the recorder matches a shape, so the interesting names are
-    the ones between them. ``run_not-a-uuid`` is admitted by the rule and refused by the
-    recorder, and a prefix test would call it readable and report a clean scope over an event
-    that dead-letters five times.
+    The rule matches a wildcard and the recorder matches a shape, so the interesting names are
+    the ones between them. EventBridge cannot say hexadecimal, so a name of the right shape in
+    the wrong alphabet is admitted by the rule and refused by the recorder, and a prefix test
+    would call it readable and report a clean scope over an event that dead-letters five
+    times.
     """
     from edullm_platform.lifecycle_projection import UnreadableBatchEventError
 
-    admitted_and_unreadable = "run_not-a-uuid"
+    admitted_and_unreadable = "run_zzzzzzzz-zzzz-7zzz-zzzz-zzzzzzzzzzzz"
     a_real_run = "run_019fd520-999e-70d8-9003-1833aaa15247"
 
     assert tool.unreadable_by_the_recorder(admitted_and_unreadable) is True

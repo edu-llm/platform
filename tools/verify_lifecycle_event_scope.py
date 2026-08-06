@@ -38,8 +38,8 @@ state changes EventBridge actually carried.
 **The verdict is read from EventBridge as well**, through ``TestEventPattern``. That is the
 same matcher the bus runs, answering about the same pattern, so this cannot be wrong in the
 way a reimplementation of EventBridge's matching semantics would eventually be wrong -- and
-prefix matching, which is what the fix turns on, is exactly the kind of rule that is easy to
-reimplement almost correctly.
+the wildcard the fix turns on is exactly the kind of rule that is easy to reimplement almost
+correctly.
 
 ## The one place this assembles rather than observes
 
