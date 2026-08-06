@@ -1111,6 +1111,83 @@ def test_the_report_hands_the_group_and_the_stream_to_the_step_that_reads_them(
     assert f"| Log group | `{binding.log_group}` |" in summary.read_text(encoding="utf-8")
 
 
+def test_a_job_that_printed_plenty_is_not_reported_as_having_said_nothing(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: label ``container.reason`` "Container said", which is what shipped.
+
+    ``container.reason`` is Batch's own short note about why a container is in the state it
+    is in -- ``OutOfMemoryError``, ``CannotPullContainerError``, ``Essential container in
+    task exited``. It is not one byte of what the program printed, and a job that ran to
+    ``SUCCEEDED`` normally carries none, so the row read ``| Container said | nothing |``
+    about a run with nine lines waiting in CloudWatch. Two separate runs were read that way
+    tonight, and the reader's conclusion -- my job produced no output -- is wrong about a job
+    that worked.
+
+    ``edullm logs`` on the same id prints the lines, so the two verbs contradicted each other
+    over the same stream. The table now says which of them holds the output.
+
+    Executed rather than read, because the row is inside a heredoc and a string assertion
+    against the file would pass on a heredoc that never runs.
+    """
+    checkout(tmp_path)
+    described = tmp_path / "described.json"
+    described.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "status": "SUCCEEDED",
+                        "jobQueue": (
+                            "arn:aws:batch:us-east-1:123456789012:job-queue/"
+                            "sbsandbox-intern-edullm-gpu-4xa10g"
+                        ),
+                        # No `reason`, which is what a job that finished normally carries.
+                        "container": {
+                            "exitCode": 0,
+                            "logStreamName": "gpu-4xa10g-run/default/abc",
+                        },
+                        "attempts": [{"startedAt": 1}],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "uv", UV_PASSTHROUGH)
+    write_stub(stub_bin, "aws", f'cat "{described}"\n')
+    summary = tmp_path / "summary.md"
+    summary.touch()
+
+    result = run_step_script(
+        workflow_step(workflow, "Say what the run is doing")["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "PYTHON_EXECUTABLE": sys.executable,
+            "PYTHONPATH": str(PROJECT_ROOT / "src"),
+            "GITHUB_OUTPUT": str(tmp_path / "step-output.txt"),
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "JOB_ID": "3f9d1f1e",
+            "RUN_ID": RUN_ID,
+        },
+        stub_bin=stub_bin,
+    )
+    said = summary.read_text(encoding="utf-8")
+
+    assert result.returncode == 0, result.stderr
+    assert "Container said" not in said
+    assert "| nothing |" not in said, (
+        "a bare 'nothing' in this table is read as 'my program printed nothing', which is "
+        "the wrong conclusion about a job that worked"
+    )
+    # The row is still carried, because when Batch does have a reason it is the whole answer.
+    assert "nothing reported" in said
+    # And the table says which verb holds the output, since this one does not.
+    assert "edullm logs" in said
+
+
 def test_the_tail_reaches_the_step_summary_and_says_to_read_upward(
     workflow: dict[str, Any], tmp_path: Path
 ) -> None:
