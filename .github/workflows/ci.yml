@@ -104,6 +104,21 @@ jobs:
       # silence: a change that reaches an installed CLI and declares nothing fails here
       # rather than being handed a patch nobody chose.
       #
+      # AND SINCE 2026-08-05, WHERE A MINOR HAS TO BE ARGUED FOR RATHER THAN MERELY SAID.
+      # Making all three sayable made all three equally easy to say, and what followed was
+      # twenty-six bumps in twenty hours -- nine patches, fourteen minors and three majors,
+      # from 0.2.2 to 3.2.0 -- on a repository nobody had yet been shown to have installed.
+      # Two of those three majors published no Break section, which by the house standard's
+      # own definition means nothing broke. Nobody was careless; the check offered three
+      # aligned commands and agents picked the one that described their change.
+      #
+      # So a minor or a major now has to carry a sentence, committed above the version line
+      # in pyproject.toml and published in the release note, and this step refuses when the
+      # size the version steps and the size the file claims disagree in either direction. It
+      # is checked here and not only in `tools/next_version.py` because a version is three
+      # integers in a text file: a rule that lives only in the command people are asked to
+      # run binds only the people who were not going to get it wrong.
+      #
       # THE LATEST RELEASE AND NOT THE BASE BRANCH is what the three steps are measured
       # from, because those two can disagree and did. v0.2.1 was cut from a branch by hand
       # while this workflow was broken, so `releases/latest` named it while main's
@@ -144,6 +159,30 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
+          # THE THREE SIZES, AND NO LONGER AS THREE PEERS. Written once because it is quoted
+          # by the refusals below and by tools/next_version.py, and because the shape of the
+          # list is the thing being corrected: an aligned menu of three commands reads as a
+          # choice between equals, and what came of that was twenty-six bumps in twenty hours
+          # of which fourteen were minors and three were majors. Patch is first, it is the
+          # only one with no argument to fill in, and the other two are described by what
+          # they cost somebody rather than by what they sound like.
+          sizes_said() {
+            echo "Almost every change here is a patch. If a re-install fixes it, it is one,"
+            echo "and it needs no reason."
+            echo
+            echo "  uv run python tools/next_version.py --bump patch   # ${1}"
+            echo
+            echo "A minor is a new command, a new flag, a new optional spec field, or a new"
+            echo "refusal that can stop a submission which used to go through. It has to say"
+            echo "why, and the sentence is published in the release note."
+            echo
+            echo "  uv run python tools/next_version.py --bump minor --why \"<what a researcher can now do>\"   # ${2}"
+            echo
+            echo "A major is a flag or spec field removed or given a new meaning, or a"
+            echo "changed exit code. It breaks somebody who already has this installed."
+            echo
+            echo "  uv run python tools/next_version.py --bump major --why \"<what stopped working>\"   # ${3}"
+          }
           base="HEAD^1"
           if ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
             git fetch --no-tags --quiet --depth=1 origin "${BASE_SHA}" 2>/dev/null || true
@@ -218,44 +257,90 @@ jobs:
             exit 0
           fi
           released="${latest#v}"
-          for size in patch minor major; do
-            candidate="$(uv run --frozen python tools/next_version.py --next "${size}" --of "${released}")"
-            if [ "${declared}" = "${candidate}" ]; then
-              echo "This change will be released as v${declared} when it merges, a ${size}"
-              echo "above ${latest}."
-              exit 0
-            fi
-          done
-          {
-            echo "::error::pyproject.toml declares ${declared}, which is not a patch, minor or major above the latest release ${latest}. Run 'uv run python tools/next_version.py --bump <size>' and commit the result."
-            echo
-            echo "This change touches:"
-            echo "${touched}" | sed 's/^/  /'
-            echo
-            echo "Those are the paths a release has to carry -- the CLI's own modules, the"
-            echo "modules it imports, and the configuration files it opens -- so an installed"
-            echo "edullm answers differently once this merges. The latest release is"
-            echo "${latest} and pyproject.toml declares ${declared}, which is not one step"
-            echo "above it."
-            echo
-            echo "Nothing after the merge can fix that. release-tag.yml tags what"
-            echo "pyproject.toml declares and cannot bump it: the bump is a commit, and"
-            echo "branch protection means only a pull request may put one on main. This"
-            echo "pull request is the pull request."
-            echo
-            echo "Pick the size this change is, run it, and commit what it writes."
-            echo
-            for size in patch minor major; do
-              candidate="$(uv run --frozen python tools/next_version.py --next "${size}" --of "${released}")"
-              echo "  uv run python tools/next_version.py --bump ${size}   # ${candidate}"
-            done
-            echo
-            echo "A minor is a new command, a new flag, a new optional spec field, or a new"
-            echo "refusal that can stop a submission which used to go through. A major is a"
-            echo "flag or field removed or given a new meaning, or a changed exit code."
-            echo "Anything else a re-install fixes is a patch."
-            echo
-            echo "Each moves pyproject.toml, uv.lock and the pinned install line together."
-            echo "Commit all three."
-          } >&2
-          exit 1
+          next_patch="$(uv run --frozen python tools/next_version.py --next patch --of "${released}")"
+          next_minor="$(uv run --frozen python tools/next_version.py --next minor --of "${released}")"
+          next_major="$(uv run --frozen python tools/next_version.py --next major --of "${released}")"
+          step=""
+          if [ "${declared}" = "${next_patch}" ]; then
+            step="patch"
+          elif [ "${declared}" = "${next_minor}" ]; then
+            step="minor"
+          elif [ "${declared}" = "${next_major}" ]; then
+            step="major"
+          fi
+          if [ -z "${step}" ]; then
+            {
+              echo "::error::pyproject.toml declares ${declared}, which is not a patch, minor or major above the latest release ${latest}. Run 'uv run python tools/next_version.py --bump' and commit the result."
+              echo
+              echo "This change touches:"
+              echo "${touched}" | sed 's/^/  /'
+              echo
+              echo "Those are the paths a release has to carry -- the CLI's own modules, the"
+              echo "modules it imports, and the configuration files it opens -- so an installed"
+              echo "edullm answers differently once this merges. The latest release is"
+              echo "${latest} and pyproject.toml declares ${declared}, which is not one step"
+              echo "above it."
+              echo
+              echo "Nothing after the merge can fix that. release-tag.yml tags what"
+              echo "pyproject.toml declares and cannot bump it: the bump is a commit, and"
+              echo "branch protection means only a pull request may put one on main. This"
+              echo "pull request is the pull request."
+              echo
+              sizes_said "${next_patch}" "${next_minor}" "${next_major}"
+              echo
+              echo "Each moves pyproject.toml, uv.lock and the pinned install line together."
+              echo "Commit all three."
+            } >&2
+            exit 1
+          fi
+          # THE HALF THAT MAKES THE SIZE A CLAIM RATHER THAN A DESCRIPTION, AND THE REASON IT
+          # IS HERE RATHER THAN ONLY IN THE TOOL.
+          #
+          # `next_version.py --bump minor` refuses without `--why`, but a version is three
+          # integers in a text file and nothing makes anybody use the tool to move them. A
+          # rule enforced only by the command people are asked to run is enforced on exactly
+          # the people who were not going to get it wrong. On 2026-08-05 the size was picked
+          # twenty-six times and fourteen of those were minors, which is what a menu of
+          # three peers produces; this is what stops the menu.
+          #
+          # BOTH DIRECTIONS, BECAUSE THE FILE HAS TO SAY ONE THING. A minor with no reason is
+          # a claim nobody made. A patch under a leftover reason from the previous minor is a
+          # file that says two things, and the thing that reads it next is release-tag.yml
+          # deciding what goes in a published note.
+          said="$(uv run --frozen python tools/next_version.py --show-why)"
+          said_size="${said%% *}"
+          : "${said_size:=patch}"
+          if [ "${said_size}" != "${step}" ]; then
+            {
+              echo "::error::${declared} is a ${step} above ${latest} and pyproject.toml declares it as a ${said_size}. Run 'uv run python tools/next_version.py --bump ${step}' and commit the result."
+              echo
+              if [ "${step}" = "patch" ]; then
+                echo "The version moved a patch and the file still carries the sentence"
+                echo "explaining why the last one was a ${said_size}. release-tag.yml reads that"
+                echo "line to decide what a release note says about this release, so a stale"
+                echo "one publishes a Break or a Summary for a change that has neither."
+                echo
+                echo "  uv run python tools/next_version.py --bump patch   # ${next_patch}"
+                echo
+                echo "That clears the line and moves the version in one step."
+              else
+                echo "A ${step} says something changed for everybody who has this installed,"
+                echo "and the release note it cuts is read by somebody deciding whether to"
+                echo "re-install. It has to carry a sentence saying what. Nothing here can"
+                echo "write that sentence and nothing should try."
+                echo
+                echo "  uv run python tools/next_version.py --bump ${step} --why \"<what changed for them>\""
+                echo
+                echo "It commits the sentence above the version line, where a reviewer reads"
+                echo "it, and release-tag.yml publishes it in the note."
+                echo
+                echo "If you cannot write that sentence, this is a patch. Patch is the"
+                echo "default and is what almost every change here is."
+                echo
+                echo "  uv run python tools/next_version.py --bump patch   # ${next_patch}"
+              fi
+            } >&2
+            exit 1
+          fi
+          echo "This change will be released as v${declared} when it merges, a ${step}"
+          echo "above ${latest}."

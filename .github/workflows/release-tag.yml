@@ -213,12 +213,12 @@ jobs:
           spent seven merges producing.
 
           **To release it**, open an ordinary pull request that runs one of these and commits
-          what it writes.
+          what it writes. Almost every change here is a patch, and a patch needs no reason.
 
           \`\`\`bash
           uv run python tools/next_version.py --bump patch
-          uv run python tools/next_version.py --bump minor
-          uv run python tools/next_version.py --bump major
+          uv run python tools/next_version.py --bump minor --why "<what a researcher can now do>"
+          uv run python tools/next_version.py --bump major --why "<what stopped working>"
           \`\`\`
 
           Each moves \`pyproject.toml\`, \`uv.lock\` and the pinned install line together.
@@ -250,16 +250,28 @@ jobs:
           # Skipped on a dispatch, which is the handle for the morning several releases are
           # missing -- the state in which the declared version is several steps above the
           # last one cut, and the one repair this rule would take away.
-          if [ "${EVENT}" = "push" ] && [ -n "${previous}" ]; then
+          # WHICH STEP THIS VERSION TAKES, COMPUTED WHENEVER IT CAN BE AND NOT ONLY WHEN IT
+          # IS ABOUT TO BE ENFORCED. The rule below is skipped on a dispatch; the note
+          # underneath still wants to know whether this release is a patch, so that a Break
+          # section and a Summary section land on the releases that earned one. Two things
+          # asking the same arithmetic is one place to get it wrong, so it is asked once.
+          size=""
+          if [ -n "${previous}" ]; then
             released="${previous#v}"
             next_patch="$(python3 tools/next_version.py --next patch --of "${released}")"
             next_minor="$(python3 tools/next_version.py --next minor --of "${released}")"
             next_major="$(python3 tools/next_version.py --next major --of "${released}")"
-            if [ "${version}" != "${next_patch}" ] \
-               && [ "${version}" != "${next_minor}" ] \
-               && [ "${version}" != "${next_major}" ]; then
-              echo "::error::v${version} is not a patch, minor or major above the latest release ${previous}, so this merge would publish a tag nobody chose. Nothing is tagged. Declare the next version in a pull request; the step summary names the three commands and what each of them would produce."
-              cat >> "${GITHUB_STEP_SUMMARY}" <<SUMMARY
+            if [ "${version}" = "${next_patch}" ]; then
+              size="patch"
+            elif [ "${version}" = "${next_minor}" ]; then
+              size="minor"
+            elif [ "${version}" = "${next_major}" ]; then
+              size="major"
+            fi
+          fi
+          if [ "${EVENT}" = "push" ] && [ -n "${previous}" ] && [ -z "${size}" ]; then
+            echo "::error::v${version} is not a patch, minor or major above the latest release ${previous}, so this merge would publish a tag nobody chose. Nothing is tagged. Declare the next version in a pull request; the step summary names the three commands and what each of them would produce."
+            cat >> "${GITHUB_STEP_SUMMARY}" <<SUMMARY
           ## A version that is not the next one
 
           This change touched the CLI or the reviewed configuration, so an installed
@@ -281,26 +293,49 @@ jobs:
           **To release this work**, open an ordinary pull request that runs one of these and
           commits what it writes.
 
+          Almost every change here is a patch. If a re-install fixes it, it is one, and it
+          needs no reason.
+
           \`\`\`bash
           uv run python tools/next_version.py --bump patch   # ${next_patch}
-          uv run python tools/next_version.py --bump minor   # ${next_minor}
-          uv run python tools/next_version.py --bump major   # ${next_major}
           \`\`\`
 
           A minor is a new command, a new flag, a new optional spec field, or a new refusal
           that can stop a submission which used to go through. A major is a flag or field
-          removed or given a new meaning, or a changed exit code. Anything else a re-install
-          fixes is a patch.
+          removed or given a new meaning, or a changed exit code, which breaks somebody who
+          already has this installed. Both have to say why, and the sentence is published in
+          the release note.
+
+          \`\`\`bash
+          uv run python tools/next_version.py --bump minor --why "<what a researcher can now do>"   # ${next_minor}
+          uv run python tools/next_version.py --bump major --why "<what stopped working>"   # ${next_major}
+          \`\`\`
 
           Each moves \`pyproject.toml\`, \`uv.lock\` and the pinned install line together.
           Merging it cuts the release.
           SUMMARY
-              exit 1
+            exit 1
+          fi
+          # THE SENTENCE THE AUTHOR HAD TO WRITE TO WIDEN THE VERSION, ON ITS WAY TO THE NOTE.
+          #
+          # Read here rather than in the step below for the same reason the previous release
+          # is: this step already has the file open and the arithmetic done, and two places
+          # asking one question is two answers to it. Held to the step the version actually
+          # takes, so a sentence left behind by a previous minor cannot publish a Summary on
+          # a patch -- `ci.yml` refuses that disagreement before the merge, and this is what
+          # makes the note right anyway on a merge that got past it.
+          reason=""
+          if [ "${size}" = "minor" ] || [ "${size}" = "major" ]; then
+            said="$(python3 tools/next_version.py --show-why)"
+            if [ "${said%% *}" = "${size}" ]; then
+              reason="${said#* }"
             fi
           fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
           echo "previous=${previous}" >> "${GITHUB_OUTPUT}"
+          echo "size=${size}" >> "${GITHUB_OUTPUT}"
+          echo "reason=${reason}" >> "${GITHUB_OUTPUT}"
 
       # A RELEASE AND NOT ONLY A TAG, deliberately. The CLI's probe reads
       # `repos/.../releases/latest`, which a bare tag does not create and which answers 404
@@ -335,6 +370,11 @@ jobs:
           # the read of the releases API did not answer. All three mean the same thing to
           # everything below: there is no range to describe, so describe none.
           PREVIOUS: ${{ steps.version.outputs.previous }}
+          # The step this version takes above that release, and the sentence its author had
+          # to write to take it. Both empty for a patch, which is what almost every release
+          # here is and the one that carries no human section at all.
+          SIZE: ${{ steps.version.outputs.size }}
+          REASON: ${{ steps.version.outputs.reason }}
           # Held to what edullm_platform.cli.configuration actually opens by
           # tests/test_release_tag_workflow.py, which watches the loader rather than reading
           # this list. Restated here because a workflow cannot import anything.
@@ -359,7 +399,33 @@ jobs:
             headline="This release changes code only. The reviewed configuration is unchanged."
           fi
 
-          cat > "${RUNNER_TEMP}/notes.md" <<EOF
+          # THE TWO HUMAN SECTIONS, WRITTEN BY THE PERSON WHO EARNED THE VERSION RATHER THAN
+          # BY WHOEVER REMEMBERS AFTERWARDS.
+          #
+          # The house standard has said since it was written that a Summary is never omitted
+          # and that a major carries a Break above everything. Twenty-nine releases have been
+          # cut and not one of them has either, because both were things a person had to go
+          # back and edit onto a published note, and a release cut on every qualifying merge
+          # is a note nobody goes back to. The sentence is now required at bump time to widen
+          # the version at all, which puts it in the tree before the merge, in front of a
+          # reviewer, and here.
+          #
+          # A PATCH GETS NEITHER, AND THAT IS THE POINT RATHER THAN A GAP. A patch is anything
+          # a re-install fixes; the two machine-written lines are the whole of what a reader
+          # of one needs, and a Summary invented for it would be the padding that teaches
+          # people to stop reading the ones that mean something.
+          : > "${RUNNER_TEMP}/notes.md"
+          if [ "${SIZE}" = "major" ] && [ -n "${REASON}" ]; then
+            # ABOVE THE MACHINE'S FIRST LINE, which is the one placement rule the standard is
+            # emphatic about. A researcher who reads only the first screen has to meet the
+            # thing that stopped working before they meet anything else.
+            cat >> "${RUNNER_TEMP}/notes.md" <<EOF
+          > **Something that worked before does not work now.** ${REASON}
+          > Re-install before you submit again. \`uv tool install --force git+https://github.com/${GITHUB_REPOSITORY}@${TAG}\`
+
+          EOF
+          fi
+          cat >> "${RUNNER_TEMP}/notes.md" <<EOF
           ${headline}
 
           Install, upgrade or repair. One idempotent line does all three.
@@ -370,6 +436,17 @@ jobs:
 
           \`uv tool upgrade\` does not work for a tool installed from git. It answers \`Nothing to upgrade\` whatever the state of the install, including with \`--reinstall\`. The line above is the upgrade.
           EOF
+          if [ "${SIZE}" = "minor" ] && [ -n "${REASON}" ]; then
+            # DIRECTLY ABOVE THE GENERATED LIST, which is where it lands for free: everything
+            # --generate-notes adds is appended after this file, so the end of this file is
+            # the seam the standard asks for.
+            cat >> "${RUNNER_TEMP}/notes.md" <<EOF
+
+          ## Summary
+
+          - ${REASON}
+          EOF
+          fi
 
           # Unquoted on purpose, so that an empty value contributes no argument at all. A tag
           # name here is v followed by three integers, so there is nothing in it to split on.

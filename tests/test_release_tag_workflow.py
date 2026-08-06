@@ -684,7 +684,21 @@ def commit(repository: Path, message: str, files: dict[str, str]) -> None:
     git(repository, "commit", "--quiet", "--message", message)
 
 
-def install_real_tooling(repository: Path, *, version: str) -> None:
+def declaring(version: str, *, why: str | None = None, size: str = "minor") -> str:
+    """A minimal ``pyproject.toml`` declaring a version, and optionally why it is wide.
+
+    The reason is a comment above the version line rather than a key, which is what the real
+    file carries and what ``--show-why`` reads. Written here rather than imported from the
+    tool so that a change to the spelling fails the cases that run the shipped shell against
+    it, rather than agreeing with itself.
+    """
+    reason = f"# WHY THIS IS A {size.upper()} RATHER THAN A PATCH. {why}\n" if why else ""
+    return f'[project]\nname = "edullm-platform"\n{reason}version = "{version}"\n'
+
+
+def install_real_tooling(
+    repository: Path, *, version: str, why: str | None = None, size: str = "minor"
+) -> None:
     """Put this repository's own tools and trigger list into the fixture, and commit them.
 
     Copied rather than stubbed. What the guard does with the answers is this file's subject,
@@ -702,7 +716,7 @@ def install_real_tooling(repository: Path, *, version: str) -> None:
     commit(
         repository,
         "the tools the checks run",
-        {"pyproject.toml": f'[project]\nname = "edullm-platform"\nversion = "{version}"\n'},
+        {"pyproject.toml": declaring(version, why=why, size=size)},
     )
 
 
@@ -716,7 +730,7 @@ def uv_running(directory: Path) -> Path:
     return write_stub(directory, "uv", f'shift 3\nexec "{sys.executable}" "$@"\n')
 
 
-def python3_saying(directory: Path, version: str) -> Path:
+def python3_saying(directory: Path, version: str, *, why: str = "") -> Path:
     """A ``python3`` that answers what ``tools/next_version.py`` would answer.
 
     Stubbed rather than real because the runner's ``python3`` is not this project's
@@ -729,11 +743,20 @@ def python3_saying(directory: Path, version: str) -> Path:
     stubbing it anyway would put a second implementation of "one step above" between the
     rule under test and the arithmetic it is made of, and a case could then pass while the
     two disagreed.
+
+    ``--show-why`` is answered here because it reads the file the version is stubbed out of,
+    and a fixture repository has no reason line in it unless one was put there. Empty is the
+    ordinary answer and the one a patch gives.
     """
     return write_stub(
         directory,
         "python3",
-        f'if [ "${{2:-}}" = "--next" ]; then exec "{sys.executable}" "$@"; fi\necho "{version}"\n',
+        f'if [ "${{2:-}}" = "--next" ]; then exec "{sys.executable}" "$@"; fi\n'
+        f'if [ "${{2:-}}" = "--show-why" ]; then\n'
+        f'  if [ -n "{why}" ]; then echo "{why}"; fi\n'
+        f"  exit 0\n"
+        f"fi\n"
+        f'echo "{version}"\n',
     )
 
 
@@ -761,9 +784,10 @@ def run_decide(
     latest: str = "",
     event: str = "push",
     script: str | None = None,
+    why: str = "",
 ) -> tuple[int, str, str, str]:
     stub_bin = tmp_path / "bin"
-    python3_saying(stub_bin, declared)
+    python3_saying(stub_bin, declared, why=why)
     write_stub(stub_bin, "gh", f'if [ -n "{latest}" ]; then echo "{latest}"; else exit 1; fi\n')
     output = tmp_path / "step-output"
     summary = tmp_path / "step-summary"
@@ -971,7 +995,13 @@ def test_a_read_of_the_releases_api_that_does_not_answer_still_cuts_the_release(
 
 
 def run_cut(
-    repository: Path, tmp_path: Path, *, tag: str, previous: str
+    repository: Path,
+    tmp_path: Path,
+    *,
+    tag: str,
+    previous: str,
+    size: str = "",
+    reason: str = "",
 ) -> tuple[int, str, str, str]:
     stub_bin = tmp_path / "bin"
     calls = tmp_path / "gh-calls"
@@ -989,6 +1019,11 @@ def run_cut(
             # The previous release, handed down from the step that read it rather than read
             # again here. Two reads of one endpoint are two answers to a question with one.
             "PREVIOUS": previous,
+            # The step this release takes and the sentence its author wrote to take it, both
+            # empty for a patch. Handed down rather than read here for the same reason the
+            # previous release is: the step above has the file open and the arithmetic done.
+            "SIZE": size,
+            "REASON": reason,
             "GITHUB_REPOSITORY": PLATFORM_REPOSITORY,
             "RUNNER_TEMP": str(runner_temp),
             **{
@@ -1136,6 +1171,137 @@ def test_a_release_that_moves_the_configuration_says_so_first(
     _, notes, _, _ = run_cut(repository, tmp_path, tag="v0.2.2", previous="v0.2.1")
 
     assert notes.startswith("**This release moves the reviewed configuration**")
+
+
+def test_a_major_puts_what_stopped_working_above_the_machines_first_line(
+    repository: Path, tmp_path: Path
+) -> None:
+    """THE SECTION THE STANDARD HAS DEMANDED FOR TWENTY-EIGHT RELEASES AND NEVER GOT.
+
+    Mutation: put the Break below the configuration headline, or leave it out.
+
+    The house standard says a Break goes above everything including the machine's first
+    line, because a researcher who reads only the first screen has to see it. Not one of the
+    twenty-eight releases cut before this carried one, ``v2.0.0`` and ``v3.0.0`` included,
+    and both of those were majors. It was never going to be added by hand to a note that is
+    published the moment a merge lands, so it comes from the sentence the author already had
+    to write to widen the version at all.
+    """
+    a_released_repository(repository)
+    commit(repository, "a flag that is gone", {"src/edullm_platform/cli/main.py": "code\n2\n"})
+
+    _, notes, _, said = run_cut(
+        repository,
+        tmp_path,
+        tag="v1.0.0",
+        previous="v0.2.1",
+        size="major",
+        reason="the --hours flag is gone, use --since",
+    )
+
+    assert notes.startswith("> **Something that worked before does not work now.**"), said
+    assert "the --hours flag is gone, use --since" in notes
+    assert install_command(repository=PLATFORM_REPOSITORY, tag="v1.0.0") in notes
+    # And the machine's own first line is still there, underneath it rather than instead.
+    assert "This release changes code only." in notes
+
+
+def test_a_minor_carries_its_summary_at_the_seam_the_generated_list_starts_from(
+    repository: Path, tmp_path: Path
+) -> None:
+    """Mutation: put the Summary at the top with the Break.
+
+    Everything ``--generate-notes`` adds is appended after this file, so the end of this
+    file is exactly "directly above the generated list", which is where the standard puts a
+    Summary and why it does: it is the seam between what a person said about the release and
+    the list of pull requests it is made of.
+    """
+    a_released_repository(repository)
+    commit(repository, "a flag that is new", {"src/edullm_platform/cli/main.py": "code\n2\n"})
+
+    _, notes, _, said = run_cut(
+        repository,
+        tmp_path,
+        tag="v0.3.0",
+        previous="v0.2.1",
+        size="minor",
+        reason="edullm status takes --since",
+    )
+
+    assert notes.startswith("This release changes code only."), said
+    assert notes.rstrip().endswith("## Summary\n\n- edullm status takes --since")
+    assert "Something that worked before" not in notes
+
+
+def test_a_patch_carries_neither_section_and_that_is_the_point(
+    repository: Path, tmp_path: Path
+) -> None:
+    """Mutation: invent a Summary for every release.
+
+    A patch is anything a re-install fixes, and the two machine-written lines are the whole
+    of what a reader of one needs. Padding twenty-eight of them out with a generated
+    sentence is how a reader learns that the section never says anything, which costs the
+    releases that do.
+    """
+    a_released_repository(repository)
+    commit(repository, "a merge", {"src/edullm_platform/cli/main.py": "code\n2\n"})
+
+    _, notes, _, said = run_cut(
+        repository, tmp_path, tag="v0.2.2", previous="v0.2.1", size="patch"
+    )
+
+    assert notes.startswith("This release changes code only."), said
+    assert "## Summary" not in notes
+    assert "Something that worked before" not in notes
+
+
+def test_a_size_declared_with_no_sentence_behind_it_publishes_no_section(
+    repository: Path, tmp_path: Path
+) -> None:
+    """Mutation: print the label with an empty reason after it.
+
+    ``ci.yml`` refuses a minor with nothing saying why, so reaching here means that check
+    was bypassed or did not run. A heading with nothing under it is worse than no heading:
+    it reads as a note somebody started and abandoned, on the one release where a reader
+    has been told something changed for them.
+    """
+    a_released_repository(repository)
+    commit(repository, "a merge", {"src/edullm_platform/cli/main.py": "code\n2\n"})
+
+    _, notes, _, said = run_cut(
+        repository, tmp_path, tag="v0.3.0", previous="v0.2.1", size="minor", reason=""
+    )
+
+    assert "## Summary" not in notes, said
+
+
+def test_the_decision_hands_down_the_step_it_took_and_the_reason_for_it(
+    repository: Path, tmp_path: Path
+) -> None:
+    """ONE PLACE DOES THE ARITHMETIC. Mutation: work the size out again in the next step.
+
+    The deciding step already reads the latest release and computes all three candidates to
+    refuse a version that is none of them, so it knows which step this release takes. The
+    step that writes the note does not, and asking a second time is two answers to a
+    question with one, against an endpoint that can move between the asks.
+
+    The reason is held to that arithmetic rather than taken on the file's word, which is
+    what stops a sentence left behind by a previous minor from publishing a Summary on a
+    patch.
+    """
+    a_merge_declaring(repository, "0.3.0", released="v0.2.2")
+
+    _, minor, _, said = run_decide(
+        repository, tmp_path, declared="0.3.0", latest="v0.2.2", why="minor status takes --since"
+    )
+    _, mismatched, _, also = run_decide(
+        repository, tmp_path, declared="0.2.3", latest="v0.2.2", why="minor status takes --since"
+    )
+
+    assert "size=minor" in minor, said
+    assert "reason=status takes --since" in minor
+    assert "size=patch" in mismatched, also
+    assert "reason=\n" in mismatched, "a patch publishes nothing, whatever the file still says"
 
 
 def test_a_file_under_config_that_the_cli_never_opens_is_not_a_configuration_change(
@@ -1312,8 +1478,10 @@ def test_a_minor_is_a_thing_the_check_accepts(repository: Path, tmp_path: Path) 
     house standard calls a minor in as many words. Nothing in the system could produce one:
     the workflow computed the next patch and pushed it, so a hand-written ``0.3.0`` was a
     number a bot would walk over. It shipped inside ``v0.2.0`` with sixty other merges.
+
+    It is still accepted, and it now costs the sentence the note publishes.
     """
-    install_real_tooling(repository, version="0.3.0")
+    install_real_tooling(repository, version="0.3.0", why="check refuses an unsealed corpus")
     commit(repository, "a refusal that can stop a submission", {"config/policy.yaml": "few\n"})
 
     code, said = run_guard(repository, tmp_path, latest="v0.2.1")
@@ -1324,13 +1492,63 @@ def test_a_minor_is_a_thing_the_check_accepts(repository: Path, tmp_path: Path) 
 
 
 def test_a_major_is_too(repository: Path, tmp_path: Path) -> None:
-    install_real_tooling(repository, version="1.0.0")
+    install_real_tooling(
+        repository, version="1.0.0", size="major", why="the --hours flag is gone"
+    )
     commit(repository, "a flag that means something else now", {"config/policy.yaml": "few\n"})
 
     code, said = run_guard(repository, tmp_path, latest="v0.2.1")
 
     assert code == 0, said
     assert "major" in said
+
+
+@pytest.mark.parametrize(("version", "size"), [("0.3.0", "minor"), ("1.0.0", "major")])
+def test_a_version_wider_than_a_patch_with_nothing_saying_why_is_refused(
+    repository: Path, tmp_path: Path, version: str, size: str
+) -> None:
+    """WHAT THE TOOL ALONE CANNOT ENFORCE. Mutation: check the arithmetic and stop there.
+
+    ``next_version.py --bump minor`` refuses without ``--why``, and a version is three
+    integers in a text file that nobody has to use a tool to move. A rule living only in the
+    command people are asked to run binds exactly the people who were not going to get it
+    wrong, which is the check-that-cannot-fail shape wearing a different hat: it passes
+    because the one path it watches is the one nobody takes.
+
+    The repository here is the state that produced twenty-five bumps in an evening. The
+    version is a real step above the latest release, so the arithmetic is satisfied and the
+    old check was green; nothing in the tree says what changed for anybody.
+    """
+    install_real_tooling(repository, version=version)
+    commit(repository, "a change to the reviewed configuration", {"config/policy.yaml": "few\n"})
+
+    code, said = run_guard(repository, tmp_path, latest="v0.2.1")
+
+    assert code == 1, said
+    assert "::error::" in said
+    assert f"{BUMP_COMMAND} {size} --why" in said
+    assert f"{BUMP_COMMAND} patch" in said, "name the size this probably is, not only the fault"
+
+
+def test_a_patch_under_a_reason_the_last_minor_left_is_refused(
+    repository: Path, tmp_path: Path
+) -> None:
+    """THE OTHER DIRECTION, WHICH REACHES A PUBLISHED NOTE. Mutation: check one way only.
+
+    ``release-tag.yml`` reads that line to decide whether a release note carries a Summary
+    or a Break. A line left behind by the previous minor, above a version that stepped a
+    patch, publishes a capability announcement on a release that added none. The bump
+    command clears it, so reaching this means somebody edited the version by hand.
+    """
+    install_real_tooling(repository, version="0.2.2", why="check refuses an unsealed corpus")
+    commit(repository, "a change to the reviewed configuration", {"config/policy.yaml": "few\n"})
+
+    code, said = run_guard(repository, tmp_path, latest="v0.2.1")
+
+    assert code == 1, said
+    assert "::error::" in said
+    assert f"{BUMP_COMMAND} patch" in said
+    assert "stale" in said
 
 
 def test_a_version_that_is_no_step_at_all_is_refused(
