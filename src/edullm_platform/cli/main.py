@@ -125,6 +125,8 @@ from edullm_platform.cli.lane import (
     missing_plugin_refusal,
     notebook_forward_argv,
     person_from_caller_arn,
+    placement_said,
+    placement_verdict,
     placement_warning,
     remote_command_argv,
     remote_script,
@@ -1175,9 +1177,31 @@ def _check(
         unscaffoldable=in_hand.unscaffoldable,
         spec_path=in_hand.path,
     )
+    # SAID HERE TOO, BECAUSE THE FREE VERB WAS THE ONE VERB THAT WOULD NOT SAY IT.
+    #
+    # `run` and `shell` have carried this since the lane was built. `check` did not, so the
+    # command whose whole job is to tell somebody whether a submission will work was silent
+    # about the one reason it will not, while the two ungated verbs that spend money without
+    # an approval both spoke up. Measured on 2026-08-06: `check --compute gpu-8xl40s` priced
+    # a run at $1,446.30 and routed it to a lead, against a file recording 4,060 refusals for
+    # that shape over two days and not one instance obtained.
+    #
+    # Above the rest rather than beside the price. It is a fact about whether any of the
+    # numbers below will ever be spent, and a reader who has reached the cost block has
+    # already decided.
+    verdict = placement_verdict(configuration, preflight.request.compute_profile)
+    said = placement_said(verdict)
+    if said is not None:
+        print("\n".join(_wrapped(said, indent="")), file=err if arguments.json else out)
+        print(file=err if arguments.json else out)
     if arguments.json:
         emit(
-            check_document(preflight, configuration=configuration, submitter=submitter),
+            check_document(
+                preflight,
+                configuration=configuration,
+                submitter=submitter,
+                placement=verdict,
+            ),
             out=out,
         )
     else:

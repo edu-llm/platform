@@ -40,6 +40,7 @@ from edullm_platform.placement import (
     CAPACITY_FILENAME,
     PLACES_AFTER_A_WAIT,
     PLACES_RELIABLY,
+    PlacementRecord,
     UnreadableCapacityError,
     read_capacity,
 )
@@ -69,6 +70,8 @@ __all__ = [
     "missing_plugin_refusal",
     "notebook_forward_argv",
     "person_from_caller_arn",
+    "placement_said",
+    "placement_verdict",
     "placement_warning",
     "remote_command_argv",
     "remote_script",
@@ -234,12 +237,10 @@ def instance_type_for(configuration: ReviewedConfiguration, profile_name: str) -
     return None
 
 
-def placement_warning(configuration: ReviewedConfiguration, profile_name: str) -> str | None:
-    """What ``config/capacity.yaml`` says about finding this shape, or nothing where it is quiet.
-
-    A sentence and never a refusal, which is the same choice ``system-overview.md`` records the
-    compile step making under "The machines". The reasoning there transfers exactly: the person
-    asking is the person paying and the wait is theirs to accept.
+def placement_verdict(
+    configuration: ReviewedConfiguration, profile_name: str
+) -> PlacementRecord | None:
+    """What ``config/capacity.yaml`` records about this shape, or nothing where it has no entry.
 
     **THE FILE IS READ HERE RATHER THAN OFF ``ReviewedConfiguration``, AND THAT IS TO KEEP A
     CORRECTION THIS REPOSITORY ALREADY PAID FOR.** ``load_reviewed_configuration`` opens six
@@ -250,9 +251,9 @@ def placement_warning(configuration: ReviewedConfiguration, profile_name: str) -
     on that sentence did it for nothing. A seventh field here would reinstate that, so the reader
     and the verdicts are shared with the compile step and the loader is left alone.
 
-    ``edullm_platform.placement`` owns both, so there is no second table of verdicts and no second
-    parse. What is not shared is the rendering: that module's sentences are markdown for a pull
-    request comment, and this one is a line above the expiry in somebody's terminal.
+    **THE RECORD IS HANDED BACK AND NOT ONLY THE SENTENCE, WHICH IS WHAT ``--json`` NEEDS.** A
+    caller that had to recognise a verdict by matching the prose would be reading a string this
+    repository rewords, which is the thing ``AGENTS.md`` tells every agent not to do.
     """
     path = configuration.directory / CAPACITY_FILENAME
     try:
@@ -266,21 +267,57 @@ def placement_warning(configuration: ReviewedConfiguration, profile_name: str) -
             f"{path} is not a document edullm can act on, so whether a machine is likely to "
             f"start cannot be said: {exc}"
         ) from exc
-    verdict = next((record for record in capacity if record.profile == profile_name), None)
+    return next((record for record in capacity if record.profile == profile_name), None)
+
+
+def placement_warning(configuration: ReviewedConfiguration, profile_name: str) -> str | None:
+    """The lane's line about finding this shape, or nothing where the file is quiet about it.
+
+    A sentence and never a refusal, which is the same choice ``system-overview.md`` records the
+    compile step making under "The machines". The reasoning there transfers exactly: the person
+    asking is the person paying and the wait is theirs to accept.
+
+    ``edullm_platform.placement`` owns the verdicts, so there is no second table and no second
+    parse. What is not shared is the rendering: that module's sentences are markdown for a pull
+    request comment, and this one is a line in somebody's terminal.
+
+    **THE LAST CLAUSE IS THIS VERB'S AND IS THE REASON THE FACT IS COMPOSED SEPARATELY.**
+    ``run`` and ``shell`` are about to sit in a loop waiting for a machine, so what to do about
+    the warning is Ctrl-C. ``check`` starts nothing and has nothing to interrupt, and printing
+    that clause there would be an instruction about a wait the verb does not impose.
+    """
+    said = placement_said(placement_verdict(configuration, profile_name))
+    return None if said is None else f"{said} Ctrl-C stops waiting and starts nothing."
+
+
+def placement_said(verdict: PlacementRecord | None) -> str | None:
+    """One recorded verdict as the fact a terminal shows, or nothing where there is none.
+
+    No next step in it, because the two callers have different ones. See
+    :func:`placement_warning` for the lane's.
+
+    Split from the read so that a caller wanting both the verdict and the sentence -- which
+    ``check`` does, one for ``--json`` and one for the paragraphs -- opens the file once. Two
+    reads could not disagree, both going through the same reader, but they would describe two
+    moments and there is no reason to have two.
+
+    The wording here is provisional: it carries the verdict, the instrument that reached it and
+    the file, which are the three facts, and somebody rewriting these strings should keep all
+    three.
+    """
     if verdict is None or verdict.places == PLACES_RELIABLY:
         return None
     if verdict.places == PLACES_AFTER_A_WAIT:
         # ``read_capacity`` refuses this verdict without a wait, so there is always one to quote.
         assert verdict.wait is not None
         return (
-            f"config/{CAPACITY_FILENAME} records {profile_name} as arriving after a wait, "
-            f"measured by a {verdict.measured_by}. {verdict.wait} Ctrl-C stops waiting and "
-            "starts nothing."
+            f"config/{CAPACITY_FILENAME} records {verdict.profile} as arriving after a wait, "
+            f"measured by a {verdict.measured_by}. {verdict.wait}"
         )
     return (
-        f"config/{CAPACITY_FILENAME} records {profile_name} as placing "
-        f"{verdict.places}, measured by a {verdict.measured_by}. Starting it is allowed and it "
-        "may take a while to arrive, or never arrive. Ctrl-C stops waiting and starts nothing."
+        f"config/{CAPACITY_FILENAME} records {verdict.profile} as placing "
+        f"{verdict.places}, measured by a {verdict.measured_by}. A machine may take a while to "
+        "arrive, or never arrive, and nothing here refuses it."
     )
 
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -22,7 +23,11 @@ from re import findall
 
 import pytest
 
-from edullm_platform.cli.configuration import PACKAGED_CONFIG_DIRECTORY
+from edullm_platform.cli.configuration import (
+    PACKAGED_CONFIG_DIRECTORY,
+    load_reviewed_configuration,
+)
+from edullm_platform.cli.lane import placement_said, placement_verdict
 from edullm_platform.cli.main import (
     BUILT_TODAY,
     EXIT_OK,
@@ -37,6 +42,7 @@ from edullm_platform.cli.preflight import Preflight
 from edullm_platform.cli.presentation import config_source_said
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
+from edullm_platform.placement import CAPACITY_FILENAME, PLACES_UNRELIABLY
 from tests.cli_support import (
     CONFIG_DIR,
     SUBMITTER_ON_TWO_TEAMS,
@@ -45,6 +51,13 @@ from tests.cli_support import (
     git_answers,
     invoke,
     write_spec,
+)
+
+#: A command that starts one process per device on an eight-card shape, so a case about
+#: something else is not also a case about ``process_per_device``.
+EIGHT_PROCESS_COMMAND = (
+    "bash -lc 'python -m torch.distributed.run --nproc-per-node=8 --standalone "
+    '.edullm/train_on_corpus.py "$EDULLM_RUN_ID" --save-folder "$EDULLM_CHECKPOINT_DIR"\''
 )
 
 
@@ -171,6 +184,130 @@ def test_a_clean_submission_is_cleared_and_priced_from_the_catalog(
     # is now released by nobody. That is the change a submitter notices first.
     assert "automatic. One cell, under $500, so nobody releases this." in out
     assert f"team              {SUBMITTER_TEAM}" in out
+
+
+def test_a_shape_that_has_never_placed_is_said_so_before_the_price(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE FREE VERB WAS SILENT ABOUT THE ONE REASON A SUBMISSION WILL NOT WORK.
+
+    ``config/capacity.yaml`` records 4,060 ``InsufficientInstanceCapacity`` refusals for
+    ``gpu-8xl40s`` over two days and not one instance obtained. ``check`` priced it at
+    $1,446.30, routed it to a lead, and said nothing at all. ``edullm run`` and
+    ``edullm shell`` -- which are ungated, uncited and spend money without an approval --
+    both call ``placement_warning`` and both do say. So the command that exists to tell a
+    researcher whether a submission will work was the one that would not.
+
+    Mutation: warn on the lane verbs only, which is the shipped behaviour and is what this
+    case is written against. A submitter who reads this sentence picks another shape for
+    free; one who does not spends a lead's approval and then waits for a machine that never
+    arrives, with nothing written anywhere -- a job that cannot be placed sits in
+    ``RUNNABLE``, which is indistinguishable from one that is merely queued.
+
+    The sentence is asserted to be the lane's own rather than a second composition of the
+    same facts. Two wordings for one verdict is how ``gpu-8xa100`` came to be told "may not
+    place" by one caller while a queue was running jobs on it.
+    """
+    root, runner = checkout(tmp_path, compute="gpu-8xl40s", command=EIGHT_PROCESS_COMMAND)
+
+    code, out, err = invoke(
+        ["check", "--dataset", "none", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    said = placement_said(
+        placement_verdict(load_reviewed_configuration(CONFIG_DIR), "gpu-8xl40s")
+    )
+
+    assert code == EXIT_OK, out + err
+    assert said is not None
+    assert said in " ".join(out.split())
+    assert f"config/{CAPACITY_FILENAME}" in out
+    # Above the price rather than below it, because the price is what a reader stops at.
+    assert out.index("capacity.yaml") < out.index("worst case")
+    # The clause the lane adds and this verb must not: check starts nothing, so there is
+    # nothing here for a Ctrl-C to stop.
+    assert "Ctrl-C" not in out
+    assert err == ""
+
+
+def test_a_shape_that_places_reliably_is_told_nothing_about_capacity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: print a line on every submission, empty or reassuring.
+
+    Ten of the seventeen priced shapes warn and seven do not, and a warning that appears
+    over the seven is one submitters learn to skip past by the fifth run -- which costs the
+    warning its whole value on the ten where it is the only thing standing between somebody
+    and a wait that never ends.
+    """
+    root, runner = checkout(tmp_path, compute="gpu-1xa10g")
+
+    code, out, err = invoke(
+        ["check", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "capacity" not in out.lower()
+    assert err == ""
+
+
+def test_the_capacity_answer_is_in_the_document_an_agent_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: print the sentence and leave ``--json`` alone.
+
+    ``AGENTS.md`` tells an agent to read ``check --json`` and to match on codes rather than
+    on prose, so a warning that exists only in the paragraphs is invisible to every caller
+    the machine-readable form was built for. The verdict is carried beside the sentence for
+    the same reason ``history`` carries counts beside ``said``: the verdict is the structure
+    to branch on and the sentence is prose that will be reworded.
+
+    On stderr under ``--json``, because stdout there is one document and nothing else.
+    """
+    root, runner = checkout(tmp_path, compute="gpu-8xl40s", command=EIGHT_PROCESS_COMMAND)
+
+    code, out, err = invoke(
+        ["check", "--dataset", "none", "--experiment", "an-experiment", "--json"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+    document = json.loads(out)
+
+    assert code == EXIT_OK, out + err
+    assert document["placement"]["profile"] == "gpu-8xl40s"
+    assert document["placement"]["places"] == PLACES_UNRELIABLY
+    assert document["placement"]["measured_by"]
+    assert "gpu-8xl40s" in document["placement"]["said"]
+    assert "gpu-8xl40s" in err
+
+
+def test_the_document_says_nothing_rather_than_nothing_known_for_a_shape_that_places(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: leave the key out where there is no warning.
+
+    A key that is absent on one path is a key every caller has to guard, which is the rule
+    ``check_document`` already states about ``run_id`` and ``manifest_sha256``. ``None`` is
+    the answer for a shape that places and for a check that never resolved one.
+    """
+    root, runner = checkout(tmp_path, compute="gpu-1xa10g")
+
+    code, out, err = invoke(
+        ["check", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment", "--json"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert json.loads(out)["placement"] is None
 
 
 def test_a_cheap_single_cell_run_is_told_nobody_releases_it(
