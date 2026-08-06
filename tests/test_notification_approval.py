@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from edullm_platform.accelerators import AcceleratorRecord, record_for
 from edullm_platform.contracts.workload import compute_maximum_compute_cost_usd
 from edullm_platform.notifications.approval import (
     APPROVAL_DETAIL_TYPE,
@@ -27,6 +28,7 @@ from edullm_platform.notifications.approval import (
     PLATFORM_EVENT_SOURCE,
     RUNG_SAID,
     SHAPE_FIELDS,
+    load_accelerators,
     load_policy,
     read_approval_requested,
 )
@@ -57,15 +59,46 @@ def catalogs() -> Catalogs:
 
 
 def asked(name: str, catalogs: Catalogs) -> Message:
-    envelope = json.loads((EVENTS / f"{name}.sanitized.json").read_text(encoding="utf-8"))
+    """One fixture envelope rendered exactly as the deployed function renders it.
+
+    Every reviewed file the notifier's zip carries is supplied here, and that is what makes
+    the equality assertions below assertions about the delivered text. A helper that omitted
+    one would test a message the account never sends: ``accelerators`` in particular
+    defaults to empty, so leaving it out would silently drop the clause naming the machine
+    and every expected string in this file would go on passing without it.
+    """
+    return rendered(
+        json.loads((EVENTS / f"{name}.sanitized.json").read_text(encoding="utf-8")), catalogs
+    )
+
+
+def rendered(
+    envelope: dict[str, Any],
+    catalogs: Catalogs,
+    accelerators: tuple[AcceleratorRecord, ...] | None = None,
+) -> Message:
+    """One envelope, read and worded, with the packaged files unless a test names otherwise."""
     facts = read_approval_requested(
         envelope,
         catalogs=catalogs,
         policy=load_policy(CONFIG),
         history=load_run_history(CONFIG),
+        accelerators=load_accelerators(CONFIG) if accelerators is None else accelerators,
     )
     assert facts is not None
     return render_approval_requested(facts)
+
+
+def on_profile(name: str, profile: str, catalogs: Catalogs) -> Message:
+    """The same fixture with a different machine named under it.
+
+    Two of the seventeen shapes are worth a message of their own and no fixture carries
+    either, so the machine is substituted rather than a third envelope being committed. Only
+    the profile moves; everything the other lines read is the fixture's own.
+    """
+    envelope = json.loads((EVENTS / f"{name}.sanitized.json").read_text(encoding="utf-8"))
+    envelope["detail"]["manifest"]["compute_profile"] = profile
+    return rendered(envelope, catalogs)
 
 
 def test_the_cost_and_the_experiment_are_in_the_first_line(catalogs: Catalogs) -> None:
@@ -87,7 +120,8 @@ def test_one_run_over_the_bound_reads_as_five_lines(catalogs: Catalogs) -> None:
 
     assert message.channel == RUNS_CHANNEL
     assert message.text == (
-        "$781.82 · context-length-sweep · Nathan Zhao · OLMo-core on gpu-8xa10g\n"
+        "$781.82 · context-length-sweep · Nathan Zhao · OLMo-core on gpu-8xa10g · "
+        "8 x A10G, 22,888 MiB each, 183,104 MiB total\n"
         "$16.288/hour x 1 node x 24h x 2 attempts x 1 cell. A ceiling rather than an "
         "estimate.\n"
         "The same workload on this machine has taken 1h00m over 3 runs, and the 24h bound "
@@ -120,6 +154,102 @@ def test_a_fan_out_shows_the_multiplied_total_and_not_one_cell(catalogs: Catalog
     assert message.text.startswith(f"${total:,.2f} ")
     assert "x 64 cells" in message.text
     assert f"${profile.hourly_rate_usd}/hour" in message.text
+
+
+def test_the_first_line_says_what_memory_the_machine_carries(catalogs: Catalogs) -> None:
+    """The one thing on this message that is about the hardware rather than the money.
+
+    A lead releasing $781.82 on ``gpu-8xa10g`` otherwise has to know the catalog by heart to
+    know what that shape holds, and three of the failures analysed in the week to 2026-08-06
+    were CUDA out-of-memory. Both figures are read back out of ``config/accelerators.yaml``
+    rather than typed here, so a re-measurement that moved a card's memory fails this with
+    the two numbers side by side instead of agreeing with a stale copy.
+    """
+    record = record_for("gpu-8xa10g", accelerators=load_accelerators(CONFIG))
+    assert record is not None
+    first = asked("approval-requested", catalogs).text.splitlines()[0]
+
+    assert first.endswith(
+        f" · {record.devices} x {record.device}, {record.memory_mib_per_device:,} MiB each, "
+        f"{record.memory_mib_total:,} MiB total"
+    )
+
+
+def test_the_memory_is_said_in_mib_rather_than_the_gb_the_card_is_sold_as(
+    catalogs: Catalogs,
+) -> None:
+    """Mutation: render the figure in GB, which is what a reader would ask for.
+
+    The A10G is sold as a 24 GB card and reports 22,888 MiB, and those agree -- 24 GB in
+    decimal bytes is 22.35 GiB. A submitter who reads "24 GB" and sizes a batch against
+    24 GiB has overcommitted the card by 1.65 GiB before the run starts, which is the whole
+    reason ``config/accelerators.yaml`` records MiB. Printing GB here would put the figure
+    that hides that in front of the person authorising the spend.
+    """
+    first = asked("approval-requested", catalogs).text.splitlines()[0]
+
+    assert "22,888 MiB each" in first
+    assert " GB" not in first
+
+
+def test_a_one_card_shape_says_its_memory_once(catalogs: Catalogs) -> None:
+    """Mutation: print "each" and "total" on a shape that has one card.
+
+    On ``gpu-1xa10g`` the per-device figure and the total are the same number, and a message
+    reporting one number twice sends its reader looking for the arithmetic error that
+    :func:`~edullm_platform.notifications.messages.money` exists to prevent. It is also the
+    most-submitted profile on this platform, so it is the shape this reads oddest on.
+    """
+    first = asked("approval-requested-fanout", catalogs).text.splitlines()[0]
+
+    assert first.endswith(" · 1 x A10G, 22,888 MiB")
+    assert "each" not in first
+    assert "total" not in first
+
+
+def test_a_cpu_profile_says_there_is_no_accelerator(catalogs: Catalogs) -> None:
+    """``devices: 0`` is a measurement and not a hole, so it gets words rather than silence.
+
+    ``c7i.8xlarge`` returns no ``GpuInfo`` at all. A submission naming this profile and a
+    command asking for CUDA is a real first-morning mistake, and this line is the only place
+    on the approval path that could tell the person releasing it.
+    """
+    first = on_profile("approval-requested", "cpu-32vcpu", catalogs).text.splitlines()[0]
+
+    assert first.endswith(" · no accelerator")
+    assert "MiB" not in first
+
+
+def test_an_unmeasured_profile_leaves_the_clause_out_rather_than_guessing(
+    catalogs: Catalogs,
+) -> None:
+    """Mutation: fall back to a default, a zero, or the words for an unknown.
+
+    Every priced profile has a row and ``tests/test_accelerators.py`` holds the two files
+    level, so the only way here is a packaged copy that has parted company with the catalog.
+    That is a fact about the deployment with nothing in it about this run, and the four lines
+    a lead decides on are worth more than a sentence saying a sixth could not be written.
+    """
+    envelope = json.loads((EVENTS / "approval-requested.sanitized.json").read_text("utf-8"))
+    unmeasured = rendered(envelope, catalogs, accelerators=()).text
+    measured = asked("approval-requested", catalogs).text
+
+    assert unmeasured.splitlines()[0].endswith("OLMo-core on gpu-8xa10g")
+    assert len(unmeasured.splitlines()) == len(measured.splitlines())
+
+
+def test_the_machine_is_spelled_the_way_the_arithmetic_below_it_is(catalogs: Catalogs) -> None:
+    """Mutation: reach for the multiplication sign, which is what the figure wants.
+
+    The line below spells its five factors with an ASCII ``x`` and has since it was written.
+    One message spelling the same operator two ways reads as two authors, on the message
+    where the reader is deciding whether to spend a four-figure sum.
+    """
+    lines = asked("approval-requested", catalogs).text.splitlines()
+
+    assert " x " in lines[0]
+    assert " x " in lines[1]
+    assert "×" not in "\n".join(lines)
 
 
 def test_a_fan_out_says_that_a_fan_out_is_never_released_automatically(
