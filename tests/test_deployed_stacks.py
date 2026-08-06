@@ -73,6 +73,19 @@ NOT_FOUND = (
 
 
 def load() -> Any:
+    """The tool as a module, reusing the one already imported if there is one.
+
+    `tests/test_audit_workflow.py` reads this same tool through its own `load_tool`, and
+    whichever of the two ran first used to have its copy replaced by the second. Nothing
+    broke, because both files keep the object they were handed rather than looking the name
+    up again -- but that is a fact about how those two files are written today and not about
+    this loader, and it is the same rebinding that did break `tools/visibility_board.py`
+    across the same pair of files. `tests/module_identity.py` fails a run that rebinds a
+    name, and this is one of the two loaders that made it do so.
+    """
+    cached = sys.modules.get("verify_deployed_stacks")
+    if cached is not None:
+        return cached
     specification = importlib.util.spec_from_file_location("verify_deployed_stacks", TOOL)
     assert specification is not None and specification.loader is not None
     module = importlib.util.module_from_spec(specification)

@@ -25,7 +25,14 @@ def build_run_history():  # type: ignore[no-untyped-def]
     The same route ``tests/test_read_substrate.py`` takes, for the same reason: these are
     scripts with a ``main``, and adding an ``__init__.py`` to make them importable would put
     them on the release trigger's import tree.
+
+    Returns the module already in ``sys.modules`` when there is one. Every test below calls
+    this, so building a fresh object each time rebinds the name and leaves the session
+    holding copies nobody can tell apart. ``tests/module_identity.py`` says what that costs.
     """
+    cached = sys.modules.get("build_run_history")
+    if cached is not None:
+        return cached
     spec = importlib.util.spec_from_file_location(
         "build_run_history", PROJECT_ROOT / "tools" / "build_run_history.py"
     )

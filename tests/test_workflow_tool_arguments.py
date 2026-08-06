@@ -25,6 +25,7 @@ import importlib.util
 import re
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 import yaml
@@ -57,6 +58,47 @@ def run_bodies() -> list[tuple[str, str]]:
     return bodies
 
 
+def tool_module(tool: str) -> ModuleType:
+    """The tool as a module, built at most once per tool for the life of the session.
+
+    Under a name no import statement can produce, which is what keeps the registration
+    below from being destructive. `tests/test_find_runs_that_saved_nothing.py` imports its
+    tool by its own name and then monkeypatches an attribute on it; registering a second
+    module object under that same name replaced the one the test had already bound its
+    entry point from, so the patch landed on an object nothing called and the real object
+    store ran. In CI that reached AWS with no credentials and the tool exited 2. It only
+    happened when this loader ran first on the same xdist worker, so it presented as five
+    unrelated tests failing at random and passing on a rerun.
+
+    The prefix made that harmless; it did not make it free. Two workflows calling the same
+    tool asked for it twice and the second build replaced the first under this private
+    name, which is the rebinding that broke `load_tool` in
+    `tests/test_audit_workflow.py`, differing only in that nothing here had kept a
+    reference to the copy being discarded. `tests/module_identity.py` fails a run that
+    rebinds any name, because "nobody is holding the old one" is a property of today's
+    callers rather than of this loader, so returning the module already built is what
+    makes that guard something this file can hold to rather than something it exempts.
+    """
+    path = PROJECT_ROOT / tool
+    name = f"_workflow_tool_{path.stem}"
+    built = sys.modules.get(name)
+    if built is not None:
+        return built
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Registered before execution, for the reason `tests/test_audit_workflow.py` gives at its
+    # own loader: `@dataclass` resolves a string annotation by looking the defining module up in
+    # sys.modules, and a module built from a file path is not there unless it is put there.
+    # This loader went years without it because no tool a workflow runs held a dataclass.
+    # The first one that did failed with an AttributeError raised inside dataclasses.py,
+    # naming neither this file nor the tool, and only under a run that had not already
+    # imported the tool by some other route -- so it passed locally and failed in CI.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def parser_for(tool: str) -> argparse.ArgumentParser | None:
     """The tool's own parser, by importing it rather than by reading its source.
 
@@ -68,28 +110,7 @@ def parser_for(tool: str) -> argparse.ArgumentParser | None:
     such a tool requires nothing and accepts nothing -- and a workflow that passed it a flag
     still fails, on the second test rather than the first.
     """
-    path = PROJECT_ROOT / tool
-    # Under a name no import statement can produce, which is what keeps the registration
-    # below from being destructive. `tests/test_find_runs_that_saved_nothing.py` imports its
-    # tool by its own name and then monkeypatches an attribute on it; registering a second
-    # module object under that same name replaced the one the test had already bound its
-    # entry point from, so the patch landed on an object nothing called and the real object
-    # store ran. In CI that reached AWS with no credentials and the tool exited 2. It only
-    # happened when this loader ran first on the same xdist worker, so it presented as five
-    # unrelated tests failing at random and passing on a rerun.
-    spec = importlib.util.spec_from_file_location(f"_workflow_tool_{path.stem}", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    # Registered before execution, for the reason `tests/gate_support.py` gives at its own
-    # loader: `@dataclass` resolves a string annotation by looking the defining module up in
-    # sys.modules, and a module built from a file path is not there unless it is put there.
-    # This loader went years without it because no tool a workflow runs held a dataclass.
-    # The first one that did failed with an AttributeError raised inside dataclasses.py,
-    # naming neither this file nor the tool, and only under a run that had not already
-    # imported the tool by some other route -- so it passed locally and failed in CI.
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    build = getattr(module, "build_parser", None)
+    build = getattr(tool_module(tool), "build_parser", None)
     if not callable(build):
         return None
     parser: argparse.ArgumentParser = build()
