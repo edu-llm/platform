@@ -18,18 +18,18 @@
 # beneath them, and nothing else.
 schema_version: 1
 s3_key: expiry-janitor/expiry-janitor.zip
-# NEVER UPLOADED. The zip below has been built and its digest is real; the object does not
-# exist in the artifacts bucket yet, so there is no version id to pin. The placeholder is
-# deliberate and is the repository's own pattern -- infra/batch-events.yaml carries the same
-# argument beside its own S3ObjectVersion: a placeholder fails at a named step where an omitted
-# property would have deployed something.
+# UPLOADED 2026-08-06, first release of this function. Until then all three of this field,
+# infra/expiry-janitor.yaml's S3ObjectVersion and a guard step in the phase-3 workflow carried
+# PLACEHOLDER-UNTIL-THE-FIRST-UPLOAD, and tests/test_janitor_package.py held the token in all
+# of them or in none, so the guard came out in the same change as these two lines.
 #
-# The identical token appears in infra/expiry-janitor.yaml and is what the phase-3 workflow's
-# janitor step checks for before it tries to deploy, so that an unrelated dispatch is not
-# broken by a stack nobody can create yet. tests/test_janitor_infrastructure.py holds all three
-# together: the placeholder is in every one of them or in none, so the release that removes it
-# has to remove it everywhere.
-s3_object_version: PLACEHOLDER-UNTIL-THE-FIRST-UPLOAD
+# The release needed --force, which is worth recording because the next first release of a
+# function will hit it too. The digest below was already correct for this tree -- it was
+# written when the zip was built and not uploaded -- so tools/release_lambda.py's "the record
+# already names this digest" comparison would have skipped the upload and left the object
+# missing. --force exists for exactly that: a record right about the bytes, naming an object
+# the bucket does not hold.
+s3_object_version: VS.b59wWeTsluXKozm3pf0W475vVyDzp
 # The 64 hex characters tools/build_janitor_lambda.py printed under "sha256". The build is
 # deterministic, so re-running it on an unchanged tree reproduces this exactly -- which is what
 # tests/test_released_zips.py compares against, in the case parametrized [janitor].

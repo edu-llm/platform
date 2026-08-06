@@ -485,21 +485,18 @@ jobs:
       # until the deployer carries iam:PassRole for it -- also a laptop deploy. See
       # infra/README.md, the researcher lane table.
       #
-      # IT SKIPS WHILE THE CODE OBJECT HAS NEVER BEEN UPLOADED, and that is the whole of the
-      # guard below. The template pins a placeholder S3ObjectVersion because the zip has been
-      # built and never uploaded, so deploying it would fail -- and failing here would break
-      # every unrelated dispatch of this workflow for a stack nobody can create yet. The skip
-      # is loud rather than silent, tools/verify_deployed_stacks.py reports the stack as
-      # declared and not deployed for as long as it lasts, and tests/test_janitor_package.py
-      # refuses to let the guard outlive the placeholder it checks for.
+      # THE SKIP THAT USED TO BE HERE IS GONE, WITH THE NEVER-UPLOADED PLACEHOLDER IT CHECKED
+      # FOR. This step grepped infra/expiry-janitor.yaml for that token and exited 0 when it
+      # found it, so a stack nobody could create did not break every unrelated dispatch of this
+      # workflow. The zip is uploaded and the template pins the version id it returned, so the
+      # guard would now be a branch that can never be taken. tests/test_janitor_package.py holds
+      # the token in all three files or in none -- deliberately including this file, which is
+      # why the comment describing the guard cannot quote it -- and that is what made removing
+      # the guard part of the release rather than a follow-up somebody forgets.
       - name: Deploy the expiry janitor stack
         if: inputs.describe_run == ''
         run: |
           set -euo pipefail
-          if grep -q 'S3ObjectVersion: PLACEHOLDER-UNTIL-THE-FIRST-UPLOAD' infra/expiry-janitor.yaml; then
-            echo "::notice::the expiry janitor's zip has never been uploaded, so this stack is skipped. Release it from a laptop with tools/release_lambda.py --function janitor, and land the version id and digest it writes."
-            exit 0
-          fi
           aws cloudformation deploy \
             --stack-name sbsandbox-intern-edullm-janitor \
             --template-file infra/expiry-janitor.yaml \
