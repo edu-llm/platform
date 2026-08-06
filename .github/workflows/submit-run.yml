@@ -208,14 +208,17 @@ on:
         options:
           - none
           - regmix-10b-v1
+          - reservoir-dolma2-v1
+          - refhq-instruct-v3
           - refhq-regmix-5p5b-v2
           - olmo-original-30b-v1
           - olmo-127b-v1
           - olmo-150b-dolma2-v1
           - math-frontload-100m-v1
-          - formal-proof-premises-500m-v2
+          - formal-proof-premises-500m-v3
           - frontload-cl-10b-v1
           - fineweb-edu-1b-v6
+          - fineweb-edu-750m-v2
           - fineweb2-phase0-equal-bpe-2b-v1
           - fineweb2-phase0-equal-superbpe-2b-v1
           - fineweb2-unimax-bpe-20b-v1

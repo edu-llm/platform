@@ -94,10 +94,12 @@ A waiver lands in the run's manifest and the approving lead is told which check 
 | `dataset_release` | Train tokens | Objects |
 | --- | --- | --- |
 | `math-frontload-100m-v1` | 0.1B | 3 |
-| `formal-proof-premises-500m-v2` | 0.5B | 12 |
+| `formal-proof-premises-500m-v3` | 0.5B | 12 |
+| `fineweb-edu-750m-v2` | 0.7B | 15 |
 | `fineweb-edu-1b-v6` | 1.0B | 4 |
 | `fineweb2-phase0-equal-bpe-2b-v1` | 2.0B | 12 |
 | `fineweb2-phase0-equal-superbpe-2b-v1` | 2.0B | 12 |
+| `refhq-instruct-v3` | 3.9B | 29 |
 | `refhq-regmix-5p5b-v2` | 5.5B | 24 |
 | `regmix-10b-v1` | 10.0B | 41 |
 | `frontload-cl-10b-v1` | 10.1B | 53 |
@@ -106,10 +108,15 @@ A waiver lands in the run's manifest and the approving lead is told which check 
 | `olmo-original-30b-v1` | 31.3B | 120 |
 | `olmo-127b-v1` | 126.5B | 474 |
 | `olmo-150b-dolma2-v1` | 157.2B | 6,851 |
+| `reservoir-dolma2-v1` | 250.2B | 10,010 |
 
-All are frozen and nothing you run can write to them. Most use the dolma2 tokenizer, which the training image has built in. The exceptions are: `fineweb-edu-1b-v6` (SmolLM2 from Hub), `formal-proof-premises-500m-v2` (vendored Qwen2.5 from Hub), and the four `fineweb2-*` Plan B releases (gigatoken BPE / SuperBPE, configured in the image with no Hub fetch). Hub outages refuse only the SmolLM2 and Qwen corpora; Plan B and dolma2 start without it.
+All are frozen and nothing you run can write to them. Most use the dolma2 tokenizer, which the training image has built in. The exceptions are: `fineweb-edu-1b-v6` and `fineweb-edu-750m-v2` (SmolLM2 from Hub), `formal-proof-premises-500m-v3` (vendored Qwen2.5 from Hub), and the four `fineweb2-*` Plan B releases (gigatoken BPE / SuperBPE, configured in the image with no Hub fetch). Hub outages refuse only the SmolLM2 and Qwen corpora; Plan B and dolma2 start without it.
 
-Two more things about `formal-proof-premises-500m-v2` are worth knowing before you report a number from it. Its shards are `uint32` rather than the usual `uint16`, which the loader must take from the manifest and never infer; and ATP/TPTP traces carry most of its token mass, so a single loss over the whole corpus is mostly measuring two of its six sources. The Plan B `fineweb2-*` shards are also `uint32` (100k-vocab gigatoken).
+Two more things about `formal-proof-premises-500m-v3` are worth knowing before you report a number from it. Its shards are `uint32` rather than the usual `uint16`, which the loader must take from the manifest and never infer; and ATP/TPTP traces carry most of its token mass, so a single loss over the whole corpus is mostly measuring two of its six sources. The Plan B `fineweb2-*` shards are also `uint32` (100k-vocab gigatoken).
+
+**`reservoir-dolma2-v1` is 977 GB and its licence needs reading before you publish anything trained on it.** Its licence field says the basis is unknown, and its own notes say more: stackexchange and finewiki are CC-BY-SA-4.0, finewiki additionally GFDL, and the two together are 7.13 per cent of its train tokens. Share-alike is a condition on redistributing a model, not just an unanswered question, so it is worth knowing before the run rather than after.
+
+**`formal-proof-premises-500m-v2` came off this list on 2026-08-06 and v3 replaced it.** v3 supersedes v2 in the corpus's own sealed metadata, so naming v2 now is refused by `edullm check` and by the compile job, both before the approval gate, with a refusal that names v3. A run resuming from a checkpoint written against v2 is the case that refusal is meant to be liftable for; the route is a reviewed line in `config/datasets.yaml` rather than a flag on the command.
 
 **More corpora are published than are offered here, and the reason is never the corpus.** `lean4-mathlib-bytes-v3` and `math-memory-full-v1` are sealed, frozen and readable, and they are tokenized with raw UTF-8 bytes, which OLMo-core has no tokenizer for. They stay in the registry and off this list until it does, because a run that resolved one would reach a container that cannot build a model for the tokens it just read. `fineweb-edu-1b-v6` was in that state until somebody wrote the one line naming its tokenizer, which is the difference between a missing upstream feature and a job nobody had done.
 
