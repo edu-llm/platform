@@ -205,8 +205,13 @@ def admit_manifest(
         approved_manifest_sha256=sha256_digest(RunManifest.model_validate(payload)),
         run_id=RUN_ID,
         submitter=MEMBER,
-        approver=LEAD,
-        approving_environment=ApprovalEnvironment.LEAD,
+        # THE AUTOMATIC GATE, WHICH WAS THE LEAD GATE UNTIL POLICY v5. Every manifest this
+        # module builds is a cheap single cell, so nobody releases one and admission refuses
+        # a submission that arrives claiming the wrong environment. This module is about
+        # where a run is placed rather than about who released it, so it names the gate the
+        # class demands and leaves the routing tests to tests/test_phase2_admission.py.
+        approver=None,
+        approving_environment=ApprovalEnvironment.AUTOMATIC,
         image_scan_findings=None,
         workflow_run=GitHubWorkflowRunReference(
             run_repository="edu-llm/platform",

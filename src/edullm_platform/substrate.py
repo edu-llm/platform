@@ -81,7 +81,12 @@ __all__ = [
 #: newer writer would otherwise interpret whatever fields it happened to recognise and report
 #: the rest as absent, which is the collapse this whole module refuses: a field nobody wrote and
 #: a field nobody could read are not the same thing.
-SUBSTRATE_FORMAT_VERSION: Final = 1
+#: 2 since ``dataset_release`` joined :class:`RunFacts`. Moved rather than left at 1 even
+#: though the change only adds a field, because :func:`from_document` reads that key
+#: unconditionally and a version 1 document has no value for it. A reader that defaulted it
+#: to the empty string would put every older run into one cohort of the run history and
+#: report the result as a measurement.
+SUBSTRATE_FORMAT_VERSION: Final = 2
 
 #: What ``state_source`` may say. ``live`` is a Batch reading, ``attempt`` a terminal lineage
 #: record, ``intent`` a submission with nothing after it, and ``unread`` the case where the
@@ -193,6 +198,11 @@ class RunFacts:
     repository: str
     commit_sha: str
     image_digest: str
+    #: What the run trained on, carried because it is one quarter of the key
+    #: :mod:`edullm_platform.run_history` groups durations by. Every other field of that key
+    #: was already here; without this one the history would have to open the intent records
+    #: a second time, which is the second ingestion this module exists to prevent.
+    dataset_release: str
     workload_profile: str
     compute_profile: str
     wandb_project: str
@@ -387,6 +397,7 @@ def normalise(
             repository=manifest.repository,
             commit_sha=manifest.commit_sha,
             image_digest=manifest.image_digest,
+            dataset_release=manifest.dataset_release,
             workload_profile=manifest.workload_profile,
             compute_profile=manifest.compute_profile,
             wandb_project=manifest.wandb_project,
@@ -468,6 +479,7 @@ def as_document(substrate: Substrate) -> dict[str, Any]:
                 "repository": facts.repository,
                 "commit_sha": facts.commit_sha,
                 "image_digest": facts.image_digest,
+                "dataset_release": facts.dataset_release,
                 "workload_profile": facts.workload_profile,
                 "compute_profile": facts.compute_profile,
                 "wandb_project": facts.wandb_project,
@@ -523,6 +535,7 @@ def from_document(document: Mapping[str, Any]) -> Substrate:
                 repository=str(facts["repository"]),
                 commit_sha=str(facts["commit_sha"]),
                 image_digest=str(facts["image_digest"]),
+                dataset_release=str(facts["dataset_release"]),
                 workload_profile=str(facts["workload_profile"]),
                 compute_profile=str(facts["compute_profile"]),
                 wandb_project=str(facts["wandb_project"]),

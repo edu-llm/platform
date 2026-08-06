@@ -1,0 +1,40 @@
+schema_version: 1
+# THIS FILE WAS admin-exception.yaml AND THE ROW IT HELD NO LONGER EXISTS. It stated a
+# twenty-five hour run over the routine runtime ceiling, released by an admin at the
+# exception gate. Policy v5 removed that ceiling along with the other four and no run
+# classifies as an exception any more, so a fixture asserting an admin release would be
+# asserting a decision `classify_request` cannot produce.
+#
+# What replaced it is the row the matrix was missing. Three scenarios now cover the three
+# things that can happen to a submission: nobody releases it, the submitter releases it
+# because they hold the role, or somebody else does. The facts are unchanged and still come
+# from fixtures/manifests/gpu-exception.yaml, which is the same twenty-five hours at $141.80
+# and is now released by nobody. That is the whole of what v5 did, in one file.
+scenario: released-by-nobody
+submitter:
+  github_login: nzhao721
+  admin: false
+  team_lead: false
+# Null because there is nobody to name. An automatic run reaches admission with no approver:
+# the workflow asks GitHub for one only where the gate had reviewers, and
+# run-approval-automatic has none.
+approver: null
+request:
+  claimed_team: data-prep
+  repository_registered: true
+  dataset_registered: true
+  dataset_is_a_corpus: true
+  compute_profile_registered: true
+  immutable_revision: true
+  immutable_image: true
+  image_scan_reviewed: true
+  estimated_cost_usd: "141.80"
+  maximum_runtime_hours: "25"
+  maximum_attempts: 1
+  fanout_size: 1
+  fanout_parallelism: 1
+expected:
+  granted: true
+  approval_class: automatic
+  approval_scope: organization
+  reason: automatic_below_approval_thresholds

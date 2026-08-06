@@ -2822,7 +2822,7 @@ def _preflight(
         cost=preflight.cost,
         approval_class=preflight.approval_class,
         approving_environment=preflight.approving_environment,
-        exceeded=preflight.exceeded,
+        history=preflight.history,
     )
 
 

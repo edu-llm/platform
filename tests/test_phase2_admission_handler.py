@@ -67,8 +67,14 @@ class InvocationContext:
 ACCEPTED_EVENT: dict[str, Any] = {
     "run_id": "run_019fa439-203e-70c7-bf8a-9ce33bc71f20",
     "submitter": "philote-dev",
-    "approver": "philote-dev",
-    "approving_environment": "run-approval-lead",
+    # NOBODY RELEASED THIS, AND UNTIL POLICY v5 A LEAD DID. The manifest below is a
+    # one-hour single-cell CPU check, which is a few dollars, so it now passes
+    # run-approval-automatic and reaches admission with no approver. Admission re-derives
+    # the class and refuses an environment that does not match it, so leaving the lead gate
+    # here would refuse every event in this module for a reason none of these tests is
+    # about.
+    "approver": None,
+    "approving_environment": "run-approval-automatic",
     "approved_manifest_sha256": (
         "sha256:ea122cba141a80662b4a714337c5d02df3a2cb5073976b12b59d9e221982fb67"
     ),

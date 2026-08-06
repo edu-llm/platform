@@ -201,99 +201,99 @@ def test_only_the_deliberately_promoted_profiles_are_provisioned() -> None:
     ]
 
 
-def test_the_dearest_routine_shape_classifies_as_routine_within_policy_thresholds() -> None:
-    """g5.48xlarge, which is eight GPUs for a team lead's signature.
+def test_a_short_run_on_the_dearest_shape_is_released_by_nobody() -> None:
+    """What the rate ceiling used to catch, asked at the size that used to slip past it.
 
-    This asked the same question of gpu-8xh100 while that profile was unprovisioned, and the
-    answer it recorded is now the wrong one: a rate above
-    EXCEPTION_RATE_CEILING_USD_PER_HOUR is an exception whatever the four request bounds say,
-    which is what the promotion put behind an admin. So the routine case moved to the most
-    expensive shape that is still routine, and gpu-8xh100's is the test below.
+    One hour and one attempt on the most expensive instance this account is priced for is
+    $55.04. Under v4 the rate ceiling made that an admin's call while every request bound
+    was satisfied. Under v5 the only bound is the total, $55.04 is a ninth of it, and
+    nobody releases this.
+
+    Asked of the dearest shape by price rather than by name, so a profile promoted above
+    p5.48xlarge is covered without an edit here, and so that the assertion is about the
+    reasoning rather than about one row of the catalog.
+
+    Mutation: put any per-hour rule back into ``classify_request``. This returns exception
+    or routine and the test says which shape it was about.
+    """
+    profile = max(SHIPPED_PROFILES, key=lambda candidate: candidate.hourly_rate_usd)
+    facts = facts_for_profile(profile, maximum_runtime_hours=Decimal(1), maximum_attempts=1)
+
+    assert profile.name == "gpu-8xh100"
+    assert facts.estimated_cost_usd == Decimal("55.04")
+    assert facts.estimated_cost_usd < shipped_policy().thresholds.automatic_below_cost_usd
+    assert classify_request(facts, shipped_policy().thresholds) == ApprovalClass.AUTOMATIC
+
+
+def test_a_long_run_on_a_cheap_eight_card_shape_is_the_one_a_lead_sees() -> None:
+    """The ranking v5 produces, and the one the rate ceiling produced backwards.
+
+    Twelve hours at three attempts on ``gpu-8xa10g`` is $586.37, over the bound, so a team
+    lead reads it. The same lead was already releasing that shape under v4 at any runtime,
+    while the hour of eight A100s above went to an admin at $21.96. The pair is the whole of
+    the argument for removing the rate: what a machine costs an hour says nothing about how
+    much of the account a request commits.
+
+    Mutation: change ``<`` to ``<=`` in the cost test. This row does not move, which is why
+    the strictly-under boundary is pinned in tests/test_policy.py rather than here; what
+    this pins is that a real catalog price crossing the real bound reaches a person.
     """
     profile = next(profile for profile in SHIPPED_PROFILES if profile.name == "gpu-8xa10g")
-    facts = facts_for_profile(profile, maximum_runtime_hours=Decimal(4), maximum_attempts=1)
-    assert facts.estimated_cost_usd == Decimal("65.15")
-    assert (
-        classify_request(
-            facts, shipped_policy().thresholds, hourly_rate_usd=profile.hourly_rate_usd
-        )
-        == ApprovalClass.ROUTINE
-    )
-
-
-def test_the_dearest_routine_shape_classifies_as_exception_above_policy_thresholds() -> None:
-    profile = next(profile for profile in SHIPPED_PROFILES if profile.name == "gpu-8xa10g")
     facts = facts_for_profile(profile, maximum_runtime_hours=Decimal(12), maximum_attempts=3)
+
     assert facts.estimated_cost_usd == Decimal("586.37")
-    assert (
-        classify_request(
-            facts, shipped_policy().thresholds, hourly_rate_usd=profile.hourly_rate_usd
-        )
-        == ApprovalClass.EXCEPTION
-    )
+    assert facts.estimated_cost_usd > shipped_policy().thresholds.automatic_below_cost_usd
+    assert classify_request(facts, shipped_policy().thresholds) == ApprovalClass.ROUTINE
 
 
 @pytest.mark.parametrize("name", ["gpu-8xa100", "gpu-8xh100"])
-def test_an_eight_gpu_p_shape_is_an_exception_at_its_smallest_run(name: str) -> None:
-    """The promotion's actual gate, asked at the size that used to slip through.
+def test_an_eight_gpu_p_shape_is_no_longer_gated_by_what_it_costs_an_hour(name: str) -> None:
+    """The two shapes the rate ceiling existed for, and what v5 does with them instead.
 
-    One hour, one attempt: routine on cost, on runtime, on attempts, on fanout. The profile
-    is what makes it an exception, and before the rate reached classification a team lead
-    could have released a p5.48xlarge this way.
+    One hour, one attempt: $21.96 on the A100 node and $55.04 on the H100 node. Both were
+    exceptions under v4 for their price per hour and neither is under v5, which is the
+    consequence the owner accepted when the ceiling was removed rather than raised.
 
-    THE ``provisioned`` ASSERTION THAT STOOD HERE HAS BEEN DROPPED, AND THE CLASSIFICATION
-    ONE IS THE WHOLE POINT OF THE TEST. gpu-8xh100 was demoted on 2026-08-04 because the
-    account cannot obtain a p5, and its rate is unchanged at $55.04. What must not drift is
-    that the rate still forces EXCEPTION: a shape coming back onto the form must come back
-    behind an admin rather than arriving as routine because nobody re-checked. Asking
-    whether it is offerable today would couple this test to a capacity shortage and lose
-    exactly that guarantee while the shortage lasts.
+    THE ``provisioned`` ASSERTION THAT STOOD HERE WAS DROPPED WHEN gpu-8xh100 WAS DEMOTED
+    and it stays dropped. What this pins is how a shape classifies when it is offerable,
+    which must not drift while it is not.
+
+    Mutation: reintroduce ``EXCEPTION_RATE_CEILING_USD_PER_HOUR`` at any value under $21.96.
+    Both rows become exceptions, and the platform goes back to sending the cheaper of two
+    requests to the higher approver.
     """
     profile = next(profile for profile in SHIPPED_PROFILES if profile.name == name)
     facts = facts_for_profile(profile, maximum_runtime_hours=Decimal(1), maximum_attempts=1)
-    assert facts.estimated_cost_usd <= shipped_policy().thresholds.routine_maximum_cost_usd
-    assert (
-        classify_request(
-            facts, shipped_policy().thresholds, hourly_rate_usd=profile.hourly_rate_usd
-        )
-        == ApprovalClass.EXCEPTION
-    )
+
+    assert facts.estimated_cost_usd < shipped_policy().thresholds.automatic_below_cost_usd
+    assert classify_request(facts, shipped_policy().thresholds) == ApprovalClass.AUTOMATIC
 
 
-def test_the_single_card_p_shape_is_routine_at_a_working_days_run() -> None:
-    """The one P profile a team lead can release, which is the point of having it.
+def test_a_working_day_on_one_h100_and_an_hour_on_eight_now_route_the_same_way() -> None:
+    """The choice a researcher who wants an H100 is making, priced and then classified.
 
-    Every other P shape is an eight-device instance above the rate ceiling, so an H100 of
-    any size needed an admin per submission and billed eight cards to a job using one.
-    p5.4xlarge is $6.88 against a $20 ceiling, so the rate does not force an exception and
-    the four request bounds decide as they do for a G shape.
+    Eight hours of ``gpu-1xh100`` is $55.04, which is exactly one hour of ``gpu-8xh100``.
+    That equality was worth stating while the two routed differently, because the rate
+    ceiling sent the eight-card hour to an admin and left the one-card day with a lead. They
+    are the same money and they now take the same route, which is what a total-only rule
+    means.
 
-    Eight hours and one attempt is $55.04, which is under the routine cost ceiling and is
-    also, exactly, one hour of gpu-8xh100. That equality is worth stating rather than
-    leaving as a coincidence of the arithmetic: the choice a researcher who wants one H100
-    is actually making is a working day on one card against an hour on eight.
-
-    Mutation: raise this rate past EXCEPTION_RATE_CEILING_USD_PER_HOUR. The shape still
-    runs and still costs the same, and every single-card H100 run goes back through an
-    admin, which is the friction the profile was added to remove.
-
-    THE ``provisioned`` ASSERTION HERE HAS BEEN DROPPED FOR THE REASON GIVEN ABOVE
-    ``test_an_eight_gpu_p_shape_is_an_exception_at_its_smallest_run``. gpu-1xh100 came off
-    the form on 2026-08-04 with its price untouched, and the classification this test pins
-    is what it must still classify as when it goes back on. The paragraph above about a
-    working day on one card against an hour on eight describes an offer nobody can currently
-    take; it is left standing because it is the argument for having the profile at all.
+    Mutation: reintroduce a per-hour rule. The two classifications stop agreeing and this
+    fails on the second one, naming the shape.
     """
-    profile = next(profile for profile in SHIPPED_PROFILES if profile.name == "gpu-1xh100")
-    facts = facts_for_profile(profile, maximum_runtime_hours=Decimal(8), maximum_attempts=1)
-    assert facts.estimated_cost_usd == Decimal("55.04")
-    assert facts.estimated_cost_usd <= shipped_policy().thresholds.routine_maximum_cost_usd
-    assert (
-        classify_request(
-            facts, shipped_policy().thresholds, hourly_rate_usd=profile.hourly_rate_usd
-        )
-        == ApprovalClass.ROUTINE
+    one_card = next(profile for profile in SHIPPED_PROFILES if profile.name == "gpu-1xh100")
+    eight_cards = next(profile for profile in SHIPPED_PROFILES if profile.name == "gpu-8xh100")
+    a_working_day = facts_for_profile(
+        one_card, maximum_runtime_hours=Decimal(8), maximum_attempts=1
     )
+    an_hour = facts_for_profile(
+        eight_cards, maximum_runtime_hours=Decimal(1), maximum_attempts=1
+    )
+    thresholds = shipped_policy().thresholds
+
+    assert a_working_day.estimated_cost_usd == an_hour.estimated_cost_usd == Decimal("55.04")
+    assert classify_request(a_working_day, thresholds) == classify_request(an_hour, thresholds)
+    assert classify_request(a_working_day, thresholds) == ApprovalClass.AUTOMATIC
 
 
 @pytest.mark.parametrize(

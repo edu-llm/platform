@@ -1,4 +1,3 @@
-from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Final, Literal, Self
 
@@ -30,11 +29,25 @@ DeniedOutrightCondition = Literal[
 
 
 class ApprovalClass(StrEnum):
-    #: Released by nobody. A run small enough that asking a person costs more than the run
-    #: does; see ``AUTOMATIC_BELOW`` bounds on :class:`PolicyThresholds` for what small
-    #: means and :func:`classify_request` for why a fan-out is never this class.
+    #: Released by nobody. A run whose worst case is under
+    #: :attr:`PolicyThresholds.automatic_below_cost_usd` and which is not a fan-out; see
+    #: :func:`classify_request` for the three things that hold a single cheap cell back.
     AUTOMATIC = "automatic"
     ROUTINE = "routine"
+    #: NO RUN CLASSIFIES AS THIS UNDER v5, AND THE MEMBER IS NOT GOING AWAY.
+    #:
+    #: :func:`classify_request` returned this for a request over a ``routine_maximum_``
+    #: bound, for an unreviewed image scan, and for a compute profile priced above a rate
+    #: ceiling. All three are gone: the first two are a team lead's to release and the
+    #: third was withdrawn because rate is the wrong instrument. What is left for an admin
+    #: is a capacity block, which is a dated purchase nobody has designed yet.
+    #:
+    #: It stays because 19 of the first 158 runs were recorded under it and every one of
+    #: those records is parsed back through :class:`ApprovalClassValue`, and because
+    #: :func:`~edullm_platform.contracts.admission.ApprovalEnvironment.for_approval_class`
+    #: and the admin branch of ``evaluate_authorization`` are the machinery a capacity
+    #: block will route through. ``admit`` also labels a manifest-hash mismatch with it,
+    #: which is a refusal wearing a class rather than a run taking a route.
     EXCEPTION = "exception"
 
 
@@ -47,27 +60,37 @@ ApprovalScopeValue = Annotated[ApprovalScope, BeforeValidator(parse_str_enum(App
 
 
 class PolicyThresholds(ContractModel):
-    routine_maximum_cost_usd: StrictDecimal = Field(ge=0)
-    routine_maximum_runtime_hours: PositiveStrictDecimal = Field(gt=0)
-    routine_maximum_attempts: int = Field(ge=1)
-    routine_maximum_fanout_size: int = Field(ge=1)
-    routine_maximum_parallelism: int = Field(ge=1)
-    #: THE TWO EXCLUSIVE BOUNDS, AND THE ONLY ONES IN THIS MODEL THAT ARE.
+    """The one number that decides whether anybody is asked about a run.
+
+    IT HELD SEVEN AND IT HOLDS ONE, AND THE SIX THAT WENT ARE NOT A TIDY-UP. Five of them
+    named a ceiling above which a run needed an admin, and under v5 no run needs an admin,
+    so a ``routine_maximum_`` bound separated routine from a class nothing lands in. The
+    sixth, ``automatic_below_runtime_hours``, bounded the automatic class by declared
+    runtime, and a declared runtime is a number the submitter typed rather than a fact
+    about the run. Worst-case total is the instrument, and it already carries runtime,
+    attempts, cells and the price of the machine.
+
+    ``config/policy.yaml`` records why each one went, beside the number that replaced it.
+    """
+
+    #: THE ONE BOUND, AND IT IS STRICTLY UNDER.
     #:
-    #: Every ``routine_maximum_`` bound above is inclusive: a value equal to the bound is
-    #: still routine. These two are not, and the difference is in the name rather than only
-    #: in :func:`classify_request`, because a field called ``automatic_maximum_cost_usd``
-    #: that excluded its own value would be the undocumented strict-versus-non-strict
-    #: comparison this pair exists to avoid. A request at exactly five dollars, or at
-    #: exactly one hour, goes to a lead.
+    #: A request whose worst case is under this figure and which asks for a single cell is
+    #: released by nobody. At this figure exactly, and above it, a team lead releases it.
+    #: The exclusion is in the name rather than only in :func:`classify_request`, because a
+    #: field called ``automatic_maximum_cost_usd`` that excluded its own value would be the
+    #: undocumented strict-versus-non-strict comparison the name exists to avoid.
     #:
-    #: Exclusive because the rule was specified as "under five dollars and under one hour",
-    #: and because the direction of the error matters asymmetrically. These bounds decide
-    #: when no human sees a run at all, so a boundary drawn one value too wide silently
-    #: enlarges the set of runs nobody looks at, while one drawn too narrow costs a lead a
-    #: click on a run that was nearly small enough.
-    automatic_below_cost_usd: StrictDecimal = Field(gt=0)
-    automatic_below_runtime_hours: PositiveStrictDecimal = Field(gt=0)
+    #: Exclusive because the direction of the error is asymmetric. This bound decides when
+    #: no human sees a run at all, so one drawn a value too wide silently enlarges the set
+    #: of runs nobody looks at, while one drawn too narrow costs a lead a click on a run
+    #: that was nearly small enough.
+    #: ``PositiveStrictDecimal`` rather than ``StrictDecimal``, which the pair of bounds it
+    #: replaced got away with. A ``StrictDecimal`` publishes the non-negative pattern, so a
+    #: schema said "0" was a legal bound while ``Field(gt=0)`` refused it. Nothing read the
+    #: field's exported shape while there were seven of them, and
+    #: ``tests/test_schema_export.py`` reads it now that there is one.
+    automatic_below_cost_usd: PositiveStrictDecimal = Field(gt=0)
 
 
 class RequestFacts(ContractModel):
@@ -93,6 +116,17 @@ class RequestFacts(ContractModel):
     maximum_runtime_hours: StrictDecimal = Field(gt=0)
     maximum_attempts: int = Field(ge=1)
     fanout_size: int = Field(default=1, ge=1)
+    #: RECORDED, AND NOTHING READS IT. The threshold it was compared against,
+    #: ``routine_maximum_parallelism``, went in v5 because nothing fed the fact either:
+    #: ``FanOut.max_parallel`` was removed when Batch turned out to accept no concurrency
+    #: cap, so every manifest arrives declaring one.
+    #:
+    #: The field stays where the threshold did not, and the two are not the same kind of
+    #: thing. A threshold is the written form of who may release a run, so a dead one reads
+    #: as a control and had to go. This is an input with a default, it constrains nobody,
+    #: and removing it would change this model's structural digest and refuse three
+    #: committed authorization scenarios that spell it. Give it a source or delete it in a
+    #: change about fan-out, not in one about approvers.
     fanout_parallelism: int = Field(default=1, ge=1)
 
 
@@ -130,96 +164,74 @@ class ApprovalPolicy(ContractModel):
         return self
 
 
-#: The hourly rate above which a compute profile needs an admin rather than a team lead,
-#: whatever the run's total cost and runtime are.
-#:
-#: WHY A RATE AND NOT THE FOUR BOUNDS ABOVE. Those bounds are all about the size of one
-#: request, and every one of them is satisfiable by a short run on the largest machine in the
-#: account. A one-hour p5.48xlarge is $55.04 against a $500 routine ceiling, one attempt
-#: against two, one hour against twelve: routine on every axis, and a team lead releasing it
-#: has authorised the most expensive instance type this platform can start. Making the
-#: threshold total cost instead would have to be set near $55 to catch it, which would then
-#: make an ordinary twelve-hour single-A10G run an exception as well.
-#:
-#: WHY A RATE AND NOT A LIST OF THE TWO PROFILE NAMES. A list is correct until somebody
-#: promotes a tenth shape, and the way it fails is that the new shape is routine by default --
-#: which is the wrong default for the only property that matters here. A rate gates the next
-#: expensive profile before anybody remembers this file exists.
-#:
-#: WHY TWENTY. It sits between the most expensive routine shape and the cheapest gated one,
-#: with both measured rather than guessed: g5.48xlarge, eight A10G, is $16.288/hour and stays
-#: routine, and p4d.24xlarge, eight A100, is $21.958/hour and does not. p5.48xlarge at $55.04
-#: is far above it. The gap is narrow, so a profile priced between $16.29 and $21.95 would
-#: land on the routine side of a line drawn for a different reason, and adding one is the
-#: moment to revisit this number.
-#:
-#: WHY IT IS HERE AND NOT IN config/policy.yaml BESIDE THE OTHER FOUR, WHICH IS WHERE IT
-#: BELONGS. ``PolicyThresholds`` is a contract model, and
-#: ``proof_bundle.discover_contract_models`` records every contract model's structural digest
-#: in four committed proof bundles, with tests/test_schema_compatibility.py recomputing them.
-#: A fifth field changes that digest, which is a proof-bundle regeneration rather than a
-#: policy edit. config/policy.yaml carries a comment pointing here so that a reader of the
-#: policy does not conclude there are only four bounds.
-EXCEPTION_RATE_CEILING_USD_PER_HOUR: Final = Decimal(20)
+#: Every fact that, when false, says an input to this request could not be resolved. Held as
+#: a tuple rather than written into the expression below so that
+#: :func:`~edullm_platform.admission.denied_outright_conditions` and this function cannot
+#: come to disagree about which facts are the registration ones.
+INPUTS_THAT_MUST_RESOLVE: Final = (
+    "repository_registered",
+    "dataset_registered",
+    "compute_profile_registered",
+    "immutable_revision",
+    "immutable_image",
+)
 
 
 def classify_request(
     facts: RequestFacts,
     thresholds: PolicyThresholds,
-    *,
-    # The rate of the profile the request names, which RequestFacts does not carry and cannot
-    # be given for the reason recorded above the ceiling. Keyword-only and required, so that
-    # a caller who has not decided what to pass gets a TypeError rather than a routine
-    # classification: the failure this argument exists to prevent is a submission on the
-    # largest instance in the account released by a team lead, and a default of zero would
-    # reintroduce it at every call site that was not updated.
-    hourly_rate_usd: Decimal,
 ) -> ApprovalClass:
-    """Which of the three approval paths this request takes.
+    """Whether anybody is asked about this request, and that is the whole of the question.
 
-    Ordered as a narrowing rather than as three independent tests, and that ordering is the
-    whole safety property. Everything that was an exception before ``automatic`` existed is
-    still an exception, because the exception test runs first and unchanged; ``automatic``
-    can only ever be carved out of what had already qualified as routine. So the auto-
-    approve rule cannot promote a request past a bound, and reading this function top to
-    bottom is enough to see that it cannot.
+    **THERE ARE TWO ANSWERS AND THERE USED TO BE THREE.** Under v4 this returned
+    ``EXCEPTION`` for a request over one of five ceilings, and an admin released it. Under
+    v5 a team lead releases everything a person releases at all, so what is left here is a
+    single line: is this one cell whose worst case is under
+    ``automatic_below_cost_usd``. Above that line, or in more than one cell, a lead sees it.
+    ``ApprovalClass.EXCEPTION`` is still a member and this function no longer returns it;
+    the reasoning is on the member.
 
     ``estimated_cost_usd`` is the figure an approver is shown, not a second one derived
     here. Both production callers set it from
     ``compute_manifest_cost_inputs(...).maximum_compute_cost_usd`` -- ``submission.py``
     before rendering that same value into the approver context, and ``admission.py`` before
     re-deriving the class inside AWS. A rule that recomputed its own estimate could route on
-    a number no human ever saw.
+    a number no human ever saw. It is a ceiling and a pessimistic one, and
+    ``edullm_platform.run_history`` is what puts a measured duration beside it for the
+    person reading. Nothing in this function reads that measurement, and nothing may:
+    routing is on what is being authorised, which is the worst case.
 
     **A FAN-OUT IS NEVER AUTOMATIC, WHATEVER IT COSTS.** The arithmetic is not the problem:
-    a sixty-four cell sweep at both count ceilings genuinely is $4.57 over 0.05 hours,
-    because the estimate already multiplies by cells. What the total does not carry is that
-    sixty-four cells is sixty-four machines starting at once. This rule was written to take
-    a person out of a twenty-step smoke test, not out of a sweep, and a sweep is exactly the
-    shape where somebody should see the total before it starts. Dropping the ``fanout_size``
-    test would auto-approve that sweep and nothing else in this function would object.
+    a sixty-four cell sweep of twenty-step checks genuinely is a few dollars, because the
+    estimate already multiplies by cells. What the total does not carry is that sixty-four
+    cells is sixty-four machines starting at once. This rule was written to take a person
+    out of a twenty-step smoke test, not out of a sweep, and a sweep is exactly the shape
+    where somebody should see the total before it starts. Dropping the ``fanout_size`` test
+    would auto-approve that sweep and nothing else here would object.
+
+    **AN UNREVIEWED IMAGE SCAN IS A LEAD'S TO RELEASE AND IS NEVER NOBODY'S.** v5 moved
+    ``image_scan_findings_unreviewed`` out of the exception class so that somebody can act
+    on what the findings say, and the property the gate was built for is that somebody
+    reads them first. A cheap short run whose digest carries unreviewed CRITICAL findings
+    would satisfy the cost test, so it is held back here and the findings are printed to
+    the lead by ``render_approver_context``. Delete this test and the softening becomes a
+    removal, because the reader disappears along with the refusal.
+
+    **AN INPUT THAT DOES NOT RESOLVE IS NEVER AUTOMATIC EITHER, AND THAT IS BELT AND
+    BRACES.** Every fact in :data:`INPUTS_THAT_MUST_RESOLVE` is also a ``denied_outright``
+    condition, so a submission tripping one is refused by ``compile_submission`` before a
+    gate is chosen and by ``admit`` before an environment is compared. It is tested here
+    anyway because this function is what names the class on the decision record such a
+    refusal writes, and "released by nobody" is the wrong words for a request nobody may
+    release. It returns routine rather than exception for them: the record says a person
+    would have been asked, and no person was, because the request was refused.
     """
-    if not (
-        facts.repository_registered
-        and facts.dataset_registered
-        and facts.compute_profile_registered
-        and facts.immutable_revision
-        and facts.immutable_image
-        and facts.image_scan_reviewed
-        and facts.estimated_cost_usd <= thresholds.routine_maximum_cost_usd
-        and facts.maximum_runtime_hours <= thresholds.routine_maximum_runtime_hours
-        and facts.maximum_attempts <= thresholds.routine_maximum_attempts
-        and facts.fanout_size <= thresholds.routine_maximum_fanout_size
-        and facts.fanout_parallelism <= thresholds.routine_maximum_parallelism
-        and hourly_rate_usd <= EXCEPTION_RATE_CEILING_USD_PER_HOUR
-    ):
-        return ApprovalClass.EXCEPTION
-    # ``FanOut.size`` is ge=2 and the fact defaults to 1, so this reads "one cell" rather
-    # than "a small sweep". There is no fan-out size that auto-approves.
-    if (
-        facts.fanout_size == 1
-        and facts.estimated_cost_usd < thresholds.automatic_below_cost_usd
-        and facts.maximum_runtime_hours < thresholds.automatic_below_runtime_hours
-    ):
+    if facts.fanout_size > 1:
+        return ApprovalClass.ROUTINE
+    if not facts.image_scan_reviewed:
+        return ApprovalClass.ROUTINE
+    if not all(getattr(facts, fact) for fact in INPUTS_THAT_MUST_RESOLVE):
+        return ApprovalClass.ROUTINE
+    if facts.estimated_cost_usd < thresholds.automatic_below_cost_usd:
         return ApprovalClass.AUTOMATIC
     return ApprovalClass.ROUTINE

@@ -18,6 +18,7 @@ does it save where a retry will look         ``checkpoint_commands.require_a_sav
 can the card run the dtype it asks for       ``precision.require_bfloat16_only_where_the_hardware_has_it``
 is the command startable and still quoted    ``contracts.manifest.RunManifest``
 what does it cost, and who releases it       ``manifest_helpers`` and ``contracts.policy``
+what have runs like this one taken           ``run_history.history_for``
 what does policy deny outright               ``admission.denied_outright_conditions``
 ===========================================  =========================================
 
@@ -56,7 +57,7 @@ are decided here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final
 
@@ -96,8 +97,8 @@ from edullm_platform.errors import (
 from edullm_platform.launchers import require_a_process_for_every_device
 from edullm_platform.manifest_helpers import build_request_facts, compute_manifest_cost_inputs
 from edullm_platform.precision import require_bfloat16_only_where_the_hardware_has_it
+from edullm_platform.run_history import HistoryAnswer, history_for
 from edullm_platform.submission import (
-    exceeded_routine_bounds,
     require_a_dataset_release_that_is_current,
     require_registered_repository,
     require_submitter_on_the_roster,
@@ -212,9 +213,13 @@ class Preflight:
     cost: CostInputs | None = None
     approval_class: ApprovalClass | None = None
     approving_environment: ApprovalEnvironment | None = None
-    #: Which routine ceilings an exception-class request is over, in the words
-    #: ``render_approver_context`` puts in front of the person who would release it.
-    exceeded: tuple[str, ...] = field(default_factory=tuple)
+    #: What runs of this shape have actually taken, or the reason there is no answer. Never
+    #: ``None`` once a manifest was built, because "no history" is a finding and has to be
+    #: printed rather than left as an absent block.
+    #:
+    #: ``exceeded`` sat here until v5 and carried which routine ceiling a request had
+    #: crossed. There are no routine ceilings now, so the field could only ever be empty.
+    history: HistoryAnswer | None = None
 
     @property
     def refused(self) -> bool:
@@ -303,9 +308,7 @@ def run_preflight(
         for condition in tripped
     )
 
-    approval_class = classify_request(
-        facts, configuration.policy.thresholds, hourly_rate_usd=cost.hourly_rate_usd
-    )
+    approval_class = classify_request(facts, configuration.policy.thresholds)
     return Preflight(
         request=request,
         refusals=tuple(refusals),
@@ -317,13 +320,7 @@ def run_preflight(
         cost=cost,
         approval_class=approval_class,
         approving_environment=ApprovalEnvironment.for_approval_class(approval_class),
-        # The rate for the same reason ``classify_request`` above is given it: it is the
-        # fifth bound, RequestFacts cannot carry it, and it is the only thing that makes a
-        # gpu-8xa100 dispatch an exception. Passed rather than left to default so this verb
-        # and the approver page name that reason in one sentence rather than two.
-        exceeded=exceeded_routine_bounds(
-            facts, configuration.policy, hourly_rate_usd=cost.hourly_rate_usd
-        ),
+        history=history_for(manifest, history=configuration.run_history),
     )
 
 

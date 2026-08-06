@@ -1,4 +1,3 @@
-from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Self
 
@@ -124,16 +123,13 @@ def evaluate_authorization(
     request: RequestFacts,
     policy: ApprovalPolicy,
     inventory: OrganizationInventory,
-    *,
-    # The hourly rate of the profile the request names, passed through to classification
-    # because RequestFacts cannot carry it. Keyword-only and required for the reason
-    # classify_request states: which approver is sufficient turns on this value, so a
-    # default would be a default answer to "may a team lead release a p5.48xlarge".
-    hourly_rate_usd: Decimal,
 ) -> AuthorizationDecision:
-    approval_class = classify_request(
-        request, policy.thresholds, hourly_rate_usd=hourly_rate_usd
-    )
+    # THE RATE ARGUMENT THIS TOOK IS GONE WITH THE CEILING IT FED. Every caller had to pass
+    # the hourly rate of the profile the request named, because classification refused to
+    # call a request routine above $20 an hour and RequestFacts cannot carry a rate. v5
+    # removed that ceiling, so there is nothing here for a rate to decide and an argument
+    # nobody reads is one every call site has to keep supplying correctly.
+    approval_class = classify_request(request, policy.thresholds)
     # RECORDED, NOT ENFORCED, AND THE FLAG IS NOW THE WHOLE OF WHAT HAPPENS.
     #
     # This used to refuse below when the roster recorded a group for the submitter and the
@@ -213,6 +209,11 @@ def evaluate_authorization(
     if self_authorized and not holds_routine_approver_role(inventory, submitter):
         return decision(AuthorizationReason.SELF_APPROVAL_NOT_PERMITTED_FOR_MEMBER)
 
+    # NOTHING CLASSIFIES AS EXCEPTION UNDER v5 AND THIS BRANCH STAYS. ``classify_request``
+    # answers automatic or routine and nothing else, so no run reaches these three lines
+    # today. They are the route a capacity block will take, they are what
+    # ``exception_approver_roles`` in config/policy.yaml names, and the four reasons below
+    # are parsed back out of nineteen stored decision records written under v2 to v4.
     if approval_class is ApprovalClass.EXCEPTION:
         if not holds_exception_approver_role(inventory, deciding_approver):
             return decision(AuthorizationReason.APPROVER_LACKS_ADMIN_ROLE)

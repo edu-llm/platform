@@ -752,7 +752,65 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # from the rebased tree and is the one the template points at. A release is a snapshot of
     # a tree and not a claim about main, which is why the digest is worth reading off the
     # account rather than inferred from the fact that a release happened.
-    releases: tuple[PendingRelease, ...] = ()
+    #
+    # AND THE REGISTER IS OPEN AGAIN, WITH THE FIRST ENTRY SINCE THOSE TWO RELEASES THAT A
+    # SUBMITTER CAN MEET. Everything either record above carried was a digest moving with no
+    # behaviour behind it. Policy v5 is the other kind.
+    releases: tuple[PendingRelease, ...] = (
+        PendingRelease(
+            function="validator",
+            reason=(
+                "Policy v5 re-cuts who releases a run, and both files it changes are in this "
+                "zip. config/policy.yaml keeps one threshold where it carried seven, "
+                "EXCEPTION_RATE_CEILING_USD_PER_HOUR is gone out of contracts/policy.py, "
+                "classify_request answers automatic or routine and never exception, and an "
+                "unreviewed image scan is a team lead's to release rather than an admin's."
+                "\n\n"
+                "THE DEPLOYED VALIDATOR IS THEREFORE STALE IN A WAY A SUBMITTER MEETS, WHICH "
+                "IS WHAT THE ENTRIES BEFORE THIS ONE WERE NOT. Until this zip is released, "
+                "admission classifies against v4 while config/policy.yaml on main says v5. A "
+                "fifty-dollar run on eight A100s is released by nobody here and refused "
+                "there for having skipped an admin gate that no longer exists; a run over any "
+                "of the four retired routine ceilings is routed to an admin the file no "
+                "longer sends anybody to. The mismatch surfaces as "
+                "approval_environment_mismatch, which names two environments and not the "
+                "release, so it is the hard kind to read."
+                "\n\n"
+                "Every decision record written in the window cites v4, correctly, because v4 "
+                "is the rule that produced it. That is what the version on the record is "
+                "for, and it is the reason the window is survivable rather than the reason "
+                "it is acceptable. Cut the release from main as soon as this merges."
+            ),
+            cleared_by="uv run python tools/release_lambda.py --function validator",
+            builds_to="15c3f1014c6ecfdc107f39d48f740d0905dad43b7e90cfc506ee62702ddd0f54",
+            released="a2f7c751245b8d25b691bb56b280e50c19c569e4f1063e5152f420faf7546ab5",
+            recorded_on=date(2026, 8, 5),
+        ),
+        PendingRelease(
+            function="recorder",
+            reason=(
+                "contracts/policy.py was rewritten by policy v5 and this package imports it "
+                "through the manifest it validates on the way into a lineage record. "
+                "PolicyThresholds keeps one field where it had seven, classify_request takes "
+                "no hourly rate and returns no exception, and the rate ceiling is gone."
+                "\n\n"
+                "Nothing the recorder does moves with any of it. It is handed a Batch state "
+                "change and writes what happened, so it reads no threshold and derives no "
+                "approval class; the only reason this digest moved is that the module is in "
+                "the import tree at all. Every lineage record the deployed bytes would write "
+                "is byte-identical to one this zip writes."
+                "\n\n"
+                "Recorded rather than left to be discovered, because a stale recorder is the "
+                "quiet one: a stale validator refuses a submission and somebody reads the "
+                "refusal, and a stale recorder writes lineage that looks exactly like "
+                "correct lineage into immutable records."
+            ),
+            cleared_by="uv run python tools/release_lambda.py --function recorder",
+            builds_to="756bb23ea9e52b9e9624386f7946b66111286813c981c88983658f4d244c496f",
+            released="46b44ae3bb921fd3a3bf48225e49eda5d1a8e1dda1bff4b61cee84708f7523e7",
+            recorded_on=date(2026, 8, 5),
+        ),
+    )
     return one_record_per_function(releases)
 
 

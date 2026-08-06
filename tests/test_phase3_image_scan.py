@@ -49,7 +49,6 @@ from edullm_platform.contracts.policy import (
     RequestFacts,
     classify_request,
 )
-from tests.policy_support import ROUTINE_RATE
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -759,12 +758,18 @@ def test_an_exception_needs_a_reason_worth_reading() -> None:
         )
 
 
-def test_an_unreviewed_image_classifies_as_something_other_than_routine() -> None:
+def test_an_unreviewed_image_reaches_a_person_and_a_reviewed_one_reaches_nobody() -> None:
     """The fact reaches classification, not just the denial list.
 
-    Mutation: leave image_scan_reviewed out of classify_request. The denial path would
-    still fire, but a caller using classify_request on its own -- which the compile step
-    does to pick an environment -- would route an unreviewed image to the lead gate.
+    A one-dollar single-cell run is released by nobody under policy v5. The same request
+    with unreviewed findings behind it goes to a team lead, which is where the findings are
+    printed. That difference is the whole of what the fact does now.
+
+    Mutation: leave ``image_scan_reviewed`` out of ``classify_request``. The second
+    assertion returns automatic, the run starts with no approver, and nobody reads a
+    CRITICAL finding before the container does. Under v4 the same mutation only moved the
+    run from an admin to a lead; under v5 it removes the reader entirely, which is why this
+    test now pins both rows rather than one.
     """
     payload = {
         "claimed_team": "memory-split",
@@ -780,20 +785,14 @@ def test_an_unreviewed_image_classifies_as_something_other_than_routine() -> Non
         "maximum_attempts": 1,
     }
     thresholds = load_yaml(PROJECT_ROOT / "config" / "policy.yaml", ApprovalPolicy).thresholds
-    # A rate under the ceiling on both calls, so the scan review is the only thing that
-    # differs between them. This test is about the fact, not about the machine.
+
     assert (
-        classify_request(
-            RequestFacts.model_validate(payload), thresholds, hourly_rate_usd=ROUTINE_RATE
-        )
-        is ApprovalClass.ROUTINE
+        classify_request(RequestFacts.model_validate(payload), thresholds)
+        is ApprovalClass.AUTOMATIC
     )
 
     unreviewed = RequestFacts.model_validate({**payload, "image_scan_reviewed": False})
-    assert (
-        classify_request(unreviewed, thresholds, hourly_rate_usd=ROUTINE_RATE)
-        is ApprovalClass.EXCEPTION
-    )
+    assert classify_request(unreviewed, thresholds) is ApprovalClass.ROUTINE
 
 
 # ---------------------------------------------------------------------------------------
@@ -947,19 +946,23 @@ def test_the_shipped_policy_blocks_on_criticals() -> None:
     assert ImageScanSeverity.CRITICAL in shipped_policy().image_scan.blocking_severities
 
 
-def test_the_shipped_policy_sends_an_unreviewed_scan_to_the_admin_gate() -> None:
-    """The gate after v4 softened it: an exception a person can release, not a wall.
+def test_the_shipped_policy_sends_an_unreviewed_scan_to_the_lead_gate() -> None:
+    """The gate after two softenings: a team lead's call, and never nobody's.
 
-    Mutation: drop ``image_scan_reviewed`` from ``classify_request``'s exception test. It
-    came out of ``denied_outright`` on 2026-08-05 and that list is now the only thing left
-    holding the gate up, so a policy that names it nowhere and a classifier that ignores it
-    look identical from the config file. This asks the classifier.
+    v4 took it out of ``denied_outright`` and made it an admin's, and v5 made it a lead's
+    along with everything else a person releases. The list is still the only place the
+    condition is named in the configuration, so a policy that names it nowhere and a
+    classifier that ignores it look identical from the config file. This asks the
+    classifier.
 
-    Denied outright means refusable by nobody, so a wrong answer costs the whole route. It
-    fired twice, both against the owner self-approving, and config/image-exceptions.yaml
-    holds zero exceptions against sixteen reviewed findings, so the review process it was
-    forcing does not exist. What survives is that no lead can release one and the approver
-    is shown the findings by name.
+    Mutation: drop ``image_scan_reviewed`` from ``classify_request``. A one-dollar run is
+    under the bound, so it becomes automatic and reaches the lead gate never rather than
+    the admin gate. Under v4 that mutation cost a level of approver; under v5 it costs the
+    approver, and the findings the section in ``render_approver_context`` prints go to
+    nobody.
+
+    What survives both softenings is that somebody reads the findings before the run starts
+    and can act on what they read. What went is a route where nobody could.
     """
     policy = shipped_policy()
     assert "image_scan_findings_unreviewed" not in policy.denied_outright
@@ -979,12 +982,10 @@ def test_the_shipped_policy_sends_an_unreviewed_scan_to_the_admin_gate() -> None
             "maximum_attempts": 1,
         }
     )
-    assert (
-        classify_request(unreviewed, policy.thresholds, hourly_rate_usd=ROUTINE_RATE)
-        is ApprovalClass.EXCEPTION
-    )
-    assert ApprovalEnvironment.for_approval_class(ApprovalClass.EXCEPTION) is (
-        ApprovalEnvironment.ADMIN
+    assert unreviewed.estimated_cost_usd < policy.thresholds.automatic_below_cost_usd
+    assert classify_request(unreviewed, policy.thresholds) is ApprovalClass.ROUTINE
+    assert ApprovalEnvironment.for_approval_class(ApprovalClass.ROUTINE) is (
+        ApprovalEnvironment.LEAD
     )
 
 

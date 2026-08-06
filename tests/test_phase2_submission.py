@@ -24,6 +24,14 @@ from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog, WorkloadProfile
 from edullm_platform.errors import SubmissionRefusedError
 from edullm_platform.image_resolution import PublishedImage
+from edullm_platform.run_history import (
+    NO_HISTORY_PACKAGED,
+    NOTHING_LIKE_THIS_YET,
+    RUNGS,
+    Cohort,
+    RunHistory,
+    shape_of,
+)
 from edullm_platform.submission import (
     CompiledSubmission,
     SubmissionInputs,
@@ -109,52 +117,20 @@ REQUIRED_CONTEXT_FIELDS = (
 )
 
 #: One exception per routine ceiling, each over exactly the one it names.
-EXCEEDED_CEILINGS: tuple[tuple[str, dict[str, object], str], ...] = (
-    (
-        "cost",
-        {
-            "maximum_runtime_hours": "12",
-            "fanout_size": 10,
-            "fanout_index_parameter": "seed",
-        },
-        # Doubled from $680.64 without the form changing, because the workload's attempt
-        # bound went from one to two and worst-case cost is per attempt.
-        "worst-case cost $1361.28 exceeds the routine ceiling of",
-    ),
-    (
-        # Twenty-five, because routine_maximum_runtime_hours went from 12 to 24 and thirteen
-        # became an ordinary routine submission. One hour over is still what keeps this row
-        # about runtime: at $5.672 an hour across two attempts, twenty-five hours is $283.60
-        # and leaves the cost ceiling unreached.
-        "runtime",
-        {"maximum_runtime_hours": "25"},
-        "runtime bound of 25h exceeds the routine ceiling of 24h",
-    ),
-    (
-        "attempts",
-        {"maximum_attempts": 3},
-        "attempt bound of 3 exceeds the routine ceiling of 2",
-    ),
-    (
-        "fan-out size",
-        # The half hour is what keeps this row about fan-out size. Sixty-five cells at the
-        # workload's own twenty-four hours and two attempts is $17,697, so the summary would
-        # name the cost ceiling as well and the row would stop isolating the one it is for.
-        {
-            "maximum_runtime_hours": "0.5",
-            "fanout_size": 65,
-            "fanout_index_parameter": "shard",
-        },
-        "fan-out size of 65 exceeds the routine ceiling of 64",
-    ),
-    # A "fan-out parallelism" row sat here and went with the form field. No submission can
-    # raise fanout_parallelism now that FanOut.max_parallel is gone, so the summary line
-    # for that ceiling is unreachable from a form. numeric_bound_violations still writes it
-    # and tests/test_policy.py still covers it from RequestFacts directly, because the
-    # threshold it reads is still in config/policy.yaml.
-)
+# THE EXCEEDED-CEILINGS TABLE THAT STOOD HERE IS GONE WITH THE CEILINGS. It held one row
+# per ``routine_maximum_`` bound and the sentence the approver page printed when a
+# submission crossed it. Policy v5 retired all four bounds and the exception class with
+# them, so there is no ceiling to cross, no section to print, and nothing for a row to
+# isolate. What replaced the section is the run-history block, which is asserted below.
 
-CEILING_IDS = [name for name, _form, _phrase in EXCEEDED_CEILINGS]
+#: A submission a team lead reads under v5, which means a fan-out or five hundred dollars.
+#: Ten cells of twelve hours is $1,361.28 and is both, which is what a large submission
+#: actually looks like; the class is the same either way.
+A_SUBMISSION_A_LEAD_SEES: dict[str, object] = {
+    "maximum_runtime_hours": "12",
+    "fanout_size": 10,
+    "fanout_index_parameter": "seed",
+}
 
 
 def load_organization_inventory() -> OrganizationInventory:
@@ -463,17 +439,6 @@ def context_fragments(
         ),
         "manifest digest": submission.manifest_sha256,
     }
-
-
-def exception_bullets(summary: str) -> list[str]:
-    heading = "## Why this is an exception"
-    assert heading in summary
-    after_heading = summary.split(heading, maxsplit=1)[1]
-    return [
-        line.removeprefix("- ")
-        for line in after_heading.splitlines()
-        if line.startswith("- ")
-    ]
 
 
 @pytest.mark.parametrize("declared", PARTIAL_FANOUTS, ids=[",".join(f) for f in PARTIAL_FANOUTS])
@@ -970,7 +935,10 @@ def test_a_refusal_that_policy_would_only_have_classified_still_happens_at_compi
     )
     classified = compile_payload(cpu_payload(dataset_release=UNREGISTERED_DATASET), policy=lenient)
 
-    assert classified.approval_class is ApprovalClass.EXCEPTION
+    # ROUTINE UNDER v5 AND EXCEPTION UNDER v4, AND WHAT MATTERS IS THAT IT IS NEITHER
+    # AUTOMATIC NOR ACCEPTED. An unresolvable input is refused at compile time whatever the
+    # class says; the class is only what the record would have carried.
+    assert classified.approval_class is ApprovalClass.ROUTINE
     assert classified.facts.dataset_registered is False
 
     with pytest.raises(SubmissionRefusedError):
@@ -1006,14 +974,14 @@ def test_the_order_of_the_form_fields_does_not_change_the_manifest_digest() -> N
 @pytest.mark.parametrize(
     ("payload", "approval_class", "environment"),
     [
-        (cpu_payload(), ApprovalClass.ROUTINE, ApprovalEnvironment.LEAD),
+        (cpu_payload(), ApprovalClass.AUTOMATIC, ApprovalEnvironment.AUTOMATIC),
         (
-            olmo_payload(maximum_runtime_hours="25"),
-            ApprovalClass.EXCEPTION,
-            ApprovalEnvironment.ADMIN,
+            olmo_payload(**A_SUBMISSION_A_LEAD_SEES),
+            ApprovalClass.ROUTINE,
+            ApprovalEnvironment.LEAD,
         ),
     ],
-    ids=["routine", "exception"],
+    ids=["automatic", "routine"],
 )
 def test_the_compiled_submission_names_the_gate_its_class_demands(
     payload: dict[str, object],
@@ -1069,125 +1037,120 @@ def test_the_summary_states_the_hash_that_will_be_rechecked_inside_aws() -> None
     assert "Recomputed inside AWS" in summary
 
 
-def test_a_routine_summary_carries_no_exception_section() -> None:
+def test_no_summary_carries_an_exception_section_any_more() -> None:
+    """The section went with the class, and both halves of that are worth pinning.
+
+    Mutation: return ``ApprovalClass.EXCEPTION`` from ``classify_request`` for anything. The
+    heading assertion still passes, because the section was deleted along with the class, so
+    the class assertion is what catches it. The pair is here rather than one of them.
+    """
     summary = render(compile_payload(cpu_payload()))
 
     assert "## Why this is an exception" not in summary
-    assert "**ROUTINE**" in summary
+    assert "**AUTOMATIC**" in summary
+    assert "run-approval-automatic" in summary
 
 
-@pytest.mark.parametrize(("ceiling", "form", "phrase"), EXCEEDED_CEILINGS, ids=CEILING_IDS)
-def test_an_exception_says_in_words_which_routine_ceiling_it_exceeded(
-    ceiling: str,
-    form: dict[str, object],
-    phrase: str,
-) -> None:
-    compiled = compile_payload(olmo_payload(**form))
-    summary = render(compiled)
-    bullets = exception_bullets(summary)
+def test_a_summary_a_lead_reads_names_the_lead_gate_and_the_same_sections() -> None:
+    """The other class, and it carries everything the automatic one does.
 
-    assert compiled.approval_class is ApprovalClass.EXCEPTION
-    assert len(bullets) == 1, (
-        f"{ceiling} was meant to be the only ceiling this submission exceeded; got {bullets}"
-    )
-    assert phrase in bullets[0]
-
-
-def test_an_exception_over_two_ceilings_names_both_of_them() -> None:
-    # Twenty-five hours and three attempts is $425.40 on gpu-4xa10g, so the cost ceiling is
-    # still unreached and exactly two bullets are expected rather than three.
-    compiled = compile_payload(olmo_payload(maximum_runtime_hours="25", maximum_attempts=3))
-    bullets = exception_bullets(render(compiled))
-
-    assert len(bullets) == 2
-    assert any("runtime bound of 25h" in bullet for bullet in bullets)
-    assert any("attempt bound of 3" in bullet for bullet in bullets)
-
-
-#: An eight-rank command, for the one payload below that runs on an eight-device machine.
-#: ``OLMO_COMMAND`` asks for four because ``OLMO_PROFILE`` has four, and
-#: ``require_a_process_for_every_device`` refuses a rank count that disagrees with the shape.
-OLMO_COMMAND_ON_EIGHT_DEVICES = (
-    "bash",
-    "-lc",
-    (
-        "python -m torch.distributed.run --nproc-per-node=8 --standalone "
-        '-m olmo_core.train --save-folder "$EDULLM_CHECKPOINT_DIR"'
-    ),
-)
-
-
-def test_an_exception_on_the_hourly_rate_alone_says_so_rather_than_blaming_registration() -> None:
-    """Mutation: leave the rate out of ``exceeded_routine_bounds`` and let it fall through.
-
-    That is what this did until the bound was added, and the sentence it fell through to
-    was not merely unhelpful but false: it told the approver that "one of its inputs is not
-    registered", which sends them looking for a registration problem that does not exist.
-
-    ``gpu-8xa100`` is the case that makes this matter rather than an invented one. Every
-    dispatch on it is above ``EXCEPTION_RATE_CEILING_USD_PER_HOUR``, so every one routes to
-    ``run-approval-admin`` and lands on the same person, and a reason section that is wrong
-    every time is one that stops being read.
-
-    Twelve hours on one attempt is chosen so the rate is the *only* thing this crosses:
-    $263.49 is well under the $500 routine cost ceiling, twelve hours is under
-    twenty-four, one attempt is under two, and there is no fan-out. So a single bullet is
-    asserted as well as its text -- a second bullet would mean the arm stopped isolating
-    the bound it exists for.
+    Mutation: render the class off the gate rather than off the submission. Both this and
+    the test above would have to be wrong together, which is why they assert the class and
+    the environment name rather than one of the two.
     """
-    compiled = compile_payload(
-        olmo_payload(
-            compute_profile="gpu-8xa100",
-            command=list(OLMO_COMMAND_ON_EIGHT_DEVICES),
-            maximum_runtime_hours="12",
-            maximum_attempts=1,
-        )
-    )
-    bullets = exception_bullets(render(compiled))
-
-    assert compiled.approval_class is ApprovalClass.EXCEPTION
-    assert compiled.cost.maximum_compute_cost_usd == Decimal("263.49")
-    assert len(bullets) == 1, f"the rate was meant to be the only bound crossed; got {bullets}"
-    assert bullets == [
-        (
-            "hourly rate of $21.9576 exceeds the rate ceiling of $20, whatever the run's "
-            "total cost is"
-        )
-    ]
-    assert "not registered" not in bullets[0]
-
-
-def test_an_exception_no_ceiling_explains_says_that_in_words_too() -> None:
-    lenient = load_approval_policy().model_copy(
-        update={"denied_outright": ("mutable_image_reference",)}
-    )
-    compiled = compile_payload(cpu_payload(dataset_release=UNREGISTERED_DATASET), policy=lenient)
-    bullets = exception_bullets(render(compiled, policy=lenient))
-
-    assert compiled.approval_class is ApprovalClass.EXCEPTION
-    assert bullets == [
-        (
-            "No routine ceiling is exceeded; the submission is an exception because one of "
-            "its inputs is not registered."
-        )
-    ]
-
-
-@pytest.mark.parametrize(("ceiling", "form", "phrase"), EXCEEDED_CEILINGS, ids=CEILING_IDS)
-def test_an_exception_summary_still_carries_everything_a_routine_one_does(
-    ceiling: str,
-    form: dict[str, object],
-    phrase: str,
-) -> None:
     policy = load_approval_policy()
-    compiled = compile_payload(olmo_payload(**form))
+    compiled = compile_payload(olmo_payload(**A_SUBMISSION_A_LEAD_SEES))
     summary = render(compiled, policy=policy)
     fragments = context_fragments(compiled, policy=policy)
 
-    assert phrase in summary
-    assert "**EXCEPTION**" in summary
+    assert compiled.approval_class is ApprovalClass.ROUTINE
+    assert "**ROUTINE**" in summary
+    assert "run-approval-lead" in summary
+    assert "## Why this is an exception" not in summary
     for field in REQUIRED_CONTEXT_FIELDS:
-        assert fragments[field] in summary, f"{ceiling} summary omitted {field}"
+        assert fragments[field] in summary, f"the summary a lead reads omitted {field}"
+
+
+def test_the_summary_prints_what_runs_of_this_shape_have_taken_beside_the_ceiling() -> None:
+    """The block that replaced the exception section, and the order of the two.
+
+    The ceiling comes first because it is what is being authorised and what routed the
+    request. The measurement comes second because it is what the ceiling overstates. An
+    approver reading only the first screen has to meet the number they are approving before
+    the number that makes it look large.
+
+    Mutation: pass no ``run_history`` and drop the section when there is none. The heading
+    assertion fails, and an approver would be unable to tell a platform that has never run
+    this shape from a tool that does not measure.
+    """
+    compiled = compile_payload(cpu_payload())
+    summary = render(compiled)
+
+    assert "## Worst-case cost" in summary
+    assert "## What runs of this shape have taken" in summary
+    assert summary.index("## Worst-case cost") < summary.index(
+        "## What runs of this shape have taken"
+    )
+    assert "It decides nothing" in summary
+
+
+def test_the_summary_says_plainly_when_no_history_is_packaged() -> None:
+    """The honest-silence half, which is the case every render in this module takes.
+
+    Nothing here passes a reading, so every summary says there is none rather than quoting
+    a duration. The words are read off ``run_history`` rather than restated, so a reworded
+    sentence moves in one place.
+
+    Mutation: have ``history_for`` return an empty ``RunHistory`` when it is handed
+    ``None``. This says no run of this shape has succeeded yet, which is a claim about the
+    platform made by an install that was never told anything, and the assertion catches it
+    because the two sentences are different strings.
+    """
+    summary = render(compile_payload(cpu_payload()))
+
+    assert NO_HISTORY_PACKAGED in summary
+    assert NOTHING_LIKE_THIS_YET not in summary
+
+
+def test_a_packaged_history_reaches_the_approver_with_its_counts_in_words() -> None:
+    """The other half, with a reading in hand.
+
+    Mutation: render the median without the count beside it. The count assertion fails, and
+    an approver would read "a median of two hours" without being able to tell whether it is
+    over three runs or thirty.
+    """
+    compiled = compile_payload(cpu_payload())
+    shape = shape_of(compiled.manifest)
+    history = RunHistory(
+        built_at=datetime(2026, 8, 5, 12, 0, tzinfo=UTC),
+        runs_read=9,
+        runs_with_a_duration=4,
+        cohorts=(
+            Cohort(
+                rung=0,
+                key=tuple(shape[field] for field in RUNGS[0][0]),
+                succeeded=4,
+                failed=2,
+                fastest_seconds=Decimal(600),
+                median_seconds=Decimal(5400),
+                slowest_seconds=Decimal(9000),
+            ),
+        ),
+    )
+
+    summary = render_approver_context(
+        compiled,
+        submitter=SUBMITTER,
+        policy=load_approval_policy(),
+        repository_url=REPOSITORY_URL,
+        inventory=load_organization_inventory(),
+        run_history=history,
+    )
+
+    assert "4 succeeded runs" in summary
+    assert "a median of 1h30m" in summary
+    assert "between 10m and 2h30m" in summary
+    assert "2 more runs failed and are not in that figure." in summary
 
 
 # ---------------------------------------------------------------------------------------
