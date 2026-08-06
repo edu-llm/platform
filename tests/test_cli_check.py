@@ -512,6 +512,72 @@ def test_a_single_attempt_check_carries_the_retries_key_holding_nothing(
     assert document["retries"] is None
 
 
+def test_the_submitter_is_told_what_the_attempt_factor_does_not_establish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: say it on the approver page and in ``--json`` only, which is what shipped.
+
+    #371 put the finding where a lead reads and where an agent reads, and left the terminal
+    silent. The submitter is the one who chose the count and the only one who can lower it
+    for free -- a lead reading it has already been asked for an approval, and lowering the
+    count there means declining a run and waiting for the next one.
+
+    Under the arithmetic that multiplies by attempts, beside the ``--hours`` lever, because
+    the reader has just seen the factor. Short on purpose: the paragraph a lead gets surveys
+    what the platform checked and why it does not enforce, and a submitter looking at their
+    own spec needs the fact and the flag.
+    """
+    root, runner = checkout(tmp_path, workload="olmo-core-train")
+
+    code, out, err = invoke(
+        ["check", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+    said = " ".join(out.split())
+
+    assert code == EXIT_OK, out + err
+    assert "x 2 attempts x" in said
+    assert "Lower --attempts to 1 if this program does not resume." in said
+    assert "Nothing here checks that it does" in said
+    # Under the worst case rather than after the durations, so the qualification and the
+    # number it qualifies are read together.
+    assert out.index("--attempts") < out.index("what it has taken")
+    # Not the approver's paragraph reprinted. Its survey of what the two checks do and do
+    # not read is what a submitter would skip, and skipping it is skipping the flag.
+    assert "EDULLM_CHECKPOINT_DIR" not in said
+    assert "registered repositories" not in said
+
+
+def test_a_one_attempt_submission_is_told_nothing_about_a_second_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: print the line on every priced submission.
+
+    There is no second attempt to lower and no ``--attempts`` to pass, so the sentence would
+    be advice about a run nobody submitted. The placement warning settled the same question
+    the same way: a line that appears over the submissions it does not describe is one
+    submitters learn to read past, which costs it its value on the ones it does.
+    """
+    root, runner = checkout(
+        tmp_path, workload="olmo-core-check", command="python -m olmo_core.internal.checks"
+    )
+
+    code, out, err = invoke(
+        ["check", "--dataset", "none", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "x 1 attempt x" in " ".join(out.split())
+    assert "--attempts" not in out
+    # The lever that is on every priced submission stays on this one.
+    assert "Lowering --hours" in out
+
+
 def test_the_document_says_nothing_rather_than_nothing_known_for_a_shape_that_places(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

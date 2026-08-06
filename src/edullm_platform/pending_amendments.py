@@ -985,7 +985,52 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # to move, because what memory an H100 carries is a fact about silicon. What would move it
     # is a new instance family being priced, which is a new row and a release for the shape it
     # prices anyway.
+    #
+    # A TWENTY-FIRST, AND IT OPENS A NEW VALIDATOR RECORD RATHER THAN EXTENDING ONE, WHICH IS
+    # THE ONE THING THIS ENTRY HAD TO BE REWRITTEN FOR. It was written against a tree where
+    # the policy v6 validator record was still open, and it read as a second cause folded
+    # into that record. That release was cut before this merged, so there is no record left
+    # to extend: infra/admission-validator-release.yaml now names 237cc46703bc, the tree
+    # built exactly that, and the window that entry described is closed. Re-applying the old
+    # side wholesale would have resurrected a window somebody has already shut and quoted a
+    # `released` digest the account no longer carries, so what follows is a new record
+    # measured against the newly deployed bytes.
+    #
+    # WHAT REOPENS IT. maximum_attempts on open-instruct-scored-rewards-train drops from 2
+    # to 1 -- grpo_fast.py:477 gates its checkpoint load on os.path.exists against the s3://
+    # URI this platform hands it, so a second attempt restarted from step 0 at full price.
+    # config/workload-catalog.yaml is in ADMISSION_CONFIG and in NOTIFIER_CONFIG and in
+    # neither of the other two builders, so it reaches exactly the validator and the
+    # notifier. The recorder's entry below is untouched by it and its digest is the same
+    # either way, and the notifier's is extended a second time rather than joined by another
+    # record, for the reason the paragraph above already gives.
+    #
+    # WHAT THE WINDOW COSTS, AND IT IS BEHAVIOUR RATHER THAN BYTES, WHICH ONLY THE CEILING'S
+    # ENTRY HAS BEEN BEFORE. That one was urgent because a lead's release was refused inside
+    # it. This one is not urgent and it is not nothing either: the deployed copy prices and
+    # provisions that profile for two attempts and the notifier quotes them, which is money
+    # a submission could spend rather than a submission that cannot run. It costs nothing
+    # today because config/run-history.json records no run of open-instruct-scored-rewards
+    # under either of its profiles.
     releases: tuple[PendingRelease, ...] = (
+        PendingRelease(
+            function="validator",
+            reason=(
+                "config/workload-catalog.yaml, which build_admission_lambda packages "
+                "verbatim, drops maximum_attempts on open-instruct-scored-rewards-train "
+                "from 2 to 1, so until this is released the deployed copy prices and "
+                "provisions that profile for two attempts of a trainer that restarts from "
+                "step 0. No run of that repository is recorded under either of its profiles"
+            ),
+            cleared_by=(
+                "uv run python tools/release_lambda.py --function validator, from main, "
+                "then the version id and digest into infra/admission-validator-release.yaml "
+                "and infra/admission-state-machine.yaml in the same commit as deleting this"
+            ),
+            builds_to="584b52714be7e90beb8eb28b7dc260e1684686b5db81df086bdf036aeacd0ca7",
+            released="237cc46703bc9145453d6ee6e5ea01feb0d9430f2107d6fded381f83f5988ed7",
+            recorded_on=date(2026, 8, 6),
+        ),
         PendingRelease(
             function="recorder",
             reason=(
@@ -1016,14 +1061,19 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "each, 183,104 MiB total` -- which puts config/accelerators.yaml and "
                 "edullm_platform/accelerators.py in this package for the first time. That "
                 "half does change what the account sends, and until the release is cut it "
-                "sends the same five lines without the clause"
+                "sends the same five lines without the clause. Extended again by a third: "
+                "config/workload-catalog.yaml is also in NOTIFIER_CONFIG, and "
+                "open-instruct-scored-rewards-train drops there from 2 attempts to 1, so an "
+                "approval request for that profile quotes two attempts and twice the worst "
+                "case this tree would. None has been sent, and that profile has no recorded "
+                "run"
             ),
             cleared_by=(
                 "uv run python tools/release_lambda.py --function notifier, from main, then "
                 "the version id and digest into infra/notifier-release.yaml and "
                 "infra/notifications.yaml in the same commit as deleting this"
             ),
-            builds_to="336b77ac45bd39734f05f9e4a9ce0feefadec7e7338fcd560dbd595843d28c48",
+            builds_to="6ddb40ced068f75061c07b3136a867028c67747e6af2cf9791a450ee9accf247",
             released="d41512d0174986aff63c6e6419bf42d5668db9734dd11f694f30ea627aa1d13b",
             recorded_on=date(2026, 8, 6),
         ),
