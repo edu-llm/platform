@@ -114,12 +114,18 @@ def unexpected(capture: CommittedRoleCapture) -> str:
 
 
 def test_a_pending_amendment_must_say_why_and_what_ends_it() -> None:
-    # The two fields that distinguish a record somebody is waiting on from an exemption.
-    # Checked here rather than trusted, because an entry with neither reads identically
-    # to one with both from every consumer's side.
+    # What distinguishes a record somebody is waiting on from an exemption. Checked here
+    # rather than trusted, because an entry with neither reads identically to one with both
+    # from every consumer's side.
+    #
+    # THIS CASE USED TO ASSERT `amendment.cleared_by.strip()` AND THAT LINE IS WHY THE
+    # FIELD IS GONE. It passed for every non-empty string and therefore for every wrong
+    # one, and on 2026-08-05 a live record named the stack of three unrelated roles while
+    # this stayed green. What ends a record is derived now, so there is nothing here to
+    # assert about its spelling; `tests/test_pending_amendment_stacks.py` opens the template
+    # the derived stack is deployed from and looks for the role in it.
     for amendment in PENDING_AMENDMENTS:
         assert amendment.reason.strip()
-        assert amendment.cleared_by.strip()
         assert amendment.findings
         assert amendment.role_name in declared_role_templates()
 
@@ -136,8 +142,11 @@ def test_a_pending_amendment_must_say_why_and_what_ends_it() -> None:
             "does not say reason",
         ),
         (
-            {"cleared_by": ""},
-            "does not say cleared by",
+            # Where an empty `cleared_by` used to be. The field it replaced could be blank
+            # or could be wrong, and only the first was refused; this one cannot be either,
+            # so what is worth refusing is a role the derivation cannot start from.
+            {"role_name": "sbsandbox-intern-edullm-not-a-role"},
+            "no committed template declares that role",
         ),
         (
             {
@@ -152,7 +161,7 @@ def test_a_pending_amendment_must_say_why_and_what_ends_it() -> None:
             "not narrower",
         ),
     ],
-    ids=["no findings", "no reason", "no trigger", "the account is ahead"],
+    ids=["no findings", "no reason", "nothing declares the role", "the account is ahead"],
 )
 def test_a_pending_amendment_a_reader_could_not_act_on_is_refused(
     broken: dict[str, Any],
@@ -164,7 +173,6 @@ def test_a_pending_amendment_a_reader_could_not_act_on_is_refused(
     fields: dict[str, Any] = {
         "role_name": DEPLOYER_ROLE,
         "reason": "a reason",
-        "cleared_by": "a trigger",
         "findings": (
             RoleDriftFinding(
                 direction=DriftDirection.NARROWER,
@@ -191,7 +199,6 @@ def test_a_pending_amendment_explains_only_the_exact_findings_it_records() -> No
     amendment = PendingAmendment(
         role_name=DEPLOYER_ROLE,
         reason="a template amendment that has not been deployed yet",
-        cleared_by="deploying it and re-capturing",
         findings=(
             RoleDriftFinding(
                 direction=DriftDirection.NARROWER,
@@ -469,7 +476,11 @@ def test_a_capture_matching_a_pending_amendment_says_what_would_end_it(
         amendment = pending_for(capture.role_name)
         assert amendment is not None
         assert amendment.reason in capture.detail
+        # The derived stack, and the sentence built around it. A reader who acts on this
+        # verdict applies what this line names, so it has to be the derived name rather
+        # than anything the record's own prose happens to mention.
         assert amendment.cleared_by in capture.detail
+        assert amendment.describe_clearing() in capture.detail
         assert not capture.holds
 
 

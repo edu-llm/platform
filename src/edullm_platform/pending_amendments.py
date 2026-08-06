@@ -47,6 +47,17 @@ equality. So the record fails the moment the account stops differing in exactly 
 in either direction. It cannot outlive the deploy it is waiting for, and it cannot quietly
 absorb a second difference that arrives while it is open.
 
+**What ends it is derived and not typed, since 2026-08-06.** ``cleared_by`` was a string
+somebody wrote, and a string nothing compares is prose however much it reads like a control.
+It was wrong in a live record and the audit that followed found it wrong in three of the
+five: two Phase 3 records and the admission states record each named a deploy workflow, and
+no deploy workflow in this repository applies a stack under ``infra/iam/``. All three would
+have sent a reader to watch a merge that could not have cleared them. The field is gone.
+:attr:`~PendingAmendment.cleared_by` is now a property, resolved role to template to stack
+through :func:`declared_role_templates` and
+:mod:`edullm_platform.stack_templates`, and ``tests/test_pending_amendment_stacks.py``
+holds the resolution to the templates themselves.
+
 **Every finding must be ``NARROWER``.** An undeployed template change can only leave the
 account behind the template. A deployed role that grants something its template does not
 is a security finding, and nothing pending explains one.
@@ -68,6 +79,11 @@ from edullm_platform.role_drift import (
     RESEARCHER_ROLE_TEMPLATES,
     DriftDirection,
     RoleDriftFinding,
+)
+from edullm_platform.stack_templates import (
+    UnmappedTemplateError,
+    applied_from_a_laptop,
+    stack_for_template,
 )
 
 __all__ = [
@@ -123,11 +139,35 @@ def declared_role_templates() -> dict[str, str]:
 
 @dataclass(frozen=True)
 class PendingAmendment:
-    """A template amendment that is committed and has not been applied to the account."""
+    """A template amendment that is committed and has not been applied to the account.
+
+    **Three fields, and the fourth was deleted because it was a fact typed twice.** A
+    record used to carry a ``cleared_by`` string naming the stack whose application ends
+    it. Nothing compared that string to anything, so it was prose wearing the clothes of a
+    control, and on 2026-08-05 it was wrong in a live record: an amendment to
+    ``sbsandbox-intern-edullm-lifecycle-lambda`` named
+    ``sbsandbox-intern-edullm-phase3-batch-iam``, which is the stack for three entirely
+    different roles. Somebody following it would have applied a template that never
+    mentions the grant, watched the apply succeed, re-taken the capture, found the finding
+    still there, and had no way to tell a failed deploy from a lying record.
+
+    The stack is now derived rather than typed. A record names a role, exactly one
+    committed template declares that role, and exactly one stack is applied from that
+    template, so :attr:`cleared_by` is a lookup through
+    :func:`declared_role_templates` and
+    :func:`~edullm_platform.stack_templates.stack_for_template`. Both steps are total or
+    the record is refused at construction. There is no longer a spelling of this record
+    that names the wrong stack, because there is no longer a spelling of it that names a
+    stack at all.
+
+    What could not be derived stays in :attr:`reason`, which is honestly uncompared prose
+    and always was. The follow-up capture, what breaks while the record stands, a bucket
+    flag one oversized template needs: none of that is a fact this repository holds
+    anywhere else, so deriving it would mean inventing it.
+    """
 
     role_name: str
     reason: str
-    cleared_by: str
     findings: tuple[RoleDriftFinding, ...]
 
     def __post_init__(self) -> None:
@@ -136,9 +176,13 @@ class PendingAmendment:
                 "records no findings; a pending amendment that expects no difference is "
                 "a record with nothing to clear"
             )
-        for name in ("reason", "cleared_by"):
-            if not getattr(self, name).strip():
-                raise self._fail(f"does not say {name.replace('_', ' ')}")
+        if not self.reason.strip():
+            raise self._fail("does not say reason")
+        # THE DERIVATION IS CHECKED HERE RATHER THAN WHERE IT IS READ, because a record
+        # whose chain does not resolve is a record nobody can act on, and the place to
+        # refuse it is the place it is written. Reading `cleared_by` for its side effect
+        # rather than its value: it raises unless both steps land.
+        _ = self.cleared_by
         ahead = [
             finding for finding in self.findings if finding.direction is not DriftDirection.NARROWER
         ]
@@ -153,6 +197,67 @@ class PendingAmendment:
 
     def _fail(self, problem: str) -> PendingAmendmentError:
         return PendingAmendmentError(f"pending amendment for {self.role_name}: {problem}")
+
+    @property
+    def template(self) -> str:
+        """The one committed template that declares this role.
+
+        Refused rather than answered for a role no registry declares, and the refusal is
+        the one :func:`declared_role_templates` was written for: nothing would ever compare
+        such a role, so nothing would ever report the findings the record is waiting to
+        stop seeing, so the record could never clear.
+        """
+        try:
+            return declared_role_templates()[self.role_name]
+        except KeyError:
+            raise self._fail(
+                "no committed template declares that role, so nothing here will ever "
+                "compare it and the record would never clear"
+            ) from None
+
+    @property
+    def cleared_by(self) -> str:
+        """The stack whose application ends this record.
+
+        Derived, and the two steps are separate lookups rather than one table, because they
+        are separately true: which template declares a role is a fact about the role
+        registries, and which stack applies a template is a fact about how this repository
+        deploys. Something that widened one without the other would break here rather than
+        answer a plausible wrong name.
+        """
+        try:
+            return stack_for_template(self.template)
+        except UnmappedTemplateError as error:
+            raise self._fail(
+                f"{self.template} declares the role and no stack in "
+                f"edullm_platform.stack_templates is applied from it, so there is no apply "
+                f"that would clear this record. {error}"
+            ) from None
+
+    @property
+    def needs_a_laptop(self) -> bool:
+        """Whether ending this takes a person with an SSO session rather than a merge.
+
+        Derived too, and it is the half three records got wrong before any of this was
+        derived. Each named one of the three deploy workflows as the thing that would clear
+        it. None of those workflows applies a single stack under ``infra/iam/``, because the
+        deployer role holds no ``iam:CreateRole``, so all three described a merge that could
+        not have ended them.
+        """
+        return applied_from_a_laptop(self.cleared_by)
+
+    def describe_clearing(self) -> str:
+        """What ends this record, in a sentence a reader can act on without looking it up."""
+        how = (
+            "from a laptop with an SSO session, per infra/README.md"
+            if self.needs_a_laptop
+            else "by the workflow that deploys it"
+        )
+        return (
+            f"Apply {self.cleared_by} {how}, from {self.template}, which is the one "
+            f"committed template that declares {self.role_name}. Then re-take the capture "
+            "for this role and delete this record."
+        )
 
     def explains(self, findings: Sequence[RoleDriftFinding]) -> bool:
         """Whether these are exactly the differences this record is waiting on.
@@ -266,14 +371,9 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
     # from a run that will never contain the stack. Where the role lives in an IAM stack,
     # say the apply and say it is a laptop one.
     amendments: tuple[PendingAmendment, ...] = ()
-    declared = declared_role_templates()
-    for amendment in amendments:
-        if amendment.role_name not in declared:
-            raise PendingAmendmentError(
-                f"pending amendment for {amendment.role_name}: no committed template "
-                "declares that role, so nothing here will ever compare it and the record "
-                "would never clear"
-            )
+    # The role-is-declared check used to be a loop here. It is in ``__post_init__`` now,
+    # because the same lookup is the first step of deriving ``cleared_by`` and two places
+    # asking the same question is how the answers part company.
     names = [amendment.role_name for amendment in amendments]
     if len(set(names)) != len(names):
         raise PendingAmendmentError(f"one role may carry one pending amendment; got {names}")

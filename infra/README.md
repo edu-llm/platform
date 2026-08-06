@@ -170,6 +170,39 @@ suggest preferring managed policies for reuse and auditability, and every templa
 boundary. If a reviewer raises it, the answer is not "we prefer inline" — it is that a
 managed policy here is a one-way door.
 
+## A wildcard in a resource path matches a slash
+
+`*` in an IAM resource ARN matches any character, and a slash is any character. So a
+resource path written to look like a fixed number of segments does not constrain the number
+of segments at all. This is documented AWS behaviour rather than a surprise, and it still
+surprises people, because a path with stars in it reads like a glob and a shell glob stops at
+a slash.
+
+The recorder's grant in `infra/iam/lifecycle-lambda-role.yaml` is the worked example.
+
+```
+arn:aws:s3:::sbsandbox-intern-edullm-outputs/teams/*/runs/*/metrics.json
+```
+
+That reads as one team, one run, one file. It allows
+`teams/a/runs/b/nested/deeper/metrics.json` and `teams/a/b/c/runs/d/metrics.json` as
+readily as `teams/a/runs/b/metrics.json`. The only constraints are the `teams/` at the
+front, a `/runs/` somewhere after it, and the filename on the end. That grant is acceptable
+as it stands, because nothing but an eval run writes a `metrics.json` under that bucket, so
+the extra reach is over keys nobody creates. It is recorded here because acceptable and
+narrow are different claims, and the statement makes the second one by accident.
+
+Two things follow for anybody reviewing an IAM statement here.
+
+Read a starred path as a prefix, an infix and a suffix rather than as segments. Ask what the
+widest key matching it would be, not what the intended key is. Where the segment count is
+the whole of the protection, a wildcard cannot supply it and a `Condition` has to: the
+`s3:prefix` conditions in this repository narrow a listing the same way, and they have the
+same property.
+
+Say so in the comment when a statement is wider than it looks. The alternative is that the
+next reviewer re-derives it, or does not.
+
 ## Verifying after each deploy
 
 CloudFormation reporting `CREATE_COMPLETE` says the API calls succeeded. It does not say

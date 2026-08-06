@@ -192,10 +192,13 @@ def _drift_detail(report: RoleDriftReport) -> str:
 
 
 def _pending_detail(report: RoleDriftReport, pending: PendingAmendment) -> str:
+    # `describe_clearing` rather than the record's own prose, because the stack it names is
+    # derived from the role and the template rather than typed. A reader who acts on this
+    # line is applying the stack it gives, so the line has to be the derived one.
     return (
         f"{_drift_detail(report)}. That is exactly the difference recorded as pending for "
         f"{report.role_name}, so it is expected rather than unexplained — and it is still "
-        f"not agreement. Why: {pending.reason} Cleared by: {pending.cleared_by}"
+        f"not agreement. Why: {pending.reason} Cleared by: {pending.describe_clearing()}"
     )
 
 
