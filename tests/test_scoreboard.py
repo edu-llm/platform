@@ -1,8 +1,8 @@
 """The board that replaced a hand-maintained table, and the four readings it must get right.
 
-`docs-frank/reference/status.md` doubled in one evening because ten agents each appended a
-number and nobody removed one. The fix is that the numbers are computed rather than written, so
-what these tests hold is the two properties that makes true. A figure the tool could not compute
+The status document this board sits on top of doubled in one evening because ten agents each
+appended a number and nobody removed one. The fix is that the numbers are computed rather than
+written, so what these tests hold is the two properties that makes true. A figure the tool could not compute
 must print as unread rather than as zero, and a plan's own note about a task must be read from
 the one place a reader looks rather than found anywhere in the note.
 """

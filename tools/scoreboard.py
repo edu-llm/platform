@@ -1,10 +1,10 @@
 """The numbers a person watches move, each one derived and each one carrying its command.
 
-WHY THIS IS A TOOL AND NOT A TABLE SOMEBODY MAINTAINS. `docs-frank/reference/status.md` grew
-from about eight hundred lines to two thousand in one evening because ten agents each appended
-their own reading and nobody removed anything, so the document accumulated numbers that were
-true when they were typed and false by morning. A hand-maintained scoreboard at the top of that
-document would be the same disease in a smaller box. Every row below is computed at the moment
+WHY THIS IS A TOOL AND NOT A TABLE SOMEBODY MAINTAINS. The status document this feeds, which
+lives in a tree this repository does not track, grew from about eight hundred lines to two
+thousand in one evening because ten agents each appended their own reading and nobody removed
+anything, so it accumulated numbers that were true when they were typed and false by morning. A
+hand-maintained scoreboard at the top of it would be the same disease in a smaller box. Every row below is computed at the moment
 it is printed, and a row that cannot be computed prints that it could not rather than printing
 the last thing anybody believed.
 
