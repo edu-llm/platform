@@ -810,22 +810,6 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "fifteen, which is the difference the build index and this table had between "
                 "them. Still nothing the validator reads."
                 "\n\n"
-<<<<<<< HEAD
-                "A sixth edit moved it again and this one does carry a behaviour, which is "
-                "the reason builds_to has moved twice more since this record opened. "
-                "Registering edullm-p1 writes config/repositories.yaml and "
-                "config/workload-catalog.yaml, and the validator packages both. Until the "
-                "release is cut the deployed validator has never heard of the repository or "
-                "of edullm-p1-check, so a submission naming either is refused by a principal "
-                "reading the previous catalog while the form offers both. That is the same "
-                "shape as the Phase 4 refusal this record's own file describes: correct for "
-                "the bytes that produced it, wrong about the account, and naming the workload "
-                "rather than the release. It is one record rather than two because a zip "
-                "carries whatever the tree holds when it is built."
-            ),
-            cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="03d9396830a8b4bd8ac50e630b441f205533b26825b6341f9c72418e2f8be56c",
-=======
                 "A SIXTH EDIT IS THE LARGEST OF THEM BY LINE COUNT AND THE SMALLEST BY "
                 "DEPLOYED BEHAVIOUR. Schema version two of the run manifest landed in "
                 "contracts/manifest.py as RunManifestV2 and RunInput, beside a "
@@ -854,10 +838,21 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "every manifest_sha256 in the store is over a run manifest, which is the one "
                 "this change deliberately did not touch. The validator does not construct a "
                 "ResultManifest at all; the recorder does."
+                "\n\n"
+                "A SEVENTH EDIT MOVED IT AGAIN AND THIS ONE DOES CARRY A BEHAVIOUR, unlike the "
+                "sixth above it. "
+                "Registering edullm-p1 writes config/repositories.yaml and "
+                "config/workload-catalog.yaml, and the validator packages both. Until the "
+                "release is cut the deployed validator has never heard of the repository or "
+                "of edullm-p1-check, so a submission naming either is refused by a principal "
+                "reading the previous catalog while the form offers both. That is the same "
+                "shape as the Phase 4 refusal this record's own file describes: correct for "
+                "the bytes that produced it, wrong about the account, and naming the workload "
+                "rather than the release. It is one record rather than two because a zip "
+                "carries whatever the tree holds when it is built."
             ),
             cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="49df73e7e2062fe17e65c6b2a519298f8847ec2bbd471ea08b449a283a8124ae",
->>>>>>> origin/main
+            builds_to="a2f7c751245b8d25b691bb56b280e50c19c569e4f1063e5152f420faf7546ab5",
             released="d2c42173589e7c91ff20faeaa7b5b9f705f02e28214ad15fcf782964bf7bf3af",
             recorded_on=date(2026, 8, 5),
         ),
