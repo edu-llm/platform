@@ -20,6 +20,7 @@ drift and the check would pass over exactly the events that dead-letter.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -185,6 +186,136 @@ def test_a_content_filter_is_a_qualifier_and_not_another_field(tool: ModuleType)
     )
 
     assert read == frozenset({("source",), ("detail", "jobName"), ("detail", "jobQueue")})
+
+
+def _canned_account(
+    *, rule_pattern: dict[str, Any], job_names: list[str], matches: set[str]
+) -> Any:
+    """One account, answering the four calls the tool makes, in the CLI's own shapes.
+
+    Substituted for ``_aws``, which is the single place every AWS call goes through, so this
+    drives the whole of :func:`main` rather than a branch that only exists for tests. Every
+    test above this line reads a function; the three below run the tool.
+    """
+
+    def answer(arguments: list[str], *, profile: str | None, region: str) -> str:
+        del profile, region
+        service, action = arguments[0], arguments[1]
+        if (service, action) == ("events", "describe-rule"):
+            return json.dumps(rule_pattern)
+        if (service, action) == ("sts", "get-caller-identity"):
+            return "123456789012\n"
+        if (service, action) == ("batch", "list-jobs"):
+            if arguments[arguments.index("--job-status") + 1] != "RUNNING":
+                return "[]"
+            return json.dumps([[one, f"arn:aws:batch:::job/{one}"] for one in job_names])
+        if (service, action) == ("events", "test-event-pattern"):
+            event = json.loads(arguments[arguments.index("--event") + 1])
+            return "True\n" if event["detail"]["jobName"] in matches else "False\n"
+        raise AssertionError(f"the tool made an unexpected call: {service} {action}")
+
+    return answer
+
+
+A_RUN = "run_019fd520-999e-70d8-9003-1833aaa15247"
+A_QUEUE = "arn:aws:batch:us-east-1:123456789012:job-queue/edullm-cpu"
+
+
+def _pattern(job_name_clause: list[dict[str, str]] | None, **detail: Any) -> dict[str, Any]:
+    inner: dict[str, Any] = {"jobQueue": [A_QUEUE], **detail}
+    if job_name_clause is not None:
+        inner["jobName"] = job_name_clause
+    return {
+        "source": ["aws.batch"],
+        "detail-type": ["Batch Job State Change"],
+        "detail": inner,
+    }
+
+
+def test_json_puts_one_document_on_stdout_and_nothing_else(
+    tool: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: print the success sentence to stdout under ``--json``.
+
+    That is how this shipped. Every refusal already went to stderr, so ``--json | jq`` worked
+    on every outcome except the good one, where the document was followed by a sentence and
+    the parse failed. A flag that works until the answer is good is worse than no flag,
+    because the failure arrives on the day nothing is wrong.
+
+    This runs ``main`` rather than reading the source, over an account substituted at the one
+    seam every AWS call goes through, so the success path is executed and its output parsed.
+    """
+    monkeypatch.setattr(
+        tool,
+        "_aws",
+        _canned_account(
+            rule_pattern=_pattern([{"wildcard": "run_*-*-7*-*-*"}]),
+            job_names=[A_RUN, "probe-mem"],
+            matches={A_RUN},
+        ),
+    )
+
+    code = tool.main(["--json"])
+    captured = capsys.readouterr()
+
+    assert code == tool.EXIT_OK
+    document = json.loads(captured.out)
+    assert document["names_the_recorder_would_refuse"] == 0
+    assert document["names_delivered_to_the_recorder"] == 1
+    assert document["distinct_job_names"] == 2
+    assert "delivers" in captured.err
+
+
+def test_a_rule_that_matches_nothing_is_a_finding_and_not_a_pass(
+    tool: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: return ``EXIT_OK`` when nothing is delivered, since nothing is refused.
+
+    This is the reading that makes the whole check useless, and it is the tempting one. No
+    delivered event is refused, so the scope must be fine. A rule scoped to a renamed queue,
+    and a ``jobName`` clause no run id satisfies, both look exactly like this, and both mean
+    every run completes in Batch and writes nothing to lineage with nothing red anywhere.
+    """
+    monkeypatch.setattr(
+        tool,
+        "_aws",
+        _canned_account(
+            rule_pattern=_pattern([{"wildcard": "nothing_*"}]),
+            job_names=[A_RUN],
+            matches=set(),
+        ),
+    )
+
+    code = tool.main([])
+
+    assert code == tool.EXIT_DISAGREES
+    assert "the_rule_delivers_nothing" in capsys.readouterr().err
+
+
+def test_a_pattern_reading_a_field_the_event_lacks_stops_the_run(
+    tool: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: delete the ``ASSEMBLED_FIELDS`` guard from ``main`` and judge anyway.
+
+    Without it the tool asks ``TestEventPattern`` about an event missing the field the pattern
+    tests, gets "no match" for every job, and reports the rule as delivering nothing. That is
+    a wrong answer arrived at confidently, and it would be read as the finding above rather
+    than as a tool that can no longer answer.
+    """
+    monkeypatch.setattr(
+        tool,
+        "_aws",
+        _canned_account(
+            rule_pattern=_pattern(None, status=["RUNNING"]), job_names=[], matches=set()
+        ),
+    )
+
+    code = tool.main([])
+    captured = capsys.readouterr()
+
+    assert code == tool.EXIT_UNUSABLE
+    assert "pattern_reads_a_field_this_cannot_supply" in captured.err
+    assert "detail.status" in captured.err
 
 
 def _project(job_name: str) -> Any:
