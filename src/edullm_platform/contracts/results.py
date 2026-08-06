@@ -422,6 +422,46 @@ class ResultManifest(ContractModel):
     #: because every result record already written carries no such field, and they are
     #: immutable.
     exit_code: int | None = None
+    #: WHAT BATCH SAID ABOUT THE STOP, WHICH IS THE ONLY ACCOUNT OF A RUN THAT NEVER
+    #: PRINTED ONE OF ITS OWN.
+    #:
+    #: The argument for ``exit_code`` above applies here without a word changed, and this
+    #: is the half of it that was left out. Batch stops listing a job some days after it
+    #: ends, so the reason goes with it, and by the time anybody asks this is the only
+    #: place it could have been.
+    #:
+    #: It is worth more than the exit code on exactly the runs that have nothing else. Of
+    #: the 73 failed runs read on 2026-08-06, four never created a log stream at all --
+    #: the container never started, so there is no stdout anywhere and never was. Those
+    #: four are unattributable today and none of them needed to be: Batch says
+    #: ``CannotPullContainerError``, ``ResourceInitializationError`` or
+    #: ``MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT`` on the job itself, in as many words,
+    #: for the whole time the job exists. The platform reads that string already and has
+    #: been throwing it away, keeping it only long enough to test whether it starts with
+    #: ``edullm:cancelled``.
+    #:
+    #: Read off the terminating attempt first and the job second. Both carry one, and on a
+    #: retried job the job-level string describes whichever attempt Batch last folded up,
+    #: so a record built from it alone could attribute one attempt's stop to another --
+    #: which is the same reasoning ``_container_exit_code`` gives for reading the attempt.
+    #:
+    #: Optional and defaulted for the reason every field below is: the lineage store holds
+    #: result records written before this existed and nothing rewrites them.
+    status_reason: str | None = Field(default=None, max_length=1024)
+    #: What the container itself failed with, which is a different fact from the one above
+    #: and is usually the decisive one.
+    #:
+    #: The job-level reason for an ordinary failed container is ``Essential container in
+    #: task exited``, which says only that a thing that had to run stopped running. The
+    #: container's own reason is where ``OutOfMemoryError: Container killed due to memory
+    #: usage`` and the image-pull failures land, and those name a cause somebody can act
+    #: on. Recording only one of the two would keep whichever the next reader did not
+    #: need.
+    #:
+    #: Separate rather than concatenated, because "Batch stopped the job for this reason"
+    #: and "the container died of this" are different claims and a reader has to be able
+    #: to tell which one is missing.
+    container_reason: str | None = Field(default=None, max_length=1024)
     #: What the listing behind ``checkpoints`` actually saw, or None on a record written
     #: before the field existed.
     #:

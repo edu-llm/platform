@@ -431,6 +431,94 @@ def batch_submit_request(
                 #
                 # The grouping key itself is appended below, with the tag, because a manifest
                 # written before the field existed has no value for it.
+                #
+                # WHAT A CONTAINER HAS TO DO BEFORE IT CAN BE DEBUGGED, WHICH IS PRINT.
+                #
+                # Of 73 failed runs read on 2026-08-06, 33 could not be attributed to anyone
+                # from what this platform recorded, and 19 of them are lost to four named
+                # recording holes. Two of those holes are one mechanism, and it is Python's
+                # own output buffering rather than anything about training.
+                #
+                # Both variables below are unconditional, and neither can fail a run that
+                # never crashes. That property is the reason these two were chosen over the
+                # several richer things that could be done here: each changes only how bytes
+                # the process was already writing reach a stream it already holds. There is
+                # no file to create, no prefix to write under and no credential to hold, so
+                # there is no new way to die -- which is the bar anything added to a healthy
+                # run's environment has to clear.
+                #
+                # STDOUT IS BLOCK-BUFFERED AT 8 KB WHENEVER IT IS NOT A TERMINAL, AND IT IS
+                # NEVER A TERMINAL HERE. The awslogs driver is a pipe, so every run this
+                # platform has ever started buffered its output, and a process that dies on
+                # a signal never reaches the flush that atexit would have run: the OOM
+                # killer's SIGKILL, a native library's SIGSEGV, and the SIGTERM torchrun
+                # sends the surviving ranks after a peer fails all discard up to a full
+                # buffer of the last thing the program said.
+                #
+                # That is the shape of both holes. "Stdout ends mid-work naming no
+                # exception" is a partly filled buffer thrown away, and it accounts for 5
+                # runs. "The container exited non-zero and printed nothing at all" is the
+                # same thing on a workload that never filled one buffer, which is another 5,
+                # and the check workload is exactly that: five of its failures exited 20,
+                # 42, 76, 85 and 99 behind an empty log stream, and a sanity check that
+                # prints a few hundred bytes before it dies prints none of them.
+                #
+                # The cost is a write per line rather than per 8 KB. The same bytes reach
+                # CloudWatch either way and are billed the same, because ingestion is priced
+                # on bytes rather than on PutLogEvents calls at any volume this account
+                # produces.
+                {"Name": "PYTHONUNBUFFERED", "Value": "1"},
+                # THE DEATHS THAT HAVE NO TRACEBACK BY CONSTRUCTION, WHICH BUFFERING CANNOT
+                # HELP WITH. SIGSEGV, SIGBUS, SIGFPE, SIGILL and SIGABRT kill the
+                # interpreter itself. There is no exception, so no `except` runs, no atexit
+                # runs, and the program's own error handling is not reached at all -- a CUDA
+                # or NCCL fault inside a native extension ends the process between two
+                # bytecodes and the log stream simply stops.
+                #
+                # faulthandler installs a C-level signal handler that writes the Python
+                # stack of every thread to file descriptor 2 before the process goes. It
+                # allocates nothing and opens nothing, which is what makes it safe in a
+                # signal handler and is also why it cannot introduce a failure: fd 2 is
+                # already open and already going to the log stream.
+                #
+                # Set through the environment rather than by asking eight teams to call
+                # faulthandler.enable(), for the reason this block exists at all. It is also
+                # what torch's own ErrorHandler.initialize() does first, so a rank that
+                # reaches torch's handler was going to get this anyway and a rank that never
+                # does now gets it too.
+                {"Name": "PYTHONFAULTHANDLER", "Value": "1"},
+                # WHY TORCHELASTIC_ERROR_FILE IS NOT SET BESIDE THESE TWO. It is the obvious
+                # third line and it would do nothing, and an hour was spent establishing
+                # that, so it is written down here rather than left for the next reader to
+                # spend the same hour.
+                #
+                # The reading that suggests it is torchrun's own failure summary, which
+                # prints `error_file: <N/A>` above `traceback : To enable traceback see:
+                # ...`. That looks exactly like a variable nobody set.
+                #
+                # TORCHRUN SETS IT ITSELF, PER RANK, AND OVERWRITES WHAT THE CONTAINER WAS
+                # GIVEN. torch/distributed/elastic/multiprocessing/api.py, in
+                # DefaultLogsSpecs.reify, assigns
+                # envs[local_rank]["TORCHELASTIC_ERROR_FILE"] to
+                # <log dir>/<local rank>/error.json for every worker it is about to start,
+                # and SubprocessHandler builds each child's environment as
+                # os.environ.copy() updated with that per-rank block. So the agent's value
+                # wins on every rank, and a value set here reaches the agent process and no
+                # trainer.
+                #
+                # <N/A> IS NOT AN UNSET VARIABLE. IT IS A FILE THE AGENT ALLOCATED AND THE
+                # RANK NEVER WROTE. ProcessFailure checks os.path.isfile on the path it
+                # handed out and falls back to _set_no_reply_file when nothing is there.
+                # The only thing that writes it is ErrorHandler.record_exception, which is
+                # reached from exactly one place: the @record decorator. torch says so in
+                # its own words on that path -- "FAILED with no error file. Decorate your
+                # entrypoint fn with @record for traceback info."
+                #
+                # So setting it here closes nothing while reading like a fix, which is the
+                # check-that-cannot-fail shape this repository has now found twelve times.
+                # What closes that row is one import and one decorator on the training
+                # entrypoint's main, and that line lives in each research repository's
+                # .edullm/ entrypoint rather than in this function.
             ],
         },
         # Unconditional. See the module docstring for why there is no branch here.

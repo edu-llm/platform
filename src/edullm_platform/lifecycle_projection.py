@@ -465,6 +465,57 @@ def _container_exit_code(attempt_detail: Mapping[str, Any]) -> int | None:
     return code
 
 
+#: What one reason string may carry into the lineage record, matching the contract's own
+#: bound. Truncated rather than dropped: a reason longer than this is still the only
+#: account of the stop that exists, and the first kilobyte of it names the cause. A record
+#: refused for a long string would lose the whole run rather than the tail of a sentence.
+_MAXIMUM_REASON_LENGTH: Final = 1024
+
+
+def _reason(value: object) -> str | None:
+    """One reason string as the record may hold it, or None when there is nothing to hold.
+
+    Whitespace-only is None rather than the empty string, because a reason nobody wrote and
+    a reason that says nothing are the same fact and the record should not offer two
+    spellings of it.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    return text[:_MAXIMUM_REASON_LENGTH]
+
+
+def _status_reason(detail: Mapping[str, Any], attempt_detail: Mapping[str, Any]) -> str | None:
+    """Why Batch says the job stopped, preferring the attempt this record is about.
+
+    The attempt first, for the reason ``_container_exit_code`` reads the attempt: on a
+    retried job the job-level string describes whichever attempt Batch last folded up, so
+    taking it first would let one attempt's stop be recorded against another's.
+
+    The job-level string is the fallback rather than being ignored, because it is the only
+    one present in the case that matters most. A job that never placed has no attempt to
+    read, and ``MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT`` is on the job from the moment
+    Batch decides it, whether or not anything ever started.
+    """
+    return _reason(attempt_detail.get("statusReason")) or _reason(detail.get("statusReason"))
+
+
+def _container_reason(attempt_detail: Mapping[str, Any]) -> str | None:
+    """What the container itself failed with, which the job-level reason usually will not say.
+
+    ``Essential container in task exited`` is the job's account of an ordinary failed
+    container and it names no cause. This is where ``OutOfMemoryError``,
+    ``CannotPullContainerError`` and ``ResourceInitializationError`` are written, and those
+    are the four runs that never produced a log stream at all.
+    """
+    container = attempt_detail.get("container")
+    if not isinstance(container, Mapping):
+        return None
+    return _reason(container.get("reason"))
+
+
 def _derive_attempt_id(
     *,
     run_id: str,
@@ -1227,6 +1278,19 @@ def project_batch_state_change(
                     # location nobody named is not a location this record should invent.
                     output_prefixes=tuple(prefix for prefix in (written_under,) if prefix),
                     exit_code=_container_exit_code(attempt_detail),
+                    # WHAT BATCH SAID, WHICH THIS PROJECTION HAS ALWAYS READ AND NEVER
+                    # KEPT. Both strings were already being parsed a few lines up, to ask
+                    # whether either starts with `edullm:cancelled`, and then dropped. So
+                    # the four runs that never created a log stream were unattributable
+                    # while the reason sat in the event this function was handed.
+                    #
+                    # Written on every outcome rather than only on a failure. A succeeded
+                    # job usually carries no reason at all, so the field is None where
+                    # there is nothing to say, and a reason on a success is worth keeping
+                    # for exactly the same reason as one on a failure: nobody can go back
+                    # and read it later.
+                    status_reason=_status_reason(detail, attempt_detail),
+                    container_reason=_container_reason(attempt_detail),
                     # WHAT THE RUN PRODUCED, WHICH THIS RECORD COULD NOT PREVIOUSLY SAY.
                     #
                     # Both fields were written empty on every result, so a run that trained

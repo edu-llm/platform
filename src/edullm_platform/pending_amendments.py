@@ -888,11 +888,54 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "and is not a regression on anything. A stale recorder is the quiet kind of "
                 "stale -- it writes lineage that looks exactly like correct lineage into "
                 "immutable records -- so it is recorded here rather than noticed later."
+                "\n\n"
+                "A SECOND CHANGE IS NOW IN THE SAME ZIP AND MOVED THIS DIGEST AGAIN. "
+                "ResultManifest gained status_reason and container_reason, and "
+                "lifecycle_projection.py fills both from the Batch event it is already "
+                "handed. The projection has always parsed those two strings, to ask whether "
+                "either begins with this platform's cancellation marker, and then discarded "
+                "them; four of the 73 failed runs read on 2026-08-06 produced no log stream "
+                "at all and are unattributable for exactly that reason, with Batch's own "
+                "CannotPullContainerError sitting in the event the whole time."
+                "\n\n"
+                "Additive in the same way and orderable against nothing. The two fields are "
+                "optional and default to None, so records already in the store parse "
+                "unchanged, which tests/test_results.py and the lifecycle projection tests "
+                "both hold directly. Until this zip is released the recorder goes on writing "
+                "results with neither field, which is today's behaviour rather than a "
+                "regression, and the runs it records in the meantime stay as unreadable as "
+                "the ones it has already recorded."
             ),
             cleared_by="uv run python tools/release_lambda.py --function recorder",
-            builds_to="31be04c5a1c8ec0f7472dfc3d1930d9cdcf1b3c4efd8a07a59f8d4fb5ea3a803",
+            builds_to="b577164f077a7541b0e3efefbae9c11878af725908649b8edfd9ee1dfe1aa7ce",
             released="756bb23ea9e52b9e9624386f7946b66111286813c981c88983658f4d244c496f",
-            recorded_on=date(2026, 8, 5),
+            recorded_on=date(2026, 8, 6),
+        ),
+        PendingRelease(
+            function="validator",
+            reason=(
+                "CARRIES NO BEHAVIOUR, AND IS RECORDED ANYWAY BECAUSE THE REGISTER CANNOT "
+                "TELL THE DIFFERENCE AND SHOULD NOT TRY. The validator imports "
+                "contracts/results.py, ResultManifest gained two optional fields there, and "
+                "the packaged bytes moved with it. Nothing the validator does reads either "
+                "field: admission decides whether a submission may run and writes no result "
+                "record, so this zip behaves identically to the released one on every input."
+                "\n\n"
+                "The alternative was to exempt a change somebody has judged inert, and the "
+                "reason not to is that the judgement is the part that fails. A digest is "
+                "either the deployed one or it is not, and a register that accepts 'this one "
+                "does not matter' is a register that accepts the next one too, on the same "
+                "sentence, from somebody who was wrong."
+                "\n\n"
+                "Releasing it is still worth doing rather than waiting for a change that "
+                "carries something. A validator whose bytes differ from the tree's makes the "
+                "next real drift unreadable, because the difference is already there and "
+                "somebody has to work out which part of it is new."
+            ),
+            cleared_by="uv run python tools/release_lambda.py --function validator",
+            builds_to="e4a45e5666ccd3648b29687c77e513460d91ef14af1c353325c921b0f25ed804",
+            released="f8cdd56259ff2b3f9ff5c26f0bb67ec1e22f8532f841fcc4c811a7e9a73cf354",
+            recorded_on=date(2026, 8, 6),
         ),
     )
     return one_record_per_function(releases)

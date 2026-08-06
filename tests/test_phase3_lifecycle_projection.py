@@ -995,6 +995,173 @@ def test_a_result_written_before_the_field_existed_still_parses() -> None:
     assert ResultManifest.model_validate(stored).exit_code is None
 
 
+def test_the_result_says_why_batch_stopped_the_job() -> None:
+    """Mutation: keep reading the reason for cancellation and go on discarding it.
+
+    This projection has always parsed both reason strings, to ask whether either begins
+    with this platform's cancellation marker, and then dropped them. Batch stops listing a
+    job some days after it ends, so the string goes with it -- which is the argument the
+    exit code already makes, applied to the half of the event that was left out.
+    """
+    projected = project(
+        "FAILED",
+        attempts=[attempt_block(statusReason="Job attempt duration exceeded timeout")],
+    )
+
+    assert projected.result is not None
+    assert projected.result.status_reason == "Job attempt duration exceeded timeout"
+
+
+def test_a_container_that_never_started_records_what_stopped_it() -> None:
+    """The four runs that produced no log stream at all, which is hole four of four.
+
+    There is no stdout to read and there never was: the container did not start, so
+    nothing it might have said exists anywhere. Batch has the answer and puts it on the
+    attempt's own container, and it is the only answer there will ever be.
+
+    Mutation: record the job-level reason alone. It says ``Essential container in task
+    exited`` for an ordinary failed container and nothing at all for this, so a record
+    built from it would leave these four exactly as unattributable as they are now.
+    """
+    could_not_pull = attempt_block(
+        container={
+            "reason": (
+                "CannotPullContainerError: ref pull has been retried 1 time(s): "
+                "failed to unpack image: no match for platform in manifest"
+            )
+        },
+        statusReason="Task failed to start",
+    )
+
+    projected = project("FAILED", attempts=[could_not_pull])
+
+    assert projected.result is not None
+    assert projected.result.exit_code is None
+    assert projected.result.status_reason == "Task failed to start"
+    assert projected.result.container_reason is not None
+    assert projected.result.container_reason.startswith("CannotPullContainerError")
+
+
+def test_the_container_reason_survives_a_job_level_reason_that_says_nothing() -> None:
+    """Mutation: record one reason and let the other stand for both.
+
+    ``Essential container in task exited`` is the job's account of every ordinary failed
+    container and names no cause. ``OutOfMemoryError`` is on the container, and it is the
+    difference between a run somebody can resize and a run nobody can explain.
+    """
+    killed = attempt_block(
+        container={
+            "exitCode": 137,
+            "reason": "OutOfMemoryError: Container killed due to memory usage",
+        },
+        statusReason="Essential container in task exited",
+    )
+
+    projected = project("FAILED", attempts=[killed])
+
+    assert projected.result is not None
+    assert projected.result.status_reason == "Essential container in task exited"
+    assert projected.result.container_reason == (
+        "OutOfMemoryError: Container killed due to memory usage"
+    )
+
+
+def test_the_status_reason_comes_from_the_attempt_rather_than_the_job() -> None:
+    """Mutation: read the job-level reason first.
+
+    The same trap the exit code has: on a retried job the job-level string describes
+    whichever attempt Batch last folded up, so taking it first would record one attempt's
+    stop against another's id.
+    """
+    retried = detail(
+        "FAILED",
+        attempts=[
+            attempt_block(statusReason="Host EC2 instance terminated"),
+            attempt_block(statusReason="Essential container in task exited"),
+        ],
+        statusReason="Host EC2 instance terminated",
+    )
+
+    projected = project_batch_state_change(
+        eventbridge_event_id=EVENTBRIDGE_EVENT_ID,
+        detail=retried,
+        occurred_at=OCCURRED_AT_INSTANT,
+    )
+
+    assert projected.result is not None
+    assert projected.result.status_reason == "Essential container in task exited"
+
+
+def test_the_job_level_reason_is_read_when_the_attempt_carries_none() -> None:
+    """Mutation: read the attempt and stop.
+
+    Batch puts the stop on the attempt when it has one to put there and on the job when it
+    does not, and an attempt with no reason of its own is the ordinary shape for a job the
+    scheduler stopped rather than the container.
+    """
+    projected = project(
+        "FAILED",
+        attempts=[attempt_block(container={"exitCode": 1})],
+        statusReason="Host EC2 instance terminated",
+    )
+
+    assert projected.result is not None
+    assert projected.result.status_reason == "Host EC2 instance terminated"
+
+
+def test_a_blank_reason_is_recorded_as_absent_rather_than_as_an_empty_string() -> None:
+    """Mutation: record whatever the field holds.
+
+    "Batch said nothing" and "Batch said the empty string" are one fact, and an immutable
+    record that can spell it two ways makes every later reader handle both.
+    """
+    projected = project(
+        "FAILED",
+        attempts=[attempt_block(container={"exitCode": 1, "reason": "   "}, statusReason="")],
+        statusReason="",
+    )
+
+    assert projected.result is not None
+    assert projected.result.status_reason is None
+    assert projected.result.container_reason is None
+
+
+def test_a_reason_longer_than_the_record_permits_is_kept_to_its_first_kilobyte() -> None:
+    """Mutation: pass the string through and let the contract refuse the whole record.
+
+    A refusal here loses the run rather than the tail of a sentence, and the cause is in
+    the first few words of a Batch reason every time. Truncating keeps the record
+    writable and keeps the part that answers the question.
+    """
+    projected = project(
+        "FAILED",
+        attempts=[attempt_block(container={"exitCode": 1, "reason": "E" * 4096})],
+    )
+
+    assert projected.result is not None
+    assert projected.result.container_reason == "E" * 1024
+
+
+def test_a_result_written_before_the_reasons_existed_still_parses() -> None:
+    """Every result record in the lineage store predates both fields and none is rewritable."""
+    stored = {
+        "attempt_id": "att_019fa731-1b33-72a4-aec8-6b19c7cff944",
+        "checkpoints": [],
+        "completed_at": "2026-07-28T05:27:21.355000Z",
+        "outcome": "succeeded",
+        "output_prefixes": ["s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/x/"],
+        "retention_class": "standard",
+        "run_id": "run_019fa72b-f164-70cb-b7ee-2a8ef318437c",
+        "schema_version": 1,
+        "wandb_run": None,
+    }
+
+    parsed = ResultManifest.model_validate(stored)
+
+    assert parsed.status_reason is None
+    assert parsed.container_reason is None
+
+
 # ---------------------------------------------------------------------------------------
 # What the run produced, which the record could not previously say
 # ---------------------------------------------------------------------------------------

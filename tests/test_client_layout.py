@@ -22,7 +22,11 @@ from pathlib import Path
 from typing import Any
 
 import edullm_client
-from edullm_client.environment import OPTIONAL_VARIABLES, REQUIRED_VARIABLES
+from edullm_client.environment import (
+    INTERPRETER_VARIABLES,
+    OPTIONAL_VARIABLES,
+    REQUIRED_VARIABLES,
+)
 
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.dataset import PUBLISHED_DATASET_BUCKET
@@ -139,6 +143,13 @@ def test_the_client_knows_every_variable_the_container_is_given() -> None:
     because the optional half is where new fields have been added twice already. ``submitter``
     is passed and does not appear, deliberately, since it is recorded as a Batch job tag and
     never reaches the container.
+
+    ``INTERPRETER_VARIABLES`` is subtracted alongside the two the client presents, and is a
+    third list rather than an exemption written into this test. Those names are read by
+    CPython rather than by any workload, so presenting them as run facts would be inventing
+    a question nobody asks -- but a name that is in none of the three lists is still a
+    variable the platform started sending and the client is silent about, which is what this
+    exists to catch. Declaring them keeps that catch exact for the next one.
     """
     fullest = container_environment_names(
         experiment="an-experiment",
@@ -147,7 +158,12 @@ def test_the_client_knows_every_variable_the_container_is_given() -> None:
         dataset_reference=published_reference("regmix-10b-v1"),
     )
 
-    unknown = sorted(fullest - set(REQUIRED_VARIABLES) - set(OPTIONAL_VARIABLES))
+    unknown = sorted(
+        fullest
+        - set(REQUIRED_VARIABLES)
+        - set(OPTIONAL_VARIABLES)
+        - set(INTERPRETER_VARIABLES)
+    )
     assert unknown == [], (
         f"the platform gives a container {unknown} and edullm_client does not present "
         "them, so a script that needs one has to read os.environ itself"

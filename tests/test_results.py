@@ -44,7 +44,12 @@ CHECKPOINT_MANIFEST_DIGEST = (
 # What must not move is whether the older bytes still VALIDATE, which is asserted directly
 # in ``test_a_checkpoint_recorded_before_the_payload_field_still_reads`` rather than left to
 # these constants to imply.
-RESULT_MANIFEST_DIGEST = "sha256:73110e6f928561c2b60f2934eec3fc5c2ad93da24f98da93f4e1030f436f90b9"
+#
+# The result digest moved again when ``status_reason`` and ``container_reason`` were added,
+# for the identical reason and with the identical answer. The compatibility half is asserted
+# in ``test_a_result_written_before_the_reasons_existed_still_parses``, which reads a payload
+# carrying neither key.
+RESULT_MANIFEST_DIGEST = "sha256:910261f706dd4191e7d96e0265f57ee26e92c3ccca50a75ef5cd9758cee3b50d"
 
 OUTSIDE_SANDBOX_PREFIXES = (
     "s3://edullm-checkpoints/runs/olmo/",
