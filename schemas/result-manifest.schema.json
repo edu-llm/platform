@@ -364,6 +364,19 @@
       "title": "Completed At",
       "type": "string"
     },
+    "container_reason": {
+      "anyOf": [
+        {
+          "maxLength": 1024,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Container Reason"
+    },
     "eval_metrics": {
       "anyOf": [
         {
@@ -411,6 +424,19 @@
       "const": 1,
       "title": "Schema Version",
       "type": "integer"
+    },
+    "status_reason": {
+      "anyOf": [
+        {
+          "maxLength": 1024,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Status Reason"
     },
     "wandb_run": {
       "anyOf": [

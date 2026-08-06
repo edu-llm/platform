@@ -33,6 +33,7 @@ from typing import Final
 from .storage import DatasetLocation, resolve_dataset
 
 __all__ = [
+    "INTERPRETER_VARIABLES",
     "OPTIONAL_VARIABLES",
     "REQUIRED_VARIABLES",
     "MissingRunEnvironmentError",
@@ -80,6 +81,25 @@ OPTIONAL_VARIABLES: Final[tuple[str, ...]] = (
     "EDULLM_DATASET_ID",
     "EDULLM_DATASET_VERSION",
     "EDULLM_DATASET_TOKENIZER",
+)
+
+#: Set on every container and deliberately not presented as run facts, because they are not
+#: facts about the run. CPython reads both of these itself, before any workload gets a say,
+#: and no script has a reason to ask what they are: nothing branches on whether stdout is
+#: buffered, and a program that did would be reading its own plumbing.
+#:
+#: LISTED RATHER THAN IGNORED, because the layout test subtracts these three tuples from
+#: what the platform actually sends and reports the remainder. A name absent from all three
+#: is a variable the platform added and the client does not present, which is the state this
+#: package exists to end. Dropping these two into a silent exception would make that check
+#: weaker for every future variable, so they are declared here and the check stays exact.
+#:
+#: Why the platform sets them at all is in ``edullm_platform.execution``: 10 of the 73 failed
+#: runs read on 2026-08-06 are a log stream that stops mid-sentence or never starts, and both
+#: are a buffer the interpreter discarded rather than a program with nothing to say.
+INTERPRETER_VARIABLES: Final[tuple[str, ...]] = (
+    "PYTHONUNBUFFERED",
+    "PYTHONFAULTHANDLER",
 )
 
 

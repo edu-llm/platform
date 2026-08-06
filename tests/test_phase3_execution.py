@@ -871,7 +871,7 @@ def test_the_submitted_target_is_the_resolved_one_and_not_anything_from_the_mani
     assert request["JobDefinition"] == resolved.job_definition_arn
 
 
-def test_the_container_environment_is_exactly_these_ten_variables() -> None:
+def test_the_container_environment_is_exactly_these_twelve_variables() -> None:
     """Mutation: add, drop or rename a variable the container reads.
 
     Nothing else in the repository pins this list, which was measured rather than assumed:
@@ -920,7 +920,78 @@ def test_the_container_environment_is_exactly_these_ten_variables() -> None:
         # because a run id always exists. A fan-out cell rewrites it in FANOUT_PROLOGUE so
         # that N cells do not resume into one W&B run.
         "WANDB_RUN_ID",
+        # Neither of these is read by any workload. They are read by CPython itself, which
+        # is the point: 10 of the 73 failed runs read on 2026-08-06 are a log stream that
+        # stops or never starts, and both are the interpreter discarding a buffer it never
+        # flushed rather than a program that had nothing to say.
+        "PYTHONUNBUFFERED",
+        "PYTHONFAULTHANDLER",
     ]
+
+
+def test_a_container_is_told_not_to_buffer_the_last_thing_it_says() -> None:
+    """Mutation: drop ``PYTHONUNBUFFERED`` and let CPython pick its own buffering.
+
+    CPython block-buffers stdout at 8 KB whenever it is not writing to a terminal, and it
+    is never writing to a terminal here: the awslogs driver is a pipe. A process killed by
+    a signal never reaches the flush atexit would have run, so the buffer goes with it.
+
+    That is 10 of the 73 failures read on 2026-08-06, under two names that look like
+    different problems. Five runs "end mid-work naming no exception", which is a partly
+    filled buffer discarded. Five more "printed nothing at all", which is the same
+    discard on a workload that never filled one buffer -- and the check workload, whose
+    whole job is to print a sentence about whether a setup is sane, is precisely that
+    shape: it exited 20, 42, 76, 85 and 99 behind five empty log streams.
+
+    Asserted on a fan-out cell as well as a single run, and by starting the command rather
+    than by reading the request. The fan-out branch is the only one that rewrites the
+    command, and a variable that survived in the request while being lost to the wrapper
+    would leave every cell of a 48-cell array buffering again with nothing to notice.
+    """
+    assert container_environment(request_for())["PYTHONUNBUFFERED"] == "1"
+
+    cell = request_for(command=["printenv", "PYTHONUNBUFFERED"], fanout=CURRICULUM_MATRIX)
+    assert start_the_container_command(cell, array_index="7") == "1"
+
+
+def test_a_container_is_asked_to_leave_a_stack_when_the_interpreter_itself_dies() -> None:
+    """Mutation: drop ``PYTHONFAULTHANDLER``, since buffering already covers the log.
+
+    It does not cover this. SIGSEGV, SIGBUS, SIGFPE, SIGILL and SIGABRT end the
+    interpreter between two bytecodes, so there is no exception, nothing catches
+    anything, and no amount of flushing helps a program that was never given the chance
+    to say a word. A CUDA or NCCL fault inside a native extension arrives exactly this
+    way, and the whole record of it is an exit code.
+
+    faulthandler writes every thread's Python stack to file descriptor 2 from a C-level
+    signal handler. It allocates nothing and opens nothing, which is both why it is legal
+    in a signal handler and why it cannot become a new way for a healthy run to fail.
+    """
+    assert container_environment(request_for())["PYTHONFAULTHANDLER"] == "1"
+
+
+def test_torchelastic_error_file_is_left_unset_because_torchrun_sets_it_itself() -> None:
+    """Mutation: add ``TORCHELASTIC_ERROR_FILE`` here, which is the obvious third line.
+
+    It closes nothing, and this asserts the absence so that adding it costs a red test and
+    a reading rather than an evening.
+
+    The reading that suggests it is torchrun's failure summary printing ``error_file:
+    <N/A>`` beside ``To enable traceback see: ...``, which looks like a variable nobody
+    set. torchrun sets it itself:
+    ``DefaultLogsSpecs.reify`` in ``torch/distributed/elastic/multiprocessing/api.py``
+    assigns ``envs[local_rank]["TORCHELASTIC_ERROR_FILE"]`` to
+    ``<log dir>/<local rank>/error.json`` for every worker, and ``SubprocessHandler``
+    composes each child's environment as ``os.environ.copy()`` updated with that block, so
+    the agent's value wins on every rank and a value set here reaches no trainer.
+
+    ``<N/A>`` is a file the agent allocated and the rank never wrote. Only
+    ``ErrorHandler.record_exception`` writes it, and only the ``@record`` decorator reaches
+    that. Setting the variable here would leave the row exactly as open as it is now,
+    behind something that reads like a fix, which is the shape this repository has spent
+    the week removing.
+    """
+    assert "TORCHELASTIC_ERROR_FILE" not in container_environment(request_for())
 
 
 def test_the_wandb_project_comes_from_the_manifest_and_not_from_the_command() -> None:
