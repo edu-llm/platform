@@ -496,13 +496,27 @@ slices:
         deployed: {reached: it fires}
         proven: {reached: it has fired}
 
+      # `built` POINTED AT ONE OF THE TWO LISTS RATHER THAN AT THE THING THAT HOLDS THEM
+      # TOGETHER. A roster existing says nothing about whether it agrees with the GitHub team
+      # that gates `run-approval-lead`, and this row is about the agreeing. It points at the
+      # comparison now.
+      #
+      # `proven` SAID NOTHING FAILS WHEN THEY DRIFT AND SOMETHING DOES. 327 put the comparison
+      # on the audit with a clock over it, so a hand capture going stale is red and a capture
+      # inside the window that disagrees with the roster is red. The row went stale in the one
+      # direction this file exists to catch, which is a built thing reading absent.
+      #
+      # THE TEAM IS STILL NOT READ LIVE AND THAT IS NOT AN OVERSIGHT. The members endpoint
+      # needs the Members organization permission, the Actions token has none, and a stored
+      # token is refused by name in the secrets test. What is on a clock is the age of the
+      # capture, which is the half that let a ninth member sit unnoticed for a month.
       - id: roster-agreement
         name: The roster and the GitHub team agreeing
         designed: {reached: overview draws it}
         planned: {not_reached: no plan reaches it}
-        built: {exists: config/organization.yaml}
+        built: {exists: tools/report_who_can_open_the_lead_gate.py}
         deployed: {environment: run-approval-lead}
-        proven: {not_reached: the two lists disagree and nothing fails when they do}
+        proven: {tests: [tests/test_lead_gate_report.py, tests/test_phase2_github_evidence.py]}
 
       - id: researcher-role
         name: The researcher role
