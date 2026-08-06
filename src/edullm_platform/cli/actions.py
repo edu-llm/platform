@@ -182,11 +182,21 @@ class CompileOutcome:
     ``compiled is None`` covers two of them and they need different sentences: a run that
     finished without publishing, where waiting longer is pointless, and a ceiling reached on
     a job still running, where ``edullm status`` will carry the answer shortly.
+
+    ``status`` is the third fact and it was being read and thrown away. The poll below asks
+    the run endpoint on every attempt to learn whether the run has finished, and that same
+    answer already says whether the run is ``queued`` or ``in_progress``. Queued and
+    compiling are different facts -- one is a runner this account has not been given yet and
+    the other is work in progress -- and a submitter waiting on a backed-up queue who is told
+    "compiling" concludes their run has started.
     """
 
     compiled: dict[str, Any] | None
     #: The workflow run reached a conclusion and no submission was published under it.
     published_nothing: bool
+    #: The run's own status the last time it was read: ``queued``, ``in_progress``,
+    #: ``completed``, or ``None`` where the answer carried no status at all.
+    status: str | None = None
 
 
 class GithubUnreachableError(RuntimeError):
@@ -508,18 +518,27 @@ class PlatformActions:
         compiling. The artifact is published by a job inside this run, so a run that has
         reached ``completed`` without one is never going to have one -- and that is reported
         as what is known rather than as a refusal, because a cancelled run arrives here too.
+
+        **AND THE STATUS IT READS IS CARRIED OUT RATHER THAN COMPARED AND DROPPED.** The
+        endpoint answers ``queued`` before a runner picks the run up and ``in_progress``
+        after, so the difference between a queue and a compile costs nothing extra to know.
+        It was being narrowed to one boolean here, and the sentence the caller printed on
+        the ceiling said "compiling" for both.
         """
+        status: str | None = None
         for attempt in range(attempts):
             if attempt:
                 self._said_waiting(waiting, elapsed_already + attempt * interval)
                 self._sleep(interval)
             compiled = self.compiled_submission(workflow_run_id)
             if compiled is not None:
-                return CompileOutcome(compiled=compiled, published_nothing=False)
+                return CompileOutcome(compiled=compiled, published_nothing=False, status=status)
             run = self._api(f"repos/{self._repository}/actions/runs/{workflow_run_id}")
-            if run.get("status") == "completed":
-                return CompileOutcome(compiled=None, published_nothing=True)
-        return CompileOutcome(compiled=None, published_nothing=False)
+            answered = run.get("status")
+            status = answered if isinstance(answered, str) else None
+            if status == "completed":
+                return CompileOutcome(compiled=None, published_nothing=True, status=status)
+        return CompileOutcome(compiled=None, published_nothing=False, status=status)
 
     def compiled_submission(self, workflow_run_id: int) -> dict[str, Any] | None:
         """What the compile job recorded, read out of the artifact it uploaded.

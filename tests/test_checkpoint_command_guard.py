@@ -437,6 +437,30 @@ def test_a_multi_attempt_run_is_told_that_nothing_here_checked_whether_it_resume
     assert "nothing on this platform establishes" in said
 
 
+def test_the_note_carries_the_finding_about_the_timeout_and_not_its_derivation() -> None:
+    """Mutation: explain Batch's retry semantics to the person choosing ``--attempts``.
+
+    The paragraph used to end with the derivation -- Batch retries a failure matching none
+    of its rules, and an attempt stopped at its runtime bound reports no container exit code
+    for the rules to match. That is true, it is written out in this module's docstring and
+    again in ``config/policy.yaml``, and it answers an objection only a reader who already
+    knows ``EvaluateOnExit`` can raise. It is a fifth of what a first-time submitter reads
+    here and it changes nothing they can do.
+
+    The finding is what they act on and it stays: the retry they are paying for lands on the
+    run that ran out of time, and it gets the same bound again.
+    """
+    said = unverified_resume_note(
+        maximum_attempts=2, workload_profile=CONTRACTED, checkpoint=contract()
+    )
+
+    assert said is not None
+    assert "ran out of time" in said
+    assert "same bound again" in said
+    assert "exit code" not in said
+    assert "Batch" not in said
+
+
 def test_a_single_attempt_run_is_told_nothing_because_it_has_no_second_attempt() -> None:
     """A line printed on every run is a line readers learn to skip.
 

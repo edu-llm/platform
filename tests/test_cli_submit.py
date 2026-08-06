@@ -604,6 +604,66 @@ def test_a_compile_job_that_published_nothing_is_not_waited_out(
     assert len(runner.ran("gh", "run", "download")) <= 2
 
 
+def test_a_queued_run_is_reported_as_queued_rather_than_as_compiling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: print one word for both states, which is what shipped.
+
+    A submission dispatched into a backed-up queue reached the ceiling and was handed back
+    "compiling. The run id is issued by the compile job", on a run whose jobs both read
+    ``queued`` with empty conclusions. The submitter concluded their run had started. On
+    2026-08-06 GitHub Actions was not starting anything, which made it likely to be read
+    that morning rather than wrong only that morning: any queue long enough to outlast the
+    wait produces it.
+
+    The fact was already in hand. The poll asks the run endpoint on every attempt to learn
+    whether the run has finished, and that answer carries ``queued`` or ``in_progress``, so
+    telling them apart costs no request -- the status was being compared against one value
+    and dropped.
+    """
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    root, runner = submitting(tmp_path, compiled=None, run_status="queued")
+
+    code, out, err = invoke(
+        ["submit", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "queued." in out
+    assert "nothing is compiling" in out
+    assert "compiling. The run id" not in out
+    # Still says where the answer will come from, which is the half that was right.
+    assert "edullm status" in out
+
+
+def test_a_run_that_is_not_queued_is_not_told_which_job_is_running_either(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: keep "compiling" for every state that is not ``queued``.
+
+    ``compile`` needs ``identify`` and ``resolve``, so a run reads ``in_progress`` from the
+    moment the first of those starts and "compiling" is a guess about which job holds it.
+    The per-job status that would settle it is a second request for one word. What the poll
+    knows is that no run id has been published, so that is what is said.
+    """
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    root, runner = submitting(tmp_path, compiled=None, run_status="in_progress")
+
+    code, out, err = invoke(
+        ["submit", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "no run id yet" in out
+    assert "compiling" not in out
+
+
 def test_an_automatic_submission_is_told_nobody_is_waiting_on_a_person(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
