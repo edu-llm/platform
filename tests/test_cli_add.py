@@ -246,6 +246,40 @@ def test_add_repository_dispatches_and_names_the_run_it_started(
     assert "https://github.com/edu-llm/platform/actions/runs/77" in out
 
 
+def test_add_repository_says_where_the_pull_request_gets_opened(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The last step is a person's click, and this is where that person is standing.
+
+    The workflow writes the registration and pushes a branch, and stops there: the
+    organization forbids Actions from opening a pull request, and the single setting that
+    would allow it also allows approving one, which is what protects the reviewed
+    configuration files a registration edits. Saying so only in the workflow log would send
+    somebody out of a terminal and into the Actions UI to hunt for a link.
+
+    It costs no extra call to GitHub, which is the reason it can be said here at all: the
+    branch is derived from the repository name rather than read back off the run. What it
+    cannot carry is the body, which the run composes and prints in its own summary, so the
+    sentence around the link has to say that rather than imply a filled-in form.
+    """
+    runner = register_runner(tmp_path)
+
+    code, out, err = invoke(
+        ["add", "repository", "--reason", "it is a codebase of its own"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "/compare/register/" in out
+    assert "?expand=1" in out
+    # The prose is wrapped to the terminal, so the sentences are read off one line.
+    said = " ".join(out.split())
+    assert "It does not open the pull request" in said
+    assert "paste the body the run's summary prints" in said
+
+
 def test_a_dispatch_nobody_may_make_is_exit_three_and_not_a_refusal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

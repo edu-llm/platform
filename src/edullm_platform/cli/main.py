@@ -95,6 +95,7 @@ from edullm_platform.cli.actions import (
     read_report_sections,
     read_run_facts,
     read_submission_runs,
+    registration_compare_url,
     report_ceiling_seconds,
     submit_ceiling_seconds,
 )
@@ -2258,7 +2259,7 @@ def _nothing_to_scaffold(
             code="unregistered_repository",
             detail=(
                 f"run edullm add repository --reason '<why>' to register {repository!r}, "
-                "which opens the pull request that does it. config/repositories.yaml "
+                "which prepares the pull request that does it. config/repositories.yaml "
                 f"carries no entry for it, so nothing here can be submitted and no "
                 f"{SPEC_PATH} was written. Registered today: {registered}."
             ),
@@ -2772,23 +2773,49 @@ def _add(
         ),
     )
     print(f"dispatching {REGISTER_WORKFLOW} ... queued", file=out)
+    # WHERE THE PULL REQUEST GETS OPENED, SAID HERE BECAUSE HERE IS WHERE THE PERSON IS.
+    # The workflow writes the registration and pushes a branch, and stops: the organization
+    # forbids Actions from opening a pull request, and the setting that would allow it also
+    # allows approving one, which is what protects the files this registration edits. So the
+    # last step is a click, and telling somebody about it only in a workflow log would send
+    # them from a terminal into the Actions UI to find a link.
+    #
+    # This costs no second call to GitHub. The branch is derived from the repository name
+    # rather than discovered, so the URL is knowable before the run has finished -- which is
+    # also why it is qualified with "once the run above is green" rather than presented as
+    # live. What this cannot carry is the prefilled body, which the run composes out of the
+    # diff it wrote and prints in its own summary.
+    compare = registration_compare_url(repository, platform_repository=arguments.platform_repository)
     submitter = github_login(runner, allow_network=True)
     run = actions.wait_for_a_new_run(REGISTER_WORKFLOW, actor=submitter, after=dispatched_at)
     if run is None:
         print(
             "dispatched, and the workflow run it started could not be found within the poll "
-            f"window. It is on its way; the {REGISTER_WORKFLOW} page carries the pull request "
-            "it opens.",
+            f"window. It is on its way; the {REGISTER_WORKFLOW} page carries the branch it "
+            "pushes and the body to paste.",
             file=out,
         )
-        return EXIT_OK
-    print(str(run.get("html_url") or ""), file=out)
+    else:
+        print(str(run.get("html_url") or ""), file=out)
     print(
         "\n".join(
             _wrapped(
-                "It opens a pull request against the reviewed configuration, which somebody "
-                "merges and then deploys. Nothing is registered until both have happened, "
-                "and edullm check refuses this repository until they have.",
+                "It writes the registration and pushes it to a branch. It does not open the "
+                "pull request, because this organization forbids Actions from opening one. "
+                "Once that run is green, open it here, and paste the body the run's summary "
+                "prints -- it is too long to carry in the link:",
+                indent="",
+            )
+        ),
+        file=out,
+    )
+    print(compare, file=out)
+    print(
+        "\n".join(
+            _wrapped(
+                "Somebody merges that pull request and then deploys. Nothing is registered "
+                "until both have happened, and edullm check refuses this repository until "
+                "they have.",
                 indent="",
             )
         ),

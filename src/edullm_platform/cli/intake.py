@@ -55,7 +55,7 @@ ADD_KINDS: Final[dict[str, str]] = {
 
 #: The kinds a pull request can be opened for without asking anybody first. One today, and
 #: the registration workflow is what makes it one: ``register-repository.yml`` edits five
-#: platform files, runs a local verification and opens the pull request. Nothing equivalent
+#: platform files, runs a local verification and prepares the pull request. Nothing equivalent
 #: exists for the other four.
 SELF_SERVICE_KINDS: Final = frozenset({"repository"})
 
