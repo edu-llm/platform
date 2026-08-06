@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import shlex
 import shutil
 import sys
@@ -1924,16 +1925,46 @@ def _shell(
             ),
             file=out,
         )
-        print(f"\n  {ssh_proxy_command(session.machine)}\n", file=out)
+        print(
+            f"\n  {ssh_proxy_command(session.machine, system=platform.system())}\n", file=out
+        )
     print(file=out)
 
-    opened = runner(
-        notebook_forward_argv(session.machine, settings=settings, local_port=LOCAL_NOTEBOOK_PORT)
-        if arguments.notebook
-        else shell_session_argv(session.machine),
-        env=session.environment,
-    )
-    print(opened.stdout, end="", file=out)
+    # EVERYTHING THIS VERB HAS TO SAY IS SAID BEFORE THE CHILD IS STARTED, AND THEN PUSHED OUT.
+    # From here the child owns the terminal and writes to the same descriptors directly, so
+    # anything still sitting in this process's buffer would surface in the middle of the
+    # researcher's session, or after it.
+    out.flush()
+    err.flush()
+
+    try:
+        runner(
+            notebook_forward_argv(
+                session.machine, settings=settings, local_port=LOCAL_NOTEBOOK_PORT
+            )
+            if arguments.notebook
+            else shell_session_argv(session.machine),
+            env=session.environment,
+            # **THE WHOLE OF WHAT MAKES THIS VERB A TERMINAL RATHER THAN A TRANSCRIPT.** Without
+            # it the runner captures both streams and this printed them once the child was gone:
+            # a researcher saw an empty screen for as long as they sat there, typed into it
+            # blind, and met their whole session at the end. Nobody had ever run this verb
+            # through to a usable prompt on any platform.
+            #
+            # It carries the forwarded notebook too, and there the same capture was worse: that
+            # session never exits on its own, so the plugin's "Waiting for connections" -- the
+            # one line saying the tunnel is up and the browser is worth opening -- was held
+            # behind a pipe until Ctrl-C, and then printed as the person walked away.
+            hands_over_the_terminal=True,
+        )
+    except KeyboardInterrupt:
+        # CTRL-C IS HOW BOTH OF THESE END, SO IT IS NOT AN INTERRUPTION AND IS NOT REPORTED AS
+        # ONE. It is what the notebook branch tells the person to type four lines above, and it
+        # is how anybody leaves a forwarded port. The handler in `main` would otherwise answer
+        # 130 and say that nothing is running that this started -- in the one verb where a GPU
+        # machine is running and billing, which makes the reassurance false as well as wrong.
+        # The expiry printed at the top is what the person actually needs, and they have it.
+        pass
     # THE SESSION'S OWN EXIT STATUS IS NOT THE RESEARCHER'S VERDICT AND IS NOT REPORTED AS ONE.
     # A shell that the person left with Ctrl-D and a shell they left after a failed command exit
     # the same way, and neither is a statement about anything. run reads a sentinel because it

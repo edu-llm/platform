@@ -58,6 +58,7 @@ from pathlib import Path
 from typing import Final, Protocol
 
 __all__ = [
+    "WINDOWS",
     "CommandResult",
     "CommandRunner",
     "GitFacts",
@@ -118,6 +119,7 @@ class CommandRunner(Protocol):
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
         stdin_stays_open: bool = False,
+        hands_over_the_terminal: bool = False,
     ) -> CommandResult: ...
 
 
@@ -141,6 +143,10 @@ class SubprocessRunner:
 
     ``stdin_stays_open`` is for the one call that is killed by an inherited standard input, and
     :meth:`_a_stdin_nobody_closes` carries what that is and why it is opt-in.
+
+    ``hands_over_the_terminal`` is for the one call that is not a question this binary asks but a
+    session it steps out of the way of. Everything above about capturing is exactly wrong for it,
+    and the paragraph on that keyword below says what capturing cost.
     """
 
     def __call__(
@@ -151,7 +157,18 @@ class SubprocessRunner:
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
         stdin_stays_open: bool = False,
+        hands_over_the_terminal: bool = False,
     ) -> CommandResult:
+        # A PIPE ON DESCRIPTOR 0 AND A PERSON TYPING ARE THE TWO ANSWERS TO ONE QUESTION, SO
+        # ASKING FOR BOTH IS A CALLER THAT HAS NOT DECIDED WHICH SESSION IT IS OPENING. Raised
+        # rather than resolved by precedence, because either precedence would silently be the
+        # bug the other keyword exists to prevent.
+        if stdin_stays_open and hands_over_the_terminal:
+            raise ValueError(
+                "a command cannot both be handed the terminal and be given a standard input "
+                "nobody closes: the first is a session the researcher types into and the "
+                "second is a session that reads no keystrokes."
+            )
         if shutil.which(argv[0]) is None:
             raise ToolMissingError(
                 f"{argv[0]} is not on PATH. edullm drives git and gh rather than holding a "
@@ -162,7 +179,23 @@ class SubprocessRunner:
             with self._a_stdin_nobody_closes(stdin_stays_open) as stdin:
                 completed = subprocess.run(
                     list(argv),
-                    capture_output=True,
+                    # **NOT CAPTURED WHEN THE CHILD HAS THE TERMINAL, AND CAPTURING IS WHAT
+                    # MADE ``edullm shell`` LOOK HUNG.** Capture puts a pipe on descriptors 1
+                    # and 2 that nothing drains until the child exits, so a researcher who
+                    # opened a shell saw an empty screen, typed into it blind, and got the
+                    # whole session played back at them at the end -- by which time the only
+                    # reasonable conclusion, that the verb had hung, was already drawn. It is
+                    # worse than the delay alone: a remote shell asks whether its output is a
+                    # terminal before it draws a prompt, and behind a pipe the answer is no.
+                    # Inheriting hands the child this process's own descriptors, so the bytes
+                    # go where the person is looking, as they are written.
+                    #
+                    # Inherited rather than relayed through a pseudo-terminal this process
+                    # allocates, for the reason `_a_stdin_nobody_closes` gives about the other
+                    # direction: a pty is a per-platform dependency, and native Windows has
+                    # none of the interface :mod:`pty` needs. The descriptors this binary was
+                    # started on are already whatever the person's terminal is.
+                    capture_output=not hands_over_the_terminal,
                     text=True,
                     # THE ENCODING IS NAMED BECAUSE `text=True` ALONE MEANS FOUR DIFFERENT
                     # CODECS. With no encoding it is the locale's, which is UTF-8 on macOS and
@@ -198,8 +231,12 @@ class SubprocessRunner:
             )
         return CommandResult(
             returncode=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            # EMPTY RATHER THAN ``None`` FOR A CHILD THAT WROTE STRAIGHT TO THE TERMINAL.
+            # Nothing was captured because the person already saw it, and a caller that
+            # printed this would be printing it a second time. ``CommandResult`` promises
+            # both fields are strings and every reader of it strips or searches them.
+            stdout=completed.stdout or "",
+            stderr=completed.stderr or "",
         )
 
     @staticmethod
