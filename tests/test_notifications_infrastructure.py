@@ -321,12 +321,11 @@ def test_the_notifier_looks_for_its_configuration_where_its_builder_puts_it() ->
     read from the builder rather than restated, so moving the packaged config moves what this
     expects, and a handler left behind fails here.
     """
-    from tools.build_admission_lambda import PACKAGED_CONFIG_PREFIX
-
     from edullm_platform.notifier_handler import (
         CONFIG_DIRECTORY_VARIABLE,
         DEFAULT_CONFIG_DIRECTORY,
     )
+    from tools.build_admission_lambda import PACKAGED_CONFIG_PREFIX
 
     variables = template("notifications.yaml")["Resources"]["NotifierFunction"]["Properties"][
         "Environment"
