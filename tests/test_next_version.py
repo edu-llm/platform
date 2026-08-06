@@ -15,14 +15,18 @@ from pathlib import Path
 import pytest
 
 from tools.next_version import (
+    MINIMUM_REASON_CHARACTERS,
     VersionUnreadableError,
+    checked_reason,
     main,
     next_patch_version,
     next_version,
     read_lock_version,
     read_name,
+    read_reason,
     read_version,
     rewrite_lock_version,
+    rewrite_reason,
     rewrite_version,
 )
 
@@ -246,6 +250,14 @@ def test_a_named_version_no_tag_could_be_cut_from_is_refused(
     assert capsys.readouterr().out == ""
 
 
+def a_project(tmp_path: Path, version: str) -> tuple[Path, Path]:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(f'[project]\nname = "x"\nversion = "{version}"\n', encoding="utf-8")
+    lock = tmp_path / "uv.lock"
+    lock.write_text(f'[[package]]\nname = "x"\nversion = "{version}"\n', encoding="utf-8")
+    return pyproject, lock
+
+
 def test_a_bump_names_the_size_it_makes(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -256,20 +268,227 @@ def test_a_bump_names_the_size_it_makes(
     refusal that stops a submission which used to go through, which the house standard calls
     a minor in as many words, and it shipped as part of a patch with sixty other merges.
     """
-    pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text('[project]\nname = "x"\nversion = "0.2.2"\n', encoding="utf-8")
-    lock = tmp_path / "uv.lock"
-    lock.write_text('[[package]]\nname = "x"\nversion = "0.2.2"\n', encoding="utf-8")
+    pyproject, lock = a_project(tmp_path, "0.2.2")
 
-    assert main(["--pyproject", str(pyproject), "--bump", "minor"]) == 0
+    assert main(["--pyproject", str(pyproject), "--bump", "minor", "--why", "status takes --since"]) == 0
     assert capsys.readouterr().out == "0.3.0\n"
     assert read_version(pyproject.read_text(encoding="utf-8")) == "0.3.0"
     assert read_lock_version(lock.read_text(encoding="utf-8"), distribution="x") == "0.3.0"
 
-    assert main(["--pyproject", str(pyproject), "--bump", "major"]) == 0
+    assert main(["--pyproject", str(pyproject), "--bump", "major", "--why", "logs drops -n"]) == 0
     assert capsys.readouterr().out == "1.0.0\n"
     assert read_version(pyproject.read_text(encoding="utf-8")) == "1.0.0"
     assert read_lock_version(lock.read_text(encoding="utf-8"), distribution="x") == "1.0.0"
+
+
+# --------------------------------------------------------------------------------------
+# Patch is the default, and anything wider has to be argued for
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("size", ["minor", "major"])
+def test_a_bump_wider_than_a_patch_without_a_reason_writes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], size: str
+) -> None:
+    """THE CASE THIS RULE EXISTS FOR. Mutation: let the bump through with no --why.
+
+    On 2026-08-05 the version went from ``0.2.2`` to ``3.1.0`` in one evening: twenty-five
+    bumps, thirteen of them minors and three of them majors, on a repository nobody had yet
+    been shown to have installed. Nobody was careless. Every failure message and the pull
+    request template offered three aligned commands, and an agent picked the one that
+    described its change rather than the one its change had earned.
+
+    Three integers in a file cannot be made harder to type. What can be made harder is
+    claiming a thing happened to somebody, so the two wider sizes cost a sentence and the
+    patch costs nothing. The refusal has to leave the file alone, because a tool that half
+    applies a bump it then refuses is the state ``uv sync --locked`` fails on.
+    """
+    pyproject, _ = a_project(tmp_path, "0.2.2")
+
+    assert main(["--pyproject", str(pyproject), "--bump", size]) == 2
+    captured = capsys.readouterr()
+
+    assert captured.out == ""
+    assert "--bump patch" in captured.err, "the refusal has to name the size it wants instead"
+    assert f"--bump {size} --why" in captured.err
+    assert read_version(pyproject.read_text(encoding="utf-8")) == "0.2.2"
+
+
+def test_the_default_and_the_bare_patch_are_asked_for_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: require a reason from every bump.
+
+    A patch is anything a re-install fixes, which is the great majority of what merges here,
+    and a rule everybody has to satisfy on every merge is one that gets a blanket exemption
+    within the week. The friction has to land on the claim, not on the ordinary case.
+    """
+    pyproject, _ = a_project(tmp_path, "0.2.2")
+
+    assert main(["--pyproject", str(pyproject), "--bump"]) == 0
+    assert capsys.readouterr().out == "0.2.3\n"
+    assert main(["--pyproject", str(pyproject), "--bump", "patch"]) == 0
+    assert capsys.readouterr().out == "0.2.4\n"
+    assert read_reason(pyproject.read_text(encoding="utf-8")) is None
+
+
+def test_a_patch_offered_a_reason_is_refused_rather_than_quietly_dropping_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: accept --why on a patch and ignore it.
+
+    Somebody who writes a sentence believes it is going to be published, and a patch
+    publishes no human section at all. Swallowing it is the quiet half of the same problem
+    this rule is about: the author thinks they said something and no reader ever sees it.
+    """
+    pyproject, _ = a_project(tmp_path, "0.2.2")
+
+    assert main(["--pyproject", str(pyproject), "--bump", "patch", "--why", "a real reason"]) == 2
+    assert "a patch takes no --why" in capsys.readouterr().err
+    assert read_version(pyproject.read_text(encoding="utf-8")) == "0.2.2"
+
+
+def test_a_reason_too_short_to_be_one_is_refused() -> None:
+    """Mutation: accept any non-empty string.
+
+    A required argument somebody satisfies with one word is a required argument that buys
+    nothing but the appearance of one. This is a floor and not a judge: it cannot tell a
+    true sentence from a plausible one and does not pretend to.
+    """
+    with pytest.raises(VersionUnreadableError, match="characters"):
+        checked_reason("minor", "minor")
+    # Whitespace is the empty string once it is normalised, so it meets the refusal that
+    # names all three sizes rather than the one about length. Both leave the file alone.
+    with pytest.raises(VersionUnreadableError, match="without a sentence"):
+        checked_reason("minor", "   \n  ")
+
+    assert checked_reason("minor", "  status takes\n  a --since flag ") == (
+        "status takes a --since flag"
+    )
+    assert len("status takes a --since flag") >= MINIMUM_REASON_CHARACTERS
+
+
+def test_a_reason_carrying_an_em_dash_is_refused_before_it_is_published() -> None:
+    """Mutation: let the character through.
+
+    This sentence is not a comment. It is published in a release note, which is prose the
+    house standard holds to its own rules, and ``tests/test_cli_install_command.py`` asserts
+    the note this project publishes carries no em dash. That test reads the workflow, and it
+    cannot see a string a person will type into it a month from now.
+    """
+    with pytest.raises(VersionUnreadableError, match="em dash"):
+        checked_reason("major", "the --hours flag is gone \u2014 use --since")
+
+
+def test_the_reason_lands_above_the_version_where_a_reviewer_reads_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: print the reason and write nothing.
+
+    A reason that exists only in a terminal is a four-word tax and no more. What makes it
+    worth anything is that it is a line in the diff of the pull request that widened the
+    version, and then a line in the note the release publishes.
+    """
+    pyproject, _ = a_project(tmp_path, "0.2.2")
+
+    assert main(["--pyproject", str(pyproject), "--bump", "minor", "--why", "status takes --since"]) == 0
+    capsys.readouterr()
+    text = pyproject.read_text(encoding="utf-8")
+
+    assert read_reason(text) == ("minor", "status takes --since")
+    lines = text.splitlines()
+    assert lines[lines.index('version = "0.3.0"') - 1].startswith("# WHY THIS IS A MINOR")
+
+    assert main(["--pyproject", str(pyproject), "--show-why"]) == 0
+    assert capsys.readouterr().out == "minor status takes --since\n"
+
+
+def test_a_patch_clears_the_reason_the_previous_minor_left(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """THE HALF THAT KEEPS THE FILE SAYING ONE THING. Mutation: leave the line alone.
+
+    The line describes the step the declared version takes, so one left behind by the
+    previous minor sitting above a patch version is a file that says two things. What reads
+    it next is ``release-tag.yml`` deciding what a published note says, and the failure is a
+    Summary announcing a capability on a release that added none.
+    """
+    pyproject, _ = a_project(tmp_path, "0.2.2")
+
+    assert main(["--pyproject", str(pyproject), "--bump", "minor", "--why", "status takes --since"]) == 0
+    assert main(["--pyproject", str(pyproject), "--bump"]) == 0
+    capsys.readouterr()
+    text = pyproject.read_text(encoding="utf-8")
+
+    assert read_version(text) == "0.3.1"
+    assert read_reason(text) is None
+    assert "WHY THIS IS A" not in text
+
+    assert main(["--pyproject", str(pyproject), "--show-why"]) == 0
+    assert capsys.readouterr().out == "", "a patch has nothing for the note to publish"
+
+
+def test_a_reason_survives_the_substitution_that_moves_the_pinned_tag(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: insert the reason before the pin is rewritten.
+
+    ``rewrite_pinned_tag`` replaces every ``@v<version>`` in the file, and a reason naming
+    the version it replaces would be rewritten along with the install line. Ordering is the
+    whole fix, and it is invisible until somebody writes a sentence with a tag in it.
+    """
+    pyproject, _ = a_project(tmp_path, "0.2.2")
+    why = "the shape withdrawn in @v0.2.3 is back"
+
+    assert main(["--pyproject", str(pyproject), "--bump", "minor", "--why", why]) == 0
+    capsys.readouterr()
+
+    assert read_reason(pyproject.read_text(encoding="utf-8")) == ("minor", why)
+
+
+def test_a_reason_with_nothing_to_attach_it_to_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: ignore a --why that comes with no --bump.
+
+    ``--next --why`` and a bare ``--why`` both read as somebody recording a reason. Neither
+    records anything, and the quiet version is found out at the tag.
+    """
+    pyproject, _ = a_project(tmp_path, "0.2.2")
+
+    assert main(["--pyproject", str(pyproject), "--why", "status takes --since"]) == 2
+    assert "nothing to record it against" in capsys.readouterr().err
+
+    assert main(["--pyproject", str(pyproject), "--show-why", "--bump"]) == 2
+    assert "cannot be combined" in capsys.readouterr().err
+    assert read_version(pyproject.read_text(encoding="utf-8")) == "0.2.2"
+
+
+def test_a_reason_quoted_inside_a_longer_comment_is_not_the_declaration() -> None:
+    """Mutation: search the file with a multiline pattern rather than line by line.
+
+    This repository's ``pyproject.toml`` is nine tenths comment and its comments quote the
+    things they argue about. A reader that matched anywhere in a line would find the
+    declaration inside the paragraph explaining what a declaration is.
+    """
+    text = (
+        '[project]\n'
+        '# The line below is not one. Something like "# WHY THIS IS A MAJOR RATHER THAN A '
+        'PATCH. x" is.\n'
+        'version = "0.2.2"\n'
+    )
+
+    assert read_reason(text) is None
+
+
+def test_a_file_with_no_version_line_cannot_be_given_a_reason() -> None:
+    """Mutation: append the reason at the end when there is nowhere to put it.
+
+    The line means "this explains the version below me". Somewhere else in the file it is a
+    sentence with no subject, and the reader is a shell script splitting on a space.
+    """
+    with pytest.raises(VersionUnreadableError, match="no top-level version line"):
+        rewrite_reason("[project]\n", size="minor", reason="status takes --since")
 
 
 def test_a_bump_of_the_real_files_leaves_a_tree_the_rest_of_the_suite_accepts(
