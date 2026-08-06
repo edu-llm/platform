@@ -13,7 +13,30 @@ name: "Platform: build research image (called by research repos)"
 #   2. The caller must reference this workflow as `@main`. The trust policy matches
 #      job_workflow_ref with StringEquals against `@refs/heads/main`, so a SHA-pinned or
 #      tag-pinned `uses:` mints a claim the role will never accept.
-#   3. The build sees one commit, not the history. The gate job checks the caller out at
+#   3. The calling repository must carry `AWS_ECR_PUBLISHER_ROLE_ARN` as a repository
+#      variable, and the first step of all three jobs refuses an empty one by name.
+#
+#      `publisher_role_arn` is declared `required: true`, and Actions reads required as "the
+#      key is present" rather than "the value is non-empty". So a caller writing the usual
+#      `vars.AWS_ECR_PUBLISHER_ROLE_ARN` against a variable nobody set satisfies the input
+#      and arrives here as the empty string, which used to reach the credentials action and
+#      come back "Credentials could not be loaded" -- sending the reader to OIDC federation
+#      rather than to a repository setting nobody made. That is the state `edullm-p1`
+#      published nothing from for days while reading as fully registered.
+#
+#      IT IS CHECKED HERE BECAUSE IT CANNOT BE CHECKED ON THE PLATFORM SIDE, AND THAT IS
+#      ABOUT THE ENDPOINT RATHER THAN ABOUT EFFORT. The variable is per repository and set by
+#      hand in each; there is no organization variable to inherit from, so six repositories
+#      carry six hand-set copies and nothing compares them. A GITHUB_TOKEN scoped to
+#      `edu-llm/platform` gets 401 from `repos/{owner}/{repo}/actions/variables`, as does an
+#      anonymous read, and the credential that would open it is a stored collaborator token
+#      -- which `test_the_repository_holds_no_secret_a_branch_could_read` forbids by name,
+#      precisely because a repository secret is readable from any branch. The rule that would
+#      have to be broken to build the live check is the rule the check would be watching. So
+#      the check runs where the value already is: on the caller's own runner, on every build
+#      attempt, before any credential step. `tools/register_repository.py` records the same
+#      claim as unverifiable in the pull request it opens rather than implying it was read.
+#   4. The build sees one commit, not the history. The gate job checks the caller out at
 #      `fetch-depth: 0` because that checkout is also where the caller's own test command
 #      runs, but the publish job takes the default shallow clone, because a full .git is
 #      weight `docker build` copies into a layer from a `.` context. A Dockerfile that
@@ -95,6 +118,7 @@ jobs:
           WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
           EVENT_NAME: ${{ github.event_name }}
           AWS_REGION: ${{ inputs.aws_region }}
+          PUBLISHER_ROLE_ARN: ${{ inputs.publisher_role_arn }}
         run: |
           set -euo pipefail
           missing=""
@@ -111,6 +135,18 @@ jobs:
           if [[ "${WORKFLOW_REF}" != */*@* ]]; then
             echo "job_workflow_ref_malformed" >&2
             echo "job.workflow_ref must read owner/repo/path@ref so provenance can record the claim the publisher role trust policy asserts." >&2
+            exit 1
+          fi
+          # The one precondition of a registration that nothing on the platform side can
+          # read. Item 3 of the caller contract at the top of this file says why the check
+          # is here and why it cannot be there.
+          if [[ -z "${PUBLISHER_ROLE_ARN}" ]]; then
+            echo "publisher_role_arn_is_empty" >&2
+            echo "This workflow was called with an empty publisher_role_arn, so there is no identity to assume and no image can be published." >&2
+            echo "Set the repository variable AWS_ECR_PUBLISHER_ROLE_ARN in the calling repository, under Settings then Secrets and variables then Actions then Variables." >&2
+            echo "It is set per repository and by hand. There is no organization variable behind it, so a value in one research repository says nothing about another." >&2
+            echo "The ARN is the one infra/README.md records for sbsandbox-intern-edullm-ecr-publisher. Ask an admin if you cannot read it." >&2
+            echo "This is checked here rather than in the platform because a token scoped to edu-llm/platform is refused by the variables endpoint of every other repository." >&2
             exit 1
           fi
           case "${EVENT_NAME}" in
@@ -266,6 +302,7 @@ jobs:
           WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
           EVENT_NAME: ${{ github.event_name }}
           AWS_REGION: ${{ inputs.aws_region }}
+          PUBLISHER_ROLE_ARN: ${{ inputs.publisher_role_arn }}
         run: |
           set -euo pipefail
           missing=""
@@ -282,6 +319,18 @@ jobs:
           if [[ "${WORKFLOW_REF}" != */*@* ]]; then
             echo "job_workflow_ref_malformed" >&2
             echo "job.workflow_ref must read owner/repo/path@ref so provenance can record the claim the publisher role trust policy asserts." >&2
+            exit 1
+          fi
+          # The one precondition of a registration that nothing on the platform side can
+          # read. Item 3 of the caller contract at the top of this file says why the check
+          # is here and why it cannot be there.
+          if [[ -z "${PUBLISHER_ROLE_ARN}" ]]; then
+            echo "publisher_role_arn_is_empty" >&2
+            echo "This workflow was called with an empty publisher_role_arn, so there is no identity to assume and no image can be published." >&2
+            echo "Set the repository variable AWS_ECR_PUBLISHER_ROLE_ARN in the calling repository, under Settings then Secrets and variables then Actions then Variables." >&2
+            echo "It is set per repository and by hand. There is no organization variable behind it, so a value in one research repository says nothing about another." >&2
+            echo "The ARN is the one infra/README.md records for sbsandbox-intern-edullm-ecr-publisher. Ask an admin if you cannot read it." >&2
+            echo "This is checked here rather than in the platform because a token scoped to edu-llm/platform is refused by the variables endpoint of every other repository." >&2
             exit 1
           fi
           case "${EVENT_NAME}" in
@@ -383,6 +432,7 @@ jobs:
           WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
           EVENT_NAME: ${{ github.event_name }}
           AWS_REGION: ${{ inputs.aws_region }}
+          PUBLISHER_ROLE_ARN: ${{ inputs.publisher_role_arn }}
         run: |
           set -euo pipefail
           missing=""
@@ -399,6 +449,18 @@ jobs:
           if [[ "${WORKFLOW_REF}" != */*@* ]]; then
             echo "job_workflow_ref_malformed" >&2
             echo "job.workflow_ref must read owner/repo/path@ref so provenance can record the claim the publisher role trust policy asserts." >&2
+            exit 1
+          fi
+          # The one precondition of a registration that nothing on the platform side can
+          # read. Item 3 of the caller contract at the top of this file says why the check
+          # is here and why it cannot be there.
+          if [[ -z "${PUBLISHER_ROLE_ARN}" ]]; then
+            echo "publisher_role_arn_is_empty" >&2
+            echo "This workflow was called with an empty publisher_role_arn, so there is no identity to assume and no image can be published." >&2
+            echo "Set the repository variable AWS_ECR_PUBLISHER_ROLE_ARN in the calling repository, under Settings then Secrets and variables then Actions then Variables." >&2
+            echo "It is set per repository and by hand. There is no organization variable behind it, so a value in one research repository says nothing about another." >&2
+            echo "The ARN is the one infra/README.md records for sbsandbox-intern-edullm-ecr-publisher. Ask an admin if you cannot read it." >&2
+            echo "This is checked here rather than in the platform because a token scoped to edu-llm/platform is refused by the variables endpoint of every other repository." >&2
             exit 1
           fi
           case "${EVENT_NAME}" in

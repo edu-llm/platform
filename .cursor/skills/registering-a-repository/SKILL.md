@@ -72,6 +72,23 @@ for a branch named anything else, and that is exactly how a registered repositor
 zero images while looking correct. If the work lives on a branch that is not `edullm/**`, say
 so, and say the two ways out, which are renaming the branch or dispatching the caller by hand.
 
+**Then set `AWS_ECR_PUBLISHER_ROLE_ARN` as a repository variable, which the workflow you just
+wrote reads and which nothing gives you.** Settings, then Secrets and variables, then Actions,
+then Variables, on the research repository itself. `gh variable set` does it from a terminal,
+given the name, the value and the repository.
+
+The ARN is the one `infra/README.md` records for `sbsandbox-intern-edullm-ecr-publisher`. It
+is set per repository, by hand, in each: **there is no organization variable behind it**, so
+the repositories that already have one tell you nothing about this one, and registering a
+repository does not create it.
+
+Until 2026-08-06 this step was in no document at all. `edullm-p1` read as fully registered and
+published nothing for days because of exactly that. It is not a step the platform can check for
+you either — a token scoped to `edu-llm/platform` is refused by every other repository's
+variables endpoint — so the check lives in the reusable build, whose first step refuses an
+empty value with `publisher_role_arn_is_empty` and the variable's name. If you see that, this
+is the step you skipped.
+
 ### 5. Write a first `.edullm/run.yaml`
 
 It holds what is a property of the code, which is the command, the workload profile and a
