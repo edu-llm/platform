@@ -48,8 +48,9 @@ CANCEL_WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "cancel-run.yml"
 GPU_ROLES_PATH = PROJECT_ROOT / "infra" / "iam" / "batch-gpu-roles.yaml"
 POLICY_PATH = PROJECT_ROOT / "config" / "policy.yaml"
 CAPACITY_PATH = PROJECT_ROOT / "config" / "capacity.yaml"
-CATALOGUE_PATH = PROJECT_ROOT / "config" / "workload-catalog.yaml"
-ACCELERATORS_PATH = PROJECT_ROOT / "config" / "accelerators.yaml"
+CONFIG_DIR = PROJECT_ROOT / "config"
+CATALOGUE_PATH = CONFIG_DIR / "workload-catalog.yaml"
+ACCELERATORS_PATH = CONFIG_DIR / "accelerators.yaml"
 INFRA_README_PATH = PROJECT_ROOT / "infra" / "README.md"
 PYPROJECT_PATH = PROJECT_ROOT / "pyproject.toml"
 
@@ -1148,6 +1149,64 @@ def test_the_platform_guide_quotes_the_priced_range_and_the_placeable_one() -> N
             f"catalogue says {count}. The two counts are what make two ranges read as two "
             "ranges rather than as a contradiction"
         )
+
+
+def test_the_lane_refusal_the_reference_quotes_is_the_one_the_lane_composes() -> None:
+    """Mutation: reword the refusal, or leave the guide's copy where it was.
+
+    The page carried "log in the way you normally do", which the tool stopped saying because
+    it is an instruction for somebody who has already done it once. It now names the one
+    command that produces a session in this account. A reader comparing a refusal on their
+    screen against a different one on the page has to work out which is out of date, and the
+    ordinary conclusion is that the tool is broken.
+
+    The AWS line is quoted too. It is the reason the paragraph is four lines rather than two
+    and it is what somebody searches for.
+    """
+    from edullm_platform.cli.main import _no_aws_session
+
+    said = (
+        "aws: [ERROR]: An error occurred (NoCredentials): Unable to locate credentials.\n"
+        'You can configure credentials by running "aws login".'
+    )
+    composed = [line for line in _no_aws_session(said).splitlines() if line.strip()]
+    page = PLATFORM_GUIDE_PATH.read_text(encoding="utf-8")
+    quoted = {line for block in fenced_blocks(page) for line in block.splitlines()}
+
+    for line in composed:
+        assert line in quoted, (
+            f"the platform reference does not quote {line!r}, which is a line the lane "
+            "prints when it has no credential. Run `edullm run` with no AWS session and "
+            "paste what it says"
+        )
+
+
+def test_the_reference_does_not_make_a_researcher_pass_a_flag_the_lane_defaults() -> None:
+    """Mutation: make ``--compute`` required again, or write it back into the two rows.
+
+    Four flags before anybody saw a GPU was the friction the default removed, and a table
+    that keeps printing the flag teaches the friction back. ``--project`` is the opposite
+    case and has to stay in both rows, because nothing but the person knows it.
+    """
+    from edullm_platform.cli.configuration import load_reviewed_configuration
+    from edullm_platform.cli.lane import default_compute_profile
+
+    page = PLATFORM_GUIDE_PATH.read_text(encoding="utf-8")
+    rows = [
+        line
+        for line in page.splitlines()
+        if line.startswith(("| `edullm run", "| `edullm shell"))
+    ]
+    assert len(rows) == 2, f"the verbs table has {len(rows)} lane rows rather than two"
+
+    defaulted = default_compute_profile(load_reviewed_configuration(CONFIG_DIR)) is not None
+    for row in rows:
+        assert "--project" in row, f"{row!r} drops --project, which the lane requires"
+        if defaulted:
+            assert "--compute c" not in row, (
+                f"{row!r} spells --compute into the command a reader copies, and the lane "
+                "picks a shape when the flag is absent. The row teaches a flag nobody needs"
+            )
 
 
 def test_the_guides_name_the_approval_classes_a_submission_can_actually_reach() -> None:

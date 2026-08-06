@@ -282,8 +282,8 @@ Nine verbs. `edullm` on its own prints the list and `edullm <verb> --help` print
 | `edullm cancel <run-id> --reason ...` | Stops it. The reason is required, and is recorded |
 | `edullm add` | Teaches the platform a repository, dataset, shape, model or person. Opens a configuration pull request |
 | `edullm ask` | Files one issue a person answers. It grants nothing itself |
-| `edullm run --project p --compute c -- <command>` | A machine of your own, this directory on it, output streamed back. Needs an AWS session |
-| `edullm shell --project p --compute c` | A terminal on that same machine, or a notebook with `--notebook`. Needs an AWS session |
+| `edullm run --project p -- <command>` | A machine of your own, this directory on it, output streamed back. Needs an AWS session. `--compute` is optional |
+| `edullm shell --project p` | A terminal on that same machine, or a notebook with `--notebook`. Needs an AWS session |
 
 The flags are the fields the form asks for, and `check` and `submit` take the same ones. The command, the workload profile and a suggested machine are properties of the code, so they live in `.edullm/run.yaml` and travel with it in git. What a run costs today is typed on the command line, because one commit run by two people belongs to two teams.
 
@@ -319,13 +319,17 @@ This is yours and it is local. It is not reviewed configuration, it is read by n
 
 ```
 AWS would not say who you are, so no machine was asked for. The lane needs an
-AWS session the way the recorded path needs gh: log in the way you normally do
-and run this again.
+AWS session the way the recorded path needs gh: run `sb-aws-creds login`,
+complete the browser approval it opens, and run this again. What AWS said:
+aws: [ERROR]: An error occurred (NoCredentials): Unable to locate credentials.
+You can configure credentials by running "aws login".
 ```
 
 `edullm shell` needs one more thing, the AWS Session Manager plugin on your own laptop, and refuses with `session_plugin_missing` when it is not on `PATH`.
 
-**How the sixteen of us holding no AWS role get a session is not settled yet.** There is a credential broker in the rollout notes whose install command does not resolve, so no command for it is printed here rather than one that fails. File `edullm ask --kind access-request` and it will be answered with whatever the route turns out to be. **Nothing on the submission path waits on this.** You can produce a citable run today with `gh auth login` and nothing else.
+**How the sixteen of us holding no AWS role get that broker is still not settled**, and the reason the rollout note's install line fails is worth knowing rather than retrying. `sb-aws-creds` is a private package published out of another repository, so `npm install -g sb-aws-creds` answers 404 and always will, and no amount of re-running it changes that. On a laptop that already has it, `sb-aws-creds login` is the whole of it. On one that does not, `edullm ask --kind access-request` is the route, and it will be answered with whatever the distribution turns out to be. **Nothing on the submission path waits on this.** You can produce a citable run today with `gh auth login` and nothing else.
+
+`--compute` is optional on both verbs. Left out, the lane starts the cheapest GPU shape whose card has bfloat16 and that has been recorded as placing, and says which one it chose and what it costs an hour before it starts. `--project` stays required, because a project name is the one thing only you hold: it tags the instance and names the prefix your output lands in, and a wrong one puts two unrelated pieces of work under one bill with nothing afterwards able to separate them.
 
 ## Keeping edullm current
 
