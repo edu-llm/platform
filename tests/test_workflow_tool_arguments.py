@@ -73,7 +73,7 @@ def tool_module(tool: str) -> ModuleType:
     The prefix made that harmless; it did not make it free. Two workflows calling the same
     tool asked for it twice and the second build replaced the first under this private
     name, which is the rebinding that broke `load_tool` in
-    `tests/test_nightly_workflow.py`, differing only in that nothing here had kept a
+    `tests/test_audit_workflow.py`, differing only in that nothing here had kept a
     reference to the copy being discarded. `tests/module_identity.py` fails a run that
     rebinds any name, because "nobody is holding the old one" is a property of today's
     callers rather than of this loader, so returning the module already built is what
@@ -87,8 +87,8 @@ def tool_module(tool: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    # Registered before execution, for the reason `tests/gate_support.py` gives at its own
-    # loader: `@dataclass` resolves a string annotation by looking the defining module up in
+    # Registered before execution, for the reason `tests/test_audit_workflow.py` gives at its
+    # own loader: `@dataclass` resolves a string annotation by looking the defining module up in
     # sys.modules, and a module built from a file path is not there unless it is put there.
     # This loader went years without it because no tool a workflow runs held a dataclass.
     # The first one that did failed with an AttributeError raised inside dataclasses.py,

@@ -8,19 +8,24 @@ running *this* hook rather than a restatement of it.
 WHAT THIS CATCHES, AND WHY IT IS NOT THE OBVIOUS CHECK
 ------------------------------------------------------
 ``tools/`` is not a package, so several test modules build a module object out of a file
-path and register it. Three times now one of them has registered a *second* object under a
+path and register it. Four times now one of them has registered a *second* object under a
 name that already held one:
 
 * ``parser_for`` in `tests/test_workflow_tool_arguments.py` registered every tool a workflow
   runs under the tool's own name, replacing the copy `tests/test_find_runs_that_saved_nothing.py`
   had already bound its entry point from. The monkeypatch that followed landed on an object
   nothing called, the real object store ran, and CI reached AWS with no credentials.
-* ``load_tool`` in `tests/test_nightly_workflow.py` did the same to
+* ``load_tool`` in `tests/test_audit_workflow.py` did the same to
   ``tools/visibility_board.py``, and five tests in `tests/test_visibility_board.py` shelled
   out to the real ``aws``.
 * ``load`` in `tests/test_deployed_stacks.py` did it to ``tools/verify_deployed_stacks.py``
   and harmed nothing, because both files happen to keep the object they were handed instead
   of looking the name up again. That is a property of how those two are written today.
+* ``build_run_history`` in `tests/test_build_run_history.py` rebuilt
+  ``tools/build_run_history.py`` on every one of the seven tests that call it, so the name
+  meant a different object in each. Landed after this guard was written and was the first
+  thing the guard caught on being rebased onto it, which is the argument for having it: it
+  was written by somebody who had read neither the incidents above nor this file.
 
 Every one of them was invisible in isolation and every one turned on which xdist worker got
 which file, so they passed pull-request CI and went red on ``main``.
@@ -114,7 +119,7 @@ def explain(name: str, filename: str) -> str:
         "is invisible when either file is run alone and it turns on which xdist worker "
         "collected what, so it passes pull-request CI and fails on main. Return the module "
         "already in sys.modules rather than building another: `load_tool` in "
-        "tests/test_nightly_workflow.py is the shape to copy, and tests/module_identity.py "
+        "tests/test_audit_workflow.py is the shape to copy, and tests/module_identity.py "
         "is why."
     )
 

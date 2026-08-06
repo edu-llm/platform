@@ -75,7 +75,7 @@ NOT_FOUND = (
 def load() -> Any:
     """The tool as a module, reusing the one already imported if there is one.
 
-    `tests/test_nightly_workflow.py` reads this same tool through its own `load_tool`, and
+    `tests/test_audit_workflow.py` reads this same tool through its own `load_tool`, and
     whichever of the two ran first used to have its copy replaced by the second. Nothing
     broke, because both files keep the object they were handed rather than looking the name
     up again -- but that is a fact about how those two files are written today and not about

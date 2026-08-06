@@ -165,7 +165,7 @@ def test_the_victim_does_something_ordinary() -> None:
     assert callable(read_tagged_resources)
 """
 
-#: `load_tool` in `tests/test_nightly_workflow.py` as it was before it was fixed, against
+#: `load_tool` in `tests/test_audit_workflow.py` as it was before it was fixed, against
 #: the tool it did it to. Two files rather than one, because that is the arrangement: the
 #: copy being discarded belongs to somebody else, and the loader has no idea.
 CULPRIT = """
