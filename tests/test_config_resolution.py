@@ -201,13 +201,18 @@ def test_every_file_under_config_is_one_the_vocabulary_names() -> None:
 def test_the_filenames_the_lambdas_spell_out_are_the_ones_the_vocabulary_holds() -> None:
     """Mutation: rename a file and leave one of the four restatements behind.
 
-    Four modules spell a reviewed filename as a literal of their own, and every one of them
+    Five modules spell a reviewed filename as a literal of their own, and every one of them
     is doing it deliberately. ``notifications/facts.py`` says why in its own header: the zip
     builder measures an entry point's import closure, and reaching for a shared constant
     would drag a module into a Lambda package to share a string. So the copies stay and this
     is what stops them drifting -- the same discipline that module already holds
     :data:`SUBMITTER_FIELD` to.
+
+    ``accelerators.py`` is the fifth and is here for the reason ``placement.py`` is: both
+    read a per-profile side table as plain YAML rather than through a contract model, so
+    neither can go through :func:`load_config_file`, which takes one.
     """
+    from edullm_platform.accelerators import ACCELERATORS_FILENAME
     from edullm_platform.notifications.facts import (
         CATALOG_FILENAME,
         ORGANIZATION_FILENAME,
@@ -220,6 +225,7 @@ def test_the_filenames_the_lambdas_spell_out_are_the_ones_the_vocabulary_holds()
     assert CATALOG_FILENAME == ConfigFile.WORKLOAD_CATALOG
     assert TARGETS_FILENAME == ConfigFile.EXECUTION_TARGETS
     assert CAPACITY_FILENAME == ConfigFile.CAPACITY
+    assert ACCELERATORS_FILENAME == ConfigFile.ACCELERATORS
     assert HISTORY_FILENAME == ConfigFile.RUN_HISTORY
     assert SENTINEL_FILE == ConfigFile.POLICY
 

@@ -1,0 +1,225 @@
+# What card each compute profile puts under a run, and how much memory is on it.
+#
+# WHY THIS IS A FILE AT ALL. Nothing in this repository knew how much memory any of its GPUs
+# had. `rg -i "device memory" config/ src/` returned prose in four comments and one hand-written
+# dict in a test, and the submission path read none of it. Three of the failures analysed in the
+# week to 2026-08-06 were CUDA out-of-memory, which is a fault a researcher meets after the
+# approval, after the queue and after the card has started billing -- and the platform could not
+# have said anything about it beforehand, because the figure it would have needed existed
+# nowhere a program could read.
+#
+# `tools/render_profile_table.py` names the same gap from the other side. It writes the profile
+# table from `config/workload-catalog.yaml` and could not reproduce the Device and Memory
+# columns `guides/olmo-core.md` carries by hand, because the card behind an instance type lived
+# in that guide's prose. It reads this file now, and those two columns are generated rather than
+# typed.
+#
+# EVERY FIGURE BELOW WAS MEASURED, AND ALL SEVENTEEN CAME FROM THE SAME CALL. Not one is copied
+# from documentation, inferred from a card's name, or carried over from the comments this file
+# replaces:
+#
+#   AWS_PROFILE=sbsandbox AWS_REGION=us-east-1 aws ec2 describe-instance-types \
+#     --instance-types <the seventeen instance types in config/workload-catalog.yaml> \
+#     --query 'InstanceTypes[].{t:InstanceType,gpus:GpuInfo.Gpus,total:GpuInfo.TotalGpuMemoryInMiB}'
+#
+# `device` is `GpuInfo.Gpus[].Name`, `devices` is `.Count`, `memory_mib_per_device` is
+# `.MemoryInfo.SizeInMiB`, and `memory_mib_total` is `GpuInfo.TotalGpuMemoryInMiB` -- read
+# separately rather than multiplied out here, so that a transcription error in either shows up
+# as the two disagreeing. `tests/test_accelerators.py` checks the product every time.
+#
+# describe-instance-types RATHER THAN THE INSTANCE-TYPE PAGES, AND THE DIFFERENCE IS NOT
+# PEDANTRY. The API answers for the types this account can see in us-east-1; the documentation
+# answers for the catalogue AWS publishes. `config/capacity.yaml` is a hundred lines of what it
+# costs to assume those are the same question. It is also the cheaper instrument: it launches
+# nothing, bills nothing, and returns in three seconds.
+#
+# MIB RATHER THAN GB, AND THIS IS THE FINDING WORTH READING BEFORE THE TABLE. The A10G is sold
+# as a 24 GB card and reports 22,888 MiB, which is 22.35 GiB. Those are the same number -- 24 GB
+# in decimal bytes IS 22.35 GiB -- but a researcher who reads "24 GB" and sizes a batch against
+# 24 GiB has overcommitted the card by 1.65 GiB before the run starts, and what they get for it
+# is a CUDA OOM some way into the first epoch. Every figure here is therefore the one the API
+# returned, in the unit it returned it in, which is also the unit `nvidia-smi` prints and the
+# unit `src/edullm_platform/execution.py` already sizes containers in. Converting to GB would
+# put the marketing figure in a file whose whole purpose is that nobody has to trust one.
+#
+# WHAT THIS IS NOT: A BUDGET. It is what the card carries, not what a process can allocate. A
+# CUDA context, the allocator's fragmentation and whatever the framework reserves all come out
+# of it first, and this file does not say by how much because nobody here has measured it on
+# these cards. Treat a figure below as a ceiling that cannot be reached rather than as an
+# allowance, and see the note under `cpu-32vcpu` for the one row where the number is exact.
+#
+# WHY IT IS NOT A FIELD ON `ComputeProfile`, WHICH IS WHERE IT BELONGS. For the two reasons
+# `config/capacity.yaml` and `src/edullm_platform/precision.py` both record about their own
+# facts. That model forbids extra fields and its structural digest is recorded in
+# `fixtures/goldens/contract-models.json`, so `memory_mib_per_device` beside `provisioned` is a
+# golden regeneration rather than a config edit. And `ComputeProfile` sits inside the admission
+# Lambda's import closure, so it would additionally make this a Lambda release for a fact read
+# by a renderer. When that regeneration happens, these rows fold into the catalogue and this
+# file goes away -- as does `GPUS_BY_INSTANCE_FAMILY` in `precision.py`, which is the same
+# question asked for a different reason and is keyed by family where this is keyed by profile.
+#
+# UNKNOWN IS NOT A VALUE, AND `cpu-32vcpu` IS WHY THE RULE IS WORTH RESTATING. Every profile in
+# `config/workload-catalog.yaml` appears here exactly once, including the one with no
+# accelerator, and `tests/test_accelerators.py` fails when that stops being true. A file listing
+# only the GPU shapes would be a table with a hole in it exactly where somebody submits a
+# training command to a CPU queue -- and `devices: 0` is a fact worth being able to read rather
+# than an entry not worth writing.
+#
+# NOTHING HERE REFUSES ANYTHING, AND THAT IS TONIGHT'S DECISION RATHER THAN AN OVERSIGHT. A
+# model-fit check needs two numbers and this file supplies one. The other is the model's
+# parameter count, which no submission carries: `schemas/submission-inputs.schema.json` has
+# fifteen properties and none of them is a model size, `RunManifest` has none either, and the
+# only place an integer parameter count is ever written down is
+# `src/edullm_platform/phase4_evidence.py`, which records what a run that has already finished
+# turned out to contain. So a fit refusal built today would have to read a size out of a
+# free-text command string, and the platform's own documented training command --
+# `python .edullm/train_on_corpus.py "$EDULLM_RUN_ID"` -- names no model at all.
+# `tests/test_accelerators.py::test_no_submission_field_carries_a_model_size` is the tripwire
+# that goes red on the day that changes.
+schema_version: 1
+#: The day the call above was made. Unlike `config/capacity.yaml`'s `observed_at`, this one is
+#: not expected to move: what memory an H100 carries is a fact about the silicon, and the date
+#: records when it was read rather than a window it was true in. What would move it is a new
+#: instance family being priced, and that is a new row rather than a re-reading of these.
+observed_at: "2026-08-06"
+profiles:
+  # THE ONE ROW WHOSE NUMBER IS EXACT, AND THE ONLY ONE THAT IS. c7i.8xlarge returns no
+  # `GpuInfo` at all, so `devices: 0` is what the API said rather than a default this file
+  # chose, and zero device memory needs no allowance subtracted from it.
+  #
+  # It is here because a submission naming this profile and a command asking for CUDA is a real
+  # first-morning mistake and this is the only place the platform could answer it from. The
+  # catalogue's `accelerator: cpu` says the same thing in a field nothing arithmetic reads.
+  - profile: cpu-32vcpu
+    device: null
+    devices: 0
+    memory_mib_per_device: 0
+    memory_mib_total: 0
+  # THE T4 SIZES, AND THE ONLY FAMILY HERE WHOSE PER-DEVICE FIGURE IS A ROUND POWER OF TWO.
+  # 16,384 MiB is exactly 16 GiB, which makes these the three rows a reader is least likely to
+  # misjudge -- and, per `src/edullm_platform/precision.py`, the three whose cards have no
+  # bfloat16, so the memory is not the constraint that bites first on them.
+  - profile: gpu-1xt4
+    device: T4
+    devices: 1
+    memory_mib_per_device: 16384
+    memory_mib_total: 16384
+  - profile: gpu-4xt4
+    device: T4
+    devices: 4
+    memory_mib_per_device: 16384
+    memory_mib_total: 65536
+  # 131,072 MiB is the largest total in the T4 family and the smallest eight-card total in this
+  # file, which is the trade `config/capacity.yaml` describes: it is the only eight-card machine
+  # this account has obtained at an instant, and it holds 128 GiB against gpu-8xa100's 320.
+  - profile: gpu-8xt4
+    device: T4
+    devices: 8
+    memory_mib_per_device: 16384
+    memory_mib_total: 131072
+  # 22,888 MiB, WHICH IS THE FIGURE THIS WHOLE FILE EXISTS TO STOP BEING ROUNDED. The A10G and
+  # the L4 both report it, both are sold as 24 GB cards, and both are 22.35 GiB. Six of the
+  # seventeen rows below and above carry it, so a recipe annotated "fits in 24 GB" is one that
+  # has 1.65 GiB less than its author thinks on six of this platform's shapes.
+  - profile: gpu-1xa10g
+    device: A10G
+    devices: 1
+    memory_mib_per_device: 22888
+    memory_mib_total: 22888
+  # MEASURED AS THE EC2 TYPE, WHICH IS THE FIELD THE CATALOGUE DECLARES AND NOT THE ONE IT
+  # PRICES. This profile's `instance_type` is `g5.2xlarge` and its `pricing_source` is
+  # SageMaker's `ml.g5.2xlarge`, so the rate and the card are read from two different products.
+  # What is below is `describe-instance-types` on the EC2 type, exactly as for every other row.
+  # The SageMaker instance carries the same A10G, and this file does not assert that, because
+  # nothing here measured it -- the profile is unprovisioned, has no Batch queue, and no run can
+  # reach it, so the distinction costs nothing today and would cost something the day it could.
+  - profile: gpu-1xa10g-sagemaker
+    device: A10G
+    devices: 1
+    memory_mib_per_device: 22888
+    memory_mib_total: 22888
+  - profile: gpu-4xa10g
+    device: A10G
+    devices: 4
+    memory_mib_per_device: 22888
+    memory_mib_total: 91552
+  - profile: gpu-8xa10g
+    device: A10G
+    devices: 8
+    memory_mib_per_device: 22888
+    memory_mib_total: 183104
+  - profile: gpu-1xl4
+    device: L4
+    devices: 1
+    memory_mib_per_device: 22888
+    memory_mib_total: 22888
+  - profile: gpu-4xl4
+    device: L4
+    devices: 4
+    memory_mib_per_device: 22888
+    memory_mib_total: 91552
+  # IDENTICAL TO gpu-8xa10g ON EVERY FIGURE IN THIS FILE, WHICH THE CATALOGUE ALREADY CLAIMED
+  # AND NOTHING COULD CHECK. Both are eight devices of 22,888 MiB for 183,104 MiB, and this one
+  # is $13.3504/hour against $16.2880. The claim is now two rows that can be compared rather
+  # than a sentence in a comment, which is the point of writing the numbers down.
+  - profile: gpu-8xl4
+    device: L4
+    devices: 8
+    memory_mib_per_device: 22888
+    memory_mib_total: 183104
+  # 45,776 MiB is exactly twice the A10G and L4 figure, which is the arithmetic behind the
+  # catalogue's note that no 24 GB card holds P7's 44 GB micro-batch and this one does -- with
+  # 1,776 MiB left over before the CUDA context is taken out of it.
+  - profile: gpu-1xl40s
+    device: L40S
+    devices: 1
+    memory_mib_per_device: 45776
+    memory_mib_total: 45776
+  # 183,104 MiB IN FOUR CARDS RATHER THAN EIGHT, WHICH IS THE SAME TOTAL AS gpu-8xa10g AND
+  # gpu-8xl4 AND IS THE CHEAPEST OF THE THREE AT $10.4926/hour. Same total is not the same
+  # machine: four larger cards hold a bigger unsharded tensor and eight smaller ones give more
+  # aggregate bandwidth, and which of those a run wants is the submitter's judgement. This file
+  # states the totals and takes no position on it.
+  - profile: gpu-4xl40s
+    device: L40S
+    devices: 4
+    memory_mib_per_device: 45776
+    memory_mib_total: 183104
+  - profile: gpu-8xl40s
+    device: L40S
+    devices: 8
+    memory_mib_per_device: 45776
+    memory_mib_total: 366208
+  - profile: gpu-1xh100
+    device: H100
+    devices: 1
+    memory_mib_per_device: 81920
+    memory_mib_total: 81920
+  # THE A100 IN THIS ACCOUNT IS THE 40 GB PART, AND ONE COMMENT IN THE CATALOGUE STILL SAYS IT
+  # IS THE 80. p4d.24xlarge reports 40,960 MiB per device for 327,680 MiB total, which is the
+  # 320 every other figure in this repository is consistent with -- `config/capacity.yaml` and
+  # `infra/batch-compute-gpu-shapes.yaml` both say 320, and `tests/test_capacity.py` already
+  # carried `"p4d": ("a100", 40)`. The outlier is the sentence in `config/workload-catalog.yaml`
+  # directing anybody reaching for the unobtainable gpu-8xh100 to this shape as "eight 80 GB
+  # cards", which offers half the memory it names.
+  #
+  # IT IS NOT CORRECTED HERE, AND THE REASON IS WORTH KNOWING BEFORE SOMEBODY TRIES. That file
+  # is packaged verbatim into the notifier and validator Lambda zips, so editing one of its
+  # comments moves two released digests and `tests/test_released_zips.py` goes red until both
+  # are re-released with an AWS credential. A pending notifier release from other work was
+  # already recorded when this was written, so the correction also has somebody else's release
+  # to sequence behind. It belongs in a change that is releasing those functions anyway. This
+  # row is the measurement that settles which of the two figures is right.
+  - profile: gpu-8xa100
+    device: A100
+    devices: 8
+    memory_mib_per_device: 40960
+    memory_mib_total: 327680
+  # The largest total this platform prices, and unobtainable: 655,360 MiB is twice gpu-8xa100
+  # and nothing in this account has ever held a p5. See the note above gpu-1xh100 in
+  # config/workload-catalog.yaml for the nine hours of InsufficientInstanceCapacity behind that.
+  - profile: gpu-8xh100
+    device: H100
+    devices: 8
+    memory_mib_per_device: 81920
+    memory_mib_total: 655360
