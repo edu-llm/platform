@@ -314,12 +314,19 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     # edullm-alt-cl set: a repository registered for training and given only a one-hour
     # check has a dropdown entry and still nowhere to run the work it was registered for.
     #
+<<<<<<< HEAD
     # edullm-p1 IS THE EXCEPTION TO THAT AND IT IS DELIBERATE RATHER THAN AN OVERSIGHT. Its
     # workload is a seven-arm Batch array over experiments/skill-dag/mixlaw, so a -train
     # entry here would have to name a runtime, an attempt count and a checkpoint contract
     # that nobody has measured, and the argument above is precisely that a bound written
     # without a measurement is a ceiling pretending to be an estimate. The pre-training team
     # owns those three numbers; the check exists so the path can be proved while they pick.
+=======
+    # Ten since olmo-eval-sweep, and it is the one entry here added singly rather than as a
+    # pair. olmo-eval-full was already registered and already had olmo-eval-check, so the
+    # thing edullm-alt-cl was missing -- somewhere to run the work the repository exists for
+    # -- is what this adds, on the two-hour GPU shape a real benchmark split needs.
+>>>>>>> origin/main
     assert len(catalog.workloads) == 10
     # The check Phase 3 runs. It names OLMo-core, which was the only registered repository
     # with a published image when this was written; dolma-tokenize is the same shape against

@@ -297,9 +297,23 @@
     {
       "base": false,
       "module": "edullm_platform.contracts.manifest",
+      "name": "RunInput",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:4efe3bb59ec0161fe55a7dc8c7508abc4727adaa56682045afa33b2002bd21d8"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.manifest",
       "name": "RunManifest",
       "schema_version": "1",
       "structural_digest": "sha256:1f6d150b79887bbc6f2962f71964b08180ea13894329c783907e5309df48cedc"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.manifest",
+      "name": "RunManifestV2",
+      "schema_version": "2",
+      "structural_digest": "sha256:bee34bb15d322ef2b1404bd2f26d16c609c28d1d5c096269d8e8d6c77fcb015e"
     },
     {
       "base": false,
@@ -353,9 +367,23 @@
     {
       "base": false,
       "module": "edullm_platform.contracts.results",
+      "name": "EvalMetric",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:1704aa48a81d91e959fb46a16c3c3d7e8421704fffd76fa0944c461f1e9957e9"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.results",
+      "name": "EvalMetrics",
+      "schema_version": "1",
+      "structural_digest": "sha256:320ff21f6036ed5ed160ae54204276ccf259d982e4ae5f04c445d26b59e8dd79"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.results",
       "name": "ResultManifest",
       "schema_version": "1",
-      "structural_digest": "sha256:47ba07791dc06f0b05512ffdcc18ad5b953a650c88e68b30a7b40d93ac1f39e4"
+      "structural_digest": "sha256:12f289f215021876de0248934e3af99127e19f0305cd119b215309a6c79cad18"
     },
     {
       "base": false,
@@ -915,7 +943,7 @@
       "module": "edullm_platform.phase5_evidence",
       "name": "BranchProtectionEvidence",
       "schema_version": "unversioned",
-      "structural_digest": "sha256:844ce60279a4834229d3fafed970f0b1e57efba02023995eacc35a84d2ecef21"
+      "structural_digest": "sha256:eb128b52a94ae5268b63a3e9f2a0e807d2a51ed38ec99032bc262efbd82ad1b9"
     },
     {
       "base": false,
@@ -923,6 +951,13 @@
       "name": "PublishedImageEvidence",
       "schema_version": "unversioned",
       "structural_digest": "sha256:edd8d7f244bd221cad534be10b7841232a22d7f1d6a3683fbddad2dac5d2734d"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.phase5_evidence",
+      "name": "RequiredCheckEvidence",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:84ac5428dfd97b9f60464c69084e7b8ddcdf2366c35dd6d07e380e0631232cc1"
     },
     {
       "base": false,

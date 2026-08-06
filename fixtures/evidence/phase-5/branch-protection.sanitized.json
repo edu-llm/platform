@@ -5,15 +5,21 @@
   "dismiss_stale_reviews": true,
   "enforce_admins": false,
   "environment": "sandbox",
-  "observed_at": "2026-07-30T22:00:39Z",
+  "observed_at": "2026-08-05T23:47:26Z",
   "organization": "edu-llm",
   "repository": "platform",
-  "require_code_owner_reviews": true,
-  "required_approving_review_count": 1,
+  "require_code_owner_reviews": false,
+  "required_approving_review_count": 0,
   "required_conversation_resolution": true,
   "required_status_checks": [
-    "checks (python 3.12)",
-    "checks (python 3.13)"
+    {
+      "app_id": 15368,
+      "context": "checks (python 3.12)"
+    },
+    {
+      "app_id": 15368,
+      "context": "checks (python 3.13)"
+    }
   ],
   "source": "github"
 }

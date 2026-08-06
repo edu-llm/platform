@@ -223,6 +223,19 @@ class ProcessPerDeviceError(SubmissionRefusedError):
     reason_code: ClassVar[str] = "process_per_device"
 
 
+class TensorParallelFlagIgnoredError(SubmissionRefusedError):
+    """A code of its own rather than ``process_per_device``, which it sits beside.
+
+    That rule asks whether the command's process count matches the shape, and its answer is
+    a number a submitter can change. This asks whether a flag the submitter did write is one
+    the harness reads, and it is true of commands that pass the device-count check -- the
+    short spelling declares four and the harness hears one, so both readings of
+    ``process_per_device`` are the wrong sentence for it.
+    """
+
+    reason_code: ClassVar[str] = "tensor_parallel_flag_ignored"
+
+
 class CheckpointPathNotInCommandError(SubmissionRefusedError):
     reason_code: ClassVar[str] = "checkpoint_path_not_in_command"
 

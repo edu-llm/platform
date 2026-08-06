@@ -33,8 +33,20 @@ from edullm_platform.researcher_lane import (
 
 __all__ = ["build_parser", "expires_at", "main", "source_identity_from"]
 
-#: What STS accepts for a source identity: 2-64 characters from this set, not starting "aws:".
-UNSAFE_IN_SOURCE_IDENTITY = re.compile(r"[^\w+=,.@-]")
+#: NARROWER THAN WHAT STS ACCEPTS, ON PURPOSE, AND THE REASON IS THE OTHER END OF THIS STRING.
+#: STS allows 2-64 characters from ``[\w+=,.@-]`` not starting "aws:", and this drops ``+``,
+#: ``=``, ``,``, ``@`` and every non-ASCII letter ``\w`` would have kept. What is left is exactly
+#: ``edullm_platform.cli.lane._UNSAFE_IN_A_SEGMENT``, because the string this produces is also
+#: the working-tier directory name that module picks, and ``infra/iam/researcher-role.yaml``'s
+#: seventh statement excepts only ``edullm-work/*/${aws:SourceIdentity}/*`` from a deny on every
+#: object write. Two derivations of one string, and the wider one loses: a session named
+#: ``broker-frank+ops-1234`` produced the identity ``frank+ops`` and the prefix ``frank-ops``,
+#: so the lane wrote to a path its own role denied and the denial named nothing.
+#:
+#: The intersection rather than either side, so neither has to widen. Every character kept here
+#: is legal in a source identity and legal in an S3 key segment.
+#: ``tests/test_enter_researcher_lane.py`` holds the two functions equal.
+UNSAFE_IN_SOURCE_IDENTITY = re.compile(r"[^A-Za-z0-9._-]")
 
 
 def source_identity_from(caller_arn: str) -> str:

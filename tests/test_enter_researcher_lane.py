@@ -75,6 +75,55 @@ def test_the_source_identity_agrees_with_the_prefix_the_working_tier_deny_fences
     )
 
 
+#: Session names chosen so the two derivations' character classes disagree if they differ at
+#: all. The first two are the ordinary cases and agreed before this corpus existed; the rest
+#: are every character STS permits in a source identity that is not permitted in the segment
+#: the working tier uses, plus one non-ASCII letter, which Python's ``\w`` keeps and an ASCII
+#: class does not. A name is not exotic for containing an ``@`` or an accent.
+SESSION_NAMES = (
+    "broker-frank.gonzalez-1785873426",
+    "console-session",
+    "broker-frank+ops-1785873426",
+    "broker-a,b-1785873426",
+    "broker-x@y-1785873426",
+    "broker-a=b-1785873426",
+    "broker-jos\u00e9-1785873426",
+    "broker-frank_gonzalez-1785873426",
+)
+
+
+@pytest.mark.parametrize("session", SESSION_NAMES)
+def test_the_two_derivations_of_one_person_return_one_string(session: str) -> None:
+    """THE SEAM BETWEEN TWO SLICES, AND IT WAS BROKEN FOR FIVE OF THESE EIGHT NAMES.
+    Mutation: widen either character class back to what its own end permits.
+
+    ``source_identity_from`` sets the value ``${aws:SourceIdentity}`` resolves to in the seventh
+    statement's exception, and ``person_from_caller_arn`` picks the working-tier prefix a lane
+    session writes to. Both derive a person from the same caller ARN, and the deny only lets a
+    write through when the prefix the second returns is the segment the first named. They
+    disagreed: STS permits ``+=,@`` and Python's ``\\w`` keeps non-ASCII letters, while an S3
+    segment here is ``[A-Za-z0-9._-]``, so ``broker-frank+ops-1785873426`` yielded the identity
+    ``frank+ops`` and the prefix ``frank-ops`` and every write that session made was denied.
+
+    THE FAILURE IS SILENT AND THAT IS WHY THIS IS PARAMETRIZED RATHER THAN SPOT-CHECKED. An
+    AccessDenied on a NotResource deny names no bucket, no key and no reason, so the person it
+    happens to has nothing to search for and nothing to report beyond "the lane does not work".
+    A single well-behaved name passes whatever the two functions do, which is what the check
+    beside this one was doing on its own.
+
+    Compared in the direction that matters. ``person_from_caller_arn`` returns None for a
+    session already in the lane, which is a case the helper does not reach; wherever it names
+    somebody, the helper must name the same person.
+    """
+    from edullm_platform.cli.lane import person_from_caller_arn
+
+    arn = f"arn:aws:sts::{ACCOUNT_ID}:assumed-role/Intern-frank.gonzalez-sbsandbox/{session}"
+    prefix = person_from_caller_arn(arn)
+
+    assert prefix is not None, "this corpus holds no in-lane session"
+    assert source_identity_from(arn) == prefix
+
+
 def test_the_expiry_is_an_absolute_utc_timestamp() -> None:
     """Mutation: emit a duration, or a local time.
 

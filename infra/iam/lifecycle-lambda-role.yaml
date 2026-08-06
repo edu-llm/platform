@@ -90,6 +90,20 @@ Resources:
                 Condition:
                   StringLike:
                     s3:prefix: "teams/*/runs/*/checkpoints/*"
+              # s3:GetObject ON ONE KEY NAME, AND THE COMMENT ABOVE IS WHY IT IS THIS NARROW.
+              # That paragraph refuses GetObject across the outputs bucket to buy one
+              # checkpoint field a listing nearly supplies. This is the case it does not
+              # cover: an eval run's scores are the contents of metrics.json and no listing
+              # can reach them, so the choice is this read or an empty field forever.
+              #
+              # The resource ends in the exact object name rather than a wildcard, so the
+              # recorder can read the one document it is being asked to project and nothing
+              # else any team wrote. A trailing * here would be the wide grant the paragraph
+              # above declines, arriving under a narrower-looking rule.
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-outputs/teams/*/runs/*/metrics.json
               # The event source mapping polls as this role, so receive, delete and the
               # attribute read are all needed; without DeleteMessage a projected event is
               # redelivered until it reaches the dead-letter queue, which reads as a

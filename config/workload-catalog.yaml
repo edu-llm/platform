@@ -418,6 +418,25 @@ workloads:
     maximum_runtime_hours: "1"
     maximum_attempts: 1
     checkpoint: null
+  # The Evaluation group's scoring entry, and the first one here a GPU helps. olmo-eval-check
+  # above stays: it is the mock-provider path that proves the harness loads and writes results
+  # without a model, and a check that costs nothing is worth keeping beside one that does not.
+  #
+  # ONE ATTEMPT, AND IT IS NOT THE USUAL ARGUMENT. Elsewhere a second attempt needs a
+  # checkpoint contract to resume from. An eval cell has nothing to resume: it reads a
+  # checkpoint somebody else wrote and produces a metrics document, so a lost host costs the
+  # read again rather than the work. checkpoint is null for the same reason -- there is no
+  # interval to checkpoint on.
+  #
+  # TWO HOURS RATHER THAN ONE, AND THE HOUR IS PER CELL. A full benchmark split on a 24 GB card
+  # is longer than the twenty-step checks above it, and the ceiling is what Batch enforces per
+  # attempt rather than across an array. A twenty-cell sweep is twenty two-hour attempts, which
+  # is what the approver is pricing: see config/policy.yaml for the ceilings a fan-out crosses.
+  - name: olmo-eval-sweep
+    repository: olmo-eval-full
+    maximum_runtime_hours: "2"
+    maximum_attempts: 1
+    checkpoint: null
   # Retained and still unrunnable: dolma has no registration and no image. Kept because the
   # catalog is a policy document and this entry is the contract a tokenizer job runs under,
   # not a claim that one can be submitted today. Two hours rather than one because
