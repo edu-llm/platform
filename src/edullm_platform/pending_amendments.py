@@ -891,6 +891,48 @@ def pending_releases() -> tuple[PendingRelease, ...]:
             released="50922d41d3750af154e3b2342cfe634c4105b398ed2895a2de585b48579b98d9",
             recorded_on=date(2026, 8, 6),
         ),
+    # A FIFTEENTH AND A SIXTEENTH, BOTH FROM ONE CORRECTED COMMENT, WHICH IS THE CHEAPEST
+    # EDIT THIS REGISTER HAS EVER OPENED FOR AND IS WORTH RECORDING AS SUCH. config/
+    # policy.yaml is packaged verbatim by two builders -- it is in ADMISSION_CONFIG and it
+    # joined NOTIFIER_CONFIG when the approval message started reading it -- so a comment in
+    # it moves two zips and no behaviour whatever. Isolated rather than assumed: with the
+    # three source files in this change restored and policy.yaml alone left edited, both
+    # tripwires fire and no other does, and with policy.yaml restored and the three source
+    # files edited, none does.
+    #
+    # WHAT THE COMMENT SAID AND WHY IT COULD NOT STAY. The v5 note justified retiring
+    # routine_maximum_attempts partly on retry_without_a_checkpoint_contract "refus[ing] a
+    # retry that would restart from nothing", and it does not: it refuses more than one
+    # attempt on a workload profile carrying no checkpoint contract, which is a fact about
+    # config/workload-catalog.yaml rather than about the codebase that would have to resume.
+    # Two of the six registered repositories pass it and restart from step 0.
+        PendingRelease(
+            function="validator",
+            reason=(
+                "A corrected comment in config/policy.yaml, which build_admission_lambda "
+                "names in ADMISSION_CONFIG and packages verbatim. policy_version, "
+                "automatic_below_cost_usd, image_scan, approval_scope, both approver roles "
+                "and every denied_outright condition are byte-identical, so the deployed "
+                "validator classifies every request exactly as this tree does."
+            ),
+            cleared_by="uv run python tools/release_lambda.py --function validator",
+            builds_to="d7171b01c6cb49c614f851167daa70db845a6ff12c729415b8b9dc55b12cba7a",
+            released="df9952459e54ff0ebbce89660b5faf3b7a87bae47d2a0856c2553c9735d2740f",
+            recorded_on=date(2026, 8, 6),
+        ),
+        PendingRelease(
+            function="notifier",
+            reason=(
+                "The same corrected comment in config/policy.yaml, which joined "
+                "NOTIFIER_CONFIG because the approval message reads the policy. The notifier "
+                "quotes policy_version and the approver roles and reads no comment, so this "
+                "is bytes and no message."
+            ),
+            cleared_by="uv run python tools/release_lambda.py --function notifier",
+            builds_to="12c2b29e4c5bfa32a60a637c0f1e9d51415106eff661de32775bfd63d2e71708",
+            released="b291227b4905c7ac9b89b78e3f8b3491ab8912d5768059a9d00d945927e8c53f",
+            recorded_on=date(2026, 8, 6),
+        ),
     )
     return one_record_per_function(releases)
 

@@ -442,6 +442,75 @@ def test_the_capacity_answer_is_in_the_document_an_agent_reads(
     assert "gpu-8xl40s" in err
 
 
+def test_what_a_second_attempt_does_not_establish_is_in_the_document_an_agent_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: price two attempts and say nothing about whether the second one resumes.
+
+    ``cost`` multiplies by ``maximum_attempts`` and is right to. What it cannot carry is that
+    the platform has checked only that a checkpoint contract exists and that the command
+    expands the variable -- and that two registered repositories pass both and restart from
+    step 0. An agent that reads ``cost`` alone quotes a ceiling for a second attempt that may
+    buy nothing.
+
+    ``maximum_attempts`` and ``resume_required`` are the structure and ``said`` is the
+    sentence, which is the split ``history`` and ``placement`` already make.
+    ``resume_required`` is the profile's declaration rather than a finding, which is the one
+    thing an agent must not read as a promise, so the sentence says so in words.
+    """
+    root, runner = checkout(tmp_path, workload="olmo-core-train")
+
+    code, out, err = invoke(
+        ["check", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment", "--json"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+    document = json.loads(out)
+
+    assert code == EXIT_OK, out + err
+    assert document["cost"]["maximum_attempts"] == 2
+    assert document["retries"]["maximum_attempts"] == 2
+    assert document["retries"]["resume_required"] is True
+
+    said = document["retries"]["said"]
+    assert "olmo-core-train" in said
+    assert "EDULLM_CHECKPOINT_DIR" in said
+    # The finding the sentence exists to carry rather than a paraphrase of the ceiling: the
+    # attempt Batch reliably spends matches none of the retry rules and gets the same bound
+    # again, so a run that resumes from nowhere cannot finish on it either.
+    assert "ran out of time" in said
+    assert "same bound again" in said
+
+
+def test_a_single_attempt_check_carries_the_retries_key_holding_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: emit the block on every check, or drop the key where there is nothing to say.
+
+    Both directions cost a caller something. A block on a one-attempt run is a paragraph
+    about a second attempt that does not exist, which is what readers learn to skip; a key
+    that disappears is a key every caller has to guard, which is the rule ``check_document``
+    already states about ``run_id``. ``placement`` settled this the same way.
+    """
+    root, runner = checkout(
+        tmp_path, workload="olmo-core-check", command="python -m olmo_core.internal.checks"
+    )
+
+    code, out, err = invoke(
+        ["check", "--dataset", "none", "--experiment", "an-experiment", "--json"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+    document = json.loads(out)
+
+    assert code == EXIT_OK, out + err
+    assert document["cost"]["maximum_attempts"] == 1
+    assert "retries" in document
+    assert document["retries"] is None
+
+
 def test_the_document_says_nothing_rather_than_nothing_known_for_a_shape_that_places(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -874,6 +874,48 @@ def test_only_a_shape_offered_in_that_zone_imports_the_us_east_1e_subnet() -> No
     assert not offenders, "; ".join(offenders)
 
 
+def test_every_compute_environment_buys_on_demand_rather_than_spot() -> None:
+    """Mutation: move one environment to SPOT and leave the retry reasoning where it was.
+
+    THIS IS A PREMISE RATHER THAN A PREFERENCE, WHICH IS WHY IT IS PINNED HERE. The only
+    ``RETRY`` arm in ``RETRY_ONLY_WHAT_A_RETRY_FIXES`` matches ``Host EC2*``, and its own
+    comment names "a Spot reclaim once the A100 tier is promoted" as the case it is for. No
+    environment in this tree is SPOT, so today that arm catches a genuine hardware fault and
+    nothing else -- which is what makes the timeout the one failure a second attempt is
+    reliably spent on, and is the reasoning ``config/policy.yaml`` and
+    ``checkpoint_commands.unverified_resume_note`` both rest on.
+
+    A SPOT environment would make all of that true in a different way rather than false, and
+    that is exactly why it must not arrive silently. Reclaims would be routine, the retry arm
+    would start firing on them, and whether the second attempt is worth its money would
+    become a live question for every profile in the catalog instead of a mostly dormant one.
+
+    ``AllocationStrategy`` is asserted with it because the two are not independent: Batch
+    accepts ``SPOT_CAPACITY_OPTIMIZED`` and ``SPOT_PRICE_CAPACITY_OPTIMIZED`` only on a SPOT
+    environment, so a strategy that names Spot is a SPOT environment written by somebody who
+    edited one field.
+    """
+    offenders: list[str] = []
+    for path in COMPUTE_PATHS:
+        for resource in resources_of_type(path, "AWS::Batch::ComputeEnvironment").values():
+            properties = resource["Properties"]
+            compute = properties["ComputeResources"]
+            named = properties["ComputeEnvironmentName"]
+            if compute["Type"] != "EC2":
+                offenders.append(f"{path.name}: {named} is Type: {compute['Type']}")
+            if "SPOT" in compute["AllocationStrategy"]:
+                offenders.append(
+                    f"{path.name}: {named} allocates with {compute['AllocationStrategy']}"
+                )
+
+    assert not offenders, (
+        "a Spot compute environment makes a reclaimed host an ordinary event, which is the "
+        "case the one RETRY rule was written for and the case the reasoning in "
+        "config/policy.yaml and checkpoint_commands.unverified_resume_note currently says "
+        f"does not arise. Read both before landing this: {'; '.join(offenders)}"
+    )
+
+
 def test_every_listed_instance_type_has_a_subnet_it_can_actually_be_placed_in() -> None:
     """Mutation: add p5e.48xlarge to gpu-8xh100, or drop the 1c and 1d subnets from gpu-8xa100.
 

@@ -132,10 +132,17 @@ these as well.
 | `refusals` | a list of `{code, detail}`. **Match on `code`.** The detail is prose and gets reworded |
 | `deferred` | checks a laptop cannot make, listed even when nothing is refused |
 | `cost` | the five factors and their product |
+| `retries` | null on a one-attempt run. Otherwise what the later attempts do and do not buy, with `said` as the sentence to quote |
 | `approval_class` | who has to release it |
 | `manifest` | exactly what would be submitted, including the command and the commit |
 | `history` | what runs of this shape have taken, with `said` as the sentence to quote |
 | `config_directory` | the reviewed configuration this install carries |
+
+**Do not read `retries.resume_required` as a promise that a retry resumes.** It is the
+workload profile's declaration, and nothing on the platform checks it against the codebase
+that would have to honour it. Measured on 2026-08-06, two of the six registered repositories
+declare it, pass every check here, and restart from step 0. Quote `said` rather than the
+flag.
 
 ## 2. Fix every refusal
 

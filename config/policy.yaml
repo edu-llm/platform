@@ -82,9 +82,11 @@ thresholds:
   #                                          expensive is what the cost bound reads.
   #   routine_maximum_attempts: 2            a third attempt needed an admin. An attempt
   #                                          multiplies the worst case, so the cost bound
-  #                                          already sees it, and
-  #                                          retry_without_a_checkpoint_contract is what
-  #                                          refuses a retry that would restart from nothing.
+  #                                          already sees it. This line also said
+  #                                          retry_without_a_checkpoint_contract "refuses a
+  #                                          retry that would restart from nothing", which
+  #                                          was untrue. The paragraph below the list is
+  #                                          what that sentence became.
   #   routine_maximum_fanout_size: 64        a sixty-fifth cell needed an admin. Every
   #                                          fan-out goes to a lead now whatever its size,
   #                                          which is a narrower rule and a stricter one for
@@ -106,6 +108,50 @@ thresholds:
   #                                          bound already carries the hours it multiplies.
   #                                          Two tests where one says the same thing sent a
   #                                          twelve-hour eighty-cent run to a lead.
+  #
+  # NOTHING REFUSES A RETRY THAT WOULD RESTART FROM NOTHING, AND THE ATTEMPTS LINE ABOVE SAID
+  # SOMETHING ELSE. This is corrected rather than deleted because approvers were told it, and
+  # a threshold whose retirement was justified by a control that does not exist is a
+  # different fact from one whose retirement was justified by the cost bound alone.
+  #
+  # WHAT THE TWO CHECKS ACTUALLY ASK. retry_without_a_checkpoint_contract refuses more than
+  # one attempt on a workload profile carrying no checkpoint contract, which is a check on
+  # this file's neighbour, config/workload-catalog.yaml. require_a_save_folder_a_retry_can_find
+  # refuses a command that never expands $EDULLM_CHECKPOINT_DIR. Neither reads the codebase,
+  # and whether a trainer loads that directory back is in the codebase.
+  #
+  # edullm-p1 is where the gap was measured. Its contract exists, its command expands the
+  # variable, its trainer honours the variable on save, and a second attempt starts from step
+  # 0 anyway: RECOVERY_MODE=fail is written into every child environment so no submitted
+  # command can change it, every attempt gets a fresh container so the fail-closed leftover
+  # check finds an empty scratch and the trainer reports starting from nothing, and
+  # resolve_load_path raises on any s3:// load path, which is the only kind this platform
+  # hands out. open-instruct-scored-rewards restarts too and for a fourth reason: grpo_fast.py
+  # gates its load on os.path.exists against an s3:// URI and logs that it is skipping it.
+  # OLMo-core and edullm-alt-cl do resume, each by code written on purpose for this platform.
+  # Two of the six registered repositories pass every check here and cannot use the attempt
+  # they are granted.
+  #
+  # A SENTENCE RATHER THAN A REFUSAL, AND THE CHOICE IS ABOUT WHICH DIRECTION A WRONG ANSWER
+  # FAILS IN. Refusing maximum_attempts above one unless resume is demonstrable needs the
+  # platform to know a trainer's load path, which it cannot see. The only way to give it one
+  # is a per-repository field somebody writes by hand, which is the same easy question
+  # standing in for the same hard one, one level further up; and it would refuse a run the
+  # platform should accept on the day a repository changed its trainer, starting with
+  # olmo-core-train, which is the profile every new researcher reaches for. So
+  # checkpoint_commands.unverified_resume_note says plainly, on the approver page and under
+  # "retries" in edullm check --json, that the attempt factor is priced correctly and that
+  # nothing here establishes the later attempts reach further than the first.
+  #
+  # AND THE ATTEMPT THAT ACTUALLY GETS SPENT IS NOT THE ONE THE RETRY RULES DESCRIBE. The
+  # only RETRY arm in RETRY_ONLY_WHAT_A_RETRY_FIXES matches Host EC2*, and all sixteen Batch
+  # compute environments under infra/ are Type: EC2 rather than SPOT, so nothing reclaims a
+  # host on purpose and that arm has almost nothing left to catch. What Batch does retry is a
+  # failure matching none of the rules, and an attempt stopped for outrunning
+  # attemptDurationSeconds carries the status reason "Job attempt duration exceeded timeout"
+  # and no container exit code at all -- so the rule globbing OnExitCode "*" has nothing to
+  # match either. The one second attempt this platform reliably pays for is therefore the one
+  # on the run that could not finish in its bound, given the same bound again.
   #
   # UNDER THIS FIGURE AND IN ONE CELL, NOBODY RELEASES IT. At it exactly, or above it, or in
   # more than one cell, a team lead does. Strictly under, unlike every routine_maximum_
