@@ -41,6 +41,7 @@ from pydantic import BeforeValidator, Field, ValidationError, model_validator
 from edullm_platform.canonical import sha256_digest
 from edullm_platform.checkpoint_commands import (
     require_a_save_folder_a_retry_can_find,
+    unverified_resume_note,
     waived_checkpoint_check_note,
 )
 from edullm_platform.contracts.admission import ApprovalEnvironment
@@ -752,6 +753,28 @@ def _waiver_lines(manifest: RunManifest) -> tuple[str, ...]:
     return tuple(line for note in notes if note is not None for line in (note, ""))
 
 
+def _retry_lines(manifest: RunManifest) -> tuple[str, ...]:
+    """What the attempt factor above buys, for a request that asks for more than one.
+
+    Under the worst case rather than beside the table, because the sentence is about a
+    number the approver has just read: the ceiling multiplies by attempts and says nothing
+    about whether the later ones reach further than the first. Empty for a single-attempt
+    run, which has nothing to qualify.
+
+    A section of its own rather than a line among the waivers. The two waiver notes report
+    something the submitter did; this reports something the platform does not know, and it
+    is owed to every lead releasing a multi-attempt run rather than to the unusual ones.
+    """
+    said = unverified_resume_note(
+        maximum_attempts=manifest.maximum_attempts,
+        workload_profile=manifest.workload_profile,
+        checkpoint=manifest.checkpoint,
+    )
+    if said is None:
+        return ()
+    return ("## What the second attempt buys", "", said, "")
+
+
 def render_approver_context(
     submission: CompiledSubmission,
     *,
@@ -868,6 +891,7 @@ def render_approver_context(
             "you."
         ),
         "",
+        *_retry_lines(manifest),
         "## What runs of this shape have taken",
         "",
         history.said,

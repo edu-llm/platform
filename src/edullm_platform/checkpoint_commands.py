@@ -52,6 +52,32 @@ with two conventions would be two things to remember and one of them would be re
 wrongly. The cases it exists for are real: a program that derives its own checkpoint path,
 and a deliberate throwaway -- the historical run above was the second, a ``--dry-run`` on a
 training profile, which resolves a config and trains nothing.
+
+**AND THE GUARD ABOVE ESTABLISHES LESS THAN ITS NAME PROMISES, WHICH IS WHY**
+:func:`unverified_resume_note` **IS IN THE SAME MODULE.** Two checks stand between a
+submission and a second attempt: :func:`~edullm_platform.contracts.validation
+.require_checkpoint_for_retries` asks whether the workload profile carries a checkpoint
+contract, and the guard above asks whether the command expands the variable. Neither reads
+the codebase, and the thing that decides whether a retry resumes is in the codebase.
+
+``edullm-p1`` is the case that proved it. The contract exists, the command expands the
+variable, the trainer honours it on save, and a second attempt starts from step 0 for three
+independent reasons in that repository: ``RECOVERY_MODE=fail`` is written into every child
+environment, so no submitted command can change it; every attempt gets a fresh container, so
+the fail-closed check for leftovers finds an empty scratch directory and the trainer reports
+starting from nothing; and ``resolve_load_path`` raises by name on any ``s3://`` load path
+with "S3 checkpoint resume is disabled", which is the only kind of path this platform hands
+out. ``open-instruct-scored-rewards`` fails the same way for a fourth reason:
+``grpo_fast.py`` gates its load on ``os.path.exists(checkpoint_state_dir)``, a local-filesystem
+test against an ``s3://`` URI, so it logs that it is skipping the load and sets
+``optimization_steps_done`` to zero. Both would pass both checks, which is what makes them a
+pair of checks that cannot fail rather than a pair that has not fired yet.
+
+So the honest instrument is a sentence rather than a refusal. The platform can see a
+registry entry, a command and a reviewed catalog; it cannot see a trainer's load path, and a
+per-repository field asserting that one resumes would be the same easy question standing in
+for the same hard one, one level further up -- and would refuse a run in the other direction
+on the day a repository changed its trainer.
 """
 
 from __future__ import annotations
@@ -75,6 +101,7 @@ __all__ = [
     "CHECKPOINT_DIRECTORY_VARIABLE",
     "expands_the_checkpoint_directory",
     "require_a_save_folder_a_retry_can_find",
+    "unverified_resume_note",
     "waived_checkpoint_check_note",
 ]
 
@@ -155,6 +182,78 @@ def waived_checkpoint_check_note(
         f"`${CHECKPOINT_DIRECTORY_VARIABLE}`, which `{CHECKPOINT_CHECK_WAIVER}` in the "
         "command declares is deliberate. Nothing verifies that a retry of this run would "
         "find anything to resume from."
+    )
+
+
+def unverified_resume_note(
+    *,
+    maximum_attempts: int,
+    workload_profile: str,
+    checkpoint: CheckpointContract | None,
+) -> str | None:
+    """What a second attempt costs, and the part of "is it worth it" nothing here answered.
+
+    Returned for every submission asking for more than one attempt, and ``None`` for the
+    rest, because a single-attempt run has no second attempt to say anything about. That is
+    the only condition. The two waiver notes in this tree appear when a submitter did
+    something unusual; this one appears whenever the arithmetic multiplies, because the gap
+    it describes is in the platform rather than in the submission and every multi-attempt
+    run is standing over it.
+
+    **THE ARITHMETIC IT SITS UNDER IS RIGHT AND IS NOT WHAT THIS CORRECTS.** Two attempts
+    price at twice one attempt, which is what a lead approves and what the run may spend.
+    What the figure cannot say is whether the second attempt does anything the first did
+    not, and the ceiling is identical either way.
+
+    **PLAIN PROSE AND NO MARKDOWN, BECAUSE THE SAME STRING IS READ IN THREE PLACES.** The
+    approver page renders markdown, ``edullm check --json`` hands this to a caller verbatim,
+    and a terminal shows it as typed. ``placement_said`` settled this already and for the
+    same reason; emphasis that reads as bold in one place is asterisks in the other two.
+
+    **THE TIMEOUT SENTENCE IS THE LOAD-BEARING ONE AND IS THE LEAST OBVIOUS.** A reader who
+    knows :data:`~edullm_platform.execution.RETRY_ONLY_WHAT_A_RETRY_FIXES` will conclude that
+    a second attempt is nearly unreachable, since the only ``RETRY`` arm matches ``Host
+    EC2*`` and every compute environment in ``infra/`` is provisioned ``Type: EC2`` rather
+    than SPOT, so nothing reclaims a host on purpose. That reading misses the arm that
+    matches no rule at all. Batch retries a failure none of the ``EvaluateOnExit`` entries
+    match -- documented on ``AWS::Batch::JobDefinition EvaluateOnExit`` and on the job
+    definition parameters page -- and an attempt stopped for outrunning
+    ``attemptDurationSeconds`` carries the status reason ``Job attempt duration exceeded
+    timeout`` and no container exit code, so the exit-code rule globbing ``*`` has nothing to
+    match and neither of the other two applies. The one second attempt this platform reliably
+    spends is therefore the one on the run that could not finish in its bound, which is
+    exactly the run for which starting again from nothing cannot help.
+    """
+    if maximum_attempts <= 1:
+        return None
+    if checkpoint is None:
+        # Unreachable through compile_submission, which refuses this pairing on the manifest.
+        # Said rather than skipped anyway: silence here would be silence in the one case that
+        # is worst, which is the shape of defect this whole note exists to report.
+        return (
+            f"This run is priced for {maximum_attempts} attempts and {workload_profile!r} "
+            "declares no checkpoint contract, so every attempt after the first repeats the "
+            "whole of the first at the same price and can reach no further."
+        )
+    declared = (
+        "declares a checkpoint every "
+        f"{checkpoint.interval_minutes} minutes that a retry resumes from"
+        if checkpoint.resume_required
+        else f"declares a checkpoint every {checkpoint.interval_minutes} minutes"
+    )
+    return (
+        f"This run is priced for {maximum_attempts} attempts and each one costs what the "
+        f"first did. Whether the later ones buy anything depends on whether the program "
+        f"resumes, which nothing on this platform establishes: {workload_profile!r} "
+        f"{declared}, and what is checked is that the declaration exists and that the "
+        f"command expands ${CHECKPOINT_DIRECTORY_VARIABLE}. Neither check reads the "
+        "codebase, and a trainer that writes to that prefix and never loads back from it "
+        "passes both -- which two of the six registered repositories were measured doing on "
+        "2026-08-06. The attempt a retry is actually spent on is the one that ran out of "
+        "time, because Batch retries a failure matching none of its rules and an attempt "
+        "stopped at its runtime bound reports no container exit code for the rules to match. "
+        "That attempt gets the same bound again, starting wherever the program resumes from, "
+        "which is the beginning if it resumes from nowhere."
     )
 
 
@@ -272,9 +371,16 @@ def _contract_said(checkpoint: CheckpointContract) -> str:
     ``resume_required`` is stated only when it is true. It is a declaration no code branches
     on, and saying "which no retry has to resume from" on a profile that allows two attempts
     would read as permission to ignore the rest of this.
+
+    **AND IT IS ATTRIBUTED TO THE PROFILE RATHER THAN STATED AS A FACT, WHICH IS THE
+    DIFFERENCE THIS FUNCTION'S FIRST LINE ALREADY CLAIMED AND DID NOT MAKE.** This read
+    "which a retry resumes from", inside a sentence beginning "declares", so the interval was
+    the profile's word and resuming was the platform's -- and the platform has never checked
+    it. Both clauses hang off ``declares`` now, and :func:`unverified_resume_note` is where a
+    reader is told what stands behind the second one.
     """
     interval = f"a checkpoint contract of one checkpoint every {checkpoint.interval_minutes} minutes"
-    return f"{interval}, which a retry resumes from" if checkpoint.resume_required else interval
+    return f"{interval}, and that a retry resumes from it" if checkpoint.resume_required else interval
 
 
 def _refusal(

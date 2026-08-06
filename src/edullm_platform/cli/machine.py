@@ -45,6 +45,7 @@ from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any, Final, TextIO
 
+from edullm_platform.checkpoint_commands import unverified_resume_note
 from edullm_platform.cli.actions import RunFacts, SubmissionRun
 from edullm_platform.cli.configuration import ReviewedConfiguration
 from edullm_platform.cli.lane import placement_said
@@ -167,8 +168,44 @@ def check_document(
             else preflight.approving_environment.value
         ),
         "cost": _cost_of(preflight),
+        "retries": _retries_of(preflight),
         "history": _history_of(preflight),
         "placement": _placement_of(placement),
+    }
+
+
+def _retries_of(preflight: Preflight) -> dict[str, Any] | None:
+    """What the attempt factor in ``cost`` buys, for a request asking for more than one.
+
+    ``None`` for a single-attempt run, the way ``placement`` is ``None`` for a shape that
+    places promptly: there is no second attempt to describe, and a key that appeared on
+    every check carrying nothing is a key every caller reads past.
+
+    Branch on ``maximum_attempts`` and ``resume_required`` and print ``said``, which is the
+    split ``_history_of`` and ``_placement_of`` already make. The two numbers are reviewed
+    configuration and the sentence is prose this repository rewords.
+
+    ``resume_required`` is the workload profile's declaration and not a finding. Nothing on
+    this platform verifies it against the codebase that would have to honour it, which is
+    what ``said`` exists to state in words -- a caller that reads ``true`` here and concludes
+    a retry resumes has made exactly the inference this field cannot support.
+    """
+    manifest = preflight.manifest
+    if manifest is None:
+        return None
+    said = unverified_resume_note(
+        maximum_attempts=manifest.maximum_attempts,
+        workload_profile=manifest.workload_profile,
+        checkpoint=manifest.checkpoint,
+    )
+    if said is None:
+        return None
+    return {
+        "maximum_attempts": manifest.maximum_attempts,
+        "resume_required": (
+            None if manifest.checkpoint is None else manifest.checkpoint.resume_required
+        ),
+        "said": said,
     }
 
 
