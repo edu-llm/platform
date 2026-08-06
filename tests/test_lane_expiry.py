@@ -34,6 +34,7 @@ from edullm_platform.cli.lane import (
     LaneRequest,
     expires_at,
     expiry_for_a_new_machine,
+    find_machine_argv,
     instance_type_for,
     load_working_tier_settings,
     machine_already_running,
@@ -166,6 +167,18 @@ def test_a_machine_carrying_no_expiry_says_so_rather_than_printing_the_word_and_
     assert expiry.value == ""
     assert TIMESTAMPS.findall(expiry.said(machine)) == []
     assert EXPIRES_AT_TAG_KEY in expiry.said(machine)
+
+
+def test_the_finder_asks_for_the_tags_and_not_the_id_alone() -> None:
+    """Mutation: query ``Reservations[].Instances[].InstanceId``, which is what it asked for.
+
+    That query is the reason the verb had nothing to print but a fresh computation: the one
+    fact a reused machine carries that it needed was not in the answer. This is the wire on the
+    argv, because the parse below cannot find a tag the call never requested.
+    """
+    query = find_machine_argv(project="mixlaw", person="caiiris")
+
+    assert "Tags" in query[query.index("--query") + 1]
 
 
 def test_the_tag_is_matched_on_the_key_the_role_and_the_janitor_spell() -> None:
