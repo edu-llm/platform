@@ -1,0 +1,359 @@
+{
+  "attached_managed_policies": [],
+  "environment": "sandbox",
+  "inline_policies": [
+    {
+      "policy_name": "lane",
+      "policy_version": "2012-10-17",
+      "statements": [
+        {
+          "action_match": {
+            "actions": [
+              "*"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "*"
+            ]
+          },
+          "sid": "AllowResearchWorkingSet"
+        },
+        {
+          "action_match": {
+            "actions": [
+              "ec2:RunInstances"
+            ],
+            "element": "Action"
+          },
+          "conditions": [
+            {
+              "condition_key": "ec2:InstanceType",
+              "operator": "StringNotLike",
+              "values": [
+                "c7i.8xlarge",
+                "g4dn.12xlarge",
+                "g4dn.metal",
+                "g4dn.xlarge",
+                "g5.12xlarge",
+                "g5.2xlarge",
+                "g5.48xlarge",
+                "g5.xlarge",
+                "g6.12xlarge",
+                "g6.48xlarge",
+                "g6.xlarge",
+                "g6e.12xlarge",
+                "g6e.48xlarge",
+                "g6e.xlarge",
+                "p4d.24xlarge",
+                "p5.48xlarge",
+                "p5.4xlarge"
+              ]
+            }
+          ],
+          "effect": "Deny",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:ec2:*:*:instance/*"
+            ]
+          },
+          "sid": "DenyInstanceTypesOutsideTheCatalog"
+        },
+        {
+          "action_match": {
+            "actions": [
+              "ec2:RunInstances"
+            ],
+            "element": "Action"
+          },
+          "conditions": [
+            {
+              "condition_key": "aws:RequestTag/Project",
+              "operator": "StringNotEquals",
+              "values": [
+                "${aws:PrincipalTag/project}"
+              ]
+            }
+          ],
+          "effect": "Deny",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:ec2:*:*:instance/*",
+              "arn:aws:ec2:*:*:volume/*"
+            ]
+          },
+          "sid": "RequireProjectTagMatchingTheSessionTag"
+        },
+        {
+          "action_match": {
+            "actions": [
+              "ec2:RunInstances"
+            ],
+            "element": "Action"
+          },
+          "conditions": [
+            {
+              "condition_key": "aws:RequestTag/ExpiresAt",
+              "operator": "Null",
+              "values": [
+                "true"
+              ]
+            }
+          ],
+          "effect": "Deny",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:ec2:*:*:instance/*"
+            ]
+          },
+          "sid": "RequireExpiresAtTagOnInstances"
+        },
+        {
+          "action_match": {
+            "actions": [
+              "ec2:CreateTags",
+              "ec2:DeleteTags"
+            ],
+            "element": "Action"
+          },
+          "conditions": [
+            {
+              "condition_key": "aws:TagKeys",
+              "operator": "ForAnyValue:StringEquals",
+              "values": [
+                "Project",
+                "ExpiresAt",
+                "DO-NOT-TERMINATE"
+              ]
+            },
+            {
+              "condition_key": "ec2:CreateAction",
+              "operator": "StringNotEquals",
+              "values": [
+                "RunInstances"
+              ]
+            }
+          ],
+          "effect": "Deny",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "*"
+            ]
+          },
+          "sid": "DenyStrippingGovernanceTagsAfterLaunch"
+        },
+        {
+          "action_match": {
+            "actions": [
+              "ec2:PurchaseCapacityBlock",
+              "ec2:PurchaseCapacityBlockExtension",
+              "ec2:PurchaseReservedInstancesOffering",
+              "ec2:PurchaseHostReservation",
+              "ec2:PurchaseScheduledInstances",
+              "ec2:CreateCapacityReservation",
+              "ec2:CreateCapacityReservationBySplitting",
+              "ec2:CreateCapacityReservationFleet",
+              "ec2:ModifyCapacityReservation",
+              "ec2:AllocateHosts",
+              "sagemaker:CreateTrainingPlan",
+              "sagemaker:CreateCluster",
+              "savingsplans:CreateSavingsPlan",
+              "rds:PurchaseReservedDBInstancesOffering",
+              "redshift:PurchaseReservedNodeOffering",
+              "elasticache:PurchaseReservedCacheNodesOffering",
+              "dynamodb:PurchaseReservedCapacityOfferings",
+              "es:PurchaseReservedInstanceOffering",
+              "opensearch:PurchaseReservedInstanceOffering"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Deny",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "*"
+            ]
+          },
+          "sid": "DenyCostCommitmentPurchases"
+        },
+        {
+          "action_match": {
+            "actions": [
+              "s3:DeleteObject",
+              "s3:DeleteObjectVersion",
+              "s3:DeleteBucket",
+              "s3:PutBucketPolicy",
+              "s3:PutLifecycleConfiguration",
+              "s3:PutBucketVersioning"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Deny",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:s3:::edullm-data",
+              "arn:aws:s3:::edullm-data/*",
+              "arn:aws:s3:::edullm-landing",
+              "arn:aws:s3:::edullm-landing/*"
+            ]
+          },
+          "sid": "DenyDeletesOnSealedBuckets"
+        },
+        {
+          "action_match": {
+            "actions": [
+              "s3:PutObject",
+              "s3:PutObjectAcl",
+              "s3:PutObjectTagging",
+              "s3:DeleteObject",
+              "s3:DeleteObjectVersion",
+              "s3:AbortMultipartUpload"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Deny",
+          "resource_match": {
+            "element": "NotResource",
+            "resources": [
+              "arn:aws:s3:::edullm-scratch/${aws:SourceIdentity}/*",
+              "arn:aws:s3:::edullm-landing/*",
+              "arn:aws:s3:::sbsandbox-intern-edullm-outputs/*"
+            ]
+          },
+          "sid": "DenyWorkingTierWritesOutsideYourOwnPrefix"
+        },
+        {
+          "action_match": {
+            "actions": [
+              "ec2:CreateFleet",
+              "ec2:RequestSpotFleet",
+              "ec2:RequestSpotInstances",
+              "autoscaling:CreateAutoScalingGroup",
+              "autoscaling:UpdateAutoScalingGroup",
+              "autoscaling:StartInstanceRefresh"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Deny",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "*"
+            ]
+          },
+          "sid": "DenyIndirectLaunchPathsThatBypassInstanceTypeChecks"
+        },
+        {
+          "action_match": {
+            "actions": [
+              "iam:CreateRole",
+              "iam:CreateUser",
+              "iam:CreateAccessKey",
+              "iam:AttachRolePolicy",
+              "iam:AttachUserPolicy",
+              "iam:PutRolePolicy",
+              "iam:PutUserPolicy",
+              "iam:CreatePolicy",
+              "iam:CreatePolicyVersion",
+              "iam:SetDefaultPolicyVersion",
+              "iam:UpdateAssumeRolePolicy",
+              "iam:PutRolePermissionsBoundary",
+              "iam:DeleteRolePermissionsBoundary"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Deny",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "*"
+            ]
+          },
+          "sid": "DenyEscapingTheLaneByMintingNewPrincipals"
+        }
+      ]
+    }
+  ],
+  "max_session_duration_seconds": 3600,
+  "observed_at": "2026-08-06T02:17:43Z",
+  "permissions_boundary_policy_name": "InternSandboxBoundary",
+  "role_name": "edullm-researcher",
+  "source": "aws",
+  "status": "ok",
+  "trust_policy_version": "2012-10-17",
+  "trust_statements": [
+    {
+      "action_match": {
+        "actions": [
+          "sts:AssumeRole",
+          "sts:SetSourceIdentity",
+          "sts:TagSession"
+        ],
+        "element": "Action"
+      },
+      "conditions": [
+        {
+          "condition_key": "aws:PrincipalArn",
+          "operator": "ArnLike",
+          "values": [
+            "arn:aws:iam::<aws-account-id>:role/Intern-*"
+          ]
+        },
+        {
+          "condition_key": "aws:TagKeys",
+          "operator": "ForAllValues:StringEquals",
+          "values": [
+            "project",
+            "lifetime"
+          ]
+        },
+        {
+          "condition_key": "aws:RequestTag/lifetime",
+          "operator": "StringLike",
+          "values": [
+            "?*"
+          ]
+        },
+        {
+          "condition_key": "aws:RequestTag/project",
+          "operator": "StringLike",
+          "values": [
+            "?*"
+          ]
+        },
+        {
+          "condition_key": "sts:SourceIdentity",
+          "operator": "StringLike",
+          "values": [
+            "?*"
+          ]
+        }
+      ],
+      "effect": "Allow",
+      "principal_match": {
+        "element": "Principal",
+        "principals": [
+          {
+            "identifier": "arn:aws:iam::<aws-account-id>:root",
+            "principal_type": "AWS"
+          }
+        ]
+      },
+      "sid": "InternRolesMayEnterTheLane"
+    }
+  ]
+}
