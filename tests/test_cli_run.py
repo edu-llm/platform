@@ -150,6 +150,59 @@ def test_an_existing_machine_for_this_project_is_reused_rather_than_doubled(
     assert runner.ran("aws", "ec2", "run-instances") == []
 
 
+def test_nothing_claims_to_start_a_shape_when_a_machine_was_found_instead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: print ``DefaultedCompute.said`` where the profile is resolved, above the
+    branch that looks for an existing machine, which is where it went in first.
+
+    That ordering had the verb say "this starts gpu-1xl4: g6.xlarge at $0.8048/hour" and then
+    "found that machine rather than starting one", three lines apart. Both cannot be true, and
+    the rate was the worse half: reuse does not check that the machine it found is the shape
+    anybody asked for, so the figure quoted belonged to a machine the person was not getting.
+
+    Asserted on the reuse path with no ``--compute`` -- the only combination that produced it --
+    and paired with the launch path below, because a fix that simply stopped printing the
+    sentence would pass this and take the announcement with it.
+    """
+    runner = a_laptop(tmp_path, existing=LANE_INSTANCE)
+
+    code, out, err = invoke(
+        ["run", "--project", "mixlaw", "--", "python", "-V"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert runner.ran("aws", "ec2", "run-instances") == []
+    assert "starts" not in out + err, out + err
+
+
+def test_a_defaulted_shape_is_still_named_with_its_rate_when_one_does_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: delete the announcement rather than moving it past the reuse branch.
+
+    The pair to the test above, and the reason it is a pair. The objection to answering
+    ``--compute`` at all is that it spends money nobody named, and the answer is that the shape
+    and its hourly rate are printed before the call that spends it. A fix for the reuse case
+    that dropped the sentence would satisfy the other test and give up the whole defence.
+    """
+    runner = a_laptop(tmp_path)
+
+    code, out, err = invoke(
+        ["run", "--project", "mixlaw", "--", "python", "-V"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert runner.ran("aws", "ec2", "run-instances") != []
+    assert "/hour" in out + err, out + err
+
+
 def test_a_reused_machine_is_told_the_expiry_its_tag_carries_and_not_a_fresh_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1331,13 +1331,14 @@ def _lane_session(
         return EXIT_UNREACHABLE
     facts = json.loads(identity.stdout)
     person = person_from_caller_arn(str(facts["Arn"])) or ""
-    # ANNOUNCED BEFORE ANYTHING IS BOUGHT, WHICH IS WHAT MAKES THE DEFAULT DEFENSIBLE RATHER
-    # THAN A SURPRISE. The objection to answering this flag is that it spends money nobody
-    # asked for; the verb spends money on every reading and the question was only which shape,
-    # so what the researcher is owed is the name and the rate, before the machine exists.
+    # RESOLVED HERE BECAUSE THE REFUSALS AND THE PLACEMENT WARNING BELOW ARE ABOUT A SHAPE, AND
+    # PRINTED LATER BECAUSE A SHAPE THIS CHOSE IS ONLY NEWS WHERE A MACHINE IS ABOUT TO START.
+    # It was announced here for its first hours, above the branch that finds an existing machine,
+    # so a second invocation read "this starts gpu-1xl4: g6.xlarge at $0.8048/hour" and then
+    # "found that machine rather than starting one" -- two sentences that cannot both be true,
+    # and the rate belonged to a shape the person was not being given, because reuse does not
+    # check that the machine it found is the shape anybody asked for.
     defaulted = None if arguments.compute else default_compute_profile(configuration)
-    if defaulted is not None:
-        print("\n".join(_wrapped(defaulted.said, indent="")), file=err)
     request = LaneRequest(
         project=arguments.project or "",
         person=person,
@@ -1387,6 +1388,12 @@ def _lane_session(
             environment=environment,
             settings=settings,
         )
+
+    # STILL BEFORE ANYTHING IS BOUGHT, WHICH IS THE PROPERTY THAT MAKES THE DEFAULT DEFENSIBLE
+    # RATHER THAN A SURPRISE: the objection to answering this flag is that it spends money nobody
+    # named, and this is the last line before the call that spends it.
+    if defaulted is not None:
+        print("\n".join(_wrapped(defaulted.said, indent="")), file=err)
 
     expiry = expiry_for_a_new_machine(datetime.now(tz=UTC), hours)
     started = _start_a_machine(
