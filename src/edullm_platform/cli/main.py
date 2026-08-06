@@ -1146,17 +1146,15 @@ def _check(
     configuration = _configuration(arguments)
     facts = read_git_facts(runner, cwd=cwd)
     submitter = github_login(runner, allow_network=False)
-    spec, scaffolded, unscaffoldable = _spec_for_checking(arguments, configuration, facts, cwd=cwd)
-    if scaffolded is not None:
+    in_hand = _spec_for_checking(arguments, configuration, facts, cwd=cwd)
+    if in_hand.written is not None:
         # READ THE TREE AGAIN, BECAUSE THIS INVOCATION JUST CHANGED IT.
         #
         # The facts above were read before the scaffold was written, so on the one run that
-        # writes a file they describe a tree that no longer exists -- and the file is
-        # uncommitted, so the very next `check` refuses with `uncommitted_changes` naming
-        # it. That refusal is correct. What was wrong is the first run, which said "no
-        # refusals" about a working tree it had just made dirty, so the two runs told
-        # different stories about the same repository thirty seconds apart and neither
-        # reader could tell which one to believe.
+        # writes a file they describe a tree that no longer exists. Everything below has to
+        # reason about the tree as it is: `working_tree_refusals` excludes a spec nobody has
+        # ever committed by asking git what it says about that path, and it can only do that
+        # if git has been asked since the file appeared.
         #
         # Re-reading rather than adjusting the facts in place, because the same function
         # answering twice cannot disagree with itself the way a patched copy could. It
@@ -1167,10 +1165,16 @@ def _check(
         # A caller pipes stdout into a parser, and the one invocation in a repository's life
         # that writes a spec is exactly the one a first-run agent makes.
         wrote = err if arguments.json else out
-        print(_scaffolded_said(scaffolded, facts), file=wrote)
+        print(_scaffolded_said(in_hand.written), file=wrote)
         print(file=wrote)
     preflight = _preflight(
-        arguments, configuration, facts, spec, submitter, unscaffoldable=unscaffoldable
+        arguments,
+        configuration,
+        facts,
+        in_hand.spec,
+        submitter,
+        unscaffoldable=in_hand.unscaffoldable,
+        spec_path=in_hand.path,
     )
     if arguments.json:
         emit(
@@ -1697,40 +1701,47 @@ def _shell_takes_no_command(given: Sequence[str]) -> str:
     )
 
 
-def _scaffolded_said(written: Path, facts: GitFacts) -> str:
-    """Where the file went, and that it is the change the refusal below is about.
+def _scaffolded_said(written: Path) -> str:
+    """Where the file went, and what to do with it.
 
-    The connection is not obvious from the two lines on their own. ``git status`` collapses
-    a wholly untracked directory to a single entry, so a scaffold into a repository with no
-    ``.edullm/`` is reported as ``.edullm/`` while this line names ``.edullm/run.yaml`` --
-    and a reader who does not join them up reads the refusal as being about something else
-    they have forgotten to commit.
+    **IT USED TO POINT AT A REFUSAL AND THE REFUSAL WAS THE DEFECT.** The second sentence
+    here read "it is not in any commit yet, which is what the uncommitted_changes refusal
+    below is naming", which was an accurate description of a loop: the refusal offered
+    stashing, stashing deleted the file, and the next ``check`` wrote it back and refused
+    the same way. ``working_tree_refusals`` no longer counts a spec nobody has committed, so
+    there is no refusal below to point at and this says the useful thing instead.
+
+    The wording is provisional. It states one fact -- the file is yours and is worth
+    committing -- and somebody rewriting these strings should keep the fact and improve the
+    sentence.
     """
-    if not _named_by_the_dirty_tree(facts, written):
-        return f"wrote {written}"
     return "\n".join(
         [
             f"wrote {written}",
             *_wrapped(
-                "It is not in any commit yet, which is what the uncommitted_changes "
-                "refusal below is naming. Commit it and check clears that one."
+                "It holds the command and the workload profile, which are properties of "
+                "the code, so commit it on a branch and push. Nothing here waits on that: "
+                "a spec that is in no commit is not counted against this check."
             ),
         ]
     )
 
 
-def _named_by_the_dirty_tree(facts: GitFacts, written: Path) -> bool:
-    """Whether ``uncommitted_changes`` is about to name the file that was just written."""
-    if facts.root is None:
-        return False
-    try:
-        relative = written.relative_to(facts.root).as_posix()
-    except ValueError:
-        return False
-    return any(
-        relative == entry or relative.startswith(entry if entry.endswith("/") else f"{entry}/")
-        for entry in facts.dirty_paths
-    )
+@dataclass(frozen=True)
+class _SpecInHand:
+    """The spec ``check`` is about to price, where it came from, or why there is none.
+
+    ``path`` and ``written`` are not the same question and collapsing them is what this
+    dataclass exists to stop. ``written`` is "this invocation created it", which is what the
+    ``wrote`` line reports; ``path`` is "this is the file being priced" whether it was found
+    or written, and it is what ``working_tree_refusals`` needs in order to tell a spec nobody
+    has committed from an edit to one the repository carries.
+    """
+
+    spec: RunSpec | None = None
+    path: Path | None = None
+    written: Path | None = None
+    unscaffoldable: Refusal | None = None
 
 
 def _spec_for_checking(
@@ -1739,7 +1750,7 @@ def _spec_for_checking(
     facts: GitFacts,
     *,
     cwd: Path,
-) -> tuple[RunSpec | None, Path | None, Refusal | None]:
+) -> _SpecInHand:
     """``check`` absorbing ``new``: a repository with no spec gets one, then gets checked.
 
     Written rather than offered, because the alternative is a prompt and a prompt is what
@@ -1755,15 +1766,15 @@ def _spec_for_checking(
     """
     declared = arguments.spec if getattr(arguments, "spec", None) else None
     if declared is not None:
-        return load_spec(declared), None, None
+        return _SpecInHand(spec=load_spec(declared), path=declared)
     found = find_spec(cwd)
     if found is not None:
-        return load_spec(found), None, None
+        return _SpecInHand(spec=load_spec(found), path=found)
     if facts.root is None or facts.repository is None:
-        return None, None, None
+        return _SpecInHand()
     unscaffoldable = _nothing_to_scaffold(arguments, configuration, repository=facts.repository)
     if unscaffoldable is not None:
-        return None, None, unscaffoldable
+        return _SpecInHand(unscaffoldable=unscaffoldable)
     written = scaffold_spec(
         configuration,
         repository=facts.repository,
@@ -1771,7 +1782,7 @@ def _spec_for_checking(
         workload_profile=arguments.workload or None,
         compute_profile=arguments.compute or None,
     )
-    return load_spec(written), written, None
+    return _SpecInHand(spec=load_spec(written), path=written, written=written)
 
 
 def _nothing_to_scaffold(
@@ -1844,7 +1855,9 @@ def _submit(
     submitter = github_login(runner, allow_network=True)
     declared = arguments.spec if arguments.spec else find_spec(cwd)
     spec = load_spec(declared) if declared is not None else None
-    preflight = _preflight(arguments, configuration, facts, spec, submitter)
+    preflight = _preflight(
+        arguments, configuration, facts, spec, submitter, spec_path=declared
+    )
 
     if preflight.refused and not arguments.force:
         print(render_refusals(preflight.refusals), end="", file=err)
@@ -2727,6 +2740,7 @@ def _preflight(
     submitter: str | None,
     *,
     unscaffoldable: Refusal | None = None,
+    spec_path: Path | None = None,
 ) -> Preflight:
     """Merge the spec, the flags and the working tree, then run every local check.
 
@@ -2739,8 +2753,14 @@ def _preflight(
     same question and the specific one answers it better, and a reader handed two refusals
     that are one problem under two spellings goes looking for the second problem -- which
     is the argument ``run_preflight`` already makes about the conditions it deduplicates.
+
+    ``spec_path`` is where the spec in hand came from, and ``working_tree_refusals`` is what
+    reads it. **BOTH VERBS PASS IT, WHICH IS THE HALF THAT IS EASY TO LEAVE OUT.** ``check``
+    is where the spec gets written and so where the loop was; ``submit`` never scaffolds and
+    would therefore have kept refusing exactly what ``check`` had just cleared, which is a
+    worse defect than the one being fixed.
     """
-    refusals: list[Refusal] = working_tree_refusals(facts)
+    refusals: list[Refusal] = working_tree_refusals(facts, spec_path=spec_path)
     if unscaffoldable is not None:
         refusals.append(unscaffoldable)
     elif spec is None:

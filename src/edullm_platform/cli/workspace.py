@@ -307,6 +307,17 @@ class GitFacts:
     commit_sha: str | None
     #: Paths git reports as modified, added, deleted or untracked, capped for a message.
     dirty_paths: tuple[str, ...]
+    #: The subset of those that git reports as untracked, which is a different fact from the
+    #: rest and the only one that tells a file nobody has ever committed from a change to one
+    #: the repository carries. ``check`` writes ``.edullm/run.yaml`` into repositories that
+    #: have none, and until this field existed the refusal could not tell that file from an
+    #: edit to a committed spec -- so it named both and the first one had no remedy.
+    #:
+    #: A wholly untracked directory is one entry here naming the directory, because that is
+    #: what ``git status --porcelain`` collapses it to. Whoever reads this has to allow for
+    #: that; expanding it would mean ``--untracked-files=all``, which turns one line about an
+    #: untracked output folder into ten thousand.
+    untracked_paths: tuple[str, ...]
     #: Whether any remote-tracking ref in this clone contains the commit. False is not proof
     #: that nothing was pushed -- a clone that has not fetched since the push says the same
     #: thing -- which is why the refusal it produces names ``git fetch`` beside ``git push``.
@@ -326,6 +337,7 @@ def read_git_facts(runner: CommandRunner, *, cwd: Path) -> GitFacts:
             branch=None,
             commit_sha=None,
             dirty_paths=(),
+            untracked_paths=(),
             commit_on_a_remote=False,
         )
     top = Path(root.text)
@@ -339,6 +351,7 @@ def read_git_facts(runner: CommandRunner, *, cwd: Path) -> GitFacts:
         if commit_sha is not None
         else CommandResult(returncode=1, stdout="", stderr="")
     )
+    reported = [line for line in status.stdout.splitlines() if len(line) > 3] if status.ok else []
     return GitFacts(
         root=top,
         # The remote decides the repository name rather than the directory, because a clone
@@ -346,11 +359,11 @@ def read_git_facts(runner: CommandRunner, *, cwd: Path) -> GitFacts:
         repository=repository_name_from_remote(remote.text) if remote.ok else None,
         branch=branch.text if branch.ok and branch.text != "HEAD" else None,
         commit_sha=commit_sha,
-        dirty_paths=tuple(
-            line[3:] for line in status.stdout.splitlines() if len(line) > 3
-        )
-        if status.ok
-        else (),
+        dirty_paths=tuple(line[3:] for line in reported),
+        # `??` in the first two columns, which is git's own spelling of "this path is in no
+        # commit and no index". Read off the same lines rather than from a second `git
+        # status`, so the two answers cannot describe two moments.
+        untracked_paths=tuple(line[3:] for line in reported if line[:2] == "??"),
         commit_on_a_remote=contains.ok and bool(contains.text),
     )
 
