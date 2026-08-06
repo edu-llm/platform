@@ -260,9 +260,27 @@ compute_profiles:
   # .github/workflows/submit-run.yml and the two lists in the tests that enumerate them --
   # the same four edits their first promotion made, in reverse.
   #
-  # WHERE TO SEND SOMEBODY MEANWHILE. gpu-8xa100 is eight 80 GB cards, is the shape that
+  # WHERE TO SEND SOMEBODY MEANWHILE. gpu-8xa100 is eight 40 GB cards, is the shape that
   # demonstrably runs, and is the substitution to offer anybody who was reaching for
   # gpu-8xh100. For one card, gpu-1xl40s is 48 GB and draws on the G pool.
+  #
+  # THIS SAID "eight 80 GB cards" AND THAT IS THE 80 GB PART, WHICH THIS ACCOUNT DOES NOT HAVE.
+  # config/accelerators.yaml records p4d.24xlarge at 40,960 MiB per device for 327,680 MiB
+  # total, measured by describe-instance-types, and that 320 is what every other figure here
+  # already agreed on -- the gpu-8xa10g note above says "the A100's 320 GB", the gpu-8xl40s
+  # note says "the 320 GB of the eight-A100 node", config/capacity.yaml and
+  # infra/batch-compute-gpu-shapes.yaml both say 320, and tests/test_capacity.py carries
+  # ("p4d", "a100", 40). This sentence was the only outlier, and it was the worst place for
+  # one: it is what somebody reaching for the unobtainable gpu-8xh100 is sent to read, so it
+  # promised twice the memory it has to the people sizing the largest things, and the way that
+  # is discovered is a CUDA out-of-memory error on a node that has already been paid for.
+  #
+  # 40 GB PER CARD IS NOT 40 GB OF HEADROOM, and the total is what matters for a sharded run.
+  # Eight cards hold 327,680 MiB between them, which is more than the 183,104 MiB of
+  # gpu-8xa10g and less than the 366,208 MiB of gpu-8xl40s -- so a model that needed a p4d for
+  # its memory rather than its interconnect may fit the L40S node, which draws on the G pool
+  # and needs no admin. Those two totals are measured figures from config/accelerators.yaml
+  # rather than the nominal 192 and 384 the comments above quote.
   - name: gpu-1xh100
     instance_type: p5.4xlarge
     accelerator: gpu
