@@ -1,0 +1,193 @@
+# WHETHER THE COPY IN EVERY RESEARCH REPOSITORY IS STILL THE COPY THIS ONE HOLDS.
+#
+# The always-on rule cannot be read out of this repository by the people it was written for.
+# No host loads an instruction file from a checkout the user does not have open, so a file that
+# lives only here loads for somebody working on the platform and for nobody working in
+# OLMo-core -- which is the whole of the defect this layer was rebuilt to fix. Each registered
+# repository therefore carries its own copy, and a copy nothing compares is how one document
+# becomes six that disagree.
+#
+# THE ONE SKILL IS NOT COMPARED HERE BECAUSE IT IS NOT DISTRIBUTED. registering-a-repository
+# fires when a codebase is not on the platform, so the six repositories that are registered are
+# the six places it can never fire. It is installed at user level, which no workflow can see.
+#
+# tests/test_agent_layer_is_distributed.py holds the distributor's mechanics and is hermetic.
+# It cannot answer this question, because this question is about other repositories. That is
+# the whole reason for a second thing: the mechanics go red in the pull request that breaks
+# them, and the copies go red within the day, and neither waits on the other.
+#
+# IT OPENS NOTHING AND MERGES NOTHING. Every one of these repositories is somebody's working
+# codebase with people on branches, so this reports and stops. Re-running
+# tools/distribute_agent_layer.py against a clone and opening a pull request is a person's
+# decision, and the failure output is the diff they need to make it.
+#
+# THE SECOND JOB ASKS THE SAME QUESTION OF THE INSTALL LINE. A researcher installs the one
+# skill by fetching a raw URL off `main`, and `tests/test_documented_urls_resolve.py` holds
+# every such URL to a path in the tree -- which goes red in the pull request that renames the
+# file and cannot answer whether `main` is serving it right now. Only a fetch can, so a fetch
+# runs here, on the same clock and for the same reason.
+name: Is the agent layer where the documents say it is
+
+on:
+  push:
+    branches: [main]
+    # THE PATHS ARE THE SOURCE AND NOT THE CONSUMERS. A push that edits the rule is the push
+    # that puts every repository out of date, and it is the only push that can, since nothing
+    # else here is copied anywhere. Listing the distributor too because a change to how the
+    # rule is spliced moves the expected bytes without touching the rule.
+    paths:
+      - "skills/agents-md-block.md"
+      - "tools/distribute_agent_layer.py"
+      - "config/repositories.yaml"
+      - ".github/workflows/agent-layer-is-distributed.yml"
+      # The second job's inputs. Every one of these carries a URL somebody is told to fetch,
+      # and a push that moves what is under one is the push that makes the URL a 404.
+      - "skills/**"
+      - "README.md"
+      - "AGENTS.md"
+      - ".cursor/skills/**"
+      - "tools/set-up-a-laptop.sh"
+      - "tools/set-up-a-laptop.ps1"
+  schedule:
+    # Daily, and a floor rather than the mechanism. The push trigger sees this repository
+    # moving ahead of the copies; only the clock sees a copy edited in its own repository,
+    # which is the likelier of the two and the one nothing else in the tree can observe.
+    # GitHub may drop a scheduled run under load, and a day late is soon enough for prose.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+# Nothing in AWS is asked and no id-token is requested. Reading a public repository needs
+# contents:read and nothing more; listing any permission sets every unlisted one to none.
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-layer-is-distributed
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --locked
+
+      - name: Compare every registered repository against this one
+        # BASH, DECLARED, AND NOT THE RUNNER'S DEFAULT BY LUCK. The release-path check in this
+        # repository splits a path list with `set -- ${paths}` and was found collapsing
+        # forty-seven pathspecs into one that matched nothing under zsh. Nothing here splits a
+        # list today, and the shell a step runs under is exactly the sort of thing that is
+        # true until somebody changes a runner image, so it is written down.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          # Read off the reviewed configuration rather than listed here. A seventh repository
+          # is registered by merging a change to that file, and a list in this workflow would
+          # leave it registered, buildable and carrying no agent layer with nothing red.
+          repositories=$(uv run --frozen python -c \
+            'from tools.distribute_agent_layer import registered_repositories
+          print("\n".join(registered_repositories()))')
+
+          echo "Comparing against: $(echo "$repositories" | tr "\n" " ")"
+
+          behind=""
+          while read -r repository; do
+            [ -n "$repository" ] || continue
+            echo "::group::$repository"
+            clone="$RUNNER_TEMP/$repository"
+            rm -rf "$clone"
+            # Full checkout of one commit. Cheap, and a sparse clone would need a path list
+            # kept in step with the distributor for no gain on repositories this size.
+            if ! git clone --quiet --depth 1 \
+                "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository_owner }}/$repository.git" \
+                "$clone"; then
+              echo "could not be cloned"
+              behind="$behind $repository"
+              echo "::endgroup::"
+              continue
+            fi
+            if uv run --frozen python tools/distribute_agent_layer.py "$clone" --check; then
+              echo "current"
+            else
+              behind="$behind $repository"
+            fi
+            echo "::endgroup::"
+          done <<< "$repositories"
+
+          if [ -n "$behind" ]; then
+            echo
+            echo "The agent layer has drifted in:$behind"
+            echo
+            echo "Re-run tools/distribute_agent_layer.py against a clone of each and open a"
+            echo "pull request. Do not push to any of these branches directly; every one of"
+            echo "them is somebody's working codebase."
+            exit 1
+          fi
+
+          echo "Every registered repository carries the copy this repository holds."
+
+  documented-urls:
+    # WHETHER THE URL THE ROSTER WAS GIVEN IS STILL SERVING A FILE.
+    #
+    # `skills/README.md` tells roughly the whole roster to `curl` a path off `main`, and a
+    # rename inside this repository turns that into `curl: (56)` for everybody who runs it
+    # afterwards, with nothing anywhere saying so. The in-tree test is the first half and
+    # catches the rename in the pull request that makes it. This is the half it cannot be:
+    # a working tree cannot know what `main` is serving, and a pull request's checkout is
+    # not `main`. Only the fetch answers that, and only after the merge.
+    #
+    # Independent of `compare` on purpose. A clone failure in one research repository must
+    # not decide whether anybody finds out the install line is dead.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --locked
+
+      - name: Fetch every URL this repository writes at itself
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Read off the same scanner the test uses, so the two cannot disagree about what
+          # a URL is. A list here would be the copy this whole workflow is against.
+          urls=$(uv run --frozen python -c \
+            'from tests.test_documented_urls_resolve import documented_urls
+          print("\n".join(sorted({f"https://raw.githubusercontent.com/edu-llm/platform/{ref}/{path}"
+                                  for _f, _l, ref, path in documented_urls()})))')
+
+          echo "$urls"
+
+          dead=""
+          while read -r url; do
+            [ -n "$url" ] || continue
+            # A raw URL for a path that is a directory answers 404 the same way a missing
+            # file does, which is the answer that matters: it is what the reader's curl gets.
+            status=$(curl -sS -o /dev/null -w '%{http_code}' --retry 3 --retry-delay 2 "$url")
+            echo "$status  $url"
+            [ "$status" = "200" ] || dead="$dead$url ($status)"$'\n'
+          done <<< "$urls"
+
+          if [ -n "$dead" ]; then
+            echo
+            echo "main is not serving these, and anybody following one gets an error page:"
+            echo "$dead"
+            echo "Put the file back, or move every URL naming it and re-broadcast the line."
+            exit 1
+          fi
+
+          echo "Every URL this repository writes at itself is being served by main."
