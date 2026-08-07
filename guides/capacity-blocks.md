@@ -53,7 +53,7 @@ Two rows are easy to reach past and should not be. `p4de.24xlarge` is the cheape
 
 `gpu-8xb300` is the one to be careful with, and not because of the price. Its container memory ceiling has never been measured: nothing has run a `p6-b300.48xlarge` here, and the figure the platform asks for is a deliberate under-estimate derived from the lowest fraction any host in this account has ever registered. A first run there gets less memory than the machine has. Correcting it needs one CloudTrail lookup after the first launch, and `src/edullm_platform/execution.py` says which.
 
-Both Blackwell rows carry a software risk that is not visible in this table. AWS publishes CUDA 12.8 and driver R570 as the minimum for `p6-b200`. The training image's CUDA base clears the first; nothing has confirmed the driver on the actual silicon, because the driver version this platform knows was read off an A10G. A block is the first thing that would settle it, which is an argument for buying a short one first.
+Both Blackwell rows used to carry a software risk that is not visible in this table, and for `p6-b200` it has since been read out of the binaries rather than guessed at. AWS publishes CUDA 12.8 and driver R570 as the minimum. The training image installs a torch wheel carrying native `sm_100` kernels, and the Batch GPU AMI ships a driver well above R570. Both minimums are met; the section below has the figures. What no reading settles is whether a job places and runs, and that is still what a block would be the first thing to establish.
 
 ## The modifications to make before the window opens
 
@@ -194,6 +194,6 @@ Worth stating plainly, because a guide that reads as a guarantee is one nobody d
 
 **A configuration that was never run.** A clean `check` on an eight-card shape says the launcher starts eight processes. It says nothing about whether the batch size somebody reaches for on 640 GB fits in 640 GB. Submit the configuration that has actually run, and scale it once it is running.
 
-**A card nobody has used here.** The training image pins CUDA against a driver version read off an A10G and carried to other shapes by inference. It is a reasonable inference and it has not been confirmed on a P-family card. The cheap rehearsal block is the only thing that turns that from an assumption into a fact.
+**A card nothing has been placed on here.** The software questions are answered — the kernels are in the wheel and the driver is in the AMI, both read directly. What has never happened is Batch putting a job on a P-family instance at all: every p5 launch this account has attempted was refused for capacity, so the placement path is unexercised rather than known-good. A block removes the capacity question and leaves that one. Submit something deliberately tiny first; it costs minutes of a window you have already paid for and it is the only way to find out.
 
 **A crash without a resume.** Writing checkpoints and resuming from them are different features, and only one of them is tested by writing one. A block does not pause while you fix a bug.
