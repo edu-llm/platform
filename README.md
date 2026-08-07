@@ -18,6 +18,8 @@ Then the guide for what you are actually doing:
 | [Running an evaluation](guides/olmo-eval-full.md) | olmo-eval-full, for scoring a model against a task suite |
 | [Validating a corpus](guides/edullm-data.md) | edullm-data, for checking and publishing a dataset |
 
+**[Getting a module tested](guides/module-testing.md)** is for whoever is fielding "can I run my thing today". It sorts a request by which repository the work belongs in and which machine to ask for, lists the refusals a researcher actually hits and the one-line fix for each, and is honest about what cannot be served this week.
+
 **[Capacity blocks](guides/capacity-blocks.md)** is the one to read when the machine you need is one EC2 will not sell this account on demand. It covers what can be reserved, what it costs, and what a researcher does differently when their run has a dated window rather than a queue.
 
 The three above need nothing installed and no AWS account. If you would rather work in a terminal than in the Actions UI, `uv tool install --force git+https://github.com/edu-llm/platform` puts the `edullm` command on your path. It prices a submission offline before it sends it, and submits, follows and stops runs. Re-running that same line is how you upgrade, whichever way the tool was installed. `uv tool upgrade` follows the ref the install named, so it upgrades one made from the bare URL above and answers `Nothing to upgrade` to one pinned at a release tag, however far behind that one is. [Day one](guides/day-one.md) is the short way through it and [from a terminal](guides/the-platform.md#from-a-terminal) is the reference.
