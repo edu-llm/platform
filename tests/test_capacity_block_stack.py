@@ -42,6 +42,8 @@ from typing import Any
 import pytest
 from infrastructure_support import INFRA_ROOT, load_template
 
+from edullm_platform.execution import CONTAINER_SHAPES
+
 TEMPLATE_PATH = INFRA_ROOT / "batch-capacity-block.yaml"
 
 #: One purchase's worth of parameters, shaped like the 9 August 2026 B200 offering.
@@ -49,12 +51,23 @@ TEMPLATE_PATH = INFRA_ROOT / "batch-capacity-block.yaml"
 #: ``MaxvCpus`` is the whole block expressed in vCPU -- one ``p6-b200.48xlarge`` at 192 -- which
 #: is AWS's guidance and is not a spend control: the window is charged upfront in full, so a
 #: lower number returns nothing and only decides how much of what was bought can be used.
+#:
+#: The four container values are read from ``CONTAINER_SHAPES`` rather than typed, because that
+#: is where the deploy workflow reads them from: the point of the parameters is that the figures
+#: exist once. Typing them here would make this module a second place they are written down, and
+#: the memory figure in particular is one this platform has already paid to get wrong.
+SHAPE = CONTAINER_SHAPES["gpu-8xb200"]
+
 PARAMETERS = {
     "InstanceType": "p6-b200.48xlarge",
     "CapacityReservationId": "cr-0123456789abcdef0",
     "AvailabilityZone": "us-east-1d",
     "SubnetId": "subnet-0123456789abcdef0",
     "MaxvCpus": 192,
+    "ContainerVcpus": SHAPE.vcpus,
+    "ContainerMemoryMiB": SHAPE.memory_mib,
+    "GpuCount": SHAPE.gpus,
+    "SharedMemoryMiB": SHAPE.shared_memory_mib,
 }
 
 STACK_NAME = "sbsandbox-intern-edullm-capacity-block-gpu-8xb200"
@@ -102,7 +115,23 @@ def resolve(node: object, *, references: dict[str, str]) -> Any:
             assert name in references, f"Ref to {name}, which is neither a parameter nor a resource"
             return references[name]
         if set(node) == {"Fn::Sub"}:
-            return substitute(node["Fn::Sub"])
+            body = node["Fn::Sub"]
+            # The two-argument form, whose second element is a map of names computed from other
+            # intrinsics. Resolved by evaluating the map first and then substituting, which is
+            # the order CloudFormation uses; the log stream prefix is built this way so that it
+            # derives from the stack name rather than from a parameter that could disagree.
+            if isinstance(body, list):
+                text, variables = body
+                for name, value in resolve(variables, references=references).items():
+                    text = text.replace("${" + name + "}", str(value))
+                return substitute(text)
+            return substitute(body)
+        if set(node) == {"Fn::Select"}:
+            index, values = node["Fn::Select"]
+            return resolve(values, references=references)[int(index)]
+        if set(node) == {"Fn::Split"}:
+            delimiter, value = node["Fn::Split"]
+            return resolve(value, references=references).split(delimiter)
         if set(node) == {"Fn::GetAtt"}:
             attribute = node["Fn::GetAtt"]
             path = attribute if isinstance(attribute, str) else ".".join(attribute)
@@ -171,9 +200,7 @@ def test_the_reservation_id_reaches_the_launch_template_as_a_target(
     and a ``Ref`` to the wrong parameter is a template that deploys and targets nothing.
     """
     assert launch_template_data(resolved)["CapacityReservationSpecification"] == {
-        "CapacityReservationTarget": {
-            "CapacityReservationId": PARAMETERS["CapacityReservationId"]
-        }
+        "CapacityReservationTarget": {"CapacityReservationId": PARAMETERS["CapacityReservationId"]}
     }
 
 
@@ -384,7 +411,12 @@ def test_every_parameter_a_purchase_supplies_is_shaped_before_it_is_deployed(
     assert parameters["CapacityReservationId"]["AllowedPattern"] == r"^cr-[0-9a-f]{8,17}$"
     assert parameters["AvailabilityZone"]["AllowedPattern"] == r"^us-east-1[a-f]$"
     assert parameters["SubnetId"]["AllowedPattern"] == r"^subnet-[0-9a-f]{8,17}$"
-    assert parameters["MaxvCpus"]["MinValue"] == 1
+    # The five numbers, none of which may be zero or negative. Nothing here can check them
+    # against the hardware -- that is what the seam test against CONTAINER_SHAPES is for -- but
+    # a zero is the one wrong value CloudFormation will accept and Batch will not.
+    for name in ("MaxvCpus", "ContainerVcpus", "ContainerMemoryMiB", "GpuCount", "SharedMemoryMiB"):
+        assert parameters[name]["Type"] == "Number", name
+        assert parameters[name]["MinValue"] == 1, name
 
 
 def test_the_outputs_print_what_reviewed_configuration_and_the_post_deploy_check_need(
@@ -403,3 +435,92 @@ def test_the_outputs_print_what_reviewed_configuration_and_the_post_deploy_check
 
     assert outputs["JobQueueName"]["Value"] == STACK_NAME
     assert outputs["CapacityReservationId"]["Value"] == PARAMETERS["CapacityReservationId"]
+
+
+# ---------------------------------------------------------------------------------------
+# The job definition, which is here rather than in the on-demand estate
+# ---------------------------------------------------------------------------------------
+
+
+def job_definition(resolved: dict[str, Any]) -> dict[str, Any]:
+    properties = resolved["CapacityBlockJobDefinition"]["Properties"]
+    assert isinstance(properties, dict)
+    return properties
+
+
+def test_the_job_definition_asks_for_exactly_what_the_container_shape_declares(
+    resolved: dict[str, Any],
+) -> None:
+    """Mutation: ask for the advertised instance memory instead of the measured ceiling.
+
+    The four numbers reach this template as parameters filled from ``CONTAINER_SHAPES``, and
+    this is the assertion that the template spends them where it said it would rather than
+    carrying a literal beside them. Memory is the one that matters: over the host's registered
+    figure the job parks in RUNNABLE with nothing telling the submitter why, which inside a paid
+    window is the window; under it, an out-of-memory kill hours in.
+    """
+    properties = job_definition(resolved)
+    container = properties["ContainerProperties"]
+
+    assert container["ResourceRequirements"] == [
+        {"Type": "VCPU", "Value": str(SHAPE.vcpus)},
+        {"Type": "MEMORY", "Value": str(SHAPE.memory_mib)},
+        {"Type": "GPU", "Value": str(SHAPE.gpus)},
+    ]
+    assert container["LinuxParameters"]["SharedMemorySize"] == SHAPE.shared_memory_mib
+    # Both roles, because Batch takes them when a definition is registered and nowhere else,
+    # and they are different identities on purpose: the execution role pulls the image and the
+    # workload role is what an untrusted training command runs as.
+    assert container["ExecutionRoleArn"].endswith(
+        ":role/sbsandbox-intern-edullm-batch-gpu-execution"
+    )
+    assert container["JobRoleArn"].endswith(":role/sbsandbox-intern-edullm-batch-gpu-workload")
+    assert container["Privileged"] is False
+
+
+def test_the_definition_is_named_and_files_its_logs_the_way_a_run_will_look_for_them(
+    resolved: dict[str, Any],
+) -> None:
+    """Mutation: hardcode the stream prefix, or create a log group in this stack.
+
+    Neither of these is checkable from AWS after the fact without a run to look at, and both
+    fail quietly. ``execution.py`` derives a run's stream prefix from the deployed definition's
+    name with this project's resource prefix removed, so the two have to agree or a run's output
+    lands under a name ``edullm logs`` does not read. And the group is the shared GPU one that
+    ``infra/batch-compute-gpu.yaml`` creates: declaring it here would both scatter one project's
+    runs across groups that come and go with purchases, and fail this deploy on a group that
+    already exists.
+    """
+    properties = job_definition(resolved)
+    container = properties["ContainerProperties"]
+
+    assert properties["JobDefinitionName"] == f"{STACK_NAME}-run"
+    options = container["LogConfiguration"]["Options"]
+    assert options["awslogs-group"] == "/aws/batch/sbsandbox-intern-edullm-gpu"
+    assert options["awslogs-stream-prefix"] == "capacity-block-gpu-8xb200-run"
+    assert "AWS::Logs::LogGroup" not in {
+        resource.get("Type") for resource in resolved.values() if isinstance(resource, dict)
+    }
+
+
+def test_the_definition_declares_the_keys_a_submission_has_to_override(
+    resolved: dict[str, Any],
+) -> None:
+    """Mutation: drop Command, or drop Environment.
+
+    ``ContainerOverrides`` can only override a key the definition already declares, so an
+    omission here is not a default -- it is a submission whose command or output prefix is
+    silently dropped, and a job that runs the image's entrypoint against a bucket path nobody
+    reads. The default command names the definition so an unoverridden run says so in its log.
+    """
+    container = job_definition(resolved)["ContainerProperties"]
+
+    assert container["Command"] == [
+        "python",
+        "-c",
+        f'print("{STACK_NAME}-run: no command override was supplied")',
+    ]
+    assert [entry["Name"] for entry in container["Environment"]] == [
+        name for name, _ in SHAPE.default_environment
+    ]
+    assert [entry["Name"] for entry in container["Secrets"]] == [name for name, _ in SHAPE.secrets]

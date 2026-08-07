@@ -457,6 +457,106 @@ jobs:
             --s3-prefix cloudformation-templates/checksummed \
             --no-fail-on-empty-changeset
 
+      # THE FOUR CONTAINER NUMBERS, READ OUT OF THE PLATFORM'S OWN TABLE RATHER THAN TYPED.
+      #
+      # infra/batch-capacity-block.yaml takes ContainerVcpus, ContainerMemoryMiB, GpuCount and
+      # SharedMemoryMiB because one template stands behind four shapes. They could have been
+      # four more dispatch fields. They must not be: the person filling this form has just
+      # spent four figures and is working against a clock, and ContainerMemoryMiB is a
+      # six-digit number whose correct value is neither the advertised instance memory nor
+      # anything a console displays -- it is the measured ECS-registered ceiling that
+      # src/edullm_platform/execution.py carries per instance type, with the reasoning for
+      # each. Mistyped high, the job parks in RUNNABLE and the window drains with no error
+      # anywhere. Mistyped low, the run takes an out-of-memory kill hours in.
+      #
+      # So the profile is the only thing named and the numbers are looked up. The instance type
+      # stays a dispatch field and is checked against the catalog here, which is the one of the
+      # five values worth verifying rather than deriving: it is read off the reservation, so a
+      # mismatch means the block that was bought is not the shape being deployed for, and that
+      # is worth a refusal before a stack exists rather than a launch that never places.
+      #
+      # THE INTERPRETER THIS NEEDS IS THE ONE THE REPORT PATH ALREADY INSTALLED, MOVED UP.
+      # It sat below the deploys because only the queue enumeration used it; a block deploy
+      # needs it before them, so the step is here with a condition covering both callers rather
+      # than written twice with a version pin that could drift. An ordinary push deploy matches
+      # neither condition and still installs nothing. Pinned to the version cancel-run.yml
+      # pins, because that workflow runs the same reader over the same file and a skew between
+      # them is a difference nobody would look for.
+      - name: Install the platform tooling
+        if: inputs.describe_run != '' || inputs.capacity_block_profile != ''
+        env:
+          UV_VERSION: "0.11.32"
+        run: |
+          set -euo pipefail
+          pipx install "uv==${UV_VERSION}"
+          installed="$(uv --version)"
+          if [[ "${installed}" != "uv ${UV_VERSION}" && "${installed}" != "uv ${UV_VERSION} "* ]]; then
+            echo "unexpected_uv_version" >&2
+            echo "Expected uv ${UV_VERSION} but PATH answers with: ${installed}" >&2
+            exit 1
+          fi
+          uv sync --locked
+
+      - name: Read the container shape the block's job definition will ask for
+        if: inputs.describe_run == '' && inputs.capacity_block_profile != ''
+        env:
+          PROFILE: ${{ inputs.capacity_block_profile }}
+          INSTANCE_TYPE: ${{ inputs.capacity_block_instance_type }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python - >> "${GITHUB_ENV}" <<'PY'
+          import os
+          from pathlib import Path
+
+          from edullm_platform.config import load_yaml
+          from edullm_platform.contracts.workload import WorkloadCatalog
+          from edullm_platform.execution import CONTAINER_SHAPES
+
+          profile = os.environ["PROFILE"]
+          declared = os.environ["INSTANCE_TYPE"]
+
+          shape = CONTAINER_SHAPES.get(profile)
+          if shape is None:
+              raise SystemExit(
+                  f"unshaped_compute_profile\n{profile} has no container shape in "
+                  "src/edullm_platform/execution.py, so what its job definition should ask "
+                  "for is unknown. Nothing has been deployed."
+              )
+
+          catalog = load_yaml(Path("config/workload-catalog.yaml"), WorkloadCatalog)
+          entries = {entry.name: entry for entry in catalog.compute_profiles}
+          if profile not in entries:
+              raise SystemExit(
+                  f"unknown_compute_profile\n{profile} is not in "
+                  "config/workload-catalog.yaml. Nothing has been deployed."
+              )
+          entry = entries[profile]
+
+          # A BLOCK STACK FOR A SHAPE THAT IS NOT BLOCK BACKED IS THE DOUBLE BILL AGAIN. The
+          # on-demand shapes already have a queue in the deploys above; standing a second one
+          # in front of a reservation for the same shape would leave two queues for it, and the
+          # one that does not belong to the block charges full rate.
+          if not entry.capacity_block_backed:
+              raise SystemExit(
+                  f"profile_is_not_capacity_block_backed\n{profile} is not marked "
+                  "capacity_block_backed in config/workload-catalog.yaml, so it already has an "
+                  "on-demand queue and must not be given a block one. Nothing has been deployed."
+              )
+
+          if entry.instance_type != declared:
+              raise SystemExit(
+                  f"capacity_block_instance_type_mismatch\n{profile} is {entry.instance_type} in "
+                  f"config/workload-catalog.yaml and the dispatch named {declared}. Either the "
+                  "block that was bought is not this shape, or the field was mistyped. "
+                  "Nothing has been deployed."
+              )
+
+          print(f"CONTAINER_VCPUS={shape.vcpus}")
+          print(f"CONTAINER_MEMORY_MIB={shape.memory_mib}")
+          print(f"GPU_COUNT={shape.gpus}")
+          print(f"SHARED_MEMORY_MIB={shape.shared_memory_mib}")
+          PY
+
       # THE QUEUE IN FRONT OF A PURCHASED BLOCK, DEPLOYED ONLY WHEN A DISPATCH NAMES ONE.
       #
       # Skipped on every push and on every dispatch that leaves the profile empty, so an
@@ -508,7 +608,11 @@ jobs:
               "CapacityReservationId=${RESERVATION}" \
               "AvailabilityZone=${ZONE}" \
               "SubnetId=${SUBNET}" \
-              "MaxvCpus=${MAX_VCPUS}"
+              "MaxvCpus=${MAX_VCPUS}" \
+              "ContainerVcpus=${CONTAINER_VCPUS}" \
+              "ContainerMemoryMiB=${CONTAINER_MEMORY_MIB}" \
+              "GpuCount=${GPU_COUNT}" \
+              "SharedMemoryMiB=${SHARED_MEMORY_MIB}"
 
       # READ THE TARGETING BACK OFF THE DEPLOYED LAUNCH TEMPLATE, WHICH IS THE ONLY CHECK THAT
       # STANDS BETWEEN A GREEN DEPLOY AND THE BILL THIS WHOLE STACK EXISTS TO PREVENT.
@@ -1140,35 +1244,6 @@ jobs:
 
           print("PHASE4_GPU_SHAPE_VERIFICATION_PASSED")
           PY
-
-      # THE TOOLING THE ENUMERATION BELOW NEEDS, INSTALLED ONLY WHEN A REPORT WAS ASKED FOR.
-      #
-      # This workflow installed no interpreter at all until now, and the two report steps
-      # below were written in python3 for exactly that reason. What changed is that they must
-      # read config/execution-targets.yaml, which is a pydantic contract behind a YAML file
-      # rather than a list of strings -- and reading it any other way would be a second
-      # mechanism for a question cancel-run.yml already answers one way.
-      #
-      # Gated on the dispatch carrying a run id, so a deploy pays nothing for it. A report
-      # pays about twenty seconds, against a search of sixteen queues that takes minutes.
-      #
-      # Pinned to the version cancel-run.yml pins, because these two now run the same reader
-      # over the same file and a version skew between them is a difference nobody would look
-      # for.
-      - name: Install the platform tooling
-        if: inputs.describe_run != ''
-        env:
-          UV_VERSION: "0.11.32"
-        run: |
-          set -euo pipefail
-          pipx install "uv==${UV_VERSION}"
-          installed="$(uv --version)"
-          if [[ "${installed}" != "uv ${UV_VERSION}" && "${installed}" != "uv ${UV_VERSION} "* ]]; then
-            echo "unexpected_uv_version" >&2
-            echo "Expected uv ${UV_VERSION} but PATH answers with: ${installed}" >&2
-            exit 1
-          fi
-          uv sync --locked
 
       # EVERY QUEUE A RUN COULD BE ON, READ OUT OF THE FILE THAT DECIDES WHERE RUNS GO.
       #

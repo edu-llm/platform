@@ -35,6 +35,8 @@ from workflow_support import (
     write_stub,
 )
 
+from edullm_platform.execution import CONTAINER_SHAPES
+
 WORKFLOW_FILE = ".github/workflows/deploy-phase3-batch.yml"
 WORKFLOW_PATH = WORKFLOWS_ROOT / "deploy-phase3-batch.yml"
 PHASE1_WORKFLOW_PATH = WORKFLOWS_ROOT / "deploy-phase1-ecr.yml"
@@ -77,6 +79,40 @@ CAPACITY_BLOCK_INPUTS = {
     "capacity_block_subnet_id",
     "capacity_block_max_vcpus",
 }
+
+#: Every shape a dispatch to this workflow can take, reduced to what its conditions actually
+#: branch on: whether a run id was given and whether a profile was. Four combinations, and the
+#: pair that matters is the one nobody would write a case for -- both filled at once, which is a
+#: report dispatch and a block deploy asked for together.
+DISPATCH_SHAPES = tuple(
+    {"describe_run": describe_run, "capacity_block_profile": profile}
+    for describe_run in ("", "run_0198f0a1-2b3c-7d4e-8f01-23456789abcd")
+    for profile in ("", "gpu-8xb200")
+)
+
+
+def satisfies(condition: str, *, describe_run: str, capacity_block_profile: str) -> bool:
+    """Whether a step's ``if:`` runs for one dispatch shape.
+
+    GitHub's expression language is not Python, and this evaluates only the sliver of it these
+    conditions use -- two input comparisons joined by ``&&`` and ``||``. Anything else is
+    refused rather than guessed at, because a condition this cannot read is one where a silent
+    wrong answer would make the assertions that call this vacuously true.
+    """
+    if not condition:
+        # A step with no condition runs on every dispatch, and on every push as well.
+        return True
+    expression = (
+        condition.replace("&&", " and ")
+        .replace("||", " or ")
+        .replace("inputs.describe_run", repr(describe_run))
+        .replace("inputs.capacity_block_profile", repr(capacity_block_profile))
+    )
+    permitted = re.fullmatch(r"[\w\s'\"!=()-]*", expression)
+    assert permitted, f"condition {condition!r} uses expression syntax this cannot evaluate"
+    assert "inputs." not in expression, f"condition {condition!r} names an input this cannot bind"
+    return bool(eval(expression, {"__builtins__": {}}, {}))
+
 
 # The order is a property of this file and of nothing else, for three of the four
 # dependencies. Only the compute stack's Fn::ImportValue of the network stack's exports is
@@ -645,9 +681,11 @@ def test_every_run_body_is_strict_about_failures_and_unset_variables() -> None:
     # The eleventh is the audit dispatch, which is how a deploy gets the deployed function
     # invoked without the deploy credential holding lambda:InvokeFunction. The twelfth and
     # thirteenth are the capacity block pair -- the deploy that runs only when a dispatch names
-    # a purchased block, and the check that reads the reservation targeting back off the
-    # launch template EC2 actually holds.
-    assert len(scripts) == len(DEPLOYMENT_ORDER) + 13
+    # a purchased block, and the check that reads the reservation targeting back off the launch
+    # template EC2 actually holds. The fourteenth reads the block's container shape out of
+    # CONTAINER_SHAPES so that the four job definition numbers are looked up rather than typed
+    # into a dispatch form by somebody who has just spent four figures.
+    assert len(scripts) == len(DEPLOYMENT_ORDER) + 14
     assert all(script.startswith("set -euo pipefail\n") for script in scripts)
 
 
@@ -663,9 +701,19 @@ def test_no_step_here_reaches_for_an_interpreter_the_workflow_never_installs() -
     The queue enumeration changed the premise rather than the risk: reading
     ``config/execution-targets.yaml`` means reading a pydantic contract, so ``uv`` is now
     installed here. So the invariant becomes the pairing rather than the absence. Every step
-    that reaches for ``uv`` must come after the step that installs it *and* carry the same
-    condition, because an install skipped by its own gate provides nothing to a step whose
-    gate is wider -- which is the 127 back again, on the dispatch shape nobody tested.
+    that reaches for ``uv`` must come after the step that installs it, and must not run on any
+    dispatch the install skips -- because an install skipped by its own gate provides nothing to
+    a step whose gate is wider, which is the 127 back again on the dispatch shape nobody tested.
+
+    THAT USED TO BE WRITTEN AS STRING EQUALITY BETWEEN THE TWO CONDITIONS, AND EQUALITY WAS
+    ONLY EVER A PROXY. It held while one step used ``uv``. The block deploy added a second
+    consumer with a genuinely different gate -- it runs when a profile is named and a run id is
+    not -- so equality would now have to be broken to let correct code through, which is the
+    kind of assertion that gets deleted rather than fixed. What was always meant is implication:
+    every dispatch that reaches a consumer must also have reached the install. So both
+    conditions are evaluated over every shape a dispatch can take and the implication is
+    checked, which is strictly stronger than the equality it replaces and does not have to be
+    revisited when a third consumer appears.
     """
     steps = only_job(workflow())["steps"]
     installed = {candidate.get("uses", "").split("@")[0] for candidate in steps}
@@ -684,18 +732,25 @@ def test_no_step_here_reaches_for_an_interpreter_the_workflow_never_installs() -
     assert len(provides) == 1, "one step installs the tooling, and it is the one gated below"
     install = provides[0]
     gate = steps[install].get("if", "")
-    assert gate == "inputs.describe_run != ''", (
-        "the install is for the report path only, so an ordinary deploy pays nothing for it"
+
+    # An ordinary push or a dispatch that asks for nothing in particular must still install
+    # nothing, which is the property the equality assertion was really protecting.
+    assert not satisfies(gate, describe_run="", capacity_block_profile=""), (
+        "an ordinary deploy pays for no interpreter it does not use"
     )
 
     for index, entry in enumerate(steps):
         if not re.search(r"(?<![\w-])uv(?![\w-])", executable(entry)):
             continue
         assert index >= install, f"{entry.get('name')!r} reaches for uv before it is installed"
-        assert entry.get("if", "") == gate, (
-            f"{entry.get('name')!r} reaches for uv under a condition the install does not "
-            "share, so there is a dispatch that skips the install and runs this"
-        )
+        consumer = entry.get("if", "")
+        for shape in DISPATCH_SHAPES:
+            if satisfies(consumer, **shape) and not satisfies(gate, **shape):
+                message = (
+                    f"{entry.get('name')!r} reaches for uv on a dispatch the install skips "
+                    f"({shape}), so that dispatch exits 127"
+                )
+                raise AssertionError(message)
 
 
 def test_the_workflow_does_not_reach_for_the_retired_shared_deploy_role() -> None:
@@ -1631,6 +1686,9 @@ def test_a_refused_call_does_not_end_the_per_run_search_or_pass_for_an_absent_ru
 TARGETED = '{"market":"capacity-block","reservation":"cr-0123456789abcdef0","preference":null}'
 BLOCK_RESERVATION = "cr-0123456789abcdef0"
 
+#: The container shape the block deploy derives its four job-definition parameters from.
+SHAPE = CONTAINER_SHAPES["gpu-8xb200"]
+
 TARGETING_STUB = """
 printf '%s\\n' "$*" >> "${CALL_LOG}"
 case "$1 $2" in
@@ -1801,6 +1859,13 @@ def test_a_complete_dispatch_deploys_the_stack_with_every_parameter_it_was_given
         ZONE="us-east-1d",
         SUBNET="subnet-0123456789abcdef0",
         MAX_VCPUS="192",
+        # The four the step before this one derives from CONTAINER_SHAPES and exports. Read from
+        # that table here rather than typed, so this asserts the workflow spends the figures the
+        # platform holds rather than four numbers this file agrees with itself about.
+        CONTAINER_VCPUS=str(SHAPE.vcpus),
+        CONTAINER_MEMORY_MIB=str(SHAPE.memory_mib),
+        GPU_COUNT=str(SHAPE.gpus),
+        SHARED_MEMORY_MIB=str(SHAPE.shared_memory_mib),
     )
 
     assert result.returncode == 0, result.stderr
@@ -1813,6 +1878,10 @@ def test_a_complete_dispatch_deploys_the_stack_with_every_parameter_it_was_given
         "AvailabilityZone=us-east-1d",
         "SubnetId=subnet-0123456789abcdef0",
         "MaxvCpus=192",
+        f"ContainerVcpus={SHAPE.vcpus}",
+        f"ContainerMemoryMiB={SHAPE.memory_mib}",
+        f"GpuCount={SHAPE.gpus}",
+        f"SharedMemoryMiB={SHAPE.shared_memory_mib}",
     ):
         assert pair in deployed, f"{pair} was not passed to CloudFormation"
     # No --no-fail-on-empty-changeset, unlike every reconciling deploy in this workflow. A

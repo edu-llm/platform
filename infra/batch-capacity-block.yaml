@@ -201,6 +201,43 @@ Parameters:
     Description: The total vCPU of the block -- instances multiplied by the instance type's vCPU count.
     MinValue: 1
 
+  # THE FOUR THAT DESCRIBE THE CONTAINER, AND NOT ONE OF THEM SHOULD BE TYPED BY A PERSON.
+  #
+  # They exist because one template stands behind four shapes and a job definition has to say
+  # what it asks for. They are parameters rather than literals for that reason alone, and the
+  # deploy workflow fills all four from CONTAINER_SHAPES in src/edullm_platform/execution.py
+  # rather than from a dispatch field -- which is what stops this being a fifth and sixth place
+  # the same numbers are written down.
+  #
+  # THAT MATTERS MOST FOR ContainerMemoryMiB, WHICH IS THE FIGURE THIS PLATFORM HAS ALREADY
+  # SPENT REAL MONEY GETTING WRONG. It is not the instance's advertised memory: ECS registers
+  # less than the hardware reports, and a definition asking for more than the host registers
+  # does not error -- the job parks in RUNNABLE where the submitter cannot see why, which
+  # during a paid window is the whole window. Ask too little and the run takes an
+  # out-of-memory kill several hours in. execution.py carries the measured ceiling per
+  # instance type and the reasoning for each, including that p6-b200.48xlarge's figure is an
+  # estimate derived from a sibling and p6-b300.48xlarge's is a lower bound.
+  #
+  # A seam test in tests/test_phase3_execution.py compares the definition this template
+  # deploys against the one a run registers for itself, field by field. Both read the same
+  # table, so they cannot disagree; that test is what proves they do not.
+  ContainerVcpus:
+    Type: Number
+    Description: The vCPU the container asks for. Filled from the profile's container shape, not typed.
+    MinValue: 1
+  ContainerMemoryMiB:
+    Type: Number
+    Description: The MiB the container asks for -- the measured ECS-registered ceiling, not the advertised figure.
+    MinValue: 1
+  GpuCount:
+    Type: Number
+    Description: The devices the container asks for. Eight on every block-backed shape so far.
+    MinValue: 1
+  SharedMemoryMiB:
+    Type: Number
+    Description: The /dev/shm size. NCCL needs it and the default 64 MiB is not enough for a multi-GPU run.
+    MinValue: 1
+
 Resources:
   # -------------------------------------------------------------------------------------
   # THE LAUNCH TEMPLATE, WHICH IS THE ENTIRE POINT OF THE STACK. Read the header before
@@ -522,6 +559,123 @@ Resources:
         - Order: 1
           ComputeEnvironment:
             Ref: CapacityBlockComputeEnvironment
+
+  # -------------------------------------------------------------------------------------
+  # THE JOB DEFINITION, AND IT IS IN THIS FILE RATHER THAN THE ON-DEMAND ESTATE ON PURPOSE.
+  #
+  # Every other shape's definition lives in infra/batch-compute-gpu-shapes.yaml beside its
+  # queue, and putting this one there would have been the smaller diff. It would also have
+  # left a b200 job definition standing in the on-demand estate permanently, which is a shape
+  # somebody can submit against on a day when no block exists at all -- $113.93/hour for a
+  # machine nobody reserved, admitted by a platform that had no way to tell the difference.
+  # A definition that exists only while a block exists cannot be used that way. It is created
+  # by the purchase and deleted with the stack when the window ends.
+  #
+  # WHAT THIS DEFINITION IS FOR, WHICH IS NOT RUNNING JOBS. No submission uses it. The
+  # admission state machine registers a per-run definition from CONTAINER_SHAPES in
+  # src/edullm_platform/execution.py, because Batch has no submit-time image override and a
+  # run has to pin the digest its own manifest declared. This is the deployed shape that
+  # registration is checked against, and the name config/execution-targets.yaml points at:
+  # the run's log stream prefix is derived from it, so a row naming a definition that does not
+  # exist yields logs filed under a name nothing accounts for. Deploying it is what makes the
+  # row true.
+  # -------------------------------------------------------------------------------------
+  CapacityBlockJobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      # NAMED OFF THE STACK, LIKE THE QUEUE, BECAUSE ONE TEMPLATE STANDS BEHIND FOUR SHAPES.
+      # The siblings can write sbsandbox-intern-edullm-gpu-8xa100-run as a literal; this file
+      # is deployed once per profile and a literal would collide on the second one. The
+      # resulting name is the queue's with -run on the end, which is the convention every
+      # other shape follows.
+      JobDefinitionName:
+        Fn::Sub: ${AWS::StackName}-run
+      Type: container
+      PlatformCapabilities:
+        - EC2
+      PropagateTags: true
+      # ONE ATTEMPT, AND ON A BLOCK THE USUAL ARGUMENT FOR RETRIES INVERTS. Elsewhere a retry
+      # costs another hour of on-demand rate and may clear a transient fault. Here the window
+      # is paid for either way, so a retry costs nothing extra -- but a training command that
+      # died of its own bug will die again identically, and the second attempt spends window
+      # rather than money. The submission overrides this from the manifest in any case; see
+      # RETRY_ONLY_WHAT_A_RETRY_FIXES for which failures a retry is allowed to answer.
+      RetryStrategy:
+        Attempts: 1
+      # AN HOUR, WHICH IS A FLOOR AND NOT THE CEILING A BLOCK RUN WANTS. Every submission
+      # carries its own Timeout computed from the workload's maximum_runtime_hours, so this
+      # value is what an unoverridden definition would get and nothing more -- it is
+      # JOB_DEFINITION_TIMEOUT_FLOOR_SECONDS, the same figure the siblings carry. Raising it
+      # here would not lengthen a real run by a second and would read as though it might.
+      Timeout:
+        AttemptDurationSeconds: 3600
+      ContainerProperties:
+        # The same digest every GPU shape pins. A submission replaces it with the digest its
+        # own manifest declared, which is the one the ECR scan gated admission on.
+        Image:
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:50e2488ab3c77e859a8fe3e6d4a06d7d54f5c852bc7c5dd201fb9db53bff455b
+        ExecutionRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
+        JobRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-workload
+        # All four from the profile's container shape, passed in rather than written here.
+        # See the parameters for why, and for what asking too much or too little costs.
+        ResourceRequirements:
+          - Type: VCPU
+            Value:
+              Fn::Sub: ${ContainerVcpus}
+          - Type: MEMORY
+            Value:
+              Fn::Sub: ${ContainerMemoryMiB}
+          - Type: GPU
+            Value:
+              Fn::Sub: ${GpuCount}
+        Secrets:
+          - Name: WANDB_API_KEY
+            ValueFrom:
+              Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-fnwEVp
+        # Declared rather than omitted, because ContainerOverrides can only override a key the
+        # definition already declares -- an absent Command here is a submission whose command
+        # is silently dropped.
+        Command:
+          - python
+          - -c
+          - Fn::Sub: 'print("${AWS::StackName}-run: no command override was supplied")'
+        Environment:
+          - Name: EDULLM_OUTPUT_BUCKET
+            Value: sbsandbox-intern-edullm-outputs
+          - Name: EDULLM_OUTPUT_PREFIX
+            Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
+        LinuxParameters:
+          SharedMemorySize:
+            Ref: SharedMemoryMiB
+        # THE LOG GROUP IS NOT CREATED HERE AND MUST NOT BE. infra/batch-compute-gpu.yaml
+        # creates /aws/batch/sbsandbox-intern-edullm-gpu and every GPU shape writes into it;
+        # a group per block would scatter one project's runs across four groups that come and
+        # go with purchases, and `edullm logs` would have to know which. Declaring it here
+        # would also have this stack try to create a group that already exists and fail.
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: /aws/batch/sbsandbox-intern-edullm-gpu
+            # THE PREFIX A RUN WILL ACTUALLY WRITE UNDER, AND IT HAS TO BE DERIVED RATHER THAN
+            # SPELLED. execution.py builds it as the deployed definition's name with this
+            # project's resource prefix removed -- capacity-block-gpu-8xb200-run -- so a
+            # literal here, or a profile parameter that could be passed a different profile
+            # than the stack name carries, would file a run's logs under a prefix `edullm
+            # logs` does not look in. Splitting the stack name leaves one source for both.
+            awslogs-stream-prefix:
+              Fn::Sub:
+                - ${Shape}-run
+                - Shape:
+                    Fn::Select:
+                      - 1
+                      - Fn::Split:
+                          - sbsandbox-intern-edullm-
+                          - Ref: AWS::StackName
+            awslogs-region:
+              Ref: AWS::Region
+        Privileged: false
 
 Outputs:
   # THE STRING THAT GOES IN config/execution-targets.yaml. It is the stack name, restated here
