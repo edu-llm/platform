@@ -341,37 +341,79 @@ def test_the_document_writes_no_count_the_tree_owns(document: Path) -> None:
     assert not written, point_it_at_the_tree(written, where=document.name)
 
 
-def test_the_rule_names_every_exit_code_the_binary_can_return() -> None:
+#: The two always-on rules, held to the binary's contract rather than only to its vocabulary.
+#:
+#: **THE SECOND ONE WAS NOT HERE AND THAT IS WHAT LET FOUR VERBS GO MISSING FROM SIX
+#: REPOSITORIES.** Every case below read ``AGENTS.md`` and nothing else, so the file loaded by
+#: agents working *on the platform* was held complete while the block distributed to every
+#: research repository named nine of the binary's verbs. `data`, `stop`, `studio` and `console`
+#: were absent for as long as they have existed. That is the more expensive of the two files to
+#: be wrong about: an agent in OLMo-core cannot run ``--help`` on a verb it does not know is
+#: there, and `edullm data` is the one that says which registered corpus will actually start
+#: before a machine is paid for.
+#:
+#: **WHY THESE THREE AND NOT A CHECK ON THE PROSE.** Each one fires when the *binary* grows or
+#: loses something and on no wording change whatever, which is the only kind of rule that
+#: survives contact with two people editing the same paragraph. A case that went red because
+#: somebody improved a sentence would be switched off inside a week, and then nothing would be
+#: watching the verbs either.
+ALWAYS_ON_RULES: tuple[Path, ...] = (AGENTS, DISTRIBUTED_RULE)
+
+
+@pytest.mark.parametrize("rule", ALWAYS_ON_RULES, ids=lambda path: path.name)
+def test_the_rule_names_every_exit_code_the_binary_can_return(rule: Path) -> None:
     """Mutation: document 0, 1 and 2 and leave 3 and 130 out.
 
     An agent branches on the exit code before it reads anything, and 3 is the only one of the
     five worth retrying. A rule that documented 2 and not 3 would produce exactly the script
     main.py's own header says was impossible before 3 existed: retry a typo forever, or never
     retry anything.
+
+    130 is the one that was missing from the distributed copy, and it is the least dramatic of
+    the five for the same reason it is worth naming: an agent with no row for it reads an
+    interrupt as a failure and retries something the person deliberately stopped.
     """
-    text = AGENTS.read_text(encoding="utf-8")
+    text = rule.read_text(encoding="utf-8")
 
     for code in (EXIT_OK, EXIT_REFUSED, EXIT_UNUSABLE, EXIT_UNREACHABLE, EXIT_INTERRUPTED):
         assert re.search(rf"(?<!\d){code}(?!\d)", text), (
-            f"AGENTS.md documents no exit {code}, and every path out of the binary is one "
+            f"{rule.name} documents no exit {code}, and every path out of the binary is one "
             "of the five"
         )
 
 
-def test_the_rule_names_every_built_verb() -> None:
-    """Mutation: describe check and submit and leave the read-only three out.
+@pytest.mark.parametrize("rule", ALWAYS_ON_RULES, ids=lambda path: path.name)
+def test_the_rule_names_every_built_verb(rule: Path) -> None:
+    """**Mutation: build a verb and leave both rules describing the set without it.**
 
-    The rule's whole job is that an agent knows the binary exists and when to reach for it.
-    A verb it does not name is a verb an agent writes a shell script for instead, which is
-    the sixteen-against-nineteen problem the overview's agent layer describes.
+    THIS IS THE RECURRING FAILURE RATHER THAN A ONE-OFF, WHICH IS WHY IT IS DRIVEN OFF
+    ``BUILT_TODAY`` AND NOT OFF A LIST. A verb is added by somebody working on the CLI, and
+    nothing about that work passes through six research repositories. The rule falls behind
+    silently and stays behind, because a document naming nine verbs reads exactly like a
+    document naming all of them -- there is no gap to see unless something counts.
+
+    A verb the rule does not name is a verb an agent writes a shell script for instead, which
+    is the whole defect this layer exists to fix, arriving one verb at a time.
+
+    Renames are covered by the same comparison from the other side: ``BUILT_TODAY`` stops
+    carrying the old name, and a rule still writing it fails
+    :func:`test_every_verb_the_document_names_is_a_verb_the_binary_knows` above.
     """
-    text = AGENTS.read_text(encoding="utf-8")
+    text = rule.read_text(encoding="utf-8")
     missing = sorted(verb for verb in BUILT_TODAY if f"edullm {verb}" not in text)
 
-    assert not missing, f"AGENTS.md names no {', '.join(missing)}"
+    assert not missing, (
+        f"{rule.name} names no {', '.join(missing)}. Every verb the binary has belongs in a "
+        "file an agent loads without being asked, because an agent cannot run --help on a "
+        "verb it does not know exists. Where the rule is the distributed block, the six "
+        "repositories carrying a copy have to be brought with it -- see "
+        "tools/distribute_agent_layer.py, and merge the repository pull requests before the "
+        "change to this file, or the daily comparison goes red in between."
+    )
 
 
-def test_the_rule_says_the_binary_holds_no_aws_credential() -> None:
+@pytest.mark.parametrize("rule", ALWAYS_ON_RULES, ids=lambda path: path.name)
+def test_the_rule_says_the_binary_holds_no_aws_credential(rule: Path) -> None:
     """Mutation: drop the sentence, on the grounds that it is not actionable.
 
     It is the most actionable sentence in the file. An agent that does not know this reaches
@@ -379,7 +421,7 @@ def test_the_rule_says_the_binary_holds_no_aws_credential() -> None:
     hold no AWS role that produces a confusing failure, while for the nineteen who do it
     produces an unrecorded run. Covering that is the whole point of the layer.
     """
-    text = AGENTS.read_text(encoding="utf-8").lower()
+    text = rule.read_text(encoding="utf-8").lower()
 
     assert "aws" in text
     assert "gh" in text
