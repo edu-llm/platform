@@ -20,8 +20,8 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
+from edullm_platform.contracts.image_contents import ImageContentsRecord
 from edullm_platform.contracts.image_scan import ImageScanExceptionRegistry
-from edullm_platform.contracts.image_tokenizers import ImageTokenizerRecord
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
@@ -68,13 +68,13 @@ class ReviewedConfiguration:
     datasets: DatasetRegistry
     inventory: OrganizationInventory
     image_scan_exceptions: ImageScanExceptionRegistry
-    #: Which tokenizers each published training image was measured to hold. A rule rather
-    #: than a measurement for loading purposes, which is a distinction worth being careful
-    #: about: it *is* a measurement, and it is not optional, because the verdict it decides
-    #: is the one field in this tree that can lose somebody a GPU allocation. An install
-    #: missing it must not fall back to answering out of the platform's own tokenizer map,
-    #: which is the derivation that marked three corpora runnable that no image can train.
-    image_tokenizers: ImageTokenizerRecord
+    #: What each published training image was measured to contain. A rule rather than a
+    #: measurement for loading purposes, which is a distinction worth being careful about: it
+    #: *is* a measurement, and it is not optional, because the two things it decides are the
+    #: ones in this tree that can lose somebody a GPU allocation. An install missing it must
+    #: not fall back to answering out of the platform's own tokenizer map, which is the
+    #: derivation that marked three corpora runnable that no image can train.
+    image_contents: ImageContentsRecord
     #: What runs of each shape have actually taken, and ``None`` where this install carries
     #: no reading. The eighth file, and the only optional one, because it is the only one
     #: that is a measurement rather than a rule. A missing rule is a broken installation and
@@ -110,8 +110,8 @@ def load_reviewed_configuration(directory: Path) -> ReviewedConfiguration:
             image_scan_exceptions=load_config_file(
                 ConfigFile.IMAGE_EXCEPTIONS, ImageScanExceptionRegistry, directory=directory
             ),
-            image_tokenizers=load_config_file(
-                ConfigFile.IMAGE_TOKENIZERS, ImageTokenizerRecord, directory=directory
+            image_contents=load_config_file(
+                ConfigFile.IMAGE_CONTENTS, ImageContentsRecord, directory=directory
             ),
             run_history=load_run_history(directory),
         )

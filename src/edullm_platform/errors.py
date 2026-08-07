@@ -258,3 +258,15 @@ class CheckpointPathNotInCommandError(SubmissionRefusedError):
 
 class Bfloat16NotInTheHardwareError(SubmissionRefusedError):
     reason_code: ClassVar[str] = "bfloat16_not_in_the_hardware"
+
+
+class ModelFactoryNotInTheImageError(SubmissionRefusedError):
+    """A factory name the reading of this repository's image does not hold.
+
+    Named for the image rather than for the exit code it prevents, which is the choice its
+    neighbour made too. ``bfloat16_not_in_the_hardware`` does not mention exit 73 and this does
+    not mention exit 70, because the code is the container's answer and this is a refusal that
+    happens instead of it. A submitter who meets this never sees a 70.
+    """
+
+    reason_code: ClassVar[str] = "model_factory_not_in_the_image"

@@ -206,7 +206,7 @@ on:
       # was open. `run_019fdd88-3ac4` picked the first, was admitted, allocated a GPU and
       # exited 69.
       #
-      # The join reads `config/image-tokenizers.yaml` now, which is a measurement of what
+      # The join reads `config/image-contents.yaml` now, which is a measurement of what
       # each published image holds rather than a list of what this platform knows. Recording
       # an image that carries one of those tokenizers puts its corpora back on this list, and
       # tests/test_submission_form_options.py will demand it.

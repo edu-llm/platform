@@ -8,7 +8,7 @@ cannot construct a tokenizer for the tokens it just resolved. Until this verb th
 find that out was to submit one and pay for it.
 
 That verdict is computed on every printing out of ``config/datasets.yaml``,
-:data:`~edullm_platform.tokenizers.TOKENIZERS` and ``config/image-tokenizers.yaml``. All
+:data:`~edullm_platform.tokenizers.TOKENIZERS` and ``config/image-contents.yaml``. All
 three are on the release trigger, so a change to any of them cuts a release; nothing about it
 is stored, so there is no stale copy to go wrong. The cases below hold it against the very
 functions the submission path uses, in both directions, so the verb cannot say a corpus runs
@@ -46,7 +46,7 @@ import pytest
 
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
-from edullm_platform.contracts.image_tokenizers import ImageTokenizerRecord
+from edullm_platform.contracts.image_contents import ImageContentsRecord, VocabularyName
 from edullm_platform.corpora import (
     CORPORA_FILENAME,
     NO_SNAPSHOT_PACKAGED,
@@ -72,14 +72,14 @@ def registry() -> DatasetRegistry:
     return load_yaml(CONFIG / "datasets.yaml", DatasetRegistry)
 
 
-def images() -> ImageTokenizerRecord:
+def images() -> ImageContentsRecord:
     """The reviewed reading of what the published images hold, as the verb loads it.
 
     The committed file rather than a fixture, in every case below that asks what the verb
     answers. A fixture here would make this module a test of the join and no longer a test of
     what a researcher is told, and what a researcher is told is the thing that was wrong.
     """
-    return load_yaml(CONFIG / "image-tokenizers.yaml", ImageTokenizerRecord)
+    return load_yaml(CONFIG / "image-contents.yaml", ImageContentsRecord)
 
 
 def snapshot() -> CorporaSnapshot:
@@ -265,7 +265,7 @@ def test_the_runnable_set_is_the_one_the_submission_form_offers() -> None:
         for row in corpora(registry(), images=images())
         if row.runnability.will_run
     }
-    carried = images().tokenizers_some_image_carries()
+    carried = images().names_some_image_carries(VocabularyName.TOKENIZERS)
     offered = {
         entry["reference_id"]
         for entry in json.loads(json.dumps(_published()))

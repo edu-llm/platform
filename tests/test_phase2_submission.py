@@ -13,6 +13,7 @@ from edullm_platform.config import load_yaml
 from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.contracts.bindings import TeamBinding
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
+from edullm_platform.contracts.image_contents import ImageContentsRecord
 from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
     ImageScanSummary,
@@ -153,6 +154,17 @@ def load_repository_registry() -> RepositoryRegistry:
     return load_yaml(PROJECT_ROOT / "config" / "repositories.yaml", RepositoryRegistry)
 
 
+def load_image_contents() -> ImageContentsRecord:
+    """The shipped reading of what the published images hold.
+
+    The real file rather than an empty record, so that these cases compile against what a
+    submission would actually meet. An empty one would be quietly permissive: the factory rule
+    is silent on a repository nobody has read, so every case here would pass whether or not the
+    rule worked.
+    """
+    return load_yaml(PROJECT_ROOT / "config" / "image-contents.yaml", ImageContentsRecord)
+
+
 #: A scan with nothing in it, for the tests that are about admission rather than about
 #: scanning. Passing a clean summary rather than omitting the arguments keeps these tests
 #: on the same code path production uses; omitting them would take the opt-out branch and
@@ -263,6 +275,7 @@ def compile_payload(
         repositories=load_repository_registry(),
         catalog=load_workload_catalog(),
         dataset_registry=load_dataset_registry(),
+        image_contents=load_image_contents(),
         image_scan_registry=(
             image_scan_registry
             if image_scan_registry is not None

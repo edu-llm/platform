@@ -69,7 +69,7 @@ from edullm_platform.contracts.execution import (
     ExecutionTargetCatalog,
     UnbackedComputeProfileError,
 )
-from edullm_platform.contracts.image_tokenizers import ImageTokenizerRecord
+from edullm_platform.contracts.image_contents import ImageContentsRecord, VocabularyName
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.policy import ApprovalPolicy
@@ -150,8 +150,8 @@ def execution_targets() -> ExecutionTargetCatalog:
     return load_yaml(PROJECT_ROOT / "config" / "execution-targets.yaml", ExecutionTargetCatalog)
 
 
-def image_tokenizers() -> ImageTokenizerRecord:
-    return load_yaml(PROJECT_ROOT / "config" / "image-tokenizers.yaml", ImageTokenizerRecord)
+def image_contents() -> ImageContentsRecord:
+    return load_yaml(PROJECT_ROOT / "config" / "image-contents.yaml", ImageContentsRecord)
 
 
 def resolution_failure(compute_profile: str) -> str | None:
@@ -337,7 +337,7 @@ def corpora_a_run_could_actually_train_on() -> set[str]:
     list is not a second lock, it is the only one. ``run_019fdd88-3ac4`` picked the first,
     spent an approval, allocated a GPU and exited 69.
     """
-    carried = image_tokenizers().tokenizers_some_image_carries()
+    carried = image_contents().names_some_image_carries(VocabularyName.TOKENIZERS)
     return {
         entry["reference_id"]
         for entry in registry("datasets.yaml").get("published", [])
@@ -439,7 +439,7 @@ def test_a_corpus_whose_tokenizer_nothing_can_build_stays_registered_and_unoffer
     every image refused it. ``run_019fdd88-3ac4`` named its sibling ``fineweb-edu-750m-v2``,
     was admitted, allocated a GPU and exited 69.
 
-    The exclusion is computed against ``config/image-tokenizers.yaml`` now, which is a
+    The exclusion is computed against ``config/image-contents.yaml`` now, which is a
     reading of what a published image holds. That makes the retirement this docstring
     promises real for the first time: the day an image is read carrying smollm2, all three of
     these corpora come back on their own and the assertion below starts demanding them.
@@ -457,7 +457,7 @@ def test_a_corpus_whose_tokenizer_nothing_can_build_stays_registered_and_unoffer
         entry["reference_id"] for entry in registry("datasets.yaml").get("published", [])
     }
     offerable = corpora_a_run_could_actually_train_on()
-    carried = image_tokenizers().tokenizers_some_image_carries()
+    carried = image_contents().names_some_image_carries(VocabularyName.TOKENIZERS)
 
     for reference_id in ("lean4-mathlib-bytes-v3", "math-memory-full-v1"):
         assert reference_id in registered

@@ -121,11 +121,13 @@ class ConfigFile(StrEnum):
     DATASETS = "datasets.yaml"
     ORGANIZATION = "organization.yaml"
     IMAGE_EXCEPTIONS = "image-exceptions.yaml"
-    #: Which tokenizers each published training image was measured to hold, which is what
-    #: decides whether a corpus is runnable. Beside the rules rather than under ``reports/``
-    #: deliberately, and ``corpora.py`` names the reason: this is the one measurement that
-    #: can lose somebody a machine, so an install must not answer out of a stale copy.
-    IMAGE_TOKENIZERS = "image-tokenizers.yaml"
+    #: What each published training image was measured to contain: the tokenizers it can build
+    #: a config for, which decides whether a corpus is runnable, and the model factories it can
+    #: resolve, which decides whether a command will build one. Beside the rules rather than
+    #: under ``reports/`` deliberately, and ``corpora.py`` names the reason: these are the
+    #: measurements that can lose somebody a machine, so an install must not answer out of a
+    #: stale copy.
+    IMAGE_CONTENTS = "image-contents.yaml"
     EXECUTION_TARGETS = "execution-targets.yaml"
     CAPACITY = "capacity.yaml"
     ACCELERATORS = "accelerators.yaml"

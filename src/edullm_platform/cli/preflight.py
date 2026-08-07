@@ -17,6 +17,7 @@ does the command start one process per card  ``launchers.require_a_process_for_e
 does vLLM read the size the command names    ``launchers.require_a_tensor_parallel_flag_vllm_reads``
 does it save where a retry will look         ``checkpoint_commands.require_a_save_folder_a_retry_can_find``
 can the card run the dtype it asks for       ``precision.require_bfloat16_only_where_the_hardware_has_it``
+does the image have the factory it names     ``model_factory.require_a_model_factory_the_image_has``
 is the command startable and still quoted    ``contracts.manifest.RunManifest``
 what does it cost, and who releases it       ``manifest_helpers`` and ``contracts.policy``
 what have runs like this one taken           ``run_history.history_for``
@@ -98,6 +99,7 @@ from edullm_platform.contracts.authorization import (
 )
 from edullm_platform.contracts.bindings import SLUG_PATTERN
 from edullm_platform.contracts.dataset_registry import PublishedDatasetReference
+from edullm_platform.contracts.image_contents import ImageContentsRecord
 from edullm_platform.contracts.manifest import FanOut, RunManifest
 from edullm_platform.contracts.policy import ApprovalClass, RequestFacts, classify_request
 from edullm_platform.contracts.workload import (
@@ -123,6 +125,7 @@ from edullm_platform.launchers import (
     require_a_tensor_parallel_flag_vllm_reads,
 )
 from edullm_platform.manifest_helpers import build_request_facts, compute_manifest_cost_inputs
+from edullm_platform.model_factory import require_a_model_factory_the_image_has
 from edullm_platform.precision import require_bfloat16_only_where_the_hardware_has_it
 from edullm_platform.run_history import HistoryAnswer, history_for
 from edullm_platform.submission import (
@@ -404,7 +407,9 @@ def run_preflight(
             history=shape.history,
         )
 
-    refusals.extend(_check_command(manifest, configuration.catalog))
+    refusals.extend(
+        _check_command(manifest, configuration.catalog, configuration.image_contents)
+    )
 
     priced = _price_and_derive_facts(manifest, configuration)
     if isinstance(priced, Refusal):
@@ -1357,7 +1362,9 @@ def _build_manifest(
     return manifest, []
 
 
-def _check_command(manifest: RunManifest, catalog: WorkloadCatalog) -> list[Refusal]:
+def _check_command(
+    manifest: RunManifest, catalog: WorkloadCatalog, images: ImageContentsRecord
+) -> list[Refusal]:
     """Every rule about the text of a command, asked against the resolved profile.
 
     Against the resolved profile rather than the workload's, because ``--compute`` is what
@@ -1402,6 +1409,14 @@ def _check_command(manifest: RunManifest, catalog: WorkloadCatalog) -> list[Refu
             command=manifest.command,
             compute_profile=manifest.compute_profile,
             catalog=catalog,
+        )
+    except SubmissionRefusedError as exc:
+        refusals.append(Refusal(code=type(exc).reason_code, detail=str(exc)))
+    try:
+        require_a_model_factory_the_image_has(
+            command=manifest.command,
+            repository=manifest.repository,
+            images=images,
         )
     except SubmissionRefusedError as exc:
         refusals.append(Refusal(code=type(exc).reason_code, detail=str(exc)))

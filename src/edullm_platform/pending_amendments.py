@@ -1170,13 +1170,13 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "a line in a StrEnum moved a Lambda for two reports the sweep never reads. "
                 "The fourteenth entry in this register recorded that coupling as the finding "
                 "rather than a one-off, and this is its third and fourth arrival. Its fifth "
-                "is config/image-tokenizers.yaml, which is what edullm data now reads a "
+                "is config/image-contents.yaml, which is what edullm data now reads a "
                 "corpus's runnability out of instead of guessing at it from this platform's "
                 "own tokenizer map -- a reviewed file, therefore a ConfigFile member, "
                 "therefore these bytes, and the sweep does not read that one either."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function janitor",
-            builds_to="9262e483a342ae8d686dcd580816dc606303cd76f311cb99a8b5183e57bb6dd6",
+            builds_to="ed8bb614cf35013780a3eac043885bd173b7197ff92d9fc71224c1a7501d5fb7",
             released="e07efe963ec9cadb79f7345a14d9074c125e359a588e0661f99db687a757e96a",
             recorded_on=date(2026, 8, 7),
         ),
