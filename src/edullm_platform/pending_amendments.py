@@ -1206,7 +1206,7 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "run moves. The escape is still the reason to cut the release."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function notifier",
-            builds_to="ff0e913ad2660ffee6b81bb7e774744144d773963b16e65499118c473156103a",
+            builds_to="14e2fb190a2205388e5682f786595c31c7f253859540a984ea38a63c7f8af5f6",
             released="d78c4a48482558039e7affc51331ec558e5880f8e48876bafb567fe683ee67b9",
             recorded_on=date(2026, 8, 7),
         ),
@@ -1284,7 +1284,7 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "field along with it."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function validator",
-            builds_to="52ec6a3a689fcf237e20cd7172bad8a894066266c73379301b86b9ed78b5df64",
+            builds_to="fdddb38bc524af5bc2bc943c26004667c00607e704b9d20894459cf5cc07e0c7",
             released="2cda942e9518cf23b6042a5b5ab35d550557a0784acfc9c3ee2d593844e9064c",
             recorded_on=date(2026, 8, 7),
         ),

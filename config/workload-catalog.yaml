@@ -568,10 +568,23 @@ workloads:
   # makes. How many devices the run gets is priced on the approver's summary before it is
   # released.
   #
-  # TWENTY-FOUR HOURS IS THE POLICY CEILING AND NOT A ROUND NUMBER. config/policy.yaml sets
-  # routine_maximum_runtime_hours to 24, so this is the longest run that still routes to an
-  # ordinary lead approval; a twenty-fifth hour would make every submission an exception and
-  # put a second person in the path of every training job.
+  # TWENTY-FOUR HOURS WAS THE POLICY CEILING AND IS NOW ONLY THIS ONE. config/policy.yaml set
+  # routine_maximum_runtime_hours to 24 when this figure was chosen, so a twenty-fifth hour
+  # made every submission an exception and put a second person in the path of every training
+  # job. That threshold is gone -- `thresholds` now carries automatic_below_cost_usd and
+  # automatic_daily_ceiling_usd and nothing else, and the removed four are recorded in
+  # config/policy.yaml rather than deleted in silence.
+  #
+  # SO RAISING THIS NUMBER NO LONGER MOVES WHO APPROVES ANYTHING. What bounds a long run is
+  # the cost ceiling, which reads the same fact: a run long enough to be worth arguing about
+  # is expensive, and expensive is what that bound sees. This ceiling is now a statement about
+  # what this workload is built to do rather than a lever on the approval path.
+  #
+  # IT ALSO DOES NOT TRUNCATE A CAPACITY BLOCK, which is the question a purchased window
+  # raises. A 24-hour block yields about 23.5 usable hours because AWS begins terminating the
+  # instances thirty minutes before the block ends, and 23.5 is inside this ceiling with half
+  # an hour to spare. A block long enough to need a twenty-fifth hour would need this figure
+  # raised, and that edit is now approval-neutral.
   #
   # IT WAS TWELVE AND THE TWELVE WAS MEASURABLY WRONG, WHICH IS WHY BOTH NUMBERS MOVED
   # TOGETHER. Memory-split's eight seed pairs and P7's 192-checkpoint sweep each land

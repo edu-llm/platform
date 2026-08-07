@@ -1186,6 +1186,20 @@ def test_the_table_is_declared_rather_than_derived_from_the_stack_name(module: A
         assert stack.template.is_relative_to(INFRA_ROOT)
 
 
+def dispatch_choices(path: Path, expression: str) -> tuple[str, ...]:
+    """The options of the ``workflow_dispatch`` choice input an expression interpolates.
+
+    ``()`` for an expression naming anything else, which is what makes the caller below refuse
+    a stack name it cannot enumerate rather than skip it.
+    """
+    named = expression.removeprefix("${{").removesuffix("}}").strip().removeprefix("inputs.")
+    inputs = load_workflow(path).get("on", {}).get("workflow_dispatch", {}).get("inputs", {})
+    declared = inputs.get(named, {})
+    if declared.get("type") != "choice":
+        return ()
+    return tuple(option for option in declared["options"] if option)
+
+
 def workflow_deploys() -> set[tuple[str, str]]:
     """Every ``cloudformation deploy`` a workflow makes, as a stack name and a template path.
 
@@ -1194,6 +1208,20 @@ def workflow_deploys() -> set[tuple[str, str]]:
     as a filter over the whole directory -- one workflow calls the CLI inside a loop to dump
     stack events after a failure, and that step is not a deploy.
 
+    ONE STACK NAME HERE IS NOT A LITERAL, AND IT IS EXPANDED RATHER THAN EXCUSED. The capacity
+    block deploy builds its name from a dispatch input, because one template stands behind four
+    stacks -- one per block-backed shape in ``config/workload-catalog.yaml`` -- and which of
+    them is being deployed is a fact about a purchase rather than about this repository.
+
+    Skipping it would put the only stack in the estate whose name is chosen at dispatch time
+    outside the check that every deployed stack is declared, which is precisely the stack most
+    worth checking: it is created during a paid window, by hand, by somebody in a hurry.
+
+    So the shell interpolation is expanded against the options of the choice input that feeds
+    it, and every name that expansion produces is returned. The invariant survives intact and
+    gains a second edge -- a fifth option added to that dropdown with no row in the register
+    fails here, rather than at the dispatch.
+
     ``steps`` is read with a default because a job that calls a reusable workflow declares
     ``uses:`` and may not declare steps at all, so the key is absent rather than empty. That
     is safe here rather than a hole for the same reason it is safe in
@@ -1201,15 +1229,54 @@ def workflow_deploys() -> set[tuple[str, str]]:
     ``cloudformation deploy`` for this to miss, and the called file is itself one of the
     workflows this glob walks -- so a deploy moved into a reusable workflow is still read.
     """
-    return {
-        (command[command.index("--stack-name") + 1], command[command.index("--template-file") + 1])
-        for path in sorted(WORKFLOWS_ROOT.glob("*.yml"))
-        for job in load_workflow(path)["jobs"].values()
-        for item in job.get("steps") or ()
-        if "cloudformation deploy" in str(item.get("run", ""))
-        for command in aws_commands(str(item["run"]))
-        if command[:3] == ["aws", "cloudformation", "deploy"]
+    deploys: set[tuple[str, str]] = set()
+    for path in sorted(WORKFLOWS_ROOT.glob("*.yml")):
+        workflow = load_workflow(path)
+        interpolations = {
+            f"${{{name}}}": str(value)
+            for job in workflow["jobs"].values()
+            for item in job.get("steps") or ()
+            for name, value in (item.get("env") or {}).items()
+        }
+        for job in workflow["jobs"].values():
+            for item in job.get("steps") or ():
+                if "cloudformation deploy" not in str(item.get("run", "")):
+                    continue
+                for command in aws_commands(str(item["run"])):
+                    if command[:3] != ["aws", "cloudformation", "deploy"]:
+                        continue
+                    name = command[command.index("--stack-name") + 1]
+                    template = command[command.index("--template-file") + 1]
+                    if "${" not in name:
+                        deploys.add((name, template))
+                        continue
+                    placeholder = name[name.index("${") : name.index("}") + 1]
+                    for option in dispatch_choices(path, interpolations[placeholder]):
+                        deploys.add((name.replace(placeholder, option), template))
+    return deploys
+
+
+def test_the_capacity_block_stacks_a_dispatch_can_deploy_are_all_enumerated(
+    module: Any,
+) -> None:
+    """Mutation: let ``dispatch_choices`` answer ``()`` for the profile input.
+
+    The test below would then pass over an empty expansion and report nothing, which is the
+    failure mode of every check built on a comprehension: it goes green when it measures the
+    empty set. This is what makes that one mean something.
+
+    All four block-backed shapes are asserted rather than the one being bought this week,
+    because the dropdown offers all four and any of them can be dispatched.
+    """
+    applied = {name for name, _template in workflow_deploys()}
+    declared = {
+        name
+        for name, stack in module.STACKS.items()
+        if stack.template == PROJECT_ROOT / "infra/batch-capacity-block.yaml"
     }
+
+    assert len(declared) == 4, "one stack per block-backed shape in the catalog"
+    assert declared <= applied, sorted(declared - applied)
 
 
 def test_every_stack_a_deploy_workflow_applies_is_in_the_table(module: Any) -> None:
