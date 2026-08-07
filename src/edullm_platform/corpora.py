@@ -8,13 +8,26 @@ that cannot construct a model for the tokens it just resolved, exiting 69 with
 :data:`~edullm_platform.tokenizers.THE_CONTAINERS_REFUSAL`. Until this verb the only way to
 find that out was to submit one.
 
-That verdict is a join over two things the wheel already carries, ``config/datasets.yaml``
-and :data:`~edullm_platform.tokenizers.TOKENIZERS`, so it cannot go stale: both are on the
-release trigger, a change to either cuts a release, and an install that answers the old way
-is an install that says so when ``edullm submit`` probes for a newer one. Nothing about
-runnability is written into the committed measurement, deliberately. A stored verdict would
-be a claim made on the day somebody ran a tool, and the day OLMo-core grows a byte tokenizer
-it would be a wrong claim nobody had a reason to re-run anything about.
+That verdict is a join over three things the wheel already carries, ``config/datasets.yaml``,
+:data:`~edullm_platform.tokenizers.TOKENIZERS` and ``config/image-tokenizers.yaml``, so it
+cannot go stale: all three are on the release trigger, a change to any of them cuts a
+release, and an install that answers the old way is an install that says so when ``edullm
+submit`` probes for a newer one. Nothing about runnability is written into the committed
+measurement, deliberately. A stored verdict would be a claim made on the day somebody ran a
+tool, and the day OLMo-core grows a byte tokenizer it would be a wrong claim nobody had a
+reason to re-run anything about.
+
+**IT WAS A JOIN OVER TWO AND THE MISSING THIRD IS WHY IT LIED.** The tokenizer map says what
+this platform knows how to express and the verdict presented that as what an image knows how
+to build. ``tokenizers.py`` records the hazard in capitals and states the ordering that
+prevents it -- the OLMo-core change lands first, this ships after -- and the ordering was
+not held, twice. So ``fineweb-edu-750m-v2``, ``fineweb-edu-1b-v6`` and
+``formal-proof-premises-500m-v3`` were verdicted ``runs``, offered on the submission form,
+and ``run_019fdd88-3ac4`` named the first, was admitted, allocated a GPU and exited 69. A
+rule written in a docstring is a rule the next author has to have read; what
+``config/image-tokenizers.yaml`` does is make the ordering the shape of the data, so a
+tokenizer this platform can express is offered only once an image has been *seen* carrying
+it. ``contracts/image_tokenizers.py`` carries that argument in full.
 
 **WHAT IS MEASURED IS THE PART THAT LIVES IN SOMEBODY ELSE'S BUCKET.** Train tokens, shard
 dtype, licence, size and the one line saying what a corpus is are in the sealed
@@ -54,6 +67,7 @@ from edullm_platform.contracts.dataset_registry import (
     DatasetRegistry,
     PublishedDatasetReference,
 )
+from edullm_platform.contracts.image_tokenizers import ImageTokenizerRecord
 from edullm_platform.reviewed_configuration import ConfigFile
 from edullm_platform.tokenizers import THE_CONTAINERS_REFUSAL, TOKENIZERS
 
@@ -286,7 +300,9 @@ def tokens_said(count: int) -> str:
     return str(count)
 
 
-def _runnability(reference: PublishedDatasetReference) -> Runnability:
+def _runnability(
+    reference: PublishedDatasetReference, images: ImageTokenizerRecord
+) -> Runnability:
     """The join, in the order a submission meets the refusals.
 
     EACH BRANCH IS A REFUSAL THAT ALREADY EXISTS SOMEWHERE ELSE, ASKED HERE RATHER THAN
@@ -298,6 +314,21 @@ def _runnability(reference: PublishedDatasetReference) -> Runnability:
     tokenizer entry would be reported as retired if retirement came first, and what a
     submitter actually meets is ``dataset_is_not_a_corpus``, because policy denies that
     outright and never gets as far as the current-version check.
+
+    **THE LAST BRANCH IS TWO QUESTIONS AND IT USED TO BE ONE, WHICH IS THE DEFECT.** It
+    asked whether the tokenizer was a key in :data:`~edullm_platform.tokenizers.TOKENIZERS`,
+    which is this platform's map of what it can *express*, and answered with a claim about
+    what an image can *build*. Those agreed until two entries were added ahead of the
+    matching lines in OLMo-core -- the ordering ``tokenizers.py`` insists on in capitals and
+    which nothing enforced -- and then three corpora were verdicted ``runs`` that no image
+    can train. ``run_019fdd88-3ac4`` named one, was admitted, allocated a GPU and exited 69.
+
+    So the two questions are asked separately, of the two things that can answer them. Both
+    end in ``exits_69`` because both produce exactly that, down to the same refusal string;
+    what differs is the sentence, because they ask opposite things of whoever reads it. A
+    tokenizer this platform cannot express is a corpus nobody can run until somebody writes
+    a config for it. One the platform expresses and no image carries is a corpus that is one
+    published image away, and the reader can be told which images were asked.
     """
     if not reference.is_a_corpus_a_run_may_read:
         return Runnability(
@@ -331,11 +362,42 @@ def _runnability(reference: PublishedDatasetReference) -> Runnability:
                 f"the machine, and the container exits 69 with {THE_CONTAINERS_REFUSAL}."
             ),
         )
+    if not images.images_carrying(reference.tokenizer):
+        return Runnability(
+            verdict="exits_69",
+            said=(
+                f"Nothing refuses this and it does not run. This platform can build a config "
+                f"for {reference.tokenizer} and no published image carries one: "
+                f"{_images_said(images)}. So a submission naming it compiles clean, "
+                "classifies routine, spends an approval, allocates the machine, and the "
+                f"container exits 69 with {THE_CONTAINERS_REFUSAL}. It becomes runnable when "
+                "the tokenizer lands in a research repository's own map and that image is "
+                "read again, and not before."
+            ),
+        )
     return Runnability(verdict="runs", said="A run may name this and it will start.")
 
 
+def _images_said(images: ImageTokenizerRecord) -> str:
+    """Which images were asked and what each holds, so a refusal names its evidence.
+
+    A refusal reading "no image carries it" sends somebody to look at every image there is.
+    One naming the images and their maps sends them to the one line that has to change,
+    which is the same argument ``unreviewed_blocking_findings`` makes for listing findings
+    rather than counting them.
+    """
+    return "; ".join(
+        f"{reading.repository} carries "
+        + (", ".join(reading.tokenizers) if reading.tokenizers else "none")
+        for reading in images.images
+    )
+
+
 def corpora(
-    registry: DatasetRegistry, *, snapshot: CorporaSnapshot | None = None
+    registry: DatasetRegistry,
+    *,
+    images: ImageTokenizerRecord,
+    snapshot: CorporaSnapshot | None = None,
 ) -> tuple[Corpus, ...]:
     """Every registered published corpus, joined and sorted by what a chooser sorts by.
 
@@ -352,7 +414,7 @@ def corpora(
     rows = [
         Corpus(
             reference=reference,
-            runnability=_runnability(reference),
+            runnability=_runnability(reference, images),
             measurement=(
                 None
                 if snapshot is None
@@ -373,7 +435,11 @@ def _by_size(row: Corpus) -> tuple[int, int, str]:
 
 
 def one_corpus(
-    reference_id: str, registry: DatasetRegistry, *, snapshot: CorporaSnapshot | None = None
+    reference_id: str,
+    registry: DatasetRegistry,
+    *,
+    images: ImageTokenizerRecord,
+    snapshot: CorporaSnapshot | None = None,
 ) -> Corpus:
     """One corpus by the name a submission would use, or a refusal naming what exists.
 
@@ -381,7 +447,7 @@ def one_corpus(
     one place to compose the list of names and cannot report "no such corpus" as an empty
     table.
     """
-    for row in corpora(registry, snapshot=snapshot):
+    for row in corpora(registry, images=images, snapshot=snapshot):
         if row.reference_id == reference_id:
             return row
     raise CorpusUnknownError(reference_id)

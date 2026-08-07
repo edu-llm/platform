@@ -167,6 +167,11 @@ def test_rendered_schemas_cover_all_root_contract_models() -> None:
         # Reviewed configuration a human edits: which published digests somebody has read
         # the scan findings for and accepted.
         "image-exceptions.schema.json",
+        # Reviewed configuration a tool writes and a human reviews: which tokenizers each
+        # published training image was measured to hold. Exported because it decides the one
+        # verdict in this tree that can lose somebody a GPU allocation, so a malformed entry
+        # has to fail at load rather than at the point `edullm data` says a corpus will run.
+        "image-tokenizers.schema.json",
         # The execution records Phase 3 writes into the same store. Defined in Phase 0 and
         # constructed by nothing until Phase 3, which is why they arrive here only now.
         "logical-run.schema.json",

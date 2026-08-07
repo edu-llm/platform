@@ -261,6 +261,20 @@
     },
     {
       "base": false,
+      "module": "edullm_platform.contracts.image_tokenizers",
+      "name": "ImageTokenizerReading",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:6a59f3b977bbf0c589e71a5fccea4e5fde6ee892d91721b20d5d3aaf87da5b81"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.image_tokenizers",
+      "name": "ImageTokenizerRecord",
+      "schema_version": "1",
+      "structural_digest": "sha256:68db2c19ca36cc24ee2a623d784dbff6991e0194f1410f8adf58c9f5aad966fe"
+    },
+    {
+      "base": false,
       "module": "edullm_platform.contracts.inventory",
       "name": "OrganizationInventory",
       "schema_version": "unversioned",

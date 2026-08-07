@@ -17,8 +17,8 @@ name: Cut a release when the CLI or the configuration changes
 # have moved `releases/latest` and told thirty-five machines they were behind, which is how
 # a staleness warning stops being read.
 #
-# So the list is the CLI's own package, every module it transitively imports, the seven
-# configuration files it opens, and the file its version lives in. The seventh is
+# So the list is the CLI's own package, every module it transitively imports, the eight
+# configuration files it opens, and the file its version lives in. The eighth is
 # config/run-history.json, which is a measurement rather than a rule and is the only one the
 # CLI tolerates the absence of -- but a release that moves it is still a release after which
 # an install quotes different durations, so it belongs here exactly as the six rules do. It
@@ -103,6 +103,7 @@ on:
       - "src/edullm_platform/contracts/identity.py"
       - "src/edullm_platform/contracts/image.py"
       - "src/edullm_platform/contracts/image_scan.py"
+      - "src/edullm_platform/contracts/image_tokenizers.py"
       - "src/edullm_platform/contracts/inventory.py"
       - "src/edullm_platform/contracts/lifecycle.py"
       - "src/edullm_platform/contracts/manifest.py"
@@ -130,6 +131,7 @@ on:
       - "src/edullm_platform/tokenizers.py"
       - "config/datasets.yaml"
       - "config/image-exceptions.yaml"
+      - "config/image-tokenizers.yaml"
       - "config/organization.yaml"
       - "config/policy.yaml"
       - "config/reports/resume-demonstrations.yaml"
@@ -470,7 +472,7 @@ jobs:
       # configuration is a release after which their `edullm check` and the platform answer
       # the same question differently.
       #
-      # THE SEVEN FILES THE CLI OPENS AND NOT `config/`. That directory holds capacity tables,
+      # THE EIGHT FILES THE CLI OPENS AND NOT `config/`. That directory holds capacity tables,
       # execution targets and generated reports the CLI never reads, and v0.2.1 said the
       # reviewed configuration had moved when the only file that changed was
       # config/capacity.yaml. Everybody who re-installed on that sentence did it for nothing,
@@ -503,6 +505,7 @@ jobs:
           CONFIGURATION_FILES: >-
             config/datasets.yaml
             config/image-exceptions.yaml
+            config/image-tokenizers.yaml
             config/organization.yaml
             config/policy.yaml
             config/repositories.yaml

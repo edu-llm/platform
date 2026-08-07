@@ -1,0 +1,98 @@
+{
+  "$defs": {
+    "ImageTokenizerReading": {
+      "additionalProperties": false,
+      "description": "One published image, and the tokenizer ids it was seen to hold.\n\n``tokenizers`` may be empty and an empty list is a finding rather than a gap. Four of\nthe six registered repositories publish an image that trains no corpus at all -- a\ndataset validator, an evaluation image that calls a hosted API -- and a reading that\nfound no map in one of those is not a reading that failed. What it means for the verdict\nis the same as a map without the key in question: no run on this image can train a\ncorpus needing one.",
+      "properties": {
+        "commit_sha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Commit Sha",
+          "type": "string"
+        },
+        "image_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image Digest"
+        },
+        "read_at": {
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$",
+          "title": "Read At",
+          "type": "string"
+        },
+        "read_by": {
+          "$ref": "#/$defs/ReadingMethod"
+        },
+        "read_from": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Read From",
+          "type": "string"
+        },
+        "repository": {
+          "minLength": 1,
+          "pattern": ".*\\S.*",
+          "title": "Repository",
+          "type": "string"
+        },
+        "tokenizers": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Tokenizers",
+          "type": "array"
+        }
+      },
+      "required": [
+        "repository",
+        "commit_sha",
+        "read_by",
+        "read_from",
+        "read_at"
+      ],
+      "title": "ImageTokenizerReading",
+      "type": "object"
+    },
+    "ReadingMethod": {
+      "description": "How a reading was taken, because the two are not equally strong.\n\n``tools/verify_image_accelerator.py`` makes this argument at length for a different fact\nand every word of it applies here: an assertion about a repository's source protects\nexactly what that source produces, and an image is not that. A ``COPY`` that misses the\nfile, a Dockerfile whose entrypoint pins an older checkout, a BuildKit cache hit that\nreuses the layer without re-running the step -- each leaves an image whose map is not the\nmap in the tree. Only a probe of the assembled image rules those out.\n\nBoth are recorded rather than only the strong one, because the weak one is available\ntoday and refusing to write it down would leave the verdict deriving from a hand-kept\nlist, which is worse than deriving from a source reading that says it is one.",
+      "enum": [
+        "image_probe",
+        "source_at_commit"
+      ],
+      "title": "ReadingMethod",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "What every published training image was last seen able to build.\n\nOne record per repository rather than per digest, and that is a deliberate loss of\nprecision worth naming. A per-digest record would be exact and would also go stale on\nevery rebuild, so the verdict would answer \"no reading for this image\" for the ordinary\ncase of somebody publishing a commit this morning. What a chooser is asking is whether\nthe corpus is trainable at all, and the tokenizer map moves when somebody edits it\nrather than when somebody rebuilds -- so the useful unit is the repository, with the\ncommit recorded so a reader can see how far behind the reading is.",
+  "properties": {
+    "images": {
+      "items": {
+        "$ref": "#/$defs/ImageTokenizerReading"
+      },
+      "minItems": 1,
+      "title": "Images",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "images"
+  ],
+  "title": "ImageTokenizerRecord",
+  "type": "object"
+}
