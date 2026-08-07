@@ -865,11 +865,21 @@ jobs:
           # ITS OWN. The gate above asks the question whose right answer is the same in
           # every registered image. This one runs `.edullm/verify_image.py` out of the
           # checkout being built, inside the assembled image, and lets a repository refuse
-          # its own build. That is the only way a fact of the shape every olmo3_* factory
-          # hardcodes attn_backend=flash_2 and this image has no flash-attn can be caught
-          # by anything, because it is a fact about a codebase nobody on the platform side
-          # maintains. Run run_019fde30-1d27-7096-8bd9-3ef9b7748d7b bought that one for the
-          # price of a gpu-1xa10g allocation and eleven seconds of it.
+          # its own build. That is the only way a fact of the shape all fourteen olmo3_*
+          # factories hardcode attn_backend=flash_2 and this image has no flash-attn can be
+          # caught by anything, because it is a fact about a codebase nobody on the platform
+          # side maintains. Run run_019fde30-1d27-7096-8bd9-3ef9b7748d7b bought that one for
+          # the price of a gpu-1xa10g allocation and eleven seconds of it.
+          #
+          # THE CHECK IS RUN TWICE AND THAT IS THE LOAD-BEARING PART. A builder has no card,
+          # and a library that quietly degrades without one turns a build-time assertion
+          # into a statement about the fallback: OLMo-core replaces the configured attention
+          # backend with the torch one before it ever asks whether the configured one is
+          # supported, so constructing a model on a builder asserts nothing and goes green.
+          # The second pass runs the same check in the same image with
+          # torch.cuda.is_available returning True, and a verdict that changes between the
+          # two is refused. It is what stops this gate from being defeated by the most
+          # obvious wrong way to write a check for it.
           #
           # A repository with no such file is not refused; the tool names that state on
           # every build, which is the same posture the accelerator gate takes toward an

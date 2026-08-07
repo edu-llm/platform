@@ -84,48 +84,102 @@ The one assertion the platform cannot make for you, run inside the assembled ima
 build, before the push. Write it, and a dependency your code needs and your image lacks is a
 red build instead of a billed GPU allocation that dies in the first seconds.
 
-This is not hypothetical and it is why the step exists. Every `olmo3_*` and `olmo2_*` factory
-in OLMo-core hardcodes `attn_backend=flash_2`; `Attention.__init__` calls `assert_supported()`
-while the model is being *constructed*; the registered image has no flash-attn and its base
-has no compiler to build one. So no model could be instantiated at all, and the way that got
-found out was a researcher waiting for a GPU, getting one, and losing it seconds later.
+This is not hypothetical and it is why the step exists. All fourteen `olmo3_*` factories in
+OLMo-core hardcode `attn_backend=flash_2`, and the registered image has no flash-attn and no
+compiler to build one, so no olmo3 model could be instantiated on a GPU at all. The way that
+got found out was a researcher waiting four and a half minutes for a card, getting one, and
+losing it eleven seconds later.
 
-**Assert what the image has to be able to do, not what it has to contain.** A version pin
-tells you a package is installed. Constructing the thing tells you the constructor does not
-raise, which is the failure above and is the one a pin cannot see.
+**Assert the property directly. Never infer it from constructing something.** This is the
+whole of the guidance and everything below is why.
 
-**Enumerate, never list.** A hardcoded set of model names is correct on the day it is typed
-and silently incomplete afterwards, which is the failure mode the check exists to prevent
-arriving one level up. Read the names off the object:
+The obvious check is to build one model per registered size and call it a pass if nothing
+raises. It asserts nothing, and OLMo-core has been running a version of it green this entire
+time. `Attention.__init__` opens with
 
 ```python
-from olmo_core.nn.transformer import TransformerConfig
-
-RUNGS = sorted(
-    name for name in dir(TransformerConfig)
-    if name.startswith(("olmo2_", "olmo3_"))
-)
-for rung in RUNGS:
-    getattr(TransformerConfig, rung)(vocab_size=100352).build(init_device="meta")
+if not torch.cuda.is_available() and backend != AttentionBackendName.torch:
+    warnings.warn(f"Backend is set to {backend}, but GPUs are not available. Defaulting to torch.")
+    backend = AttentionBackendName.torch
 ```
 
-`init_device="meta"` is load-bearing: it runs every constructor and allocates no storage, so
-the whole ladder costs seconds and no memory. Print each name before you build it, so a red
-build names the rung that failed.
+*before* it calls `assert_supported()`. A builder has no card. So on a builder every olmo3
+config quietly swaps its attention backend for the torch one, the question of whether
+flash-attn is installed is never asked, and the check goes green on an image that cannot
+train a single olmo3 model. **A green like that is worse than no check**, because it asserts
+in a log exactly the property it cannot see.
+
+Ask the library the question instead of asking it to do the work:
+
+```python
+from olmo_core.nn.attention import AttentionBackendName
+
+AttentionBackendName.flash_2.assert_supported()
+```
+
+That is `has_flash_attn_2()`, a test against a module-level import with no device call
+anywhere in it. It answers the same with or without a card, which is what makes a
+builder-green worth something.
+
+**Enumerate, never list.** A hardcoded set of backend names is correct on the day it is typed
+and silently incomplete afterwards — which is this same failure arriving one level up. Read
+what your own configs name, then assert each of those directly. Building the *config* is
+safe: it instantiates no module, so nothing degrades. It is `.build()` that runs the
+constructor, and `.build()` is what you are avoiding.
+
+```python
+from dataclasses import fields, is_dataclass
+
+def backends_named_by(config):
+    """Every attention backend anywhere in this config, without instantiating anything."""
+    seen, stack = set(), [config]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, AttentionBackendName):
+            seen.add(node)
+        elif is_dataclass(node):
+            stack.extend(getattr(node, field.name) for field in fields(node))
+        elif isinstance(node, (list, tuple)):
+            stack.extend(node)
+        elif isinstance(node, dict):
+            stack.extend(node.values())
+    return seen
+
+wanted = set()
+for name in sorted(dir(TransformerConfig)):
+    if name.startswith(("olmo2_", "olmo3_")):
+        wanted |= backends_named_by(getattr(TransformerConfig, name)(vocab_size=100352))
+
+for backend in sorted(wanted, key=str):
+    print(f"asserting {backend}")
+    backend.assert_supported()
+```
+
+The walk is deliberately structural rather than reaching for an attribute path, because the
+path is yours and it moves. Swap `AttentionBackendName` for whatever the next dependency your
+configs assert on turns out to be; the shape does not change. `olmo2_*` factories leave the
+backend unset today, which resolves to torch and needs nothing — reading it off rather than
+assuming it is what keeps that true when it stops being true.
+
+**The platform runs your check twice and compares the answers.** Once as the builder really
+is, and once with `torch.cuda.is_available()` returning True. A check whose verdict changes
+between the two is refused as `self_check_is_device_conditional`, because its green is about
+a code path a GPU machine will not take. This is what catches the vacuous check above, and
+you should expect it to catch you if you write one.
 
 **It runs with no network, with no GPU, and with only `.edullm/` mounted.** No device is
-available and none can be asked for, which is affordable for the case above — flash-attn is
-absent, so the import raises with no device in the question — and is affordable in the
-passing direction too, because loading a CUDA extension needs no card and constructing a
-module launches no kernel. **A check that genuinely needs a device must not go here.** It
-would go red on every build of a correct image. Put it behind your `*-check` workload
-profile instead, which is a short run on the smallest GPU shape and is what that profile is
-for.
+available and none can be asked for. That is affordable: a backend support test, an import, a
+version assertion and a compiled CUDA extension all load without a driver — neither
+`flash_attn_2_cuda` nor torch 2.9.0's `libtorch_cuda.so` even declares `libcuda.so.1` as a
+dependency. **A check that genuinely reads the device must not go here.** It would go red on
+every build of a correct image, and it is refused as `self_check_needs_a_device`. Put it
+behind your `*-check` workload profile, which is a short run on the smallest GPU shape and is
+what that profile is for.
 
 Exit non-zero, or raise, to refuse the image. Whatever the check printed is reproduced in the
-build log, so print what a reader will need. A repository with no such file is not refused —
-the build says so on every run rather than passing over it silently — so leaving this out is
-a choice you are making rather than a step you can skip unnoticed.
+build log, so print what you assert before you assert it. A repository with no such file is
+not refused — the build says so on every run rather than passing over it silently — so
+leaving this out is a choice you are making rather than a step you can skip unnoticed.
 
 ### 5. Write the build-caller workflow
 

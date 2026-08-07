@@ -1157,8 +1157,8 @@ def test_the_accelerator_gate_stands_between_the_build_and_the_push() -> None:
 def test_the_repositorys_own_self_check_stands_between_the_build_and_the_push() -> None:
     """The assertion the platform cannot write, run where the platform's own ones run.
 
-    A repository is the only party that knows whether its image can construct the models it
-    exists to train, and until this ran nothing asked: run
+    A repository is the only party that knows which backends its own configs name and
+    whether its image carries them, and until this ran nothing asked: run
     run_019fde30-1d27-7096-8bd9-3ef9b7748d7b bought that fact for a gpu-1xa10g allocation
     and died eleven seconds into it.
 
