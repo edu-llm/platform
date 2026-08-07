@@ -351,8 +351,10 @@ compute_profiles:
   # lines on.
   #
   # 80 GB A100, AND THE CHEAPEST WAY TO GET 640 GB OF DEVICE MEMORY ONTO THIS PLATFORM. Same
-  # machine as gpu-8xa100 with the larger part fitted, so the comment above gpu-8xa100 that
-  # calls that shape "eight 80 GB cards" describes this row and not that one.
+  # machine as gpu-8xa100 with the larger part fitted: p4de.24xlarge against p4d.24xlarge, 80 GB
+  # per card against 40. This row is the one an "eight 80 GB A100 cards" description belongs to,
+  # and the note above gpu-8xa100 records at length that the description was once attached to
+  # that row instead. Anybody who reaches for 80 GB A100 wants this name and not that one.
   - name: gpu-8xa100-80gb
     instance_type: p4de.24xlarge
     accelerator: gpu

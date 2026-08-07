@@ -58,8 +58,25 @@ JANITOR_TEMPLATE = "infra/expiry-janitor.yaml"
 NOTIFICATIONS_TEMPLATE = "infra/notifications.yaml"
 ALARM_DESTINATION_TEMPLATE = "infra/alarm-destination.yaml"
 ADMISSION_TEMPLATE = "infra/admission-state-machine.yaml"
+#: The one template this workflow deploys that no push can deploy, so it is uploaded and
+#: validated with the rest and appears in neither ``DEPLOYMENT_ORDER`` nor the push filter.
+#: It takes a ``cr-`` id that exists only once somebody has bought a block, and a path filter
+#: entry for it would promise a reconcile the workflow has no parameters to perform.
+CAPACITY_BLOCK_TEMPLATE = "infra/batch-capacity-block.yaml"
 
 ADMISSION_STACK = "sbsandbox-intern-edullm-phase2-admission"
+CAPACITY_BLOCK_DEPLOY_STEP = "Deploy the queue for a purchased capacity block"
+CAPACITY_BLOCK_VERIFY_STEP = "Prove the launch template targets the reservation that was paid for"
+#: The six inputs the capacity block dispatch takes, beside ``describe_run``. Five are the
+#: template's own parameters and the sixth names the stack.
+CAPACITY_BLOCK_INPUTS = {
+    "capacity_block_profile",
+    "capacity_reservation_id",
+    "capacity_block_instance_type",
+    "capacity_block_availability_zone",
+    "capacity_block_subnet_id",
+    "capacity_block_max_vcpus",
+}
 
 # The order is a property of this file and of nothing else, for three of the four
 # dependencies. Only the compute stack's Fn::ImportValue of the network stack's exports is
@@ -74,10 +91,22 @@ ADMISSION_STACK = "sbsandbox-intern-edullm-phase2-admission"
 # them, which is this list's whole subject matter reintroduced across a boundary no test can
 # reach.
 DEPLOYMENT_ORDER = (
-    ("Deploy Phase 3 outputs bucket stack", "sbsandbox-intern-edullm-phase3-outputs", OUTPUTS_TEMPLATE),
+    (
+        "Deploy Phase 3 outputs bucket stack",
+        "sbsandbox-intern-edullm-phase3-outputs",
+        OUTPUTS_TEMPLATE,
+    ),
     ("Deploy Phase 3 network stack", "sbsandbox-intern-edullm-phase3-network", NETWORK_TEMPLATE),
-    ("Deploy Phase 3 batch compute stack", "sbsandbox-intern-edullm-phase3-batch", COMPUTE_TEMPLATE),
-    ("Deploy Phase 4 GPU batch compute stack", "sbsandbox-intern-edullm-phase4-gpu", GPU_COMPUTE_TEMPLATE),
+    (
+        "Deploy Phase 3 batch compute stack",
+        "sbsandbox-intern-edullm-phase3-batch",
+        COMPUTE_TEMPLATE,
+    ),
+    (
+        "Deploy Phase 4 GPU batch compute stack",
+        "sbsandbox-intern-edullm-phase4-gpu",
+        GPU_COMPUTE_TEMPLATE,
+    ),
     # After the stack above and not beside it, because this template creates no log group.
     # It names the one that stack creates, and the awslogs driver takes a string, so
     # CloudFormation enforces nothing about the order.
@@ -143,6 +172,7 @@ def template_url(template: str) -> str:
     # to CloudFormation. The region comes from the environment the credential action sets.
     return f"https://s3.${{AWS_REGION}}.amazonaws.com/{ARTIFACTS_BUCKET}/{uploaded_key(template)}"
 
+
 #: The same group the Phase 2 workflow declares. The two deploy one stack in common, so a
 #: distinct group would let them race into a mid-update stack.
 CONCURRENCY_GROUP = "cloudformation-sbsandbox-intern-edullm-phase2"
@@ -153,9 +183,7 @@ def workflow() -> dict[str, Any]:
 
 
 def run_scripts() -> list[str]:
-    return [
-        candidate["run"] for candidate in only_job(workflow())["steps"] if "run" in candidate
-    ]
+    return [candidate["run"] for candidate in only_job(workflow())["steps"] if "run" in candidate]
 
 
 def test_the_workflow_runs_only_on_dispatch_and_pushes_to_main_that_touch_phase3() -> None:
@@ -170,14 +198,28 @@ def test_the_workflow_runs_only_on_dispatch_and_pushes_to_main_that_touch_phase3
     assert set(parsed["on"]) == {"workflow_dispatch", "push"}
     assert parsed["on"]["push"]["branches"] == ["main"]
 
-    # The dispatch carries one optional input and it must stay optional with an empty
-    # default: a required one would make every hand-started deploy answer a question about a
-    # run, and a non-empty default would make every deploy try to report on a run that does
-    # not exist.
+    # EVERY INPUT IS OPTIONAL WITH AN EMPTY DEFAULT, AND ALL SEVEN FOR THE SAME REASON. A
+    # required one would make every hand-started deploy answer a question it has no business
+    # with, and a non-empty default would make every deploy act on it -- reporting on a run
+    # that does not exist, or reaching for a capacity block nobody bought.
+    #
+    # The six capacity block inputs are checked as a set rather than named one at a time
+    # because the property that matters is that the group stays whole: the deploy step refuses
+    # a dispatch carrying some of them and not others, and an input dropped from this list
+    # would turn that refusal into a stack deployed with an empty parameter.
     dispatch = parsed["on"]["workflow_dispatch"]
-    assert set(dispatch["inputs"]) == {"describe_run"}
-    assert dispatch["inputs"]["describe_run"]["required"] is False
-    assert dispatch["inputs"]["describe_run"]["default"] == ""
+    assert set(dispatch["inputs"]) == {"describe_run"} | CAPACITY_BLOCK_INPUTS
+    for named in dispatch["inputs"]:
+        assert dispatch["inputs"][named]["required"] is False, f"{named} is required"
+        assert dispatch["inputs"][named]["default"] == "", f"{named} defaults to something"
+
+    # The profile is a choice and the empty string is one of its options, which is what makes
+    # "no capacity block today" expressible in a dropdown. The other five are free text: they
+    # carry ids and a zone read off a console, and the template checks their shape.
+    profile = dispatch["inputs"]["capacity_block_profile"]
+    assert profile["type"] == "choice"
+    assert profile["options"][0] == ""
+    assert "gpu-8xb200" in profile["options"]
 
 
 def test_the_push_paths_are_exactly_the_templates_this_workflow_deploys() -> None:
@@ -306,8 +348,13 @@ def test_every_template_is_uploaded_and_validated_before_any_of_them_is_deployed
     validate_script = step(job, VALIDATE_STEP)["run"]
     step_names = [candidate.get("name") for candidate in job["steps"]]
 
+    # The capacity block template is validated with the rest and deployed by none of them.
+    # Validating a template no push can deploy is worth the two calls: the alternative is
+    # discovering it is malformed from a dispatch made minutes after a block was paid for.
     expected: list[list[str]] = []
-    for _name, _stack, template in DEPLOYMENT_ORDER:
+    for template in [template for _name, _stack, template in DEPLOYMENT_ORDER] + [
+        CAPACITY_BLOCK_TEMPLATE
+    ]:
         expected.append(
             [
                 "aws",
@@ -456,9 +503,9 @@ def test_the_workflow_never_submits_a_job_and_never_asks_to() -> None:
     )
     assert all(
         command[3:7] == ["--bucket", ARTIFACTS_BUCKET, "--key", uploaded_key(template)]
-        for command, (_name, _stack, template) in zip(
+        for command, template in zip(
             [command for command in commands if tuple(command[1:3]) in permitted_writes],
-            DEPLOYMENT_ORDER,
+            [template for _name, _stack, template in DEPLOYMENT_ORDER] + [CAPACITY_BLOCK_TEMPLATE],
             strict=True,
         )
     )
@@ -596,8 +643,11 @@ def test_every_run_body_is_strict_about_failures_and_unset_variables() -> None:
     # 2026-08-05, after a create that failed and rolled back left the notifier stack
     # unupdatable and broke every dispatch of this workflow until it was deleted by hand.
     # The eleventh is the audit dispatch, which is how a deploy gets the deployed function
-    # invoked without the deploy credential holding lambda:InvokeFunction.
-    assert len(scripts) == len(DEPLOYMENT_ORDER) + 11
+    # invoked without the deploy credential holding lambda:InvokeFunction. The twelfth and
+    # thirteenth are the capacity block pair -- the deploy that runs only when a dispatch names
+    # a purchased block, and the check that reads the reservation targeting back off the
+    # launch template EC2 actually holds.
+    assert len(scripts) == len(DEPLOYMENT_ORDER) + 13
     assert all(script.startswith("set -euo pipefail\n") for script in scripts)
 
 
@@ -803,9 +853,7 @@ def test_the_guard_refuses_when_a_rolled_back_stack_still_holds_something(
     update, which is the failure this step exists to prevent and which reads as a broken
     template.
     """
-    result, made = run_rollback_guard(
-        tmp_path, status="ROLLBACK_COMPLETE", held="NotifierQueue\n"
-    )
+    result, made = run_rollback_guard(tmp_path, status="ROLLBACK_COMPLETE", held="NotifierQueue\n")
 
     assert result.returncode != 0
     assert not [command for command in made if command.startswith("cloudformation delete-stack")]
@@ -1221,9 +1269,7 @@ def test_a_definition_asking_for_the_wrong_number_of_devices_fails_the_run(
     One device on a g5.48xlarge deploys, runs, bills for eight and uses one. ``requestsAGpu``
     is true throughout, which is why the count is asserted separately from its presence.
     """
-    result = run_shapes_verification(
-        tmp_path, drifted_profile="gpu-8xa10g", drifted_gpu_count="1"
-    )
+    result = run_shapes_verification(tmp_path, drifted_profile="gpu-8xa10g", drifted_gpu_count="1")
 
     assert result.returncode != 0
     assert "gpu shape verification failed" in result.stderr
@@ -1262,7 +1308,9 @@ def test_asking_about_a_run_deploys_nothing() -> None:
             f"asks about a run must skip it"
         )
 
-    reporting = next(entry for entry in steps if "Say what one run is doing" in entry.get("name", ""))
+    reporting = next(
+        entry for entry in steps if "Say what one run is doing" in entry.get("name", "")
+    )
     assert "inputs.describe_run != ''" in reporting["if"]
 
 
@@ -1288,14 +1336,16 @@ def test_the_queue_view_answers_the_question_a_single_run_report_cannot() -> Non
     # And it reaches the log, not only the step summary. The summary renders in the web UI
     # and there is no API for it, so a bare redirect makes this step read as empty to anybody
     # reading the run through the CLI -- which is how it was read the first time.
-    assert ">> \"${GITHUB_STEP_SUMMARY}\"" not in queues["run"], (
+    assert '>> "${GITHUB_STEP_SUMMARY}"' not in queues["run"], (
         "write through tee so the rows are in the log as well as the summary"
     )
     assert "tee -a" in queues["run"]
 
     # And the per-run report must not also fire on the sentinel, which is not a run id and
     # would fail its own format check.
-    reporting = next(entry for entry in steps if "Say what one run is doing" in entry.get("name", ""))
+    reporting = next(
+        entry for entry in steps if "Say what one run is doing" in entry.get("name", "")
+    )
     assert "inputs.describe_run != 'queues'" in reporting["if"]
 
 
@@ -1563,3 +1613,273 @@ def test_a_refused_call_does_not_end_the_per_run_search_or_pass_for_an_absent_ru
     assert "on any configured queue" not in summary, (
         "an incomplete search must not borrow the sentence a complete one uses"
     )
+
+
+# THE CAPACITY BLOCK PAIR, WHICH IS THE ONLY THING THIS WORKFLOW DOES THAT COSTS MONEY WHEN
+# IT SILENTLY SUCCEEDS.
+#
+# Every other deploy here is idempotent and reconciles from a file. This one puts a Batch
+# queue in front of a reservation somebody has already paid for, and the way it fails is the
+# subject of infra/batch-capacity-block.yaml's header: a launch template that does not name
+# the reservation launches on demand instances beside the paid idle block, with no error, no
+# INVALID status and no warning anywhere. The bill is the only signal.
+#
+# So the two things worth testing are that an ordinary deploy cannot reach any of this, and
+# that the check which reads the targeting back would actually fail.
+
+#: What a launch template that draws against the block looks like, as EC2 answers it.
+TARGETED = '{"market":"capacity-block","reservation":"cr-0123456789abcdef0","preference":null}'
+BLOCK_RESERVATION = "cr-0123456789abcdef0"
+
+TARGETING_STUB = """
+printf '%s\\n' "$*" >> "${CALL_LOG}"
+case "$1 $2" in
+  "ec2 describe-launch-template-versions") printf '%s' "${OBSERVED}" ;;
+  "cloudformation deploy") ;;
+  *) echo "unexpected call: $*" >&2 ; exit 64 ;;
+esac
+"""
+
+
+def run_capacity_block_step(
+    tmp_path: Path, step_name: str, *, observed: str = TARGETED, **environment: str
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "aws", TARGETING_STUB)
+    call_log = tmp_path / "calls.txt"
+    call_log.write_text("", encoding="utf-8")
+
+    result = run_step_script(
+        step(only_job(workflow()), step_name)["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "CALL_LOG": str(call_log),
+            "OBSERVED": observed,
+            **environment,
+        },
+        stub_bin=stub_bin,
+    )
+    made = [line for line in call_log.read_text(encoding="utf-8").splitlines() if line]
+    return result, made
+
+
+def test_an_ordinary_deploy_cannot_reach_a_capacity_block() -> None:
+    """Mutation: drop the profile condition from either capacity block step.
+
+    Both steps would then run on every push to main and on every hand-started deploy, with
+    all five parameters empty. CloudFormation refuses that on the template's AllowedPattern,
+    so the visible result is that every unrelated deploy of this workflow goes red -- which
+    is the same class of breakage the rolled-back-create guard exists to undo, arriving by a
+    different route.
+
+    Both conditions are asserted on both steps rather than one each. ``describe_run`` is what
+    keeps a question about a run from deploying anything, and the profile is what keeps a
+    deploy from reaching for a block; a step carrying one and not the other is reachable from
+    a dispatch that should not reach it.
+    """
+    job = only_job(workflow())
+
+    for step_name in (CAPACITY_BLOCK_DEPLOY_STEP, CAPACITY_BLOCK_VERIFY_STEP):
+        condition = step(job, step_name)["if"]
+        assert "inputs.describe_run == ''" in condition, step_name
+        assert "inputs.capacity_block_profile != ''" in condition, step_name
+
+
+def test_the_capacity_block_template_is_deliberately_absent_from_the_push_filter() -> None:
+    """Mutation: add the capacity block template to the push paths.
+
+    The sibling of ``test_the_push_paths_are_exactly_the_templates_this_workflow_deploys``,
+    and the exemption that test needs stated somewhere it can be read. That one holds every
+    deployed template to being watched, because a template that deploys here and is missing
+    from the filter is a change that merges and never reaches AWS.
+
+    This template is the one case where the reverse is true. It takes a ``cr-`` id that comes
+    into existence only when somebody buys a block, so there is nothing a merge could deploy:
+    a push path for it would start a run whose capacity block step is skipped for want of a
+    profile, every time, forever. Worse, it would read as coverage.
+
+    It is still uploaded and validated on every deploy, which is checked above. That is the
+    half of the promise this workflow can keep.
+    """
+    watched = set(workflow()["on"]["push"]["paths"])
+
+    assert CAPACITY_BLOCK_TEMPLATE not in watched
+    assert CAPACITY_BLOCK_TEMPLATE not in {template for _n, _s, template in DEPLOYMENT_ORDER}
+
+
+def test_the_capacity_block_stack_is_named_the_way_the_register_already_declares_it() -> None:
+    """Reads the workflow and the stack register. Mutation: name the stack anything else.
+
+    ``src/edullm_platform/stack_templates.py`` declares four stack names over this one
+    template, one per capacity-block-backed shape, and the audit reads deployed stacks by
+    those names. A workflow that deployed under a name the register does not carry would
+    produce a queue nothing audits and a register entry nothing satisfies, and neither half
+    reports the other.
+
+    Built from the prefix rather than written out, so a rename in the register is a failure
+    here rather than a divergence nobody looks for.
+    """
+    from edullm_platform.stack_templates import CAPACITY_BLOCK_STACK_PREFIX
+
+    script = step(only_job(workflow()), CAPACITY_BLOCK_DEPLOY_STEP)["run"]
+
+    assert f'"{CAPACITY_BLOCK_STACK_PREFIX}${{PROFILE}}"' in script
+    # The profile dropdown must offer exactly the shapes the register declares a stack for.
+    # An option with no stack name behind it is a dispatch that deploys under a name nothing
+    # audits; a declared stack with no option is a block nobody can put a queue in front of.
+    offered = {
+        option
+        for option in workflow()["on"]["workflow_dispatch"]["inputs"]["capacity_block_profile"][
+            "options"
+        ]
+        if option
+    }
+    from edullm_platform.stack_templates import STACK_TEMPLATES
+
+    declared = {
+        stack.removeprefix(CAPACITY_BLOCK_STACK_PREFIX)
+        for stack, template in STACK_TEMPLATES
+        if template == CAPACITY_BLOCK_TEMPLATE
+    }
+    assert offered == declared
+
+
+@pytest.mark.parametrize(
+    "absent",
+    ["RESERVATION", "INSTANCE_TYPE", "ZONE", "SUBNET", "MAX_VCPUS"],
+)
+def test_a_dispatch_carrying_only_some_of_the_five_values_deploys_nothing(
+    tmp_path: Path, absent: str
+) -> None:
+    """Mutation: let a missing value through and pass the empty string to CloudFormation.
+
+    The template would refuse it on an AllowedPattern, which is a real check and the wrong
+    place for this one. A person dispatching this has just spent four figures and is working
+    against a window that has already started; the difference between being told which field
+    is empty and being told that a parameter did not match ``^cr-[0-9a-f]{8,17}$`` is several
+    minutes of a paid hour.
+
+    Parametrized over all five because the guard is a loop, and a loop is exactly the shape
+    that silently stops covering a name somebody removes from it.
+    """
+    complete = {
+        "PROFILE": "gpu-8xb200",
+        "RESERVATION": BLOCK_RESERVATION,
+        "INSTANCE_TYPE": "p6-b200.48xlarge",
+        "ZONE": "us-east-1d",
+        "SUBNET": "subnet-0123456789abcdef0",
+        "MAX_VCPUS": "192",
+    }
+    result, made = run_capacity_block_step(
+        tmp_path, CAPACITY_BLOCK_DEPLOY_STEP, **{**complete, absent: ""}
+    )
+
+    assert result.returncode == 1
+    assert "capacity_block_dispatch_incomplete" in result.stderr
+    assert absent in result.stderr, "the refusal has to name the field that is empty"
+    assert made == [], "nothing may be deployed by a dispatch that was refused"
+
+
+def test_a_complete_dispatch_deploys_the_stack_with_every_parameter_it_was_given(
+    tmp_path: Path,
+) -> None:
+    """Mutation: drop one --parameter-overrides pair.
+
+    CloudFormation keeps the previous value of a parameter that is not overridden, and on a
+    first create it refuses. The dangerous half is the update: a second block deployed into
+    the stack of a first, with one parameter left behind, is a queue targeting last weeks
+    reservation -- which is the on demand launch this whole stack exists to prevent, reached
+    by the one route the targeting check below cannot distinguish from a typo.
+    """
+    result, made = run_capacity_block_step(
+        tmp_path,
+        CAPACITY_BLOCK_DEPLOY_STEP,
+        PROFILE="gpu-8xb200",
+        RESERVATION=BLOCK_RESERVATION,
+        INSTANCE_TYPE="p6-b200.48xlarge",
+        ZONE="us-east-1d",
+        SUBNET="subnet-0123456789abcdef0",
+        MAX_VCPUS="192",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert len(made) == 1
+    deployed = made[0]
+    assert "sbsandbox-intern-edullm-capacity-block-gpu-8xb200" in deployed
+    for pair in (
+        "InstanceType=p6-b200.48xlarge",
+        f"CapacityReservationId={BLOCK_RESERVATION}",
+        "AvailabilityZone=us-east-1d",
+        "SubnetId=subnet-0123456789abcdef0",
+        "MaxvCpus=192",
+    ):
+        assert pair in deployed, f"{pair} was not passed to CloudFormation"
+    # No --no-fail-on-empty-changeset, unlike every reconciling deploy in this workflow. A
+    # person who has just bought a block and is told nothing changed needs that to be a
+    # failure rather than a green tick.
+    assert "--no-fail-on-empty-changeset" not in deployed
+
+
+def test_the_targeting_check_passes_against_a_template_that_draws_on_the_block(
+    tmp_path: Path,
+) -> None:
+    result, made = run_capacity_block_step(
+        tmp_path,
+        CAPACITY_BLOCK_VERIFY_STEP,
+        PROFILE="gpu-8xb200",
+        RESERVATION=BLOCK_RESERVATION,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "CAPACITY_BLOCK_TARGETING_VERIFIED" in result.stdout
+    assert any("describe-launch-template-versions" in command for command in made)
+
+
+@pytest.mark.parametrize(
+    ("observed", "what_went_wrong"),
+    [
+        (
+            '{"market":null,"reservation":"cr-0123456789abcdef0","preference":null}',
+            "the market type was lost, so the launch is an ordinary on demand purchase",
+        ),
+        (
+            '{"market":"capacity-block","reservation":null,"preference":"open"}',
+            "the target was lost and the preference is back, which is the shared template",
+        ),
+        (
+            '{"market":"capacity-block","reservation":"cr-9999999999999999","preference":null}',
+            "it targets a different reservation than the one that was paid for",
+        ),
+        (
+            '{"market":"capacity-block","reservation":"cr-0123456789abcdef0","preference":"open"}',
+            "a preference beside a target, which is the burning case wearing camouflage",
+        ),
+    ],
+)
+def test_the_targeting_check_fails_on_every_way_the_launch_could_leave_the_block(
+    tmp_path: Path, observed: str, what_went_wrong: str
+) -> None:
+    """Mutation: read one of the three properties and not the others, or print instead of raise.
+
+    These are the four shapes of the failure that costs $113.93 an hour beside a block that
+    has already been paid for, and not one of them is visible in a stack status, a compute
+    environment status or a job queue state. Each is asserted separately because each is
+    reachable on its own: a hand edit to the launch template, a parameter left behind by an
+    update, a transposed character in a dispatched id.
+
+    The refusal has to say do not submit, because the reader is somebody mid-window looking
+    for a reason to press on.
+    """
+    result, _made = run_capacity_block_step(
+        tmp_path,
+        CAPACITY_BLOCK_VERIFY_STEP,
+        observed=observed,
+        PROFILE="gpu-8xb200",
+        RESERVATION=BLOCK_RESERVATION,
+    )
+
+    assert result.returncode != 0, what_went_wrong
+    assert "CAPACITY_BLOCK_TARGETING_VERIFIED" not in result.stdout
+    printed = result.stdout + result.stderr
+    assert "Do not submit anything to this queue" in printed
