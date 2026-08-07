@@ -182,10 +182,10 @@ def test_shipped_catalog_instance_types_are_unique() -> None:
 
 
 def test_only_the_deliberately_promoted_profiles_are_provisioned() -> None:
-    """Fourteen are promoted, on purpose, and the list is the assertion.
+    """Fifteen are promoted, on purpose, and the list is the assertion.
 
     This test said no profile was provisioned, then one, then two, then eleven, then sixteen,
-    and now names fourteen. Each change was a deliberate edit made after the infrastructure
+    then fourteen, and now names fifteen. Each change was a deliberate edit made after the infrastructure
     existed, which is the whole point of writing the names out: it is the tripwire for
     flipping a flag before deploying anything to back it. The catalog would then claim
     capacity that does not exist, and every submission naming that profile would reach Batch
@@ -203,6 +203,28 @@ def test_only_the_deliberately_promoted_profiles_are_provisioned() -> None:
     Whether a promoted profile is actually backed is a separate question, asserted against
     config/execution-targets.yaml in tests/test_phase3_execution.py. This one is only about
     the flag, which is why it can be read from a single file.
+
+    gpu-8xb200 IS THE FIFTEENTH AND IT IS THE FIRST DELIBERATE EXCEPTION TO THE PARAGRAPH
+    ABOVE, SO IT HAS TO ANSWER IT RATHER THAN JUST APPEAR IN THE LIST. It is promoted while no
+    queue backs it, which is precisely what this tripwire is written to catch.
+
+    The outcome the docstring warns about does not follow, because the two situations differ in
+    the way that matters. gpu-8xh100 had a queue that existed and was healthy, and EC2 would not
+    sell the account a p5 -- so SubmitJob succeeded, the job entered RUNNABLE, and nothing could
+    end it. gpu-8xb200 has no queue at all until a purchase deploys one, so SubmitJob itself
+    fails with a queue that does not exist. The state machine stops there, visibly, before any
+    instance is asked for. A hard failure at submit is the cheap end of this; RUNNABLE forever is
+    the expensive end, and no queue is the reason this cannot reach it.
+
+    What is bought by accepting that failure is a Lambda release cut off the clock. Both files
+    this flag lives beside are packaged into the admission validator's zip, so promoting a
+    profile is a release -- and a block window is billed in full, upfront, whether or not
+    anything runs during the two CI runs and the deploy that a release costs. See
+    infra/admission-state-machine.yaml, which records four occasions when the packaging seam was
+    met, including the one phrased as: promoting a compute profile is a Lambda release.
+
+    The tripwire is not weakened for the other shapes. gpu-8xa100-80gb, gpu-8xh200 and
+    gpu-8xb300 are block-backed too and stay false, so this is one name and not a category.
     """
     assert [profile.name for profile in SHIPPED_PROFILES if profile.provisioned] == [
         "cpu-32vcpu",
@@ -219,6 +241,7 @@ def test_only_the_deliberately_promoted_profiles_are_provisioned() -> None:
         "gpu-4xl40s",
         "gpu-8xl40s",
         "gpu-8xa100",
+        "gpu-8xb200",
     ]
 
 
@@ -424,9 +447,18 @@ def test_priced_but_unreferenced_profiles_do_not_demand_capacity_evidence() -> N
         profile.name for profile in profiles_requiring_capacity_evidence(shipped_catalog())
     }
     assert UNPROVISIONED_LEVER not in required
+    # PROVISIONED AND NOT BLOCK-BACKED, WHICH IS NARROWER THAN IT WAS AND FOR A REASON THAT IS
+    # NOT ABOUT REACHABILITY. What this evidence answers is whether L-417A185B, the on-demand P
+    # pool, admits one run on the shape. A capacity block is not drawn from that pool -- AWS
+    # meters concurrently active blocks against separate per-family quotas -- so for gpu-8xb200
+    # the on-demand figure is not a weaker answer than it was, it is an answer to a different
+    # question. profiles_requiring_capacity_evidence carries the argument in full.
     assert required == {
-        profile.name for profile in SHIPPED_PROFILES if profile.provisioned
+        profile.name
+        for profile in SHIPPED_PROFILES
+        if profile.provisioned and not profile.capacity_block_backed
     }
+    assert "gpu-8xb200" not in required
     reason_code, detail = ec2_quota_coverage_issues(
         catalog=shipped_catalog(),
         quotas=representative_quota_records(),

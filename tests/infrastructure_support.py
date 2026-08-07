@@ -63,11 +63,56 @@ OIDC_PROVIDER = {
 }
 
 
+#: The one template whose Batch resource names are a substitution rather than a literal.
+CAPACITY_BLOCK_TEMPLATE = "infra/batch-capacity-block.yaml"
+
+
 def load_template(path: Path) -> dict[str, Any]:
     assert path.is_file(), f"required file is missing: {path.relative_to(PROJECT_ROOT)}"
     loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(loaded, dict)
     return loaded
+
+
+def block_stack_names() -> set[str]:
+    """Every stack name ``infra/batch-capacity-block.yaml`` is deployed under.
+
+    Read from the register rather than assembled from a prefix and the block-backed profiles,
+    because that register is what the daily audit reconciles the account against -- so a stack
+    this resolves a name for is a stack something else already expects to exist.
+    """
+    from edullm_platform.stack_templates import STACK_TEMPLATES
+
+    return {stack for stack, template in STACK_TEMPLATES if template == CAPACITY_BLOCK_TEMPLATE}
+
+
+def deployable_names(declared: Any) -> set[str]:
+    """Every name a ``JobQueueName`` or ``JobDefinitionName`` can deploy under, as one set.
+
+    The permanent stacks write the name out and the set has one member.
+    ``infra/batch-capacity-block.yaml`` cannot write one: it is deployed once per block-backed
+    profile, under a stack name carrying the profile, so a literal would collide on the second
+    purchase. It substitutes ``${AWS::StackName}`` instead, which is one name per block-backed
+    shape, and any of them is a real deployed name.
+
+    Resolved against ``src/edullm_platform/stack_templates.py``, which is the register the deploy
+    workflow builds the stack name from, so this substitutes the way the deploy will rather than
+    by pattern-matching a string this file invented.
+
+    Shared by the two modules that compare deployed names against configuration. It was written
+    once in each, and one copy resolving a substitution the other does not is how the pair would
+    come to disagree about which names exist.
+    """
+    if isinstance(declared, str):
+        return {declared}
+    body = declared["Fn::Sub"]
+    resolved = {
+        body.replace("${AWS::StackName}", stack)
+        for stack in block_stack_names()
+        if "${" not in body.replace("${AWS::StackName}", stack)
+    }
+    assert resolved, f"the name {body!r} resolves against no stack this template is deployed as"
+    return resolved
 
 
 def walk_strings(value: object) -> Iterator[str]:

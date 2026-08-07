@@ -1189,6 +1189,14 @@ def test_resolving_a_compute_profile_is_the_same_question_the_provisioned_flag_a
         "gpu-4xl40s",
         "gpu-8xl40s",
         "gpu-8xa100",
+        # THE THIRD THING THE DOCSTRING SAYS NOTHING HERE CAN SEE IS EXACTLY THE STATE THIS ONE
+        # IS IN, AND UNLIKE THE TWO p5 SHAPES IT IS IN IT ON PURPOSE. Both files agree, the
+        # resolver resolves, and the queue those names point at is created by a purchase rather
+        # than by a deploy -- so between now and a block being bought the dropdown offers a
+        # profile whose submission reaches Batch and is refused there for a queue that does not
+        # exist. That is the bounded failure the promotion accepts, and it buys cutting the
+        # Lambda release outside a window that is billed whether or not it is used.
+        "gpu-8xb200",
     }
     for name in provisioned:
         assert resolution_failure(name) is None
