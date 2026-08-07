@@ -18,6 +18,7 @@ from __future__ import annotations
 import ast
 import re
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -425,6 +426,219 @@ def test_the_rule_says_the_binary_holds_no_aws_credential(rule: Path) -> None:
 
     assert "aws" in text
     assert "gh" in text
+
+
+class Guardrail(NamedTuple):
+    """One prohibition a researcher's agent has to be carrying before it acts.
+
+    ``anchors`` is the point of this and wants explaining. A guardrail is not matched on its
+    sentence, because its sentence is meant to be rewritten -- these documents are edited by
+    whoever is improving them, sometimes two people in an afternoon, and a case that went red
+    on a better paragraph would be switched off within a week. What each one is matched on
+    instead is the **token the tree owns that the rule cannot be stated without**: a package
+    name, a flag, a refusal code. Rewording the sentence around ``boto3`` keeps ``boto3``.
+    Deleting the rule takes it with them.
+
+    Any one anchor satisfies the guardrail, so a rule with two accepted spellings carries both.
+    Every anchor here is one some version of these documents actually used -- none is invented,
+    for the reason
+    :func:`test_the_wording_this_looks_for_is_the_wording_the_tree_actually_used` gives about
+    :data:`UNBUILT_CLAIM`.
+
+    Matching runs over :func:`prose_of` the document rather than the whole of it, which is what
+    lets an anchor be the flag itself rather than a phrase around it. See
+    :func:`test_a_command_being_demonstrated_does_not_stand_in_for_the_rule_about_it`.
+    """
+
+    identity: str
+    anchors: tuple[str, ...]
+    costs: str
+
+
+def _split_on_fences(text: str) -> tuple[list[str], list[str]]:
+    """``text`` as its prose lines and its fenced lines, the fence markers in neither."""
+    prose: list[str] = []
+    fenced: list[str] = []
+    inside = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            inside = not inside
+            continue
+        (fenced if inside else prose).append(line)
+    return prose, fenced
+
+
+def prose_of(text: str) -> str:
+    """``text`` with its fenced code blocks removed, which is where the rules are not.
+
+    A guardrail is a claim made to the reader. A fenced block is a command being demonstrated,
+    and the two collide often enough to matter: the install line these documents open with
+    contains ``--force``, which is also the flag one of the prohibitions is about. Reading the
+    prose on its own is what stops a worked example standing in for the rule that governs it.
+    """
+    return "\n".join(_split_on_fences(text)[0])
+
+
+#: **THE PROHIBITIONS, DECLARED, BECAUSE NOTHING WAS HOLDING THEM AND A DELETION READ AS AN
+#: EDIT.** Every other case in this file holds these documents to the *binary* -- the verbs it
+#: has, the flags it takes, the codes it returns -- and all of that is read out of the code, so
+#: it cannot rot. None of it looked at the sentences telling an agent what not to do, which are
+#: the sentences the layer exists for. A rule removed from a document was therefore a silent
+#: change with no gate anywhere, and the enclosing heading surviving made it read as intact at
+#: a glance.
+#:
+#: **WHY THE PAIR BELOW AND NOT ``AGENTS.md``.** These are the two documents a researcher's
+#: agent actually loads: the block spliced into every registered repository, and the skill
+#: installed for the codebases the platform does not carry. This repository's own ``AGENTS.md``
+#: has a maintainer reading it, who has the source tree, ``--help`` and this suite within
+#: reach; a prohibition dropped there is recoverable in a way the same drop is not in a
+#: repository where nothing can check it and the reader has no reason to doubt it. Holding the
+#: pair rather than all three is also what lets this repository's ``AGENTS.md`` become a
+#: maintainer document without this case having an opinion about it, which is not a question for
+#: a test to settle.
+#:
+#: **A GUARDRAIL MAY MOVE AND MAY BE REPHRASED. EDIT THIS DECLARATION WHEN IT DOES.** Adding a
+#: spelling to ``anchors``, or changing which documents must carry one, is an ordinary and
+#: allowed edit, and it is a visible line in a diff with the cost written next to it -- which is
+#: the whole difference between that and a deletion that reads as tidying up. What is not
+#: allowed is dropping an entry to make a red case green, because the entry is the only record
+#: that the rule was ever thought necessary.
+GUARDRAILS: tuple[Guardrail, ...] = (
+    Guardrail(
+        "no_aws_calls",
+        ("boto3", "script that calls AWS", "`aws` CLI"),
+        "an agent that has not been told this reaches for boto3 or the aws CLI the moment "
+        "edullm refuses something, which either fails confusingly or produces a run with no "
+        "lineage record -- and it is the prohibition the binary's whole shape depends on. "
+        "Three spellings because both documents state it three ways in one sentence, and any "
+        "of them surviving a rewrite means the rule did",
+    ),
+    Guardrail(
+        "price_from_the_output",
+        ("memory",),
+        "a price, a runtime bound, a ceiling or a count of approvers quoted from prose was "
+        "correct on the day it was typed. These live in reviewed configuration and move "
+        "without anybody being told, which is why tests/test_cli_no_hardcoded_bounds.py "
+        "refuses one written into a terminal, and why an agent has to be told to read "
+        "`edullm check --json` rather than repeat a figure it saw",
+    ),
+    Guardrail(
+        "no_force_past_refusal",
+        ("--force",),
+        "every refusal skipped is one admission makes again from inside AWS, so it buys a "
+        "queue wait rather than an outcome. Matched in prose only, because the fenced install "
+        "line in both documents writes the same flag and would satisfy this without the rule "
+        "being stated at all",
+    ),
+    Guardrail(
+        "image_is_the_commit",
+        ("uncommitted",),
+        "the image is built from the last commit, so an agent that does not know this tests a "
+        "working tree and reports on a run that never contained its change",
+    ),
+    Guardrail(
+        "dataset_none_is_a_statement",
+        ("`none`",),
+        "absent and the literal word are different answers, and only one of them is a "
+        "statement. An agent that omits the field where the run reads no corpus is refused for "
+        "a reason that reads like a missing corpus",
+    ),
+    Guardrail(
+        "dtype_in_the_command",
+        ("bfloat16_not_in_the_hardware", "dtype into the command"),
+        "the guard reads the text of the command and cannot see a precision the program sets "
+        "in code, so a card with no bfloat16 refuses the first kernel needing it -- after the "
+        "run has been priced, released, admitted and given a machine",
+    ),
+)
+
+#: The two documents a researcher's agent loads, and where the guardrails are therefore held.
+#: :data:`ALWAYS_ON_RULES` is a different pair on purpose: verbs and exit codes are cheap to
+#: state and belong everywhere, while a prohibition is held where its absence is unrecoverable.
+RESEARCHER_FACING: tuple[Path, ...] = (DISTRIBUTED_RULE, RESEARCHER_SKILL)
+
+
+@pytest.mark.parametrize("guardrail", GUARDRAILS, ids=lambda rail: rail.identity)
+@pytest.mark.parametrize("document", RESEARCHER_FACING, ids=lambda path: path.name)
+def test_the_document_still_states_the_guardrail(document: Path, guardrail: Guardrail) -> None:
+    """**Mutation: delete a prohibition and leave the heading above it standing.**
+
+    That is not a hypothetical. It is what happened to this repository's ``AGENTS.md`` on
+    2026-08-07: two rules went out of the working tree, one of them "do not quote a price from
+    memory", while the section heading they sat under survived -- so the file read as intact at
+    a glance, the phrase was absent from it entirely, and no gate anywhere went red. The rules
+    turned out to have moved rather than vanished, which is a good outcome arrived at by
+    somebody being careful rather than by anything checking.
+
+    What this cannot do is tell a move from a deletion, and it should not try: a rule is allowed
+    to move, and :data:`RESEARCHER_FACING` is what decides where it has to end up. What it does
+    is make the difference *visible* -- a move keeps every case green, and a deletion goes red
+    naming the rule and what its absence costs.
+    """
+    text = prose_of(document.read_text(encoding="utf-8"))
+
+    assert any(anchor in text for anchor in guardrail.anchors), (
+        f"{document.name} no longer states the {guardrail.identity} guardrail: none of "
+        f"{list(guardrail.anchors)} appears in its prose. What it costs: {guardrail.costs}.\n\n"
+        "This case matches a token rather than a sentence, so rewording the rule keeps it "
+        "green and only removing the rule turns it red. If the wording has changed and the "
+        "rule is still there, add your spelling to that guardrail's anchors in GUARDRAILS. If "
+        "the rule has deliberately moved, move it in RESEARCHER_FACING. Both are ordinary "
+        "edits. Deleting the entry is not: it is the only record that this rule was ever "
+        "thought necessary."
+    )
+
+
+def test_no_guardrail_is_anchored_on_something_another_one_would_satisfy() -> None:
+    """Mutation: anchor two guardrails on the same token, or on a word too short to mean much.
+
+    Both are the same failure -- a case green for a reason unrelated to the rule it is named
+    after, which is worse than no case at all because it reads as coverage. Distinctness is
+    checked rather than assumed because the anchors are hand-written, and this is the one
+    property of them a machine can hold.
+    """
+    identities = [rail.identity for rail in GUARDRAILS]
+    assert len(identities) == len(set(identities)), f"a guardrail identity repeats: {identities}"
+
+    claimed: dict[str, str] = {}
+    for rail in GUARDRAILS:
+        assert rail.anchors, f"{rail.identity} is anchored on nothing and would never go red"
+        assert rail.costs.strip(), f"{rail.identity} does not say what its absence costs"
+        for anchor in rail.anchors:
+            assert len(anchor) >= 5, (
+                f"{rail.identity} is anchored on {anchor!r}, which is short enough to appear "
+                "in these documents for reasons having nothing to do with the rule"
+            )
+            assert anchor not in claimed, (
+                f"{rail.identity} and {claimed[anchor]} are both anchored on {anchor!r}, so "
+                "one of them is green for the other's reason"
+            )
+            claimed[anchor] = rail.identity
+
+
+def test_a_command_being_demonstrated_does_not_stand_in_for_the_rule_about_it() -> None:
+    """Mutation: match the guardrails against the whole document instead of :func:`prose_of` it.
+
+    One of the six would start passing for nothing. Every one of these documents opens with
+    ``uv tool install --force``, so the flag ``no_force_past_refusal`` is about is present in
+    every version of every document whether or not the rule is -- and a document that had
+    dropped the rule entirely would still be green.
+
+    Pinned as a case rather than left to a docstring because the fence-stripping reads like
+    tidying and would be the first thing simplified away by somebody who had not hit this.
+    """
+    for document in RESEARCHER_FACING:
+        fenced_only = "\n".join(_split_on_fences(document.read_text(encoding="utf-8"))[1])
+
+        assert "--force" in fenced_only, (
+            f"{document.name} no longer prints the install line inside a fence, so this case is "
+            "no longer demonstrating anything. Check that prose_of still earns its keep before "
+            "deleting it."
+        )
+        assert "boto3" not in fenced_only, (
+            f"{document.name} demonstrates boto3 inside a fenced block, which would satisfy the "
+            "no_aws_calls guardrail from a code sample rather than from the rule"
+        )
 
 
 def skill_frontmatter(path: Path) -> dict[str, str]:
