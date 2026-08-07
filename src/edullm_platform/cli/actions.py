@@ -63,6 +63,7 @@ __all__ = [
     "CANCEL_WORKFLOW",
     "DECLINED",
     "EDULLM_VERSION_FIELD",
+    "LOG_HEADINGS",
     "MIGHT_BE_DECLINED",
     "PLATFORM_REPOSITORY",
     "PRINTED_RUN_ID",
@@ -99,6 +100,20 @@ PLATFORM_REPOSITORY: Final = "edu-llm/platform"
 
 SUBMIT_WORKFLOW: Final = "submit-run.yml"
 CANCEL_WORKFLOW: Final = "cancel-run.yml"
+
+#: Which end of a run's log ``cancel-run.yml`` was asked for, and the heading it writes the
+#: block under, keyed by the ``from_start`` this binary sends it.
+#:
+#: TWO HEADINGS BECAUSE A SECTION HAS TO SAY WHICH END IT IS, AND ONE WOULD BE A LIE HALF
+#: THE TIME. ``read_report_sections`` finds a block by its heading, so the workflow and this
+#: binary have to agree on the word -- and a single heading reading "the last lines" over a
+#: block read from the head is the class of untruth the whole verb is for. The pair lives
+#: here so ``tests/test_cancel_run_workflow.py`` can hold the two files to one answer, the
+#: way it already does for the queue names, rather than each spelling its own.
+LOG_HEADINGS: Final[dict[bool, str]] = {
+    False: "The last lines this run printed",
+    True: "The first lines this run printed",
+}
 
 #: The one input on the submission form that is not a ``SubmissionInputs`` field. It names
 #: the install that dispatched, so that a refusal caused by a defect in this binary can say
@@ -1277,20 +1292,42 @@ def read_report_sections(log: str, headings: Sequence[str]) -> str:
 def _step_and_line(line: str) -> tuple[str | None, str]:
     """``job\tstep\t2026-08-04T12:00:00.0000000Z message`` split into the step and the message.
 
+    **THE PREFIX IS EXACTLY TWO FIELDS AND THE MESSAGE IS THE WHOLE OF WHAT FOLLOWS, WHICH
+    IS WHY THIS COUNTS FROM THE LEFT.** It used to count from the right -- the step was
+    ``split("\t")[-2]`` and the message was ``[-1]`` -- which is the same answer only for a
+    message containing no tab of its own. A container's output is under no such obligation,
+    and the one this platform exists to run breaks it on every line: OLMo-core logs
+    ``time\thost:rank\tmodule:line\tLEVEL\tmessage``, five fields and four tabs.
+
+    So the step was read as ``INFO`` from the moment the trainer said anything, which is a
+    different step from the one that wrote the heading, which ends the section --
+    :func:`read_report_sections` had printed the fence and nothing inside it. ``edullm logs``
+    announced twenty-nine lines and printed five, on every training run there has ever been,
+    and the fence it opened was never closed. Measured on ``run_019fdde1-1ba9``: the last
+    line to survive was the container's own ``=== P2 RESUME ===`` and the first to be
+    dropped was the trainer's ``Loading checkpoint from ...``, which is the line somebody was
+    reading the log to find.
+
     The step is ``None`` for a line carrying no prefix, which keeps a log that arrived
     unprefixed -- a fixture, or a ``gh`` that stopped adding the columns -- reading as one
-    step rather than as a step boundary on every line.
+    step rather than as a step boundary on every line. Two tabs are required for a prefix
+    rather than one, because one is the shape neither ``gh`` nor an unprefixed log produces
+    and guessing at it is how a message's own first tab became a column again.
     """
-    parts = line.split("\t")
-    step = parts[-2] if len(parts) > 1 else None
-    return step, _unprefixed(line)
+    _job, prefixed, rest = line.partition("\t")
+    step, separated, message = rest.partition("\t")
+    if not (prefixed and separated):
+        return None, _untimestamped(line)
+    return step, _untimestamped(message)
 
 
-def _unprefixed(line: str) -> str:
-    """``job\tstep\t2026-08-04T12:00:00.0000000Z message`` down to ``message``."""
-    parts = line.split("\t")
-    tail = parts[-1]
-    head, separator, rest = tail.partition(" ")
+def _untimestamped(text: str) -> str:
+    """``2026-08-04T12:00:00.0000000Z message`` down to ``message``.
+
+    The runner's timestamp only. Anything the container put in front of its own message --
+    including a timestamp of its own -- is the message, and is left alone.
+    """
+    head, separator, rest = text.partition(" ")
     if separator and head.endswith("Z") and "T" in head:
         return rest
-    return tail
+    return text

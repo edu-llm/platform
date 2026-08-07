@@ -37,9 +37,10 @@ import pytest
 import yaml
 from workflow_support import run_step_script, write_stub
 
-from edullm_platform.cli.actions import read_report_sections
+from edullm_platform.cli.actions import LOG_HEADINGS, read_report_sections
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.execution import ExecutionTargetCatalog
+from edullm_platform.tokenizers import THE_CONTAINERS_REFUSAL
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "cancel-run.yml"
@@ -1482,7 +1483,7 @@ def test_the_tail_reaches_the_step_summary_and_says_to_read_upward(
     )
 
     result = run_step_script(
-        workflow_step(workflow, "Show the last fifty lines")["run"],
+        workflow_step(workflow, "fifty lines the container printed")["run"],
         cwd=tmp_path,
         env={
             "RUNNER_TEMP": str(tmp_path),
@@ -1490,6 +1491,7 @@ def test_the_tail_reaches_the_step_summary_and_says_to_read_upward(
             "GITHUB_STEP_SUMMARY": str(summary),
             "LOG_GROUP": "/aws/batch/sbsandbox-intern-edullm-gpu",
             "LOG_STREAM": "gpu-run/default/abc",
+            "FROM_START": "false",
         },
         stub_bin=stub_bin,
     )
@@ -1499,6 +1501,169 @@ def test_the_tail_reaches_the_step_summary_and_says_to_read_upward(
     assert "CommError: user is not logged in" in written
     assert "ProcessGroup is not registered" in written
     assert "Read upward from the end" in written
+    # And under the heading the verb that reads this block looks for, rather than under a
+    # second spelling of it. See ``LOG_HEADINGS``.
+    assert f"### {LOG_HEADINGS[False]}" in written
+
+
+def test_the_head_of_a_log_is_reachable_and_says_which_end_it_is(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """THE HALF OF THIS STEP THAT DID NOT EXIST. Mutation: ignore ``from_start``.
+
+    Everything a run prints before its first batch -- the corpus it resolved, the dtype and
+    the tokenizer it built, the checkpoint it loaded and the step it resumed from -- is
+    hundreds of megabytes above the end of a training log, and fifty lines of tail cannot
+    reach any of it. A change was made to OLMo-core, in another repository, purely to move
+    ``resumed_from_step`` into the window this step could see; that is the cost of the
+    missing flag, paid once and payable again for the next line somebody wants.
+
+    Both halves are asserted, because reading the wrong end and *saying* the right thing is
+    worse than not having the flag: the call has to carry ``--start-from-head`` and the
+    block has to be headed as the start of the stream, or ``edullm logs`` prints somebody
+    the first fifty lines under a sentence promising the last fifty.
+    """
+    summary = tmp_path / "summary.md"
+    summary.touch()
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "uv", UV_PASSTHROUGH)
+    # The stub records what it was called with, so the direction of the read is measured on
+    # the call rather than inferred from the output it was handed.
+    write_stub(
+        stub_bin,
+        "aws",
+        f'printf "%s\\n" "$@" > {tmp_path / "aws-argv.txt"}\n'
+        "cat <<'JSON'\n"
+        + json.dumps({"events": [{"timestamp": 1, "message": "Building train module..."}]})
+        + "\nJSON\n",
+    )
+
+    result = run_step_script(
+        workflow_step(workflow, "fifty lines the container printed")["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "PYTHON_EXECUTABLE": sys.executable,
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "LOG_GROUP": "/aws/batch/sbsandbox-intern-edullm-gpu",
+            "LOG_STREAM": "gpu-run/default/abc",
+            "FROM_START": "true",
+        },
+        stub_bin=stub_bin,
+    )
+    written = summary.read_text(encoding="utf-8")
+    argv = (tmp_path / "aws-argv.txt").read_text(encoding="utf-8").split()
+
+    assert result.returncode == 0, result.stderr
+    assert "--start-from-head" in argv
+    assert "--no-start-from-head" not in argv
+    assert f"### {LOG_HEADINGS[True]}" in written
+    assert "This is the start of the stream." in written
+    assert "Building train module..." in written
+
+
+def test_a_container_refused_for_its_tokenizer_is_told_so_rather_than_left_with_a_number(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: print the tail and leave exit 69 to be decoded.
+
+    ``run_019fdd88-3ac4`` named a corpus whose tokenizer the training image has no
+    configuration for. It compiled clean, classified routine, spent an approval, allocated a
+    GPU and exited 69 having trained nothing. What the reader got was a number and a tail,
+    and the table above this block says -- correctly, and this does not disturb it -- that an
+    exit code is whatever the container returned and is not a stage of this platform.
+
+    This reads the container's own words rather than the number, which is why it can be
+    definite where the table cannot. ``THE_CONTAINERS_REFUSAL`` is imported from the map
+    that decides it, so the sentence a researcher reads and the sentence the image prints
+    are one string.
+    """
+    summary = tmp_path / "summary.md"
+    summary.touch()
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "uv", UV_PASSTHROUGH)
+    write_stub(
+        stub_bin,
+        "aws",
+        "cat <<'JSON'\n"
+        + json.dumps(
+            {
+                "events": [
+                    {"timestamp": 1, "message": "resolving pretrain/fineweb-edu-750m v2"},
+                    {
+                        "timestamp": 2,
+                        "message": (
+                            f"{THE_CONTAINERS_REFUSAL}: no OLMo-core config for "
+                            "tokenizer/smollm2-bpe; this image knows: tokenizer/dolma2-bpe"
+                        ),
+                    },
+                ]
+            }
+        )
+        + "\nJSON\n",
+    )
+
+    result = run_step_script(
+        workflow_step(workflow, "fifty lines the container printed")["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "PYTHON_EXECUTABLE": sys.executable,
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "LOG_GROUP": "/aws/batch/sbsandbox-intern-edullm-gpu",
+            "LOG_STREAM": "gpu-run/default/abc",
+            "FROM_START": "false",
+        },
+        stub_bin=stub_bin,
+    )
+    written = summary.read_text(encoding="utf-8")
+
+    assert result.returncode == 0, result.stderr
+    assert "refused by the image, not by the platform" in written
+    assert "re-running it changes nothing" in written
+    assert "edullm data" in written
+
+
+def test_a_run_that_printed_no_such_refusal_is_not_told_about_one(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: print the tokenizer note on every failed run.
+
+    A note that appears under every tail is a note nobody reads on the one run it is about,
+    which is the argument ``build-research-image.yml`` makes for ``if: failure()`` on its own
+    summary. This one is matched on a string the image prints, so a run that printed
+    something else must not get it.
+    """
+    summary = tmp_path / "summary.md"
+    summary.touch()
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "uv", UV_PASSTHROUGH)
+    write_stub(
+        stub_bin,
+        "aws",
+        "cat <<'JSON'\n"
+        + json.dumps({"events": [{"timestamp": 1, "message": "CUDA out of memory"}]})
+        + "\nJSON\n",
+    )
+
+    result = run_step_script(
+        workflow_step(workflow, "fifty lines the container printed")["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "PYTHON_EXECUTABLE": sys.executable,
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "LOG_GROUP": "/aws/batch/sbsandbox-intern-edullm-gpu",
+            "LOG_STREAM": "gpu-run/default/abc",
+            "FROM_START": "false",
+        },
+        stub_bin=stub_bin,
+    )
+    written = summary.read_text(encoding="utf-8")
+
+    assert result.returncode == 0, result.stderr
+    assert "refused by the image" not in written
+    assert THE_CONTAINERS_REFUSAL not in written
 
 
 @pytest.mark.parametrize(
@@ -1534,7 +1699,7 @@ def test_a_run_with_no_readable_log_is_reported_rather_than_failed(
     summary.touch()
 
     result = run_step_script(
-        workflow_step(workflow, "Show the last fifty lines")["run"],
+        workflow_step(workflow, "fifty lines the container printed")["run"],
         cwd=tmp_path,
         env={
             "RUNNER_TEMP": str(tmp_path),
@@ -1570,13 +1735,14 @@ def test_a_refused_log_read_names_the_grant_and_does_not_fail_the_dispatch(
     )
 
     result = run_step_script(
-        workflow_step(workflow, "Show the last fifty lines")["run"],
+        workflow_step(workflow, "fifty lines the container printed")["run"],
         cwd=tmp_path,
         env={
             "RUNNER_TEMP": str(tmp_path),
             "GITHUB_STEP_SUMMARY": str(summary),
             "LOG_GROUP": "/aws/batch/sbsandbox-intern-edullm-gpu",
             "LOG_STREAM": "gpu-run/default/abc",
+            "FROM_START": "false",
         },
         stub_bin=stub_bin,
     )
