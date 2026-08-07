@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from infrastructure_support import INFRA_ROOT, load_template
+from infrastructure_support import INFRA_ROOT, deployable_names, load_template
 
 from edullm_platform.admission import AdmissionOutcome, admit
 from edullm_platform.canonical import sha256_digest
@@ -73,7 +73,6 @@ from edullm_platform.execution import (
     resolve_execution_target,
 )
 from edullm_platform.phase3_evidence import BATCH_TIMEOUT_STATUS_REASON
-from edullm_platform.stack_templates import STACK_TEMPLATES
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = PROJECT_ROOT / "config"
@@ -1255,43 +1254,11 @@ def registration_for(
     )
 
 
-#: The template whose job definition name is a substitution rather than a literal.
-CAPACITY_BLOCK_TEMPLATE = "infra/batch-capacity-block.yaml"
-
-
-def block_stack_names() -> set[str]:
-    """Every stack name ``infra/batch-capacity-block.yaml`` is deployed under.
-
-    Read from the register rather than assembled from a prefix and the block-backed profiles,
-    because that register is what the audit reconciles the account against -- so a stack this
-    resolves a name for is a stack something else already expects to exist.
-    """
-    return {stack for stack, template in STACK_TEMPLATES if template == CAPACITY_BLOCK_TEMPLATE}
-
-
-def definition_names(declared: Any) -> set[str]:
-    """Every name a ``JobDefinitionName`` can deploy under, as one set.
-
-    The permanent stacks write the name out and the set has one member.
-    ``infra/batch-capacity-block.yaml`` cannot write one: it is deployed once per block-backed
-    profile, under a stack name carrying the profile, so a literal would collide on the second
-    purchase. It names itself ``${AWS::StackName}-run`` instead, which is four names -- one per
-    block-backed shape -- and any of them is a real deployed definition.
-
-    The stack names come from ``src/edullm_platform/stack_templates.py``, which is the register
-    the deploy workflow builds the stack name from, so this resolves the substitution the same way
-    the deploy will rather than by pattern-matching a string this file invented.
-    """
-    if isinstance(declared, str):
-        return {declared}
-    body = declared["Fn::Sub"]
-    resolved = {
-        body.replace("${AWS::StackName}", stack)
-        for stack in block_stack_names()
-        if "${" not in body.replace("${AWS::StackName}", stack)
-    }
-    assert resolved, f"job definition name {body!r} resolves against no stack this template has"
-    return resolved
+#: Both live in ``tests/infrastructure_support.py`` now, because this module and
+#: ``tests/test_phase3_infrastructure.py`` both compare deployed Batch names against
+#: ``config/execution-targets.yaml``, and a copy here that resolved a substitution the other did
+#: not is how the pair would come to disagree about which names exist.
+definition_names = deployable_names
 
 
 def resolve_intrinsics(node: Any, *, name: str) -> Any:

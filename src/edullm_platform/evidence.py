@@ -482,8 +482,30 @@ def profiles_requiring_capacity_evidence(
     offers is one a run can be started on; anything the catalog merely prices cannot be
     reached, so demanding a quota record for it would demand evidence about capacity nobody
     can consume.
+
+    CAPACITY-BLOCK-BACKED PROFILES ARE EXCLUDED, AND THE REASON IS THAT THE QUOTA THIS FEEDS
+    IS THE WRONG ONE FOR THEM RATHER THAN THAT THEY ARE UNREACHABLE. Everything above is about
+    ``L-417A185B``, "Running On-Demand P instances": the question is whether the account's
+    on-demand pool admits one run on the shape. A capacity block does not come out of that
+    pool. AWS meters concurrently active Capacity Blocks against separate per-family quotas --
+    "Concurrent P5 Capacity Blocks per account" and its siblings, counted in vCPU and
+    defaulting to zero -- so the on-demand figure neither permits nor prevents a block run.
+
+    Giving one of these profiles an ``INSTANCE_EVIDENCE`` row under the on-demand P code would
+    therefore record a false claim, and a specific kind of false claim: the check would report
+    a healthy 768 vCPU and mean nothing by it, while the quota that actually gates the shape
+    went unread. That is worse than the gap, because it reads as coverage.
+
+    What is genuinely unmodelled here is the block quota itself, and it is left unmodelled
+    rather than guessed at. It is also not this account's blocker: a ``p6-b200.48xlarge``
+    capacity block ran here for 42.95 hours in July, which is evidence the P6 block quota is
+    already above zero and worth more than a number this file could assert.
     """
-    return tuple(profile for profile in catalog.compute_profiles if profile.provisioned)
+    return tuple(
+        profile
+        for profile in catalog.compute_profiles
+        if profile.provisioned and not profile.capacity_block_backed
+    )
 
 
 def ec2_quota_coverage_issues(

@@ -546,7 +546,7 @@ def test_a_queue_that_could_not_be_listed_makes_the_total_a_floor(catalogs: Cata
 
     text = overnight(catalogs, lister).text
 
-    assert "A floor rather than a total, because 1 of the 14 queues could not be listed." in text
+    assert "A floor rather than a total, because 1 of the 15 queues could not be listed." in text
 
 
 def test_a_failure_is_named_with_its_exit_code_and_where_it_ran(catalogs: Catalogs) -> None:
@@ -581,7 +581,7 @@ def test_a_quiet_night_says_how_many_queues_answered(catalogs: Catalogs) -> None
     is good news.
     """
     assert overnight(catalogs, None).text == (
-        "Overnight, 12h: nothing ran and nothing is queued. 0 of 14 queues answered."
+        "Overnight, 12h: nothing ran and nothing is queued. 0 of 15 queues answered."
     )
 
 

@@ -275,7 +275,13 @@ def test_the_shipped_catalog_is_read_for_which_profiles_have_a_queue() -> None:
     provisioned = provisioned_profiles(CATALOG_PATH)
 
     assert provisioned["gpu-8xa100"] is True
-    for name in ("gpu-8xh100", "gpu-8xa100-80gb", "gpu-8xh200", "gpu-8xb200", "gpu-8xb300"):
+    # gpu-8xb200 READS True AND IT IS THE ONE PROFILE HERE WHERE THAT DOES NOT MEAN A QUEUE IS
+    # WAITING. Its execution target is deployed by a purchase, so what the flag records is that
+    # everything except the purchase is in place. What this tool does with the flag is unchanged
+    # and still right: what_is_missing stops naming the profile as a thing to be provisioned,
+    # because provisioning it is no longer one of the steps a buyer has left.
+    assert provisioned["gpu-8xb200"] is True
+    for name in ("gpu-8xh100", "gpu-8xa100-80gb", "gpu-8xh200", "gpu-8xb300"):
         assert provisioned[name] is False, f"{name} has no block, so it cannot be provisioned"
 
 

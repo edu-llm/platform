@@ -44,6 +44,7 @@ from infrastructure_support import (
     IAM_ROOT,
     INFRA_ROOT,
     PROJECT_ROOT,
+    deployable_names,
     iam_roles,
     load_template,
     resource_of_type,
@@ -69,6 +70,7 @@ NETWORK_PATH = INFRA_ROOT / "batch-network.yaml"
 COMPUTE_PATH = INFRA_ROOT / "batch-compute.yaml"
 GPU_COMPUTE_PATH = INFRA_ROOT / "batch-compute-gpu.yaml"
 GPU_SHAPES_PATH = INFRA_ROOT / "batch-compute-gpu-shapes.yaml"
+CAPACITY_BLOCK_PATH = INFRA_ROOT / "batch-capacity-block.yaml"
 EVENTS_PATH = INFRA_ROOT / "batch-events.yaml"
 OUTPUTS_PATH = INFRA_ROOT / "outputs-bucket.yaml"
 STATE_MACHINE_PATH = INFRA_ROOT / "admission-state-machine.yaml"
@@ -1607,6 +1609,18 @@ def test_execution_targets_config_names_exactly_what_the_templates_create() -> N
             )
             for profile in BACKED_GPU_SHAPE_PROFILES
         },
+        # gpu-8xb200 IS BACKED BY A TEMPLATE THAT IS DEPLOYED ONCE PER PURCHASE RATHER THAN ONCE.
+        # Its queue and definition therefore exist only while a block does, and their names are
+        # substitutions on the stack name rather than literals -- which is why every name read
+        # below goes through deployable_names. The roles and the log group are the shared GPU ones,
+        # for the reason recorded at the foot of this test: it runs the same image, resumes from
+        # the same prefix and reads the same secret as every other GPU shape.
+        "gpu-8xb200": (
+            CAPACITY_BLOCK_PATH,
+            GPU_BATCH_ROLES_PATH,
+            GPU_EXECUTION_ROLE_NAME,
+            GPU_WORKLOAD_ROLE_NAME,
+        ),
     }
 
     assert set(bindings) == set(backing), (
@@ -1631,12 +1645,14 @@ def test_execution_targets_config_names_exactly_what_the_templates_create() -> N
         # thirteen definitions and the profile is what picks the pair out of it. Reading the
         # first of each would compare every shape against gpu-1xt4's names and pass for one.
         queues = {
-            resource["Properties"]["JobQueueName"]
+            name
             for resource in resources_of_type(compute, "AWS::Batch::JobQueue").values()
+            for name in deployable_names(resource["Properties"]["JobQueueName"])
         }
         definitions = {
-            resource["Properties"]["JobDefinitionName"]
+            name
             for resource in resources_of_type(compute, "AWS::Batch::JobDefinition").values()
+            for name in deployable_names(resource["Properties"]["JobDefinitionName"])
         }
 
         assert binding["region"] == "us-east-1", profile
@@ -1651,7 +1667,8 @@ def test_execution_targets_config_names_exactly_what_the_templates_create() -> N
         driver = next(
             resource["Properties"]["ContainerProperties"]["LogConfiguration"]
             for resource in resources_of_type(compute, "AWS::Batch::JobDefinition").values()
-            if resource["Properties"]["JobDefinitionName"] == binding["job_definition"]
+            if binding["job_definition"]
+            in deployable_names(resource["Properties"]["JobDefinitionName"])
         )
         assert binding["log_group"] == driver["Options"]["awslogs-group"], profile
 

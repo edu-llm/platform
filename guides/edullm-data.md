@@ -4,7 +4,7 @@ Checking each shard of a staged corpus against the bounds its family declares. A
 
 > **The read grant is deployed.** The CPU workload role carries `s3:GetObject` and `s3:ListBucket` on both `edullm-landing` and `edullm-data`, in an inline policy named `read-the-dataset-airlock`. This banner used to say the grant was committed and not yet applied, and to expect `AccessDenied` before the first shard was checked. The committed capture of the deployed role, `fixtures/evidence/phase-3/roles/sbsandbox-intern-edullm-batch-workload.sanitized.json`, names that policy and `arn:aws:s3:::edullm-landing/*`, and it was read off the account at 2026-08-06T02:04Z. Read that file. Do not reach for `aws iam list-role-policies`, which most of us cannot run and which this guide used to tell you to.
 
-> **`cpu-32vcpu` is not advice here, it is the only profile that works.** Only the CPU workload role reads `edullm-landing`. Every GPU profile runs as `sbsandbox-intern-edullm-batch-gpu-workload`, which reads the sealed `edullm-data` and not the landing zone, so a validator sent to a GPU queue fails on its first read at between $0.53 and $30.13 an hour.
+> **`cpu-32vcpu` is not advice here, it is the only profile that works.** Only the CPU workload role reads `edullm-landing`. Every GPU profile runs as `sbsandbox-intern-edullm-batch-gpu-workload`, which reads the sealed `edullm-data` and not the landing zone, so a validator sent to a GPU queue fails on its first read at between $0.53 and $98.84 an hour.
 
 ## Prerequisites
 

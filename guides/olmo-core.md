@@ -188,13 +188,15 @@ The last column is `places`. `reliably` and `unreliably` are usually a probe ask
 
 **No shape in either table above needs an admin, and no rate sends a run anywhere.** This section used to say that everything at or above `gpu-8xa100` went to an admin, because the platform routed every profile over $20 an hour that way whatever the run cost in total. Policy v5 deleted that ceiling and no rate routes anything now. Measured on 2026-08-06, a one-hour single-attempt check on `gpu-8xa100` at $21.96 an hour and one on `gpu-8xl40s` at $30.13 an hour both come back `automatic`, which is released by nobody at all. What routes a run is its worst-case total, and [approval](the-platform.md#approval) has the figure. The one thing that does reach an admin is the block-backed table below, and it is a fact about the purchase rather than about the rate.
 
-Four more eight-card shapes exist and none of them can be submitted to today. They are backed by [capacity blocks](capacity-blocks.md) — dated windows somebody buys in advance — rather than by a queue, so `edullm check` refuses all four with `unprovisioned_compute_profile` until a block has actually been bought and wired up. They are listed here so that a researcher who needs more than 640 GB knows the route exists and asks, rather than concluding the platform tops out at `gpu-8xh100`.
+Four more eight-card shapes exist, and they are backed by [capacity blocks](capacity-blocks.md) — dated windows somebody buys in advance — rather than by a standing queue. They are listed here so that a researcher who needs more than 640 GB knows the route exists and asks, rather than concluding the platform tops out at `gpu-8xh100`.
+
+Three of the four are refused outright: `edullm check` answers `unprovisioned_compute_profile` until a block has been bought and wired up. **`gpu-8xb200` is the exception and the column says so rather than `yes`.** You can name it and it will be admitted, because its execution target is in place — but the queue behind it is created by a purchase and deleted when that window closes, so a submission made when no block is live fails at Batch. It fails before a machine starts and before any money moves, which is why the shape is nameable at all: getting it wired up is a Lambda release, and doing that inside a paid window would spend the thing being bought.
 
 | Compute profile | Devices | Memory | Rate | Placing |
 | --- | --- | --- | --- | --- |
 | `gpu-8xa100-80gb` | 8 x A100 | 655,360 MiB | $17.712/hr | **refused** |
 | `gpu-8xh200` | 8 x H200 | 1,155,072 MiB | $54.92/hr | **refused** |
-| `gpu-8xb200` | 8 x B200 | 1,466,872 MiB | $98.84/hr | **refused** |
+| `gpu-8xb200` | 8 x B200 | 1,466,872 MiB | $98.84/hr | unreliably |
 | `gpu-8xb300` | 8 x B300 | 2,200,320 MiB | $112.32/hr | **refused** |
 
 Those rates are what a reserved hour costs rather than an on-demand one, because on-demand is not available for any of them, and they are the only rates in this guide that are not a Price List figure. The launcher rule below applies unchanged: all four are eight-device machines and need eight processes.
