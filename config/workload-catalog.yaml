@@ -377,12 +377,18 @@ compute_profiles:
     pricing_observed_at: "2026-08-07"
     provisioned: false
     capacity_block_backed: true
-  # BLACKWELL, WHICH IS A NEW ARCHITECTURE RATHER THAN A BIGGER CARD, AND THE ONE ROW HERE WITH A
-  # SOFTWARE RISK IN FRONT OF IT. AWS publishes a minimum of CUDA 12.8 and driver R570 for
-  # p6-b200. The training image's CUDA 12.8 base clears the first on paper; nothing has confirmed
-  # the second on the silicon, because the driver version this platform knows was read off an
-  # A10G. infra/batch-compute-gpu-shapes.yaml excludes p6-b200 from the H100 environment for
-  # exactly that reason, and a block is the first thing that would settle it.
+  # BLACKWELL, WHICH IS A NEW ARCHITECTURE RATHER THAN A BIGGER CARD. AWS publishes a minimum of
+  # CUDA 12.8 and driver R570 for p6-b200, and on 2026-08-07 both were established by reading
+  # rather than by running. The training image has no CUDA base -- it is the bare python image,
+  # and its CUDA arrives with the torch wheel, which is the cu128 build and carries native sm_100
+  # SASS in every one of its fatbins with no PTX to fall back on and none needed. The driver is a
+  # property of the AMI rather than of the image: ECS_AL2023_NVIDIA ships 580.159.03, above R570,
+  # and the same image type backs every GPU environment here. The figure this comment used to
+  # distrust for having been read off an A10G was the AMI's figure all along.
+  #
+  # infra/batch-compute-gpu-shapes.yaml still excludes p6-b200 from the H100 environment and
+  # should keep doing so. That exclusion is not about the software: an on-demand p6-b200 reached
+  # as a scarcity fallback is $113.93/hour that nobody chose.
   - name: gpu-8xb200
     instance_type: p6-b200.48xlarge
     accelerator: gpu

@@ -1210,7 +1210,7 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "one out of a paid window spends the thing being paid for."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function notifier",
-            builds_to="a10cb852ecb24f9f3a88b7abf4190720c878e32757e37fa9e7dd4ea42e21b0e5",
+            builds_to="0bb85b60ee5dff18581bdba2cad5b9430f4ddb8019f809f24b3c457dc689a51a",
             released="d78c4a48482558039e7affc51331ec558e5880f8e48876bafb567fe683ee67b9",
             recorded_on=date(2026, 8, 7),
         ),
@@ -1297,7 +1297,7 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "two CI runs and a deploy out of a window already being billed."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function validator",
-            builds_to="bcaf7afc70c98f8e1b7b648c6b1e202d5f6e6733e0bfa096bf4b7a4fbe37c062",
+            builds_to="bc63881b5c7959c9403a471c2e2bb22338444a62b2afd938b792469b7b46eab9",
             released="2cda942e9518cf23b6042a5b5ab35d550557a0784acfc9c3ee2d593844e9064c",
             recorded_on=date(2026, 8, 7),
         ),
