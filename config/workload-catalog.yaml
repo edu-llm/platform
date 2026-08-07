@@ -390,7 +390,17 @@ compute_profiles:
     hourly_rate_usd: "98.8400"
     pricing_source: "AWS Capacity Blocks for ML published effective hourly reservation rate, p6-b200.48xlarge us-east-1"
     pricing_observed_at: "2026-08-07"
-    provisioned: false
+    # PROVISIONED WITHOUT A BLOCK BOUGHT, WHICH IS DELIBERATE AND IS THE ONLY ROW LIKE IT.
+    # provisioned means config/execution-targets.yaml carries a row, and it does. It does not
+    # mean a machine is reachable today: the queue that row names is created per purchase by
+    # a dispatch of the phase-3 deploy carrying a reservation id, so until a block is bought a
+    # gpu-8xb200 submission is admitted and then fails at Batch on a queue that is not there.
+    #
+    # That is the cheaper of the two failures. Promoting a profile is a Lambda release -- see
+    # infra/admission-state-machine.yaml, which records four times this seam has been met --
+    # and a release is two CI runs and a deploy. Left until after the purchase, that is spent
+    # out of a paid window that is already running. Spent now, it is free.
+    provisioned: true
     capacity_block_backed: true
   # The largest and most expensive machine this catalog prices, and the only one whose container
   # memory ceiling is a bound rather than a figure -- see src/edullm_platform/execution.py, which
