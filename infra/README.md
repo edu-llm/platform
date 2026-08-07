@@ -2180,3 +2180,91 @@ role, and the profile name must be the one `run_instances_argv` passes as
 `--iam-instance-profile Name=`; a mismatch there fails a launch after a machine has been priced.
 Any bucket other than `edullm-scratch` in the inline policy means the machine reaches past the
 working tier and the role should be narrowed rather than left.
+
+## The capacity block stacks, of which four are declared and none is normally deployed
+
+| # | Stack | Template | Roles or resources | Applied from |
+| --- | --- | --- | --- | --- |
+| 1 | `sbsandbox-intern-edullm-capacity-block-gpu-8xa100-80gb` | `infra/batch-capacity-block.yaml` | launch template, single-zone compute environment, queue | laptop, per purchase |
+| 2 | `sbsandbox-intern-edullm-capacity-block-gpu-8xh200` | `infra/batch-capacity-block.yaml` | launch template, single-zone compute environment, queue | laptop, per purchase |
+| 3 | `sbsandbox-intern-edullm-capacity-block-gpu-8xb200` | `infra/batch-capacity-block.yaml` | launch template, single-zone compute environment, queue | laptop, per purchase |
+| 4 | `sbsandbox-intern-edullm-capacity-block-gpu-8xb300` | `infra/batch-capacity-block.yaml` | launch template, single-zone compute environment, queue | laptop, per purchase |
+
+**One template and four rows, which no other entry in this file does.** Every other stack here is
+one template applied once. This one is parameterised on an instance type, a reservation id, an
+availability zone and a subnet, so one file is how *every* capacity block is deployed, and the
+stack name is what says which shape a given deployment is holding. `src/edullm_platform/stack_templates.py`
+carries the same four rows and the argument for why the mapping had to stop being one-to-one.
+
+**An account listing with none of these in it is the normal state.** A block is bought for a dated
+window, the stack goes up against that one reservation, and it comes down when the window ends. So
+the nightly reconciliation expects them absent and reports nothing; what it cannot tell you is that
+one has been left up, which costs nothing directly — the compute environment holds no instances once
+the reservation expires — but leaves a queue that reviewed configuration may still point at. The
+revert is the `provisioned` flip and the `execution-targets.yaml` row, and `guides/capacity-blocks.md`
+is where that procedure lives.
+
+**The suffix is the compute profile and not the instance type.** It is the string that joins the
+stack to the two files that have to be edited when it goes up and reverted when it comes down,
+`config/workload-catalog.yaml` and `config/execution-targets.yaml`. A fifth block-backed profile
+priced in the catalog without a fifth row here fails `tests/test_deployed_stacks.py` rather than
+failing at the deploy.
+
+**These are laptop deploys despite not declaring an IAM role.** Nothing in this repository dispatches
+them: the parameters are only knowable from a purchase somebody has just made in the console, and
+there is no workflow input carrying a reservation id. It is the same reason `sbsandbox-intern-edullm-scratch`
+is a laptop stack while not being an IAM one.
+
+**`sbsandbox-intern-edullm-audit-reader-iam` has to be applied before the first of these goes up.**
+`infra/iam/audit-reader-role.yaml` used to name one `…-capacity-block` stack in its
+`cloudformation:GetTemplate` resources and now names these four, so the deployed role is behind the
+template until that stack is applied from a laptop. Nothing fails while it is behind — a grant on an
+absent stack reaches nothing either way — and what it costs is that the first real block window would
+be one the nightly drift check is denied on, discovered at 05:00 on the morning after the money was
+spent. There is no `PendingAmendment` record for it because the register compares findings read off
+the account and `edullm-audit-reader` carries no committed capture, so this paragraph is the record.
+
+### Deploying one block stack
+
+Read the instance type, the reservation id and the availability zone off the reservation itself
+rather than off the purchase intent, and take the subnet from the network stack's export for that
+zone. The vCPU ceiling is the instance type's vCPU count multiplied by the number of instances in
+the block.
+
+```bash
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-capacity-block-gpu-8xb200 \
+  --template-file infra/batch-capacity-block.yaml \
+  --parameter-overrides \
+      InstanceType=p6-b200.48xlarge \
+      CapacityReservationId=cr-0123456789abcdef0 \
+      AvailabilityZone=us-east-1d \
+      SubnetId=subnet-0123456789abcdef0 \
+      MaxvCpus=192 \
+  --profile sbsandbox \
+  --region us-east-1
+```
+
+The stack name must be the row above for the shape being deployed, because the queue takes its name
+from the stack name and that queue name is what gets pasted into `config/execution-targets.yaml`. A
+stack named anything else deploys perfectly and produces a queue no reviewed configuration can
+reach.
+
+Then read the reservation back rather than the template, because the failure this deploy has is
+silent:
+
+```bash
+aws ec2 describe-capacity-reservations \
+  --capacity-reservation-ids cr-0123456789abcdef0 \
+  --profile sbsandbox --region us-east-1
+```
+
+`ReservationType` must be `capacity-block` and `State` must be `scheduled` or `active`. A block that
+reached `payment-failed` has been released, and the stack will deploy against its id regardless and
+then place nothing.
+
+The mistake worth checking for explicitly is the one that costs twice. A capacity block is a
+*targeted* reservation: nothing consumes it unless the launch names the reservation id. If the
+launch template's `InstanceMarketOptions` or `CapacityReservationSpecification` does not reach the
+compute environment, Batch does not fail — it launches ordinary on-demand instances beside a block
+that has already been paid for.

@@ -26,7 +26,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-from edullm_platform.cli.intake import ASK_KINDS, ASK_QUEUE_LABEL, issue_body
+from edullm_platform.cli.intake import (
+    ASK_KINDS,
+    ASK_QUEUE_LABEL,
+    CAPACITY_BLOCK_FIELDS,
+    CAPACITY_BLOCK_KIND,
+    RESUME_TESTED_ANSWERS,
+    issue_body,
+)
 from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED, NOT_BUILT_YET
 from tests.cli_support import CONFIG_DIR, FakeRunner, failed, invoke, ok
 
@@ -264,6 +271,217 @@ def test_a_refused_ask_is_a_document_when_json_is_asked_for(
 
     assert code == EXIT_REFUSED, out + err
     assert json.loads(out)["refusals"][0]["code"] == "no_ask_detail"
+
+
+def form_fields() -> dict[str, dict[str, object]]:
+    """Every field on the triage form, by its id, with the entry as the form declares it."""
+    document = yaml.safe_load((TEMPLATE_DIR / "ask.yml").read_text(encoding="utf-8"))
+    return {
+        str(entry["id"]): entry for entry in document.get("body", ()) if entry.get("id")
+    }
+
+
+def test_the_four_the_cli_requires_are_the_four_the_form_asks() -> None:
+    """Mutation: rename a field id here, or add a fifth the form does not offer.
+
+    THIS IS THE SAME SEAM AS ``ASK_KINDS`` AND IT IS HERE FOR THE SAME REASON. The two doors
+    into one queue are this verb and the form, ``tools/report_asks.py`` reads whatever comes
+    out of either, and the field ids are what a later reader of that queue would group on. A
+    field the CLI asks for under a name the form does not use is a column that exists on half
+    the asks, which is worse than a column that exists on none: it looks like an answer somebody
+    declined to give.
+
+    Asserted as a subset of the form rather than as equality, because the form asks other things
+    too and asks them of all five kinds. What must hold is that every id the CLI writes is one
+    the form also asks under.
+    """
+    assert {name for name, _ in CAPACITY_BLOCK_FIELDS} <= set(form_fields())
+
+
+def test_the_form_leaves_all_four_optional_and_the_cli_is_what_requires_them() -> None:
+    """Mutation: mark them required on the form and drop the check from the CLI.
+
+    THE ASYMMETRY IS DELIBERATE AND THIS IS WHERE IT IS WRITTEN DOWN. One triage form serves
+    five kinds and GitHub cannot make a field required conditionally on a dropdown, so a
+    ``required: true`` here would stop somebody filing a ``run-problem`` until they had invented
+    a GPU memory figure. The CLI reads ``--kind`` before it validates anything, so it can
+    require what the form cannot, and that is the whole argument for the requirement living
+    there. If somebody ever does make these required on the form, this test says why not.
+    """
+    for name, _ in CAPACITY_BLOCK_FIELDS:
+        entry = form_fields()[name]
+        validations = entry.get("validations") or {}
+        assert validations.get("required", False) is False, name
+
+
+def test_what_resume_tested_accepts_becomes_what_the_form_would_have_recorded() -> None:
+    """Mutation: let ``--resume-tested`` take free text, or invent a fourth wording.
+
+    An ask filed from a terminal and one filed from the browser are answered by the same person
+    off the same board, and a purchase turns on this field: a block does not pause while a bug
+    is fixed, so an untested resume is what makes a crash cost the window rather than an hour.
+    Free text here accepts "probably", which reads as a yes to somebody skimming and is what
+    somebody who has not tested a resume writes.
+    """
+    offered = form_fields()["resume_tested"]["attributes"]["options"]  # type: ignore[index]
+
+    assert set(RESUME_TESTED_ANSWERS.values()) == {str(option) for option in offered}
+
+
+def test_a_capacity_block_ask_missing_the_numbers_is_refused_before_it_is_filed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: file it and let whoever prices it ask for the numbers.
+
+    A BLOCK IS CHARGED UPFRONT AND CANNOT BE CANCELLED, SO THE ASK IS ARITHMETIC RATHER THAN
+    JUDGEMENT. Peak memory picks the machine, hours picks how many whole days are bought, the
+    date decides whether any offering can meet it at all, and a tested resume decides what a
+    crash costs. An ask missing any of them cannot be priced, so filing it buys a round trip and
+    another two weeks of lead time -- and two weeks is roughly the shortest notice on which a
+    block can be got at all, so the round trip is the difference between having one and not.
+
+    All four named in one refusal rather than one per attempt, which is the promise ``check``
+    makes and matters more here: the caller is a person who has just been told what a block
+    costs, and four refusals is four runs of the verb.
+    """
+    runner = ask_runner()
+
+    code, out, err = invoke(
+        [
+            "ask",
+            "--kind",
+            CAPACITY_BLOCK_KIND,
+            "--title",
+            "a b200 block for the long-context sweep",
+            "--detail",
+            "The sweep needs a card the on-demand fleet does not carry.",
+        ],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_REFUSED, out + err
+    assert "capacity_block_ask_is_incomplete" in err
+    for name, _ in CAPACITY_BLOCK_FIELDS:
+        assert f"--{name.replace('_', '-')}" in err
+    assert runner.calls == []
+
+
+def test_the_other_four_kinds_are_not_asked_for_a_gpu_memory_figure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: make the four ``required=True`` on the parser.
+
+    Argparse cannot require a flag conditionally on another flag's value, so a requirement
+    expressed there would land on every kind and would make reporting a broken run start with
+    inventing four numbers about a purchase nobody is making. This is the test that fails if
+    the requirement ever migrates from ``capacity_block_refusals`` to the parser.
+    """
+    runner = ask_runner()
+
+    code, out, err = invoke(
+        [
+            "ask",
+            "--kind",
+            "run-problem",
+            "--title",
+            "submit refused a dataset the catalog lists",
+            "--detail",
+            "edullm check passes and submit refuses.",
+        ],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+
+
+def test_a_purchase_field_on_a_kind_nothing_prices_is_refused_rather_than_dropped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: accept the flag on any kind and write it into the body, or ignore it silently.
+
+    A flag a verb accepts and ignores is one somebody goes on passing while believing it
+    arrived. The shape of that mistake here is somebody arguing for several thousand dollars of
+    machine in fields attached to a ``feedback`` ask, which nothing prices and nobody costs, and
+    then waiting on an answer to a question the queue never received.
+    """
+    runner = ask_runner()
+
+    code, out, err = invoke(
+        [
+            "ask",
+            "--kind",
+            "feedback",
+            "--title",
+            "the refusal was confusing",
+            "--detail",
+            "It named a file I do not have.",
+            "--hours-needed",
+            "18",
+        ],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_REFUSED, out + err
+    assert "ask_field_belongs_to_another_kind" in err
+    assert "--hours-needed" in err
+    assert runner.calls == []
+
+
+def body_sent(runner: FakeRunner) -> str:
+    """The body one ``gh issue create`` was called with."""
+    argv = runner.ran("gh", "issue", "create")[0]
+    return argv[argv.index("--body") + 1]
+
+
+def test_a_complete_capacity_block_ask_carries_the_four_answers_into_the_issue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: validate the four and then file the detail alone.
+
+    Checking them locally and dropping them would be the worst of both: the asker is stopped
+    until they have the numbers and the person pricing it still has to ask. They go into the
+    body rather than onto labels because whoever answers is reading this beside a price list.
+
+    The token ``--resume-tested`` took is expanded into the form's own sentence, so the issue
+    reads the same whichever door it came through.
+    """
+    runner = ask_runner()
+
+    code, out, err = invoke(
+        [
+            "ask",
+            "--kind",
+            CAPACITY_BLOCK_KIND,
+            "--title",
+            "a b200 block for the long-context sweep",
+            "--detail",
+            "The sweep needs a card the on-demand fleet does not carry.",
+            "--peak-gpu-memory",
+            "just over 1 TiB, from a 70B model at 32k context",
+            "--hours-needed",
+            "18, from a two-hour run on an eighth of the tokens",
+            "--needed-by",
+            "any time before 15 September",
+            "--resume-tested",
+            "tested",
+        ],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    body = body_sent(runner)
+    assert "just over 1 TiB, from a 70B model at 32k context" in body
+    assert "18, from a two-hour run on an eighth of the tokens" in body
+    assert "any time before 15 September" in body
+    assert RESUME_TESTED_ANSWERS["tested"] in body
 
 
 def test_an_issues_endpoint_that_will_not_answer_is_exit_three(

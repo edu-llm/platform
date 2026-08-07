@@ -26,6 +26,7 @@ from edullm_platform.contracts.workload import (
     CostInputs,
     UnregisteredComputeProfileError,
     WorkloadCatalog,
+    compute_profile_is_capacity_block_backed,
 )
 
 COMMIT_SHA_REGEX = re.compile(COMMIT_SHA_PATTERN)
@@ -174,6 +175,13 @@ def build_request_facts(
         dataset_registered=dataset_registry.is_registered(manifest.dataset_release),
         dataset_is_a_corpus=dataset_registry.is_a_trainable_corpus(manifest.dataset_release),
         compute_profile_registered=is_compute_profile_registered(manifest, catalog),
+        # READ OFF THE CATALOG AND NOT OFF THE MANIFEST, WHICH IS THE ASYMMETRY THE DOCSTRING
+        # ABOVE IS ABOUT. This fact sends a request to a platform admin, so a submitter able to
+        # supply it could also decline to, and the shape of that mistake is a capacity block
+        # released by a team lead who was never told it was one.
+        capacity_block_backed=compute_profile_is_capacity_block_backed(
+            catalog, manifest.compute_profile
+        ),
         immutable_revision=manifest_has_immutable_revision(manifest),
         immutable_image=manifest_has_immutable_image(manifest),
         image_scan_reviewed=image_scan_reviewed,

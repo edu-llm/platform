@@ -92,6 +92,11 @@ def request_facts_payload(**overrides: object) -> dict[str, object]:
         "dataset_registered": True,
         "dataset_is_a_corpus": True,
         "compute_profile_registered": True,
+        # ON THE BASELINE THIS IS FALSE, AND EVERY CASE BELOW THAT DOES NOT SAY OTHERWISE IS
+        # ABOUT AN ORDINARY ON-DEMAND SHAPE. True short-circuits the whole function to
+        # ``exception``, so a baseline carrying it would make the cost bound, the fan-out test
+        # and the scan test unreachable and every one of those cases would pass on a mutant.
+        "capacity_block_backed": False,
         "immutable_revision": True,
         "immutable_image": True,
         "image_scan_reviewed": True,
@@ -271,38 +276,57 @@ def test_every_input_that_must_resolve_is_a_fact_the_request_carries() -> None:
 
 
 # --------------------------------------------------------------------------------------
-# No run reaches an admin any more
+# A capacity block is the one thing that reaches an admin
 # --------------------------------------------------------------------------------------
 
 
-def test_no_combination_of_facts_classifies_as_an_exception() -> None:
-    """The v5 ruling, asserted rather than read off the function.
+def test_a_capacity_block_is_the_only_thing_that_classifies_as_an_exception() -> None:
+    """The whole grid, and the one switch in it that produces the third class.
 
-    Mutation: return ``ApprovalClass.EXCEPTION`` from any branch of ``classify_request``.
-    This fails on the row that reaches it. The grid is every switch this function reads,
-    which is what makes the claim "no run tier routes to an admin" a measurement rather than
-    a reading of the source.
+    THIS ASSERTED THE OPPOSITE UNTIL 2026-08-07 and it was right to, for about a fortnight.
+    v5 removed all five ceilings that reached an admin and left nothing routing there, which
+    this pinned as ``seen == {AUTOMATIC, ROUTINE}``. Meanwhile ``config/policy.yaml`` went on
+    naming ``platform_admin`` in ``exception_approver_roles`` "for the capacity blocks being
+    designed separately", four block-backed shapes were priced, and three separate comments
+    claimed a withdrawn rate ceiling was still gating them. The gate existed, the shapes
+    existed, and nothing joined them.
+
+    So the grid is walked twice over ``capacity_block_backed`` and the two halves say different
+    things: with the flag false nothing reaches an admin however expensive, however many cells
+    and however unreviewed, and with it true everything does. That is a stronger claim than a
+    single case, because it is what makes the branch's position at the top of the function
+    testable -- a block-backed sixty-four-cell sweep with an unreviewed scan and an
+    unregistered repository is in this grid, and every one of those facts would otherwise send
+    it to a lead.
+
+    Mutation: move the ``capacity_block_backed`` branch below any other test. The rows that
+    also trip that test come back ``routine`` and the second half of this fails naming the
+    combination.
     """
-    seen = set()
-    for cost in ("0", "499.99", "500", "1000000"):
-        for cells in (1, 2, 64):
-            for reviewed in (True, False):
-                for resolves in (True, False):
-                    overrides: dict[str, object] = {
-                        fact: resolves for fact in INPUTS_THAT_MUST_RESOLVE
-                    }
-                    seen.add(
-                        classify_request(
-                            facts(
-                                estimated_cost_usd=cost,
-                                fanout_size=cells,
-                                image_scan_reviewed=reviewed,
-                                **overrides,
-                            ),
-                            thresholds(),
+    by_backing: dict[bool, set[ApprovalClass]] = {False: set(), True: set()}
+    for block_backed in (False, True):
+        for cost in ("0", "499.99", "500", "1000000"):
+            for cells in (1, 2, 64):
+                for reviewed in (True, False):
+                    for resolves in (True, False):
+                        overrides: dict[str, object] = {
+                            fact: resolves for fact in INPUTS_THAT_MUST_RESOLVE
+                        }
+                        by_backing[block_backed].add(
+                            classify_request(
+                                facts(
+                                    capacity_block_backed=block_backed,
+                                    estimated_cost_usd=cost,
+                                    fanout_size=cells,
+                                    image_scan_reviewed=reviewed,
+                                    **overrides,
+                                ),
+                                thresholds(),
+                            )
                         )
-                    )
-    assert seen == {ApprovalClass.AUTOMATIC, ApprovalClass.ROUTINE}
+
+    assert by_backing[False] == {ApprovalClass.AUTOMATIC, ApprovalClass.ROUTINE}
+    assert by_backing[True] == {ApprovalClass.EXCEPTION}
 
 
 # --------------------------------------------------------------------------------------
@@ -363,32 +387,48 @@ def test_two_full_days_of_eight_a10g_is_the_shape_a_lead_still_sees() -> None:
     )
 
 
-def test_the_largest_instance_in_the_account_for_one_hour_is_released_by_nobody() -> None:
-    """What removing the rate ceiling actually admits, stated as a test rather than accepted.
+def test_the_dearest_hour_in_the_catalog_is_held_back_by_the_machine_and_not_by_its_price() -> None:
+    """What removing the rate ceiling admits, and what replaced it, in one pair.
 
     ``p6-b300.48xlarge`` is the dearest shape ``config/workload-catalog.yaml`` prices, and one
-    hour of it at one attempt is $112.32. Under v4 the rate ceiling made that an admin's
-    call. Under v5 it is under the bound and nobody releases it, and the owner accepted that
-    when the ceiling was removed.
+    hour of it at one attempt is $112.32. Under v4 the rate ceiling made that an admin's call.
+    That ceiling is gone and $112.32 is under the one remaining bound, so **cost alone releases
+    it to nobody** -- the first assertion, and the consequence the owner accepted when the
+    ceiling came out.
 
-    THE FIGURE DOUBLED ON 2026-08-07 AND THE CLASSIFICATION DID NOT MOVE, which is the sharpest
-    version of this test that has existed. It was $55.04 on ``p5.48xlarge`` from the day the
-    ceiling came out until four block-backed shapes were priced, the dearest of them at $112.32 --
-    and that rate is a capacity block's rather than an on-demand hour's, so it is what the machine
-    genuinely costs rather than a hypothetical. An hour of the most expensive machine on the
-    platform is still nobody's decision to release, and the bound that would have caught it is
-    still the one the owner removed on purpose.
+    It does not reach nobody, because the shape is block-backed. The second assertion is the
+    same money with the one fact about the machine restored, and it goes to an admin. Asserting
+    the pair rather than either half is what distinguishes the two rules: a test on the cost
+    alone would pass under a reinstated rate ceiling, and a test on the real profile alone would
+    pass under one too. Only the disagreement between them says the instrument is
+    reversibility rather than price.
 
-    Mutation: reintroduce any per-hour rule. This fails, which is the point of writing the
-    accepted consequence down as an assertion: the next person to find it alarming has to
-    change the policy rather than quietly reinstate a bound.
+    ``capacity_block_backed`` is read off the catalog rather than written here, so a repricing
+    or a demotion moves this test with the file.
+
+    Mutation: reintroduce any per-hour rule. The first assertion fails, which is the point of
+    writing the accepted consequence down: the next person to find $112.32 alarming has to
+    change the policy rather than quietly reinstate a bound. Mutation: drop the
+    ``capacity_block_backed`` branch. The second fails.
     """
-    dearest = max(profile.hourly_rate_usd for profile in load_workload_catalog().compute_profiles)
-    one_hour = compute_maximum_compute_cost_usd(dearest, 1, Decimal(1), 1)
+    profiles = load_workload_catalog().compute_profiles
+    dearest = max(profiles, key=lambda profile: profile.hourly_rate_usd)
+    one_hour = compute_maximum_compute_cost_usd(dearest.hourly_rate_usd, 1, Decimal(1), 1)
 
     assert one_hour == Decimal("112.32")
+    assert dearest.capacity_block_backed is True
     assert classify_request(facts(estimated_cost_usd=one_hour), thresholds()) is (
         ApprovalClass.AUTOMATIC
+    )
+    assert (
+        classify_request(
+            facts(
+                estimated_cost_usd=one_hour,
+                capacity_block_backed=dearest.capacity_block_backed,
+            ),
+            thresholds(),
+        )
+        is ApprovalClass.EXCEPTION
     )
 
 

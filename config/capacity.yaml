@@ -18,9 +18,16 @@
 # WHY IT IS NOT A FIELD ON THE CATALOG'S PROFILES, WHICH IS WHERE IT BELONGS. ComputeProfile is
 # a contract model with extra="forbid", and its structural digest is recorded in
 # fixtures/goldens/contract-models.json, so an `availability` field beside `provisioned` is a
-# re-record rather than a config edit -- the same reason EXCEPTION_RATE_CEILING_USD_PER_HOUR sits in
-# src/edullm_platform/contracts/policy.py instead of in config/policy.yaml, which carries the
-# same kind of pointer. When that happens, `places` folds into ComputeProfile and this goes away.
+# re-record rather than a config edit. When that happens, `places` folds into ComputeProfile and
+# this goes away.
+#
+# THAT COST IS REAL AND IT IS NOT A REASON ON ITS OWN, which this comment used to imply by
+# pointing at EXCEPTION_RATE_CEILING_USD_PER_HOUR as a constant that sat in
+# src/edullm_platform/contracts/policy.py for the same reason. There is no such constant -- policy
+# v5 withdrew it -- and `capacity_block_backed` was added to ComputeProfile on 2026-08-07 with the
+# re-record it costs, because the approval gate for a non-cancellable purchase is worth a golden
+# regeneration. What keeps `places` out is that it is a fact about the account's neighbours rather
+# than about the machine, not the price of the re-record.
 #
 # WHAT PLACEMENT IS, AND WHY IT IS A THIRD THING NEXT TO provisioned AND backed. A profile can
 # be priced in config/workload-catalog.yaml, provisioned with a compute environment, and backed

@@ -227,6 +227,7 @@ def test_the_claim_a_default_makes_is_authorized_exactly_as_a_typed_one_is() -> 
         dataset_registered=True,
         dataset_is_a_corpus=True,
         compute_profile_registered=True,
+        capacity_block_backed=False,
         immutable_revision=True,
         immutable_image=True,
         image_scan_reviewed=True,

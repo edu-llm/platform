@@ -145,7 +145,7 @@
       "module": "edullm_platform.contracts.decision_matrix",
       "name": "AuthorizationScenario",
       "schema_version": "1",
-      "structural_digest": "sha256:f10e3bdf85532a82faf51aa33b7422fa912c173f43de797d5fb84115e57f4975"
+      "structural_digest": "sha256:f8acd3af905420e7be12b8e1e52e2c61403c08e6cf1a9aed35b962be8ea47d5f"
     },
     {
       "base": false,
@@ -334,7 +334,7 @@
       "module": "edullm_platform.contracts.policy",
       "name": "RequestFacts",
       "schema_version": "unversioned",
-      "structural_digest": "sha256:485e40ae5aadececec2074170641563a8246726c1067fdee8148c6d72a2645b5"
+      "structural_digest": "sha256:3b21fd174efe3ad7d60d324d3db0b4c1cd1151830668e4c8a14133199173b967"
     },
     {
       "base": false,
@@ -425,7 +425,7 @@
       "module": "edullm_platform.contracts.workload",
       "name": "ComputeProfile",
       "schema_version": "unversioned",
-      "structural_digest": "sha256:1344998c8ec4bc2f1a7007923c20b1442eabd0051108aea78fb2ebe6ba3cf2cc"
+      "structural_digest": "sha256:92e945f9899ea999612902a1ce9b125f929a307fc0db82a05db01450dadc9f80"
     },
     {
       "base": false,
@@ -439,7 +439,7 @@
       "module": "edullm_platform.contracts.workload",
       "name": "WorkloadCatalog",
       "schema_version": "unversioned",
-      "structural_digest": "sha256:e348b83c2f38b748029920dd75c882bb0208e47ec71348db16c0812d76155ac0"
+      "structural_digest": "sha256:24738d7d85340b821b8e83a42149667c57d4a022246dc2ab57029122b65c3067"
     },
     {
       "base": false,

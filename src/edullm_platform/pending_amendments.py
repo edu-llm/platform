@@ -887,10 +887,14 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "carries one record and a zip holds whatever the tree holds when it is "
                 "built. janitor_handler.py builds its settings in _settings_from_environment "
                 "and never calls load_lane_settings, and nothing it does reads the "
-                "vocabulary, so this is bytes and no behaviour."
+                "vocabulary, so this is bytes and no behaviour. Rebuilt again on the same day "
+                "for capacity_block_backed on ComputeProfile, reached through the same "
+                "researcher_lane.py import. The janitor stops expired lane instances and "
+                "classifies nothing, so it reads that field no more than it reads the rest of "
+                "a compute profile."
             ),
             cleared_by="uv run python tools/release_lambda.py --function janitor",
-            builds_to="e8dc2290655b2259bfe417d81cb51e71b32ec893b79d8ddc0125e6d0017ea28f",
+            builds_to="5779d3547b8361b224e866a0a166cf9c0046b340a22fbb632130aec2d184e63a",
             released="50922d41d3750af154e3b2342cfe634c4105b398ed2895a2de585b48579b98d9",
             recorded_on=date(2026, 8, 7),
         ),
@@ -911,8 +915,12 @@ def pending_releases() -> tuple[PendingRelease, ...]:
         # nothing.
         #
         # The one difference a reader might expect and will not find is a cost or approval change.
-        # Every one of the four is far above EXCEPTION_RATE_CEILING_USD_PER_HOUR, so no request
-        # naming them could be classified more weakly by either version.
+        # This said all four are far above EXCEPTION_RATE_CEILING_USD_PER_HOUR so neither version
+        # could classify them more weakly, and that constant went with policy v5. The conclusion
+        # survives its reasoning: all four carry `capacity_block_backed: true`, which
+        # classify_request answers EXCEPTION for, and the deployed validator refuses the four
+        # names outright because it has never heard of them. Neither version releases one on a
+        # team lead's say-so.
         #
         # INSTANCE_TYPE_PATTERN WIDENED IN THE SAME CHANGE AND IT CANNOT STRAND A DEPLOYED ZIP.
         # It learned to accept a hyphen in the family, for p6-b200.48xlarge and p6-b300.48xlarge.
@@ -930,10 +938,17 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "p6-b200.48xlarge and p6-b300.48xlarge validate at all. All four profiles "
                 "are provisioned: false with no execution target, so both the deployed zip "
                 "and this tree refuse a submission naming one, and no submitter can meet the "
-                "difference. Widening a pattern accepts more and never less."
+                "difference. Widening a pattern accepts more and never less. Rebuilt on the "
+                "same day for the capacity_block_backed field on ComputeProfile and "
+                "RequestFacts, which is the change that makes classify_request answer "
+                "EXCEPTION for those four names. That is a real difference in what the "
+                "deployed zip would decide and it is still unreachable for the same reason: "
+                "the deployed validator has never heard of the four profiles and refuses them "
+                "as unregistered, and the release that gives any of them a queue packages this "
+                "field along with it."
             ),
             cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="6210ad3312b0425f3bafa98594249babe4372b9271026d07b9af01f73cf05b18",
+            builds_to="63546cd78f45c9a23ad7aad9236ccce86fd5c95c4bc192a166e704c013224621",
             released="df9952459e54ff0ebbce89660b5faf3b7a87bae47d2a0856c2553c9735d2740f",
             recorded_on=date(2026, 8, 7),
         ),
@@ -944,10 +959,13 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "tools/build_notifier_lambda.py, which names workload-catalog.yaml, and "
                 "through the contract the notifier imports. What it reads the catalog for is "
                 "describing a run in a message, and no run can name any of the four while "
-                "they are unprovisioned, so the window is bytes and no behaviour."
+                "they are unprovisioned, so the window is bytes and no behaviour. Rebuilt on "
+                "the same day for capacity_block_backed on ComputeProfile and RequestFacts. "
+                "_why_this_gate already carried the exception sentence and was already tested, "
+                "so nothing about what the deployed notifier prints for a reachable run moves."
             ),
             cleared_by="uv run python tools/release_lambda.py --function notifier",
-            builds_to="0b783f0649941e943edfe0afc7b26aa5dc572fdaa8df26cf7caa5ef67e9277cc",
+            builds_to="cd8bd50e7a78ad24225c0fa7ad45b9c8cb04ce045942ad8c51b809d8c1047cbc",
             released="b291227b4905c7ac9b89b78e3f8b3491ab8912d5768059a9d00d945927e8c53f",
             recorded_on=date(2026, 8, 7),
         ),
@@ -957,10 +975,12 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "Moved through the contract rather than through configuration: the recorder "
                 "imports contracts/workload.py, where INSTANCE_TYPE_PATTERN widened. It "
                 "writes result manifests and reads no compute profile, so nothing it does "
-                "differs across the release."
+                "differs across the release. Rebuilt on the same day for the "
+                "capacity_block_backed field added to ComputeProfile in that same module, "
+                "which the recorder reads no more than it read the pattern."
             ),
             cleared_by="uv run python tools/release_lambda.py --function recorder",
-            builds_to="ad74bee4860fd1830e34bfe221ec00e48984e325f00053270d82cee0c043d4da",
+            builds_to="49bbc1bc6588dabe9f6614dc25637d46784c96a6c6a64b2257944af5af929a68",
             released="11d4c78a8ddc2b22c8a43dd5224d00a3e038f86403a8ba2e50c8f88a6d92c8b1",
             recorded_on=date(2026, 8, 7),
         ),

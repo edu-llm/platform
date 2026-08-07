@@ -310,13 +310,27 @@ edullm check --json --compute <profile> --hours <hours-bought-minus-0.5> \
 **Submit before the window opens rather than on the day.** Batch accepts a job against a
 block that is not yet active and places it the moment the machines appear, so admission, the
 image resolution and the approval all happen on your own time instead of on paid time. The
-approval is the reason this matters, because approval is a person. A day on an eight-card
-shape prices well above the bound a run starts on its own at, so `approval_class` usually
-comes back `routine` and a team lead has to open the run page. **The block bills from the
-moment it starts whether or not anybody has approved anything**, so a submission left at a
-gate until an approver wakes up spends paid-for minutes at the full block rate to produce
-nothing. Read `approval_class` out of `edullm check --json` rather than assuming which way
-it lands.
+approval is the reason this matters, because approval is a person. **Every block-backed shape
+classifies as `exception` and needs a platform admin, whatever the run costs and however
+short it is** — the shape decides this and not the price, so shrinking the run does not move
+it, and the set of people who can release it is smaller than a team's leads. **The block
+bills from the moment it starts whether or not anybody has approved anything**, so a
+submission left at a gate until an approver wakes up spends paid-for minutes at the full
+block rate to produce nothing. Read `approval_class` out of `edullm check --json` rather than
+assuming which way it lands.
+
+**Three things about your own code usually have to change, and two of them need a commit and
+an image build.** The batch size and the parallel degrees have to be re-sized for a card with
+different memory and a different device count; the container gets materially less host memory
+than the instance advertises, so a buffer sized to the spec sheet will not place and the
+figure to size against is the one `edullm check --json` prints for the profile rather than
+anything AWS publishes about the machine; and the two Blackwell shapes need
+CUDA 12.8 and driver R570, which a repository pinning a `torch` or `flash-attn` wheel built
+for Hopper does not satisfy. The image is built from a commit, so any of that which touches
+your repository has to be merged and built **before** the start date.
+[Capacity blocks](https://github.com/edu-llm/platform/blob/main/guides/capacity-blocks.md)
+carries the per-shape figures and the order to do them in. `edullm check` catches none of
+this except `process_per_device`.
 
 **A job submitted outside the window sits in `RUNNABLE` and looks exactly like one that is
 merely queued.** This is the trap, and it is the part of this section worth remembering.

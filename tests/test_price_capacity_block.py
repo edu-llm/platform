@@ -28,6 +28,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TOOLS_DIRECTORY = PROJECT_ROOT / "tools"
@@ -242,7 +243,10 @@ def test_a_duplicated_instance_type_in_the_menu_is_refused(tmp_path: Path) -> No
         encoding="utf-8",
     )
 
-    with pytest.raises(Exception):
+    # The exception SafeUniqueKeyLoader raises rather than any exception, because a blind
+    # `Exception` here would also pass on a loader that read the file fine and then tripped over
+    # something else -- which is every way this could break while the duplicate went through.
+    with pytest.raises(yaml.constructor.ConstructorError, match="duplicate mapping key"):
         read_block_menu(document)
 
 

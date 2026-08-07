@@ -25,6 +25,10 @@ request:
   dataset_registered: true
   dataset_is_a_corpus: true
   compute_profile_registered: true
+  # False on all three, and on the third of the matrix it is the one fact that would
+  # change the answer: a block-backed profile classifies as an exception whatever the cost
+  # test says, so a true here turns released-by-nobody into released-by-an-admin.
+  capacity_block_backed: false
   immutable_revision: true
   immutable_image: true
   image_scan_reviewed: true

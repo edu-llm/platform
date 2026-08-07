@@ -340,6 +340,11 @@ def admit(
     # RE-DERIVED HERE AND NOT TAKEN FROM THE RUNNER, WHICH IS THE POINT OF THIS FUNCTION.
     # The rate that used to be passed beside the facts is gone with the ceiling that read
     # it, so the class is a function of the facts and the deployed thresholds alone.
+    #
+    # ``capacity_block_backed`` is one of those facts and is derived from the catalog inside
+    # AWS, so a submitter who edited a compile step's answer cannot demote a block-backed
+    # request to a team lead's gate. That is the same asymmetry the registration flags have and
+    # it matters more here, because the thing on the other side of it has already been paid for.
     approval_class = classify_request(facts, policy.thresholds)
     authorization = evaluate_authorization(
         submitter=submitter,

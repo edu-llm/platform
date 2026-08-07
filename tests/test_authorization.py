@@ -105,6 +105,7 @@ def request_facts_payload(**overrides: object) -> dict[str, object]:
         "dataset_registered": True,
         "dataset_is_a_corpus": True,
         "compute_profile_registered": True,
+        "capacity_block_backed": False,
         "immutable_revision": True,
         "immutable_image": True,
         "image_scan_reviewed": True,

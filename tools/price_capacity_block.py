@@ -36,7 +36,7 @@ import sys
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Final
+from typing import Final
 
 import yaml
 
@@ -195,17 +195,25 @@ def what_is_missing(block: Block, provisioned: dict[str, bool]) -> tuple[str, ..
     """
     if block.profile is None:
         return (
-            f"config/workload-catalog.yaml prices no profile for {block.instance_type}, so "
-            "one has to be added, with an accelerators.yaml row and a CONTAINER_SHAPES entry",
-            "the container memory ceiling has to be read off a host that has run this type; "
-            "asking for too much is refused as MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT",
+            (
+                f"config/workload-catalog.yaml prices no profile for {block.instance_type}, so "
+                "one has to be added, with an accelerators.yaml row and a CONTAINER_SHAPES entry"
+            ),
+            (
+                "the container memory ceiling has to be read off a host that has run this type; "
+                "asking for too much is refused as MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT"
+            ),
         )
     if not provisioned.get(block.profile, False):
         return (
-            f"{block.profile} is priced and carries provisioned: false, so edullm check "
-            "refuses it with unprovisioned_compute_profile until the block is deployed",
-            f"restore the {block.profile} row in config/execution-targets.yaml and flip "
-            "provisioned to true once the reservation exists",
+            (
+                f"{block.profile} is priced and carries provisioned: false, so edullm check "
+                "refuses it with unprovisioned_compute_profile until the block is deployed"
+            ),
+            (
+                f"restore the {block.profile} row in config/execution-targets.yaml and flip "
+                "provisioned to true once the reservation exists"
+            ),
         )
     return ()
 
@@ -249,10 +257,14 @@ def describe(
     """One block as the paragraph a buyer reads before committing to it."""
     total = block.rate * Decimal(days * 24)
     lines = [
-        f"  {block.instance_type}  {block.devices} x {block.device}, "
-        f"{block.device_memory_gb} GB",
-        f"    ${block.rate}/hour published, about ${total:.2f} for {days} day"
-        f"{'s' if days != 1 else ''} at that rate",
+        (
+            f"  {block.instance_type}  {block.devices} x {block.device}, "
+            f"{block.device_memory_gb} GB"
+        ),
+        (
+            f"    ${block.rate}/hour published, about ${total:.2f} for {days} day"
+            f"{'s' if days != 1 else ''} at that rate"
+        ),
     ]
     already = obtainable_today(block, placement)
     if already is not None:

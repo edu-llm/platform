@@ -137,9 +137,12 @@ Description: Fourteen GPU compute environments, their job queues and their diges
 # gpu-8xh100 MOVED FROM 192 TO 768, AND THE OLD NUMBER WAS A SPEND CONTROL WEARING A CAPACITY
 # SETTING'S CLOTHES. 192 is one p5.48xlarge and the P quota is four of them, so the ceiling
 # permitted a quarter of what the account can start. It is the wrong lever twice over. Spend
-# is decided at the approval gate, where a person reads the figure and anything above
-# EXCEPTION_RATE_CEILING_USD_PER_HOUR in src/edullm_platform/contracts/policy.py needs an
-# admin whatever the total, and both P shapes are above it. And a ceiling below the work
+# is decided at the approval gate, where a person reads the figure before anything starts.
+# This used to add that anything above EXCEPTION_RATE_CEILING_USD_PER_HOUR in
+# src/edullm_platform/contracts/policy.py needed an admin whatever the total and that both P
+# shapes were above it; policy v5 withdrew that ceiling, so the person reading the figure for
+# either of these is a team lead. It is still a person and it is still not this field. And a
+# ceiling below the work
 # refuses nothing at submission, because Batch parks the job in RUNNABLE under
 # MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE, which is a state a submitter cannot read
 # from outside and which the 1800 second cancel on each queue is the only thing that ends.
@@ -148,8 +151,9 @@ Description: Fourteen GPU compute environments, their job queues and their diges
 #
 # gpu-8xa100 MOVED FROM 96 TO 768 ON 2026-08-03, AND THAT IS THE PARAGRAPH ABOVE FINISHING
 # ITS SWEEP RATHER THAN A SECOND POSITION. Every clause of it was already true of this shape.
-# p4d.24xlarge is above EXCEPTION_RATE_CEILING_USD_PER_HOUR, so an admin reads the figure
-# before anything starts. A ceiling of one instance refused nothing at submission, because
+# A team lead reads the figure before anything starts -- this said an admin did, because
+# p4d.24xlarge was above EXCEPTION_RATE_CEILING_USD_PER_HOUR, and that constant is gone. A
+# ceiling of one instance refused nothing at submission, because
 # Batch parks the second job in RUNNABLE under
 # MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE, which the submitter cannot read and
 # which only the 1800 second cancel ends. 96 survived because that change was scoped to the
@@ -1693,9 +1697,14 @@ Resources:
         # -- exactly the divergence infra/batch-compute-gpu.yaml refuses to accept on the G
         # side. Three things make it acceptable here and not there. BEST_FIT_PROGRESSIVE
         # prefers the cheapest type that fits, so p4d is tried first and p4de is reached only
-        # on its failure. Both rates are above EXCEPTION_RATE_CEILING_USD_PER_HOUR, so the
-        # substitution cannot move a request into a weaker approval class the way a
-        # g5.xlarge-to-g5.2xlarge swap would. And the comparison the divergence spoils is
+        # on its failure. The substitution cannot move a request into a weaker approval class
+        # the way a g5.xlarge-to-g5.2xlarge swap would: this rested on both rates being above
+        # EXCEPTION_RATE_CEILING_USD_PER_HOUR, which no longer exists, and it now rests on the
+        # fact that the class is decided from the profile the submission named and the
+        # substitution happens inside Batch, where nothing reclassifies anything. Note that
+        # gpu-8xa100-80gb prices the same machine as an admin-gated block-backed shape; that
+        # is a different profile and this fallback does not put a request onto it. And the
+        # comparison the divergence spoils is
         # Phase 5's estimate against actual, which is a comparison between a run that
         # happened and a record; the status quo is no run at all.
         #
@@ -2015,12 +2024,14 @@ Resources:
   # one H100, single node. All three were being routed to gpu-1xl40s, which is 48 GB and fits
   # the P7 recipe with nothing to spare and does not fit a KV cache sized for an 80 GB card.
   #
-  # IT IS UNDER THE ADMIN CEILING AND gpu-8xh100 IS NOT, WHICH IS MOST OF WHY IT MATTERS.
-  # $6.88/hour is below EXCEPTION_RATE_CEILING_USD_PER_HOUR, so a single-H100 run is released
-  # by the submitter's own team lead. The only H100 on this platform until now was the
-  # $55.04/hour eight-card node, which needs an admin every time and bills eight devices to a
-  # job that uses one. A researcher who wanted one card was choosing between paying 8x and
-  # waiting for an admin, or taking a smaller card and changing their recipe.
+  # IT IS AN EIGHTH OF THE COST OF THE ONLY OTHER H100 HERE, WHICH IS MOST OF WHY IT MATTERS.
+  # This paragraph read "it is under the admin ceiling and gpu-8xh100 is not", because
+  # $6.88/hour was below EXCEPTION_RATE_CEILING_USD_PER_HOUR and $55.04 was above it. Policy v5
+  # withdrew that ceiling, so both are released by the submitter's own team lead and the
+  # distinction the heading drew no longer exists. What survives is the money: the only H100 on
+  # this platform until now was the $55.04/hour eight-card node, which bills eight devices to a
+  # job that uses one, so a researcher who wanted one card was choosing between paying 8x and
+  # taking a smaller card and changing their recipe.
   #
   # gpu-1xl40s STAYS. It is the cheaper card at $1.861 against $6.88, it draws on the G pool
   # rather than the P pool so it cannot be starved by an eight-card H100 job, and 48 GB is

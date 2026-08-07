@@ -41,6 +41,13 @@ import yaml
 from infrastructure_support import ACCOUNT_LITERAL, INFRA_ROOT
 from workflow_support import WORKFLOWS_ROOT, aws_commands, load_workflow
 
+from edullm_platform.config import load_yaml
+from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.stack_templates import (
+    CAPACITY_BLOCK_STACK_PREFIX,
+    CAPACITY_BLOCK_TEMPLATE,
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TOOL = PROJECT_ROOT / "tools" / "verify_deployed_stacks.py"
 
@@ -1238,6 +1245,36 @@ def test_every_committed_template_is_claimed_by_a_stack(module: Any) -> None:
     }
 
     assert templates == claimed
+
+
+def test_a_capacity_block_stack_is_declared_for_every_block_backed_shape(module: Any) -> None:
+    """The four rows against the four profiles, so a fifth block shape cannot arrive unnoticed.
+
+    ``infra/batch-capacity-block.yaml`` is pinned to one instance type, so a block on a shape with
+    no row here has nowhere to be declared -- which is what happened when there was a single
+    ``…-capacity-block`` row and a second concurrent block raised ``UnmappedTemplateError`` at
+    import. One row per ``capacity_block_backed`` profile is the whole set that can exist, and
+    tying the two together is what makes that a check rather than a convention.
+
+    Read off the catalog rather than listed here, so pricing a fifth block shape fails at this
+    line with the name of the row to add, before anybody searches for an offering on it.
+
+    Mutation: price a fifth block-backed profile and add no row. This fails naming it. Mutation:
+    rename one of the four stacks off the prefix. It falls out of `declared` and fails too.
+    """
+    catalog = load_yaml(PROJECT_ROOT / "config" / "workload-catalog.yaml", WorkloadCatalog)
+    block_backed = {
+        profile.name for profile in catalog.compute_profiles if profile.capacity_block_backed
+    }
+    declared = {
+        name.removeprefix(CAPACITY_BLOCK_STACK_PREFIX)
+        for name, stack in module.STACKS.items()
+        if stack.template == PROJECT_ROOT / CAPACITY_BLOCK_TEMPLATE
+        and name.startswith(CAPACITY_BLOCK_STACK_PREFIX)
+    }
+
+    assert block_backed, "no profile is block-backed, so this asserts nothing"
+    assert declared == block_backed
 
 
 def test_the_stack_names_are_the_ones_the_deploy_procedure_writes_down(module: Any) -> None:

@@ -37,6 +37,11 @@
           "title": "Accelerator",
           "type": "string"
         },
+        "capacity_block_backed": {
+          "default": false,
+          "title": "Capacity Block Backed",
+          "type": "boolean"
+        },
         "hourly_rate_usd": {
           "pattern": "^(?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)$",
           "title": "Hourly Rate Usd",

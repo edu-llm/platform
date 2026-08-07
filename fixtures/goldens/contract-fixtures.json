@@ -1,23 +1,23 @@
 {
   "fixtures": [
     {
-      "canonical_json_bytes": 622,
+      "canonical_json_bytes": 652,
       "contract": "AuthorizationScenario",
-      "digest": "sha256:9aebc09ec8548896997f7efdfa4921448012d66ef6610b2c7fb58536daddb288",
+      "digest": "sha256:98b4e270cd4c232d80b5e6cdf25be0e27b89165057b1ca64a7cb9ed973d25968",
       "fixture": "lead-self-authorization.yaml",
       "relative_path": "fixtures/authorization/lead-self-authorization.yaml"
     },
     {
-      "canonical_json_bytes": 676,
+      "canonical_json_bytes": 706,
       "contract": "AuthorizationScenario",
-      "digest": "sha256:49bae6480ac7ecad34c1b2020388312ae7adf94e314d05f90af8386c3c2e1bde",
+      "digest": "sha256:09f1bce5de5d800438559b03cf8c3ef15cd262fe876d11ab6d2b1a23025fc531",
       "fixture": "member-approval.yaml",
       "relative_path": "fixtures/authorization/member-approval.yaml"
     },
     {
-      "canonical_json_bytes": 625,
+      "canonical_json_bytes": 655,
       "contract": "AuthorizationScenario",
-      "digest": "sha256:e9823775aa68d6a9e934e8632f6e2a5f65c308c8f91c1dc2041d78f4bcc4f4c5",
+      "digest": "sha256:4cb041a23576a44483580086634e4fbcc804c3223b919c0c6b9cde738ec662ef",
       "fixture": "released-by-nobody.yaml",
       "relative_path": "fixtures/authorization/released-by-nobody.yaml"
     },
