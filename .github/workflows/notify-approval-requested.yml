@@ -1,0 +1,168 @@
+name: Ask the runs channel to release a submission
+
+# WHY THIS IS A FILE OF ITS OWN AND NOT SIX MORE LINES IN submit-run.yml, WHICH IS THE ONLY
+# DECISION IN HERE WORTH ARGUING ABOUT.
+#
+# The work is small: read the compiled submission, wrap it in the envelope the notifier
+# already knows how to render, put it on the notifier queue. The obvious home is a seventh
+# job in submit-run.yml, and that spelling was written first and then thrown away, because
+# of what a job in that file is.
+#
+# infra/iam/image-resolver-role.yaml states the problem in as many words: "A trust policy
+# cannot distinguish jobs within a workflow. `compile`, `deny-unapproved` and the resolve job
+# that will use this role all present the same job_workflow_ref and the same sub, so this
+# role is assumable by any of them and by any job added to that file later." Both the
+# admission role and the image resolver pin job_workflow_ref to
+# submit-run.yml@refs/heads/main. A seventh job holding `id-token: write` would therefore be
+# a seventh principal under both of those trust policies, and the new role this job needs
+# would in turn be assumable by `resolve` and by `deny-unapproved`.
+#
+# Neither of those widenings is catastrophic on its own -- the admission role additionally
+# requires an environment-scoped subject, which a job declaring no `environment:` cannot
+# present, and that is exactly what the deny-unapproved probe proves on every dispatch. But
+# submit-run.yml is also the file whose shell steps decide which gate a submission faces and
+# write down the approver login admission evaluates authorization against, so it is the last
+# file in this repository that should be accumulating credentials it does not need.
+#
+# A job that comes from a reusable workflow presents the *called* file as its
+# job_workflow_ref, which GitHub documents at
+# actions/how-tos/secure-your-work/security-harden-deployments/oidc-with-reusable-workflows:
+# "the token will include the standard claims that contain information about the calling
+# workflow, and will also include a custom claim called job_workflow_ref that contains
+# information about the called workflow." So moving the body here closes the widening in both
+# directions at once, and each direction is a separate condition failing rather than one:
+#
+#   * this job cannot assume the admission role or the image resolver, because its
+#     job_workflow_ref is this file and both pin submit-run.yml with StringEquals -- and for
+#     admission, additionally, because it declares no environment;
+#   * `resolve` and `deny-unapproved` cannot assume the publisher role below, because their
+#     job_workflow_ref is submit-run.yml and it pins this file.
+#
+# WHAT THE ARRANGEMENT COSTS, STATED RATHER THAN LEFT TO BE FOUND. This file is now callable
+# from any workflow in this repository, and a caller added anywhere would be able to put an
+# envelope on the notifier queue -- which is to say, post an arbitrary message into
+# #edullm-runs. That is the widening this shape buys with, and it is smaller than the one it
+# avoids: the worst it achieves is a Slack line, where the file it was moved out of is the
+# file that reaches admission. It is held to one caller by
+# tests/test_notify_approval_workflow.py rather than by review habit, and renaming this file
+# revokes the role, which is the same failure mode infra/README.md describes for every trust
+# pin here.
+#
+# NO INPUTS, AND THAT IS LOAD-BEARING RATHER THAN TIDY. Everything the message says comes out
+# of the compiled-submission artifact the compile job already uploaded, and everything else
+# comes off the `github` context of the caller. An input would be a value a caller chooses,
+# and the point of reading the artifact is that the message cannot say anything the document
+# the approver context was rendered from does not say.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    name: Put the approval request on the notifier queue
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # NO `environment:`, DELIBERATELY, AND THE ABSENCE IS A CONTROL RATHER THAN AN OMISSION.
+    # GitHub mints a ref-scoped subject for a job that declares none, and the admission role
+    # enumerates only the two environment-scoped subjects in its sub condition. So even if
+    # this file were somehow accepted under admission's job_workflow_ref pin, the subject
+    # would still be refused -- which is the property tests/test_phase2_submit_run_workflow.py
+    # already exercises for real against STS on every dispatch, in the deny-unapproved job.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the platform
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # The caller's commit, which for a dispatch of submit-run.yml is the commit the
+          # compile job ran from. The envelope must be built by the same tree that compiled
+          # the document it describes.
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install the platform tooling
+        env:
+          UV_VERSION: "0.11.32"
+        run: |
+          set -euo pipefail
+          pipx install "uv==${UV_VERSION}"
+          installed="$(uv --version)"
+          if [[ "${installed}" != "uv ${UV_VERSION}" && "${installed}" != "uv ${UV_VERSION} "* ]]; then
+            echo "unexpected_uv_version" >&2
+            echo "Expected uv ${UV_VERSION} but PATH answers with: ${installed}" >&2
+            exit 1
+          fi
+          uv sync --locked
+
+      # The same artifact the submit job downloads on the far side of the gate, and the same
+      # bytes: one upload, two readers. A second render from the dispatch inputs would be a
+      # second chance to disagree with what the approver was shown.
+      - name: Download the compiled submission
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: compiled-submission
+          path: ${{ runner.temp }}/compiled-submission
+
+      - name: Configure AWS credentials
+        id: credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_NOTIFIER_PUBLISHER_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          # One SendMessage. The role's ceiling is an hour and this has no use for one.
+          role-duration-seconds: 900
+          role-session-name: approval-request-publisher
+          mask-aws-account-id: true
+
+      - name: Assemble the approval request
+        env:
+          ACCOUNT_ID: ${{ steps.credentials.outputs.aws-account-id }}
+          PUBLISH_REGION: ${{ vars.AWS_REGION }}
+          SERVER_URL: ${{ github.server_url }}
+          PLATFORM_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python tools/build_approval_envelope.py \
+            --submission "${RUNNER_TEMP}/compiled-submission/compiled-submission.json" \
+            --output "${RUNNER_TEMP}/approval-request.json" \
+            --account "${ACCOUNT_ID}" \
+            --region "${PUBLISH_REGION}" \
+            --server-url "${SERVER_URL}" \
+            --repository "${PLATFORM_REPOSITORY}" \
+            --workflow-run-id "${WORKFLOW_RUN_ID}" \
+            --workflow-run-attempt "${WORKFLOW_RUN_ATTEMPT}"
+
+      # THE QUEUE URL IS DERIVED RATHER THAN GRANTED, WHICH SAVES AN ACTION ON THE ROLE.
+      # sqs:GetQueueUrl would be the obvious way to turn a name into a URL and it is a second
+      # verb on a role whose whole argument is that it holds one. The URL of a queue is
+      # https://sqs.<region>.amazonaws.com/<account>/<name> and every part of that is already
+      # in hand: the region is a repository variable, the account comes off the credentials
+      # step, and the name is the queue infra/notifications.yaml declares.
+      # tests/test_notify_approval_workflow.py holds that name against that template, because
+      # nothing else connects the two and a renamed queue would otherwise be a message that
+      # goes nowhere and reports success.
+      - name: Put it on the notifier queue
+        env:
+          ACCOUNT_ID: ${{ steps.credentials.outputs.aws-account-id }}
+          PUBLISH_REGION: ${{ vars.AWS_REGION }}
+          QUEUE_NAME: sbsandbox-intern-edullm-notifier
+        run: |
+          set -euo pipefail
+          queue_url="https://sqs.${PUBLISH_REGION}.amazonaws.com/${ACCOUNT_ID}/${QUEUE_NAME}"
+          # --message-body reads the file rather than interpolating it, so nothing a
+          # submitter typed is ever part of this script.
+          aws sqs send-message \
+            --queue-url "${queue_url}" \
+            --message-body "file://${RUNNER_TEMP}/approval-request.json" \
+            --region "${PUBLISH_REGION}" \
+            --output text \
+            --query MD5OfMessageBody > "${RUNNER_TEMP}/queued.txt"
+          # The digest the queue answered with, which is the whole of the confirmation
+          # available here. Delivery is the notifier and Slack, and a failure past this point
+          # lands in the dead-letter queue with an alarm on it rather than in this log.
+          echo "The runs channel has been asked to release this submission. Queue accepted the body as $(cat "${RUNNER_TEMP}/queued.txt")."
