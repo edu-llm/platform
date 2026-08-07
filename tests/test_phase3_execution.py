@@ -73,6 +73,7 @@ from edullm_platform.execution import (
     resolve_execution_target,
 )
 from edullm_platform.phase3_evidence import BATCH_TIMEOUT_STATUS_REASON
+from edullm_platform.stack_templates import STACK_TEMPLATES
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = PROJECT_ROOT / "config"
@@ -85,6 +86,17 @@ COMPUTE_TEMPLATE_PATHS = (
     INFRA_ROOT / "batch-compute.yaml",
     INFRA_ROOT / "batch-compute-gpu.yaml",
     INFRA_ROOT / "batch-compute-gpu-shapes.yaml",
+)
+
+#: The same three plus the block template, and this is a separate tuple rather than a fourth
+#: entry above on purpose. ``COMPUTE_TEMPLATE_PATHS`` is read for compute environments as well as
+#: definitions, and the block environment deliberately has no ``ComputeEnvironmentName`` -- it
+#: cannot have one, because BEST_FIT makes every edit a replacement and CloudFormation cannot
+#: replace a resource whose physical name is fixed. Widening the tuple above therefore breaks
+#: assertions about the permanent estate that are right as they stand.
+JOB_DEFINITION_TEMPLATE_PATHS = (
+    *COMPUTE_TEMPLATE_PATHS,
+    INFRA_ROOT / "batch-capacity-block.yaml",
 )
 STATE_MACHINE_TEMPLATE_PATH = INFRA_ROOT / "admission-state-machine.yaml"
 
@@ -122,6 +134,12 @@ PROMOTED_PROFILES = (
     "gpu-4xl40s",
     "gpu-8xl40s",
     "gpu-8xa100",
+    # Promoted before its queue exists, which no other entry here is. The queue and definition
+    # this profile's row names are created per purchase by infra/batch-capacity-block.yaml, so
+    # between this promotion and a block being bought the account has no gpu-8xb200 queue at
+    # all. That is deliberate: promoting a profile is a Lambda release, and paying for one out
+    # of a window that is already running costs more than a submission that fails at Batch.
+    "gpu-8xb200",
 )
 #: The profile the refusal tests below ask for. It has to be a profile the catalog prices and
 #: does not provision, and it moved from gpu-4xa10g to gpu-1xl40s and now to here as each of
@@ -1237,6 +1255,113 @@ def registration_for(
     )
 
 
+#: The template whose job definition name is a substitution rather than a literal.
+CAPACITY_BLOCK_TEMPLATE = "infra/batch-capacity-block.yaml"
+
+
+def block_stack_names() -> set[str]:
+    """Every stack name ``infra/batch-capacity-block.yaml`` is deployed under.
+
+    Read from the register rather than assembled from a prefix and the block-backed profiles,
+    because that register is what the audit reconciles the account against -- so a stack this
+    resolves a name for is a stack something else already expects to exist.
+    """
+    return {stack for stack, template in STACK_TEMPLATES if template == CAPACITY_BLOCK_TEMPLATE}
+
+
+def definition_names(declared: Any) -> set[str]:
+    """Every name a ``JobDefinitionName`` can deploy under, as one set.
+
+    The permanent stacks write the name out and the set has one member.
+    ``infra/batch-capacity-block.yaml`` cannot write one: it is deployed once per block-backed
+    profile, under a stack name carrying the profile, so a literal would collide on the second
+    purchase. It names itself ``${AWS::StackName}-run`` instead, which is four names -- one per
+    block-backed shape -- and any of them is a real deployed definition.
+
+    The stack names come from ``src/edullm_platform/stack_templates.py``, which is the register
+    the deploy workflow builds the stack name from, so this resolves the substitution the same way
+    the deploy will rather than by pattern-matching a string this file invented.
+    """
+    if isinstance(declared, str):
+        return {declared}
+    body = declared["Fn::Sub"]
+    resolved = {
+        body.replace("${AWS::StackName}", stack)
+        for stack in block_stack_names()
+        if "${" not in body.replace("${AWS::StackName}", stack)
+    }
+    assert resolved, f"job definition name {body!r} resolves against no stack this template has"
+    return resolved
+
+
+def resolve_intrinsics(node: Any, *, name: str) -> Any:
+    """A deployed definition with its substitutions evaluated, so it can be compared as a value.
+
+    The permanent stacks carry no intrinsics inside a job definition worth resolving -- their
+    names, images and resource figures are literals, so this returns them unchanged. The block
+    template carries them everywhere, because one file is deployed under four stack names and its
+    four resource figures arrive as parameters filled from ``CONTAINER_SHAPES``.
+
+    Resolving is what lets the comparison below stay a comparison of two definitions rather than
+    of one definition and a template. The alternative -- special-casing the block shapes out of
+    the seam -- would exempt the only definition on this platform that is deployed under a name
+    nobody typed, which is the one most likely to be wrong.
+    """
+    stack = name.removesuffix("-run")
+    profile = stack.removeprefix(f"{SANDBOX_RESOURCE_PREFIX}capacity-block-")
+    shape = CONTAINER_SHAPES.get(profile)
+    # Ref keeps the value's type, because SharedMemorySize is an integer in the siblings and a
+    # string here would be a difference in the comparison rather than in the account.
+    # The region comes off the profile's own row rather than a literal, because that row is what
+    # the registered definition's log configuration is built from -- so if the two ever disagree
+    # the comparison should fail rather than be made to agree by a constant in this file.
+    region = target(profile).region if shape is not None else "us-east-1"
+    references: dict[str, Any] = {"AWS::Region": region, "AWS::StackName": stack}
+    substitutions = {
+        "AWS::StackName": stack,
+        "AWS::AccountId": ACCOUNT_ID,
+        "AWS::Region": region,
+        "AWS::Partition": "aws",
+    }
+    if shape is not None:
+        references["SharedMemoryMiB"] = shape.shared_memory_mib
+        substitutions |= {
+            "ContainerVcpus": str(shape.vcpus),
+            "ContainerMemoryMiB": str(shape.memory_mib),
+            "GpuCount": str(shape.gpus),
+            "SharedMemoryMiB": str(shape.shared_memory_mib),
+        }
+
+    def walk(current: Any) -> Any:
+        if isinstance(current, dict):
+            if set(current) == {"Ref"}:
+                return references[current["Ref"]]
+            if set(current) == {"Fn::Sub"}:
+                body = current["Fn::Sub"]
+                if isinstance(body, list):
+                    text, variables = body
+                    for variable, value in variables.items():
+                        text = text.replace("${" + variable + "}", str(walk(value)))
+                else:
+                    text = body
+                for variable, value in substitutions.items():
+                    text = text.replace("${" + variable + "}", value)
+                assert "${" not in text, f"{body!r} keeps an unresolved substitution"
+                return text
+            if set(current) == {"Fn::Select"}:
+                index, values = current["Fn::Select"]
+                return walk(values)[int(index)]
+            if set(current) == {"Fn::Split"}:
+                delimiter, value = current["Fn::Split"]
+                return walk(value).split(delimiter)
+            return {key: walk(value) for key, value in current.items()}
+        if isinstance(current, list):
+            return [walk(value) for value in current]
+        return current
+
+    return walk(node)
+
+
 def deployed_job_definition(name: str) -> dict[str, Any]:
     """The job definition the compute templates register under this name.
 
@@ -1247,14 +1372,14 @@ def deployed_job_definition(name: str) -> dict[str, Any]:
     """
     matching = [
         resource["Properties"]
-        for path in COMPUTE_TEMPLATE_PATHS
+        for path in JOB_DEFINITION_TEMPLATE_PATHS
         for resource in load_template(path)["Resources"].values()
         if isinstance(resource, dict)
         and resource.get("Type") == "AWS::Batch::JobDefinition"
-        and resource["Properties"]["JobDefinitionName"] == name
+        and name in definition_names(resource["Properties"]["JobDefinitionName"])
     ]
     assert len(matching) == 1, f"expected exactly one deployed job definition named {name}"
-    return matching[0]
+    return resolve_intrinsics(matching[0], name=name)
 
 
 def deployed_container_properties(resolved: ExecutionTarget) -> dict[str, Any]:
