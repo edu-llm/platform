@@ -84,6 +84,7 @@ from pydantic import ValidationError
 from edullm_platform.cli.actions import (
     CANCEL_WORKFLOW,
     EDULLM_VERSION_FIELD,
+    LOG_HEADINGS,
     PLATFORM_REPOSITORY,
     PRINTED_RUN_ID,
     REGISTER_WORKFLOW,
@@ -454,9 +455,9 @@ WHAT_A_VERB_DOES: Final = {
         "asked about, unless --ask-aws says to."
     ),
     "logs": (
-        "The last lines one run printed, read out of the report "
-        f"{CANCEL_WORKFLOW} writes when asked to look at a run rather than stop it. A run "
-        "it cannot find is refused rather than asked about, unless --ask-aws says to."
+        "The last lines one run printed, or the first with --from-start, read out of the "
+        f"report {CANCEL_WORKFLOW} writes when asked to look at a run rather than stop it. "
+        "A run it cannot find is refused rather than asked about, unless --ask-aws says to."
     ),
     "cancel": (
         "Stops one admitted run, with the reason you give. The run's history then records "
@@ -720,6 +721,25 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
 
     logs = verb_parser("logs", WHAT_A_VERB_DOES["logs"])
     logs.add_argument("run_id", help="the run to read")
+    # THE END OF A LOG IS THE RIGHT DEFAULT AND IT WAS THE ONLY THING REACHABLE, WHICH IS A
+    # DIFFERENT PROBLEM FROM WHICH END IS RIGHT. Most failures are read from the end, so the
+    # tail stays the default and this is a flag rather than a choice somebody has to make
+    # every time. What it fixes is that everything a run printed on the way up -- the corpus
+    # it resolved, the tokenizer it built, the checkpoint it loaded, the step it resumed from
+    # -- is written before the first batch and is therefore hundreds of megabytes above the
+    # end, and no route from a laptop reached it. `resumed_from_step` was added to
+    # OLMo-core's own summary specifically so that one of those lines would arrive somewhere
+    # this verb could see; that is a change to a research repository made to work around a
+    # missing flag here.
+    logs.add_argument(
+        "--from-start",
+        action="store_true",
+        help=(
+            "read from the beginning of the stream rather than the end. What a run prints "
+            "while it starts -- the corpus, the tokenizer, the checkpoint it resumed from -- "
+            "is up there, and a refusal in any of them is above every line the tail holds."
+        ),
+    )
     _add_ask_aws(logs)
 
     cancel = verb_parser("cancel", WHAT_A_VERB_DOES["cancel"])
@@ -3845,12 +3865,18 @@ def _logs(
         print(file=out)
         print(_because(facts), end="", file=out)
         return EXIT_OK
+    # The heading follows the end of the stream that was asked for, because the workflow
+    # writes one block or the other and a verb that asked for the head must not print a
+    # section headed "the last lines". Both spellings live in ``LOG_HEADINGS`` beside the
+    # workflow input that selects them, so ``tests/test_cancel_run_workflow.py`` can hold
+    # the two files to one answer the way it already does for the queue names.
     return _drive_the_run_report(
         actions,
         run_id=facts.run_id,
         stop=False,
         reason=None,
-        headings=("The last lines this run printed",),
+        from_start=arguments.from_start,
+        headings=(LOG_HEADINGS[arguments.from_start],),
         because=facts.because,
         out=out,
         err=err,
@@ -4290,6 +4316,7 @@ def _drive_the_run_report(
     stop: bool,
     reason: str | None,
     headings: Sequence[str],
+    from_start: bool = False,
     because: str | None = None,
     out: TextIO,
     err: TextIO,
@@ -4315,6 +4342,11 @@ def _drive_the_run_report(
     than typed, because a number typed into a sentence is the copy nobody edits.
     """
     fields = {"run_id": run_id, "stop": "true" if stop else "false"}
+    # Sent only when it is asked for. ``status`` and ``cancel`` read the description rather
+    # than the log block, so handing them a field about which end of a stream to read would
+    # be two verbs declaring an opinion about an answer they do not print.
+    if from_start:
+        fields["from_start"] = "true"
     if reason is not None:
         fields["reason"] = reason
     dispatched_at = datetime.now(UTC)

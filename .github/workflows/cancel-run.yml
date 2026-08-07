@@ -60,6 +60,27 @@ on:
         required: false
         default: false
         type: boolean
+      # WHICH END OF THE LOG, BECAUSE ONE OF THEM WAS UNREACHABLE AND IT IS THE ONE THAT
+      # SAYS WHY A RUN NEVER STARTED PROPERLY.
+      #
+      # The tail is the right default and stays it: most failures are read from the end, and
+      # the block below says why fifty lines is the window. What the tail cannot reach is
+      # everything a run prints on the way up -- the corpus it resolved, the dtype and the
+      # tokenizer it built, the checkpoint it loaded and the step it resumed from -- all of
+      # which are written before the first batch and are therefore hundreds of megabytes
+      # above the end of a training log. A run refused at any of them exits in seconds and
+      # its whole story is in the first fifty lines; a run that trained for twelve hours has
+      # that story buried, and until this input there was no route to it that did not need
+      # an AWS credential, which is what nobody asking has.
+      #
+      # It is not a line count and deliberately not one. Fifty from either end is a window
+      # somebody can read; a number on the form is a way to ask for a step summary that is
+      # truncated by GitHub rather than by this.
+      from_start:
+        description: "Tick to read the first lines the container printed rather than the last. What a run prints while it starts — the corpus, the tokenizer, the checkpoint it resumed from — is up there."
+        required: false
+        default: false
+        type: boolean
       reason:
         description: "Why you are stopping it. Required only when stopping — it is recorded on the termination, so the run's history says what happened rather than just that it ended."
         required: false
@@ -604,6 +625,11 @@ jobs:
       # it is deliberately not enough to bury the reader -- somebody who needs more now knows
       # the group and the stream and can be given credentials for one read.
       #
+      # FIFTY FROM WHICHEVER END WAS ASKED FOR, WHICH IS THE HALF THAT WAS MISSING. The tail
+      # is still the default; `from_start` reads the same window off the other end. Both are
+      # one GetLogEvents call and neither needs a new grant -- `startFromHead` is a parameter
+      # on the call this role already makes.
+      #
       # WHAT THIS CHANGES ABOUT WHO CAN READ A RUN'S OUTPUT, STATED RATHER THAN LEFT TO BE
       # DISCOVERED. A step summary is visible to everybody who can see this repository's
       # workflow runs, so a container's own output now reaches them, where before it needed
@@ -614,11 +640,12 @@ jobs:
       #
       # Not gated on `stop`, for the reason the report above is not: the question people
       # arrive with is what their run did, and answering it must not require ending the run.
-      - name: Show the last fifty lines the container printed
+      - name: Show fifty lines the container printed
         if: steps.find.outputs.not_running != 'true'
         env:
           LOG_GROUP: ${{ steps.describe.outputs.log_group }}
           LOG_STREAM: ${{ steps.describe.outputs.log_stream }}
+          FROM_START: ${{ inputs.from_start }}
         run: |
           set -euo pipefail
           # A queued job has no stream yet and a queue outside the configuration resolves to
@@ -636,13 +663,20 @@ jobs:
           # events when it is false, which is its default, and the events come back oldest
           # first inside that window either way -- so the block below reads in the order the
           # container printed and holds the last fifty lines rather than the first fifty.
+          # --start-from-head is that same call reading the other end, which is the whole of
+          # what `from_start` selects. Events arrive oldest first there too, so nothing below
+          # has to know which end was asked for beyond the sentence it writes about it.
+          from_head="--no-start-from-head"
+          if [[ "${FROM_START}" == "true" ]]; then
+            from_head="--start-from-head"
+          fi
           events="${RUNNER_TEMP}/log-tail.json"
           read_status=0
           aws logs get-log-events \
             --log-group-name "${LOG_GROUP}" \
             --log-stream-name "${LOG_STREAM}" \
             --limit 50 \
-            --no-start-from-head \
+            "${from_head}" \
             --output json > "${events}" 2> "${RUNNER_TEMP}/log-tail-error.txt" || read_status=$?
           if [[ "${read_status}" -ne 0 ]]; then
             # Never a failed dispatch. The report above is already written and is worth
@@ -657,8 +691,18 @@ jobs:
           import json
           import os
 
+          from edullm_platform.cli.actions import LOG_HEADINGS
+          from edullm_platform.tokenizers import THE_CONTAINERS_REFUSAL
+
+          from_start = os.environ["FROM_START"] == "true"
           events = json.load(open(os.environ["RUNNER_TEMP"] + "/log-tail.json")).get("events", [])
-          print("### The last lines this run printed")
+
+          # THE HEADING IS IMPORTED RATHER THAN TYPED, BECAUSE `edullm logs` FINDS THIS BLOCK
+          # BY IT. Two spellings of one word in two files is the drift this repository holds
+          # the queue names against, and here the failure is silent in the worst way: the
+          # verb reports that the workflow "named no section this verb reads" and the answer
+          # it came for is sitting in the step summary.
+          print(f"### {LOG_HEADINGS[from_start]}")
           print()
           if not events:
               print(
@@ -667,18 +711,53 @@ jobs:
                   "somewhere other than stdout."
               )
           else:
-              print(f"{len(events)} line(s), oldest first. This is the end of the stream.")
+              where = "the start" if from_start else "the end"
+              print(f"{len(events)} line(s), oldest first. This is {where} of the stream.")
               print()
               print("```")
               for event in events:
                   print(str(event.get("message", "")).rstrip("\n"))
               print("```")
               print()
-              print(
-                  "Read upward from the end rather than only at it. A failure whose last "
-                  "lines are a torch distributed error is usually a credential or a "
-                  "configuration refused much earlier, and the line that says so is above."
-              )
+              if from_start:
+                  print(
+                      "This is what the run printed on the way up: the corpus it resolved, "
+                      "the tokenizer it built, and the checkpoint it loaded if it resumed. A "
+                      "run refused at any of those never reached a first batch, so nothing "
+                      "the tail holds explains it."
+                  )
+              else:
+                  print(
+                      "Read upward from the end rather than only at it. A failure whose last "
+                      "lines are a torch distributed error is usually a credential or a "
+                      "configuration refused much earlier, and the line that says so is "
+                      "above. `edullm logs <run> --from-start` reads the other end."
+                  )
+
+              # THE ONE EXIT CODE THIS PLATFORM CAN READ, AND IT IS READ OFF THE CONTAINER'S
+              # OWN WORDS RATHER THAN OFF THE NUMBER. The table above says, correctly, that
+              # an exit code is whatever the container returned and is not a stage of this
+              # platform -- six of the sixty-seven failures in the retained window carry
+              # researcher-invented codes in the same range. None of that is disturbed here.
+              # What is matched is the sentence the training image prints when it is handed a
+              # corpus whose tokenizer it has no configuration for, which is unambiguous, and
+              # which cost a real GPU allocation on run_019fdd88-3ac4 because nothing joined
+              # the two for the person reading.
+              #
+              # THE STRING IS IMPORTED FROM THE MAP THAT DECIDES IT. A copy typed here would
+              # be a second spelling of another repository's behaviour, which is the exact
+              # thing `edullm_platform.tokenizers` exists to keep to one.
+              if any(THE_CONTAINERS_REFUSAL in str(event.get("message", "")) for event in events):
+                  print()
+                  print(
+                      f"> **This run was refused by the image, not by the platform.** "
+                      f"`{THE_CONTAINERS_REFUSAL}` above means the training image has no "
+                      "configuration for the tokenizer this corpus was built with, so the "
+                      "GPU was allocated and nothing trained. It is not a bug in the "
+                      "program you ran and re-running it changes nothing. `edullm data` says "
+                      "which corpora the published image can actually train, and names the "
+                      "tokenizer each one needs."
+                  )
           PY
 
       # THE CHECK. Two ways to be allowed and no third: it is your run, or you are an

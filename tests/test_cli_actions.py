@@ -30,6 +30,7 @@ from edullm_platform.cli.actions import (
     PRINTED_RUN_ID,
     SUBMIT_WORKFLOW,
     PlatformActions,
+    _step_and_line,
     elapsed_said,
     read_report_sections,
     report_ceiling_seconds,
@@ -276,6 +277,103 @@ def test_the_last_section_of_a_report_ends_where_the_step_that_wrote_it_ends() -
     assert tailed == (
         "### The last lines this run printed\n9 line(s), oldest first\nstep 200 loss 5.9"
     )
+
+
+#: One block of ``cancel-run.yml``'s log tail as it actually arrives, which is the fixture
+#: every other one here was missing: a container line with tabs of its own.
+#:
+#: The two shapes below are both real and both from ``run_019fdde1-1ba9``. The container's
+#: bash writes ``phase2 exit=137`` with no tab in it; the trainer writes
+#: ``time\thost:rank\tmodule:line\tLEVEL\tmessage``, which is five fields and four tabs, and
+#: is the format every OLMo-core run logs in from the moment it says anything.
+LOG_WITH_A_CONTAINER_LINE_CARRYING_TABS = (
+    "cancel\tShow fifty\t2099-01-01T00:00:00.0000000Z ### The last lines this run printed\n"
+    "cancel\tShow fifty\t2099-01-01T00:00:01.0000000Z 3 line(s), oldest first\n"
+    "cancel\tShow fifty\t2099-01-01T00:00:02.0000000Z ```\n"
+    "cancel\tShow fifty\t2099-01-01T00:00:03.0000000Z phase2 exit=137\n"
+    "cancel\tShow fifty\t2099-01-01T00:00:04.0000000Z "
+    "2026-08-07 20:29:09.986\tip-10-20-55-74:0\tolmo_core.train.trainer:935\tINFO\t"
+    "Loading checkpoint from 's3://bucket/step20'...\n"
+    "cancel\tShow fifty\t2099-01-01T00:00:05.0000000Z "
+    "2026-08-07 20:29:52.030\tip-10-20-55-74:0\tolmo_core.train.trainer:412\tINFO\t"
+    "Will resume training from step 20, epoch 1\n"
+    "cancel\tShow fifty\t2099-01-01T00:00:06.0000000Z ```\n"
+    "cancel\tPost Check out the platform\t2099-01-01T00:00:07.0000000Z Post job cleanup.\n"
+)
+
+
+def test_a_log_line_with_tabs_of_its_own_is_not_read_as_the_end_of_the_section() -> None:
+    """**THE TRUNCATION THAT MADE EVERY TRAINING LOG UNREADABLE.** Mutation: take the step
+    from ``split("\\t")[-2]`` and the message from ``[-1]``, which is what shipped.
+
+    ``gh run view --log`` puts two fields in front of every line, so the step is the second
+    from the left and the message is everything after it. Counting from the right instead is
+    the same answer only while the message contains no tab -- and OLMo-core logs
+    ``time\\thost:rank\\tmodule:line\\tLEVEL\\tmessage``, so the step was read as ``INFO`` from
+    the trainer's first line onwards. A step that differs from the one that wrote the heading
+    ends the section, so the block stopped there.
+
+    What a researcher saw was the count, the opening fence, whatever the container's bash had
+    printed, and then nothing: the fence was never closed and the tail was never reached.
+    Measured on ``run_019fdde1-1ba9`` on 2026-08-07 -- announced twenty-nine lines, printed
+    five -- and it reproduces on every run that has ever trained, because the format is the
+    logger's rather than the run's.
+
+    The closed fence is asserted as well as the content. It is the visible half: a reader who
+    sees an unclosed code block knows something was dropped, and a reader who sees a closed
+    one containing five lines under a heading claiming twenty-nine does not.
+    """
+    tailed = read_report_sections(
+        LOG_WITH_A_CONTAINER_LINE_CARRYING_TABS, ("The last lines this run printed",)
+    )
+
+    assert tailed.splitlines() == [
+        "### The last lines this run printed",
+        "3 line(s), oldest first",
+        "```",
+        "phase2 exit=137",
+        (
+            "2026-08-07 20:29:09.986\tip-10-20-55-74:0\tolmo_core.train.trainer:935\t"
+            "INFO\tLoading checkpoint from 's3://bucket/step20'..."
+        ),
+        (
+            "2026-08-07 20:29:52.030\tip-10-20-55-74:0\tolmo_core.train.trainer:412\t"
+            "INFO\tWill resume training from step 20, epoch 1"
+        ),
+        "```",
+    ]
+    assert "Post job cleanup" not in tailed
+
+
+def test_the_container_keeps_the_columns_it_printed_and_loses_only_the_runners() -> None:
+    """Mutation: go on stripping to the last tab, which drops the container's own prefix.
+
+    Only ``gh``'s two columns and its timestamp are the runner's. A container that prefixes
+    its own lines with a time, a host and a rank is printing those, and they are how somebody
+    reading a distributed log tells which process said what -- so a stripper that took
+    everything up to the final tab would answer "which rank" with nothing on every line.
+    """
+    _, line = _step_and_line(
+        "cancel\tShow fifty\t2099-01-01T00:00:04.0000000Z "
+        "2026-08-07 20:29:09.986\tip-10-20-55-74:0\tolmo_core.train.trainer:935\tINFO\tstarting"
+    )
+
+    assert line == (
+        "2026-08-07 20:29:09.986\tip-10-20-55-74:0\tolmo_core.train.trainer:935\tINFO\tstarting"
+    )
+
+
+def test_a_log_that_arrives_with_no_columns_at_all_reads_as_one_step() -> None:
+    """Mutation: treat one tab as a prefix, or read an unprefixed line as a step boundary.
+
+    A ``gh`` that stopped adding the columns, and a fixture written without them, both arrive
+    here. Reading either as a step boundary on every line would end every section at its
+    heading; reading a single tab as a prefix would make a message's own first tab a column
+    again, which is the defect above by a shorter road.
+    """
+    assert _step_and_line("## run_0198") == (None, "## run_0198")
+    assert _step_and_line("2099-01-01T00:00:00.0000000Z ## run_0198") == (None, "## run_0198")
+    assert _step_and_line("loss\t5.9") == (None, "loss\t5.9")
 
 
 def test_a_section_the_runner_interrupted_is_not_cut_short_by_its_own_grouping() -> None:
