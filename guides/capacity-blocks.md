@@ -14,17 +14,17 @@ That one property is what shapes everything below. Every step in this guide exis
 
 Capacity blocks cover the P and Trainium families. These are the ones sold in `us-east-1`, which is where every queue on this platform lives.
 
-| Block | Cards | GPU memory | Published rate | About a day | Profile |
-| --- | --- | --- | --- | --- | --- |
-| `p5.4xlarge` | 1 × H100 | 80 GB | $5.191/hr | ~$125 | `gpu-1xh100` |
-| `p4d.24xlarge` | 8 × A100 40GB | 320 GB | $11.80/hr | ~$283 | `gpu-8xa100` |
-| `p4de.24xlarge` | 8 × A100 80GB | 640 GB | $17.712/hr | ~$425 | `gpu-8xa100-80gb` |
-| `p5.48xlarge` | 8 × H100 | 640 GB | $41.528/hr | ~$997 | `gpu-8xh100` |
-| `p5en.48xlarge` | 8 × H200 | 1128 GB | $54.920/hr | ~$1,318 | `gpu-8xh200` |
-| `p6-b200.48xlarge` | 8 × B200 | 1432 GB | $98.84/hr | ~$2,372 | `gpu-8xb200` |
-| `p6-b300.48xlarge` | 8 × B300 | 2144 GB | $112.32/hr | ~$2,696 | `gpu-8xb300` |
+| Block | Cards | GPU memory | Published rate | About a day | Profile | Without a block |
+| --- | --- | --- | --- | --- | --- | --- |
+| `p5.4xlarge` | 1 × H100 | 80 GB | $5.191/hr | ~$125 | `gpu-1xh100` | **refused** |
+| `p4d.24xlarge` | 8 × A100 40GB | 320 GB | $11.80/hr | ~$283 | `gpu-8xa100` | after a wait |
+| `p4de.24xlarge` | 8 × A100 80GB | 640 GB | $17.712/hr | ~$425 | `gpu-8xa100-80gb` | **refused** |
+| `p5.48xlarge` | 8 × H100 | 640 GB | $41.528/hr | ~$997 | `gpu-8xh100` | **refused** |
+| `p5en.48xlarge` | 8 × H200 | 1128 GB | $54.920/hr | ~$1,318 | `gpu-8xh200` | **refused** |
+| `p6-b200.48xlarge` | 8 × B200 | 1432 GB | $98.84/hr | ~$2,372 | `gpu-8xb200` | **refused** |
+| `p6-b300.48xlarge` | 8 × B300 | 2144 GB | $112.32/hr | ~$2,696 | `gpu-8xb300` | **refused** |
 
-Every row has a profile behind it as of 7 August 2026. **None of them has a queue behind it**, which is a different thing: all seven shapes above `gpu-8xa100` carry `provisioned: false`, so `edullm check` refuses them with `unprovisioned_compute_profile` until a block is actually bought and its stack deployed. A profile means the platform knows the machine's size, rate and memory ceiling. It does not mean anything can run there yet.
+Every row has a profile behind it as of 7 August 2026. **Only one of them has a queue behind it**, which is a different thing, and the last column is that difference. Six of the seven carry `provisioned: false`, so `edullm check` refuses them with `unprovisioned_compute_profile` until a block is actually bought and its stack deployed. A profile means the platform knows the machine's size, rate and memory ceiling. It does not mean anything can run there yet. `gpu-8xa100` is the exception and is the one shape here you can also have without buying anything, which is why a block for it is worth arguing about rather than assuming.
 
 The rates are AWS's published effective hourly rates and they move with supply and demand. **The number that matters is the one on the offering**, which you see before you commit. Read that rather than this table.
 
@@ -69,12 +69,14 @@ Two model-config changes tend to be needed alongside the batch size and are easy
 
 The container asks for a fixed slice of host RAM, and it is deliberately under what the machine advertises: an ECS host registers less memory than EC2 advertises for it, and a container asking above what the host registered is not slow, it is unplaceable. Batch answers `MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT` on the job without launching anything, so a queue that never scales is the symptom.
 
-| Shape | Device memory | Instance memory | Your container gets |
-| --- | --- | --- | --- |
-| `gpu-8xa100-80gb` | 640 GB | 1152 GiB | 1092 GiB |
-| `gpu-8xh200` | 1128 GB | 2048 GiB | 1936 GiB |
-| `gpu-8xb200` | 1432 GB | 2048 GiB | 1936 GiB |
-| `gpu-8xb300` | 2144 GB | 4096 GiB | 3787 GiB |
+| Shape | Device memory | Instance memory | Your container gets | Without a block |
+| --- | --- | --- | --- | --- |
+| `gpu-8xa100-80gb` | 640 GB | 1152 GiB | 1092 GiB | **refused** |
+| `gpu-8xh200` | 1128 GB | 2048 GiB | 1936 GiB | **refused** |
+| `gpu-8xb200` | 1432 GB | 2048 GiB | 1936 GiB | **refused** |
+| `gpu-8xb300` | 2144 GB | 4096 GiB | 3787 GiB | **refused** |
+
+The last column reads the same on all four rows and is carried anyway, because a table is the part of a page people arrive at from a search rather than read down to. These four are exactly the block-backed shapes, so a row lifted out of this table on its own would otherwise look like a machine somebody can pick.
 
 **`gpu-8xb300` is the row to read twice.** A researcher sizing a dataloader or an offload buffer to the 4 TiB the machine advertises will not get it, and will not get 4 TiB minus a small allowance either — they get about 3787 GiB, some 309 GiB short. That figure is not a measurement. No `p6-b300.48xlarge` has ever started in this account, so it is a deliberate lower bound: the advertised memory times the smallest fraction any host here has ever registered, chosen to be certainly under whatever the real host publishes. It leaves memory on the table on purpose, because overshooting costs a job that will not place on a machine already being billed under a block that cannot be cancelled. `src/edullm_platform/execution.py` carries the arithmetic and the CloudTrail lookup that corrects it after the first launch, which costs nothing and needs no probe.
 

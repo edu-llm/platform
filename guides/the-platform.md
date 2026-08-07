@@ -50,7 +50,7 @@ Ask for all three through the [ask](https://github.com/edu-llm/platform/issues/n
 
 ## Choosing a machine
 
-`compute_profile` is a closed dropdown, and it is the most expensive field on the form by a wide margin. **Two ranges, and reading the wrong one is how people plan a run they cannot have.** Seventeen shapes are priced, from $0.53 an hour to $55.04. Fourteen of them can be started, and that range stops at $30.13. Nothing infers the field from what you are running, and nothing refuses a small job on a large machine.
+`compute_profile` is a closed dropdown, and it is the most expensive field on the form by a wide margin. **Two ranges, and reading the wrong one is how people plan a run they cannot have.** Twenty-one shapes are priced, from $0.53 an hour to $112.32. Fourteen of them can be started, and that range stops at $30.13. Nothing infers the field from what you are running, and nothing refuses a small job on a large machine.
 
 **The three that are priced and cannot be started.** `gpu-8xh100` and `gpu-1xh100` catch people, because eight H100s at $55.04 an hour is the number everybody remembers and 640 GB has no peer in the catalogue. EC2 has never sold this account a p5 of either size: `config/capacity.yaml` records 7,654 refusals for the eight-card shape and 4,060 for the single-card one, both over a day, and not one instance from either. So both read `provisioned: false` and naming one is refused with `unprovisioned_compute_profile`, before anything is dispatched and before anybody is asked to release it. `gpu-1xa10g-sagemaker` is the third and nothing was ever built for it. Both profile tables carry a column that says which is which, in [training a model](olmo-core.md#one-big-card).
 
@@ -71,12 +71,13 @@ Your image is unaffected by this field. It is built from your commit for one arc
 
 ## Approval
 
-There are two answers, and `edullm check` prints which one the per-run rule gives before you submit anything.
+There are three answers, and `edullm check` prints which one the per-run rule gives before you submit anything.
 
 | What `check` prints | Who releases it |
 | --- | --- |
 | `automatic` | Nobody, unless the day's ceiling below has been reached |
 | `routine` | Any of the eight team leads |
+| `exception` | A platform admin, and only a capacity block reaches it |
 
 **One cell, under $500 worst case, and nobody releases it.** No lead, no wait, unless the day's ceiling below has been reached. It is still recorded and still attributed to you, and you still have to be on the roster and running registered code. What you skip is the queue, not the checks.
 
@@ -92,7 +93,9 @@ There are two answers, and `edullm check` prints which one the per-run rule give
 
 Everything else waits for a person. Any of the eight team leads can release any group's run, so you are not blocked on one individual. But nobody is paged, so if a run has been waiting, ask.
 
-**There is no admin tier and no rate ceiling.** A third class called `exception` exists in the code and no submission reaches it. It is kept for capacity blocks, which nothing has built. Eight A100s at $21.96 an hour for one hour is $21.96, and it starts on its own like anything else under the bound. If a page or a refusal sends you to find an admin, that page is out of date.
+**There is no rate ceiling, and the admin tier is one thing rather than a price.** `exception` used to mean any shape over $20 an hour and it does not any more: an approval class that is a function of a price is one a repricing changes, so policy v5 withdrew it. Eight A100s at $21.96 an hour for one hour is $21.96 and starts on its own like anything else under the bound. If a page or a refusal sends you to find an admin for a shape you can start today, that page is out of date.
+
+**What does reach an admin is a capacity block, and it is about the purchase rather than the total.** The shapes marked `capacity_block_backed` in `config/workload-catalog.yaml` -- `gpu-8xa100-80gb`, `gpu-8xh200`, `gpu-8xb200` and `gpu-8xb300` -- exist only as a pre-paid, dated window of a machine that EC2 will not sell this account by the hour. That purchase is charged upfront, in full, and cannot be cancelled, so a person who can commit the money releases it rather than whichever lead is nearest. It routes that way whatever the run costs: a short block on the cheapest of the four prices below several routine on-demand runs and still commits money nobody can get back, while a long `gpu-8xl40s` run costs more and commits nothing until it starts. Cost is what a lead is shown; reversibility is what an admin is for. [Capacity blocks](capacity-blocks.md) is the guide for the rest of it.
 
 If you are approving, it is not a formality. Before you release a run you are shown its cost, its machine, the team it is booked to, whether the submitter will be attributed, and whether it waived any check.
 

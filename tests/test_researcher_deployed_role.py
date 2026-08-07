@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from edullm_platform.pending_amendments import pending_for
 from edullm_platform.phase1_capture import CaptureVerdict, read_committed_role_captures
 from edullm_platform.role_drift import (
     RESEARCHER_ROLE_CAPTURE_DIR,
@@ -73,6 +74,20 @@ def test_the_deployed_researcher_role_matches_the_template_that_declares_it() ->
     of its own: a capture present for a role the registry does not declare is a finding too,
     and a directory shared with another registry would make one registry's filing look like
     the other's drift.
+
+    **A RECORDED AMENDMENT IS THE ONE DIFFERENCE ALLOWED, WHICH THIS DID NOT SAY UNTIL
+    2026-08-07 AND THE OTHER TWO REGISTRIES ALWAYS HAVE.** It demanded ``OK`` outright, so
+    the ordinary state of a template amended in a commit and not yet applied from a laptop
+    failed here rather than being the ``PENDING_DEPLOY`` the reader has a member for. That
+    made this the one deployed-role test a legitimate pending deploy turned red, which is
+    the state the register exists to describe. ``tests/test_phase1_deployed_roles.py`` and
+    ``tests/test_phase2_deployed_roles.py`` both derive the expected verdict from
+    ``pending_for``; this now does the same, so a difference nobody recorded still fails and
+    a difference somebody recorded is compared for equality against what they recorded.
+
+    Mutation: delete the record without applying the role. This fails on the verdict.
+    Mutation: leave the record and change one instance type in the template. The findings
+    stop matching and ``explains`` answers false, so the verdict goes back to ``DRIFTED``.
     """
     captures = read_committed_role_captures(
         PROJECT_ROOT,
@@ -82,9 +97,11 @@ def test_the_deployed_researcher_role_matches_the_template_that_declares_it() ->
 
     assert len(captures) == len(RESEARCHER_ROLE_TEMPLATES)
     for capture in captures:
-        assert capture.verdict is CaptureVerdict.OK, (capture.role_name, capture.detail)
+        pending = pending_for(capture.role_name)
+        expected = CaptureVerdict.OK if pending is None else CaptureVerdict.PENDING_DEPLOY
+        assert capture.verdict is expected, (capture.role_name, capture.detail)
         assert capture.report is not None
-        assert capture.report.matches, capture.report.findings
+        assert capture.report.findings == (() if pending is None else pending.findings)
 
 
 def test_the_account_stored_the_policy_variables_literally() -> None:

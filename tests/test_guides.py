@@ -93,8 +93,10 @@ def fenced_blocks(text: str) -> list[str]:
 def _in_words(count: int) -> str:
     """A small count as the guides write it, because they write numbers as words.
 
-    Only as far as the catalogue can reach. A twenty-first profile should fail here rather
-    than pass with a digit the pages do not use.
+    Only as far as the catalogue can reach. A count past the end of this should fail here
+    rather than pass with a digit the pages do not use. It reached twenty-one on 2026-08-07,
+    when the four block-backed profiles were priced, and was extended rather than loosened
+    for the reason the sentence above gives.
     """
     words = {
         11: "eleven",
@@ -107,6 +109,10 @@ def _in_words(count: int) -> str:
         18: "eighteen",
         19: "nineteen",
         20: "twenty",
+        21: "twenty-one",
+        22: "twenty-two",
+        23: "twenty-three",
+        24: "twenty-four",
     }
     assert count in words, f"nothing here spells {count}; extend this or use a digit"
     return words[count]
@@ -1321,16 +1327,25 @@ def test_the_reference_does_not_make_a_researcher_pass_a_flag_the_lane_defaults(
 
 def test_the_guides_name_the_approval_classes_a_submission_can_actually_reach() -> None:
     """Mutation: leave the admin tier in a guide after policy stops routing anything to it.
+    Mutation: leave a guide saying nothing reaches it after something does.
 
     ``guides/olmo-core.md`` told people that every profile over $20 an hour needed an
     admin rather than a team lead. Policy v5 deleted that ceiling along with four others,
-    and ``classify_request`` has returned two answers ever since. A researcher who wanted
+    and ``classify_request`` returned two answers for a fortnight. A researcher who wanted
     eight A100s went looking for an approver who does not need to be found, and the run
     they were avoiding starts on its own.
 
-    The reachable set is computed by driving ``classify_request`` rather than read off the
-    enum, because the enum still carries the third member on purpose and a test reading it
-    would report a tier no submission has taken since v5.
+    **AND THEN IT WENT BACK TO THREE, WHICH IS WHY THIS DRIVES THE FUNCTION INSTEAD OF
+    ASSERTING A NUMBER.** ``capacity_block_backed`` routes a shape whose only route to
+    hardware is a pre-paid non-cancellable window to a platform admin, so ``exception`` is
+    reachable again and the sentence saying nothing reaches it is now the stale one. The
+    error runs in both directions and the guide has been wrong in both, a fortnight apart,
+    so this asserts the correspondence rather than either state: whatever
+    ``classify_request`` can return has to be named, and whatever it cannot has to be
+    marked as unreachable.
+
+    The fact space is every input the classifier branches on. ``capacity_block_backed`` is
+    in it because leaving it false would reproduce exactly the fortnight above.
     """
     from edullm_platform.contracts.policy import (
         ApprovalClass,
@@ -1344,32 +1359,29 @@ def test_the_guides_name_the_approval_classes_a_submission_can_actually_reach() 
     for cost in ("0.53", "1000"):
         for fanout in (1, 4):
             for scanned in (True, False):
-                reachable.add(
-                    classify_request(
-                        RequestFacts(
-                            claimed_team="scratch",
-                            repository_registered=True,
-                            dataset_registered=True,
-                            dataset_is_a_corpus=True,
-                            compute_profile_registered=True,
-                            immutable_revision=True,
-                            immutable_image=True,
-                            image_scan_reviewed=scanned,
-                            estimated_cost_usd=Decimal(cost),
-                            maximum_runtime_hours=Decimal(1),
-                            maximum_attempts=1,
-                            fanout_size=fanout,
-                        ),
-                        thresholds,
+                for block_backed in (True, False):
+                    reachable.add(
+                        classify_request(
+                            RequestFacts(
+                                claimed_team="scratch",
+                                repository_registered=True,
+                                dataset_registered=True,
+                                dataset_is_a_corpus=True,
+                                compute_profile_registered=True,
+                                capacity_block_backed=block_backed,
+                                immutable_revision=True,
+                                immutable_image=True,
+                                image_scan_reviewed=scanned,
+                                estimated_cost_usd=Decimal(cost),
+                                maximum_runtime_hours=Decimal(1),
+                                maximum_attempts=1,
+                                fanout_size=fanout,
+                            ),
+                            thresholds,
+                        )
                     )
-                )
 
     unreachable = set(ApprovalClass) - reachable
-    assert unreachable, (
-        "every approval class is reachable now, so the paragraph the guides carry about "
-        "there being no admin tier is wrong and this test should be rewritten rather than "
-        "deleted"
-    )
 
     approval = platform_guide_text().split("\n## Approval", 1)[1].split("\n## ", 1)[0]
     for reached in sorted(reachable):

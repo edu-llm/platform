@@ -370,7 +370,52 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
     # nothing here compares the two, so the register cannot tell a run that has not happened
     # from a run that will never contain the stack. Where the role lives in an IAM stack,
     # say the apply and say it is a laptop one.
-    amendments: tuple[PendingAmendment, ...] = ()
+    #
+    # A SEVENTH RECORD, AND IT COULD NOT HAVE BEEN WRITTEN AT ALL UNTIL THE COMPARATOR WAS
+    # CORRECTED IN THE SAME COMMIT. `infra/iam/researcher-role.yaml` gained four instance
+    # types on 2026-08-07 for the four block-backed compute profiles, in the `Deny` over
+    # `StringNotLike ec2:InstanceType` that holds the lane to the catalog. `role_drift`
+    # read a shorter deployed list on a negated operator as WIDER -- the label for a role
+    # that grants something its template does not -- and `__post_init__` refuses one of
+    # those, on the correct grounds that no pending deploy explains a role that is ahead of
+    # its template. So the one finding that was exactly a pending deploy was the one
+    # finding this registry could not hold. `_is_negated` is that fix and this is the record
+    # it made writable.
+    #
+    # WHAT IS ACTUALLY BEHIND, AND IT IS THE LANE RATHER THAN THE QUEUE. This statement
+    # governs `ec2:RunInstances` as `edullm run` and `edullm shell` call it. A Batch job
+    # placed on a capacity block does not pass through it -- Batch launches through the
+    # compute environment's instance profile -- so a block window is not waiting on this
+    # apply. What is waiting on it is a researcher typing `edullm run --compute gpu-8xb200`,
+    # which would be refused at RunInstances by a policy the template says permits it.
+    amendments: tuple[PendingAmendment, ...] = (
+        PendingAmendment(
+            role_name="edullm-researcher",
+            reason=(
+                "infra/iam/researcher-role.yaml added p4de.24xlarge, p5en.48xlarge, "
+                "p6-b200.48xlarge and p6-b300.48xlarge to DenyInstanceTypesOutsideTheCatalog "
+                "when the four block-backed compute profiles were priced, and the role has "
+                "not been applied since. The deployed role is narrower than the template: it "
+                "denies RunInstances on all four, so the lane verbs refuse a shape the "
+                "catalog prices. Nothing about a Batch submission is affected, on a capacity "
+                "block or otherwise, because Batch launches through the compute "
+                "environment's instance profile rather than through this role. Re-take the "
+                "capture with tools/capture_phase3_evidence.py --target researcher-role after "
+                "the apply, and delete this record in the same commit."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'lane' statement 2 conditions",
+                    detail=(
+                        "StringNotLike ec2:InstanceType does not accept values the template "
+                        "does: p4de.24xlarge, p5en.48xlarge, p6-b200.48xlarge, "
+                        "p6-b300.48xlarge"
+                    ),
+                ),
+            ),
+        ),
+    )
     # The role-is-declared check used to be a loop here. It is in ``__post_init__`` now,
     # because the same lookup is the first step of deriving ``cleared_by`` and two places
     # asking the same question is how the answers part company.
