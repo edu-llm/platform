@@ -54,11 +54,12 @@ and a deliberate throwaway -- the historical run above was the second, a ``--dry
 training profile, which resolves a config and trains nothing.
 
 **AND THE GUARD ABOVE ESTABLISHES LESS THAN ITS NAME PROMISES, WHICH IS WHY**
-:func:`unverified_resume_note` **IS IN THE SAME MODULE.** Two checks stand between a
-submission and a second attempt: :func:`~edullm_platform.contracts.validation
-.require_checkpoint_for_retries` asks whether the workload profile carries a checkpoint
-contract, and the guard above asks whether the command expands the variable. Neither reads
-the codebase, and the thing that decides whether a retry resumes is in the codebase.
+:func:`require_a_demonstrated_resume_for_retries` **IS IN THE SAME MODULE.** Two checks used
+to stand between a submission and a second attempt: :func:`~edullm_platform.contracts
+.validation.require_checkpoint_for_retries` asks whether the workload profile carries a
+checkpoint contract, and the guard above asks whether the command expands the variable.
+Neither reads the codebase, and the thing that decides whether a retry resumes is in the
+codebase.
 
 ``edullm-p1`` is the case that proved it. The contract exists, the command expands the
 variable, the trainer honours it on save, and a second attempt starts from step 0 for three
@@ -73,11 +74,32 @@ test against an ``s3://`` URI, so it logs that it is skipping the load and sets
 ``optimization_steps_done`` to zero. Both would pass both checks, which is what makes them a
 pair of checks that cannot fail rather than a pair that has not fired yet.
 
-So the honest instrument is a sentence rather than a refusal. The platform can see a
-registry entry, a command and a reviewed catalog; it cannot see a trainer's load path, and a
-per-repository field asserting that one resumes would be the same easy question standing in
-for the same hard one, one level further up -- and would refuse a run in the other direction
-on the day a repository changed its trainer.
+**THIS MODULE ANSWERED THAT WITH A SENTENCE AND THE SENTENCE WAS NOT ENOUGH, WHICH IS THE
+ONE DECISION HERE THAT HAS BEEN REVERSED.** What stood above was: "the honest instrument is
+a sentence rather than a refusal. The platform can see a registry entry, a command and a
+reviewed catalog; it cannot see a trainer's load path, and a per-repository field asserting
+that one resumes would be the same easy question standing in for the same hard one, one
+level further up -- and would refuse a run in the other direction on the day a repository
+changed its trainer." Every clause of that is true about *inference* and none of it reaches
+*observation*. The platform does not have to read a load path to know whether one works; it
+has to have watched one work once, and a run that resumed is a thing this platform records
+whether or not anybody reads it. :mod:`edullm_platform.contracts.resume_evidence` is that
+record, and the field it carries is a citation of a run rather than a claim about a
+codebase -- so the reviewer of the pull request adding one opens the run and sees the same
+two step numbers, which is not available to a reviewer of an assertion.
+
+The staleness objection survives and is answered by not refusing on it. An entry names the
+commit whose image ran, :func:`resume_note` prints that commit and that date, and a
+repository whose trainer moved since has evidence a submitter can discount. What refuses is
+the absence of any evidence at all, which is where every repository stood on 2026-08-07 and
+where ``olmo-core-train`` and ``edullm-alt-cl-train`` were both selling second attempts.
+
+**AND IT IS WAIVABLE, IN THE SPELLING THE OTHER TWO ESCAPES ALREADY USE.** A refusal that
+cannot be got past would make a lost host cost the whole run for anybody whose repository
+has no demonstration yet, which is worse than the thing being refused.
+:data:`RESUME_CHECK_WAIVER` travels in the command, so it is inside the hashed manifest and
+the immutable lineage record, and :func:`resume_note` puts it in front of the lead releasing
+the run.
 """
 
 from __future__ import annotations
@@ -87,22 +109,26 @@ import shlex
 from collections.abc import Sequence
 from typing import Final
 
+from .contracts.resume_evidence import ResumeDemonstration, ResumeDemonstrations
 from .contracts.workload import CheckpointContract
-from .errors import CheckpointPathNotInCommandError
+from .errors import CheckpointPathNotInCommandError, ResumeNotDemonstratedError
 from .launchers import (
     MAXIMUM_WRAPPER_DEPTH,
     carries_the_token,
     shell_command_string,
     simple_command_segments,
 )
+from .reviewed_configuration import ConfigFile
 
 __all__ = [
     "CHECKPOINT_CHECK_WAIVER",
     "CHECKPOINT_DIRECTORY_VARIABLE",
+    "RESUME_CHECK_WAIVER",
     "URI_WARNING",
     "expands_the_checkpoint_directory",
+    "require_a_demonstrated_resume_for_retries",
     "require_a_save_folder_a_retry_can_find",
-    "unverified_resume_note",
+    "resume_note",
     "waived_checkpoint_check_note",
 ]
 
@@ -116,6 +142,12 @@ CHECKPOINT_DIRECTORY_VARIABLE: Final = "EDULLM_CHECKPOINT_DIR"
 #: platform's business. Spelled to match ``EDULLM_LAUNCH_CHECK=waived`` exactly, because the
 #: two escapes should be one convention rather than two.
 CHECKPOINT_CHECK_WAIVER: Final = "EDULLM_CHECKPOINT_CHECK=waived"
+
+#: What a submitter writes to buy a second attempt for a repository nobody has watched
+#: resuming. Spelled to match the two escapes above exactly, because three escapes with
+#: three conventions would be three things to remember and one of them would be remembered
+#: wrongly.
+RESUME_CHECK_WAIVER: Final = "EDULLM_RESUME_CHECK=waived"
 
 #: THE HALF OF THIS GUARD THAT IS PROSE, BECAUSE THE OTHER HALF CANNOT BE WRITTEN.
 #:
@@ -185,6 +217,12 @@ _DOUBLE_QUOTED_ESCAPES: Final = frozenset('$`"\\\n')
 #: is one word to a shell rather than ``foo`` and a comment.
 _WORD_ENDS: Final = frozenset(";&|()<>")
 
+#: Named in the refusal so that a submitter can open the file the refusal is about, off the
+#: member rather than typed. A literal here reads as a path and this module resolves no
+#: directory -- it is handed the loaded file -- so the two would drift the day the file moved
+#: and the refusal would send somebody to a name nothing carries.
+_DEMONSTRATIONS_FILE: Final = ConfigFile.RESUME_DEMONSTRATIONS.value
+
 
 def require_a_save_folder_a_retry_can_find(
     *,
@@ -237,22 +275,66 @@ def waived_checkpoint_check_note(
     )
 
 
-def unverified_resume_note(
+def require_a_demonstrated_resume_for_retries(
     *,
+    command: Sequence[str],
     maximum_attempts: int,
+    repository: str,
+    workload_profile: str,
+    demonstrations: ResumeDemonstrations,
+) -> None:
+    """Refuse a second attempt for a repository nobody has watched resume.
+
+    A single-attempt run is not checked, because it has no second attempt to justify. That
+    is the rule rather than an omission: this refusal is entirely about what the attempt
+    factor in the price buys, and a run buying nothing is priced at one.
+
+    The question is asked of the repository and not of the workload profile, because what
+    resumes is a trainer. Two profiles over one codebase are the same load path with
+    different bounds.
+
+    Raises :class:`~edullm_platform.errors.SubmissionRefusedError`, as the neighbouring
+    command rules do, so the caller needs no second branch.
+    """
+    if maximum_attempts <= 1:
+        return
+    if carries_the_token(command, RESUME_CHECK_WAIVER):
+        return
+    if demonstrations.for_repository(repository) is not None:
+        return
+    raise ResumeNotDemonstratedError(
+        f"ask for one attempt, or demonstrate that {repository} resumes. This run is "
+        f"priced for {maximum_attempts} attempts of {workload_profile!r} and each one "
+        f"costs what the first did, so the second is worth paying for only if the program "
+        f"picks up where the first stopped. Nothing has ever watched {repository} do that: "
+        f"config/{_DEMONSTRATIONS_FILE} records no run of it in which a second process "
+        "resumed a first one's checkpoint and went on from a step above zero. Two of the "
+        "six registered repositories were measured starting again from step 0 while "
+        "passing every other check on this path, so the absence is a real question rather "
+        "than a formality. A demonstration is one submission: kill a training run partway, "
+        "let it start again against the same $"
+        f"{CHECKPOINT_DIRECTORY_VARIABLE}, and record the two step numbers. If this run "
+        f"needs its second attempt before anybody has time for that, write "
+        f"{RESUME_CHECK_WAIVER} into the command, which says so on the record and on the "
+        "page the lead releasing it reads."
+    )
+
+
+def resume_note(
+    *,
+    command: Sequence[str],
+    maximum_attempts: int,
+    repository: str,
     workload_profile: str,
     checkpoint: CheckpointContract | None,
+    demonstrations: ResumeDemonstrations,
 ) -> str | None:
-    """What a second attempt costs, and the part of "is it worth it" nothing here answered.
+    """What a second attempt buys, said out of a measurement rather than out of a hope.
 
     Returned for every submission asking for more than one attempt, and ``None`` for the
-    rest, because a single-attempt run has no second attempt to say anything about. That is
-    the only condition. The two waiver notes in this tree appear when a submitter did
-    something unusual; this one appears whenever the arithmetic multiplies, because the gap
-    it describes is in the platform rather than in the submission and every multi-attempt
-    run is standing over it.
+    rest, because a single-attempt run has no second attempt to say anything about.
 
-    **THE ARITHMETIC IT SITS UNDER IS RIGHT AND IS NOT WHAT THIS CORRECTS.** Two attempts
+    **THE ARITHMETIC IT SITS UNDER IS RIGHT AND IS NOT WHAT THIS QUALIFIES.** Two attempts
     price at twice one attempt, which is what a lead approves and what the run may spend.
     What the figure cannot say is whether the second attempt does anything the first did
     not, and the ceiling is identical either way.
@@ -262,30 +344,26 @@ def unverified_resume_note(
     and a terminal shows it as typed. ``placement_said`` settled this already and for the
     same reason; emphasis that reads as bold in one place is asterisks in the other two.
 
-    **THE TIMEOUT SENTENCE IS THE LOAD-BEARING ONE AND IS THE LEAST OBVIOUS.** A reader who
-    knows :data:`~edullm_platform.execution.RETRY_ONLY_WHAT_A_RETRY_FIXES` will conclude that
-    a second attempt is nearly unreachable, since the only ``RETRY`` arm matches ``Host
-    EC2*`` and every compute environment in ``infra/`` is provisioned ``Type: EC2`` rather
-    than SPOT, so nothing reclaims a host on purpose. That reading misses the arm that
-    matches no rule at all. Batch retries a failure none of the ``EvaluateOnExit`` entries
-    match -- documented on ``AWS::Batch::JobDefinition EvaluateOnExit`` and on the job
-    definition parameters page -- and an attempt stopped for outrunning
-    ``attemptDurationSeconds`` carries the status reason ``Job attempt duration exceeded
-    timeout`` and no container exit code, so the exit-code rule globbing ``*`` has nothing to
-    match and neither of the other two applies. The one second attempt this platform reliably
-    spends is therefore the one on the run that could not finish in its bound, which is
-    exactly the run for which starting again from nothing cannot help.
+    **THE TIMEOUT SENTENCE WAS THE LOAD-BEARING ONE AND WAS MEASURED FALSE.** It said that a
+    reader who knows :data:`~edullm_platform.execution.RETRY_ONLY_WHAT_A_RETRY_FIXES` will
+    conclude a second attempt is nearly unreachable -- the only ``RETRY`` arm matches ``Host
+    EC2*`` and every compute environment in ``infra/`` is ``Type: EC2`` rather than SPOT, so
+    nothing reclaims a host on purpose -- and that the reading misses the arm matching no rule
+    at all, because Batch retries a failure none of the ``EvaluateOnExit`` entries match and
+    an attempt stopped for outrunning ``attemptDurationSeconds`` reports no container exit
+    code for the ``*`` rule to match. The premise is right and the conclusion is wrong.
+    ``run_019fdd90-99d1-70e8-a005-e341452d9458`` was submitted on 2026-08-07 with two attempts
+    and a bound it could not finish inside. Batch stopped it with the status reason ``Job
+    attempt duration exceeded timeout`` and reported ``FAILED`` at ``Attempts 1 of 2``. A
+    timeout terminates the job rather than ending an attempt the retry rules are consulted
+    about, so no second attempt was made and none is ever made that way.
 
-    **AND THAT DERIVATION IS FOR A READER OF THIS MODULE RATHER THAN FOR A SUBMITTER.** The
-    sentence used to carry it: "because Batch retries a failure matching none of its rules
-    and an attempt stopped at its runtime bound reports no container exit code for the rules
-    to match". It is true, it is written out here and again in ``config/policy.yaml``, and
-    it answers an objection only somebody who already knows ``EvaluateOnExit`` can raise. A
-    submitter deciding ``--attempts`` needs the finding, which is that the retry they are
-    paying for lands on the run that ran out of time and gets the same bound again; the
-    mechanism behind it changes nothing they can do. The finding stayed and the derivation
-    went, which is a fifth of the paragraph a first-time reader was spending on Batch's
-    retry semantics.
+    **SO WHAT THE SENTENCE TELLS A SUBMITTER IS WHAT THE SECOND ATTEMPT IS ACTUALLY FOR.** It
+    is insurance against a host dying underneath a running attempt, which is the one arm that
+    retries, and against nothing else anybody here has observed. The derivation above is for a
+    reader of this module: it answers an objection only somebody who already knows
+    ``EvaluateOnExit`` can raise, and it is written out here and again in
+    ``config/policy.yaml`` for them.
     """
     if maximum_attempts <= 1:
         return None
@@ -298,23 +376,27 @@ def unverified_resume_note(
             "declares no checkpoint contract, so every attempt after the first repeats the "
             "whole of the first at the same price and can reach no further."
         )
-    declared = (
-        "declares a checkpoint every "
-        f"{checkpoint.interval_minutes} minutes that a retry resumes from"
-        if checkpoint.resume_required
-        else f"declares a checkpoint every {checkpoint.interval_minutes} minutes"
-    )
-    return (
-        f"This run is priced for {maximum_attempts} attempts and each one costs what the "
-        f"first did. Whether the later ones buy anything depends on whether the program "
-        f"resumes, which nothing on this platform establishes: {workload_profile!r} "
-        f"{declared}, and what is checked is that the declaration exists and that the "
-        f"command expands ${CHECKPOINT_DIRECTORY_VARIABLE}. Neither check reads the "
-        "codebase, and a trainer that writes to that prefix and never loads back from it "
-        "passes both -- which two of the six registered repositories were measured doing on "
-        "2026-08-06. The attempt a retry is actually spent on is the one that ran out of "
-        "time, and it gets the same bound again, starting wherever the program resumes from "
-        "-- which is the beginning if it resumes from nowhere."
+    # The demonstration first. A command carrying the waiver token for a repository that has
+    # been watched resuming is waiving nothing, and printing the waiver over the measurement
+    # would report the weaker of two true things.
+    demonstration = demonstrations.for_repository(repository)
+    if demonstration is not None:
+        return _demonstrated_resume_said(
+            maximum_attempts=maximum_attempts,
+            checkpoint=checkpoint,
+            demonstration=demonstration,
+        )
+    # WHETHER THE WAIVER IS ACTUALLY THERE IS ASKED RATHER THAN ASSUMED, AND THE FIRST
+    # VERSION ASSUMED IT. Past the refusal a waiver is the only way to be here, so the
+    # sentence was written as though one had been used -- and `edullm check` composes this
+    # note beside the refusal rather than instead of it, so every refused submission was
+    # told it carried a token it had not written. A submitter reading that goes looking for
+    # a waiver in their own command.
+    return _no_demonstration_said(
+        maximum_attempts=maximum_attempts,
+        repository=repository,
+        workload_profile=workload_profile,
+        waived=carries_the_token(command, RESUME_CHECK_WAIVER),
     )
 
 
@@ -426,6 +508,70 @@ def _expands_in(text: str) -> bool:
 # ---------------------------------------------------------------------------------------
 
 
+def _demonstrated_resume_said(
+    *,
+    maximum_attempts: int,
+    checkpoint: CheckpointContract,
+    demonstration: ResumeDemonstration,
+) -> str:
+    """The second attempt priced against the run that showed the first one could be resumed.
+
+    The commit and the date are both in it, and neither is decoration. They are what lets a
+    reader decide whether the evidence still describes the code they are about to run, which
+    is the judgement this platform declines to make on their behalf -- see the module
+    docstring on why a stale entry does not refuse.
+    """
+    return (
+        f"This run is priced for {maximum_attempts} attempts and each one costs what the "
+        f"first did. The second is worth paying for here: {demonstration.repository} has "
+        f"been watched resuming. On {demonstration.recorded_at.date().isoformat()}, run "
+        f"{demonstration.run_id} on {demonstration.compute_profile} at commit "
+        f"{demonstration.commit_sha[:12]} was stopped partway and started again against the "
+        f"same checkpoint prefix; the second process reported resuming from step "
+        f"{demonstration.resumed_from_step} and went on to step "
+        f"{demonstration.reached_step}. The profile declares a checkpoint every "
+        f"{checkpoint.interval_minutes} minutes, so the work a second attempt repeats is "
+        "bounded by that interval rather than by the whole run. Read the commit above "
+        "against the one you are submitting: a trainer that has changed since has evidence "
+        "that is older than it is."
+    )
+
+
+def _no_demonstration_said(
+    *,
+    maximum_attempts: int,
+    repository: str,
+    workload_profile: str,
+    waived: bool,
+) -> str:
+    """The sentence for a multi-attempt run standing over the gap rather than past it.
+
+    Three ways to be here and the ``waived`` clause is what tells the reader which. A
+    submitter used the token; a submission is being refused and this note is composed beside
+    the refusal; or the install carries no demonstrations file at all, which
+    ``edullm check`` reports separately by naming the configuration directory it read.
+    """
+    how = (
+        f"and this submission carries {RESUME_CHECK_WAIVER}, which is what let it ask for "
+        f"more than one attempt of {workload_profile!r}"
+        if waived
+        else f"which is why {workload_profile!r} is refused more than one attempt here"
+    )
+    return (
+        f"This run is priced for {maximum_attempts} attempts and each one costs what the "
+        f"first did, and nothing establishes that the later ones reach further than the "
+        f"first. No run of {repository} has been recorded resuming a checkpoint, {how}. "
+        f"What is checked besides that is that a checkpoint contract exists and that the "
+        f"command expands ${CHECKPOINT_DIRECTORY_VARIABLE}; neither reads the codebase, and "
+        "a trainer that writes to that prefix and never loads back from it passes both -- "
+        "which two of the six registered repositories were measured doing on 2026-08-06. "
+        "The second attempt is also narrower than it looks: a run stopped for outrunning its "
+        "time bound is not retried at all, measured on 2026-08-07, so what the attempt factor "
+        "buys is a retry on a host dying and nothing else -- starting wherever the program "
+        "resumes from, which is the beginning if it resumes from nowhere."
+    )
+
+
 def _contract_said(checkpoint: CheckpointContract) -> str:
     """The contract in the terms it is written in, so the refusal quotes rather than asserts.
 
@@ -437,7 +583,7 @@ def _contract_said(checkpoint: CheckpointContract) -> str:
     DIFFERENCE THIS FUNCTION'S FIRST LINE ALREADY CLAIMED AND DID NOT MAKE.** This read
     "which a retry resumes from", inside a sentence beginning "declares", so the interval was
     the profile's word and resuming was the platform's -- and the platform has never checked
-    it. Both clauses hang off ``declares`` now, and :func:`unverified_resume_note` is where a
+    it. Both clauses hang off ``declares`` now, and :func:`resume_note` is where a
     reader is told what stands behind the second one.
     """
     interval = f"a checkpoint contract of one checkpoint every {checkpoint.interval_minutes} minutes"

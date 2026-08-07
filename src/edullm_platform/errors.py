@@ -256,5 +256,18 @@ class CheckpointPathNotInCommandError(SubmissionRefusedError):
     reason_code: ClassVar[str] = "checkpoint_path_not_in_command"
 
 
+class ResumeNotDemonstratedError(SubmissionRefusedError):
+    """A code of its own rather than ``checkpoint_path_not_in_command``, which it sits beside.
+
+    That rule asks where a run saves and its answer is a word a submitter adds to a command.
+    This asks whether the program has ever been watched loading what it saved, and the thing
+    that clears it is a run rather than an edit -- so a caller branching on the code needs
+    them apart. A submission can fail both, and the two are fixed by different people on
+    different days.
+    """
+
+    reason_code: ClassVar[str] = "resume_not_demonstrated"
+
+
 class Bfloat16NotInTheHardwareError(SubmissionRefusedError):
     reason_code: ClassVar[str] = "bfloat16_not_in_the_hardware"

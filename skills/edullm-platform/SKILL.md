@@ -161,6 +161,12 @@ that would have to honour it. Measured on 2026-08-06, two of the six registered 
 declare it, pass every check here, and restart from step 0. Quote `said` rather than the
 flag.
 
+**`retries.resume_demonstrated` is the one that is a measurement.** It is `null` where nobody
+has watched this repository resume, and otherwise a run id, a commit and the two step numbers
+that run reported -- the step a second process started from and the step it reached. A run
+asking for more than one attempt against a repository with `null` there is refused; see
+`resume_not_demonstrated` below.
+
 ## 2. Fix every refusal
 
 The `detail` names the field and usually the file. These are the ones you will meet.
@@ -185,6 +191,7 @@ The `detail` names the field and usually the file. These are the ones you will m
 | `bfloat16_not_in_the_hardware` | The card is Turing and has no bfloat16 at all. Pick a shape whose card has it, or set the run to float32 |
 | `checkpoint_path_not_in_command` | The workload promises a checkpoint a retry resumes from and the command never expands `$EDULLM_CHECKPOINT_DIR`. Point the program's save folder at it, under a shell so it expands |
 | `retry_without_a_checkpoint_contract` | More than one attempt on a workload that checkpoints nothing means the retry restarts from the beginning. Drop `--attempts` or pick a workload that checkpoints |
+| `resume_not_demonstrated` | More than one attempt against a repository nobody has watched resume. Pass `--attempts 1`, or run the demonstration once for that repository — kill a training run partway, let it start again against the same `$EDULLM_CHECKPOINT_DIR`, and record the two step numbers in `config/reports/resume-demonstrations.yaml`. `EDULLM_RESUME_CHECK=waived` in the command buys the attempt now and says so on the approver's page |
 
 Anything else, read the `detail`. It was written to be acted on and it usually names the
 file to change.

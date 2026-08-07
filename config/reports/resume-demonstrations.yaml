@@ -1,0 +1,60 @@
+# Repositories that have been watched resuming, and the runs that were watched.
+#
+# WHAT AN ENTRY IS AND WHAT IT IS NOT. It is not a claim that a trainer resumes. It is a
+# citation of a run in which a second process reported starting from a step above zero and
+# went on past it, with the two numbers written down so that a reviewer of the pull request
+# adding the entry can open the run and read the same ones. Nothing here may be written from
+# reading a codebase. `src/edullm_platform/contracts/resume_evidence.py` carries the argument
+# for why that distinction is the whole point.
+#
+# WHAT IT BUYS. `require_a_demonstrated_resume_for_retries` refuses a submission asking for
+# more than one attempt against a repository with no entry. Before this file existed, the two
+# checks between a submission and a second attempt were whether the workload profile declared
+# a checkpoint contract and whether the command expanded $EDULLM_CHECKPOINT_DIR -- and both
+# of those pass for `edullm-p1` and for `open-instruct-scored-rewards`, which were measured on
+# 2026-08-06 restarting from step 0. A pair of checks that cannot fail.
+#
+# HOW TO ADD ONE, WHICH IS ONE SUBMISSION AND NOT AN ARGUMENT. Submit a short training run
+# whose command runs the trainer twice against the same $EDULLM_CHECKPOINT_DIR, killing the
+# first partway; read the resuming process's own report of the step it loaded and the step it
+# reached. `docs/` carries no recipe for this on purpose -- the command belongs in the
+# research repository's own `.edullm/` directory, where the trainer's flags are, and
+# `OLMo-core@.edullm/run-resume-proof.yaml` is the worked example.
+#
+# AN ENTRY IS NEVER DELETED BECAUSE IT GOT OLD. `commit_sha` is what a reader judges staleness
+# by, and `resume_note` prints it beside the date on the approver's page. An entry is deleted
+# when the run it cites is found not to say what it says.
+schema_version: 1
+
+demonstrations:
+  - repository: OLMo-core
+    run_id: run_019fddad-9d81-7068-8166-7b2769b9a2c9
+    commit_sha: 08df5aa0142465c80b4ea48e84faa46117275d61
+    workload_profile: olmo-core-train
+    compute_profile: gpu-1xa10g
+    resumed_from_step: 420
+    reached_step: 659
+    observed: >-
+      A separate submission with its own run id and its own empty $EDULLM_CHECKPOINT_DIR,
+      pointed at run_019fdd8f-ad71-70f6-bc19-e091cf3b22a7's checkpoint prefix with the
+      OLMo-core config override trainer.load_path=. It loaded step 420 and its first logged
+      step was 421, not 1.
+
+      What makes this a demonstration of resume rather than of a weight load is that its
+      loss is bit-identical to the source run's at every overlapping step -- 3.7617 at 421,
+      3.7363 at 422, 3.8190 at 425, 3.9139 at 430, 3.8013 at 500, 3.7301 at 509 -- over
+      eighty-eight steps. A restored optimizer with an unrestored data loader diverges on
+      the first step, not the ninetieth, so the batch order came back too. The learning rate
+      matched CosWithWarmup(warmup=100, t_max=700) analytically at every step: 0.000501 at
+      step 421, where a schedule that had restarted would still have been in warmup at
+      0.00021.
+
+      The source run is the other half of the same measurement: it trained, took SIGKILL at
+      360 seconds mid-run, started again against its own prefix inside the same container,
+      and produced one continuous curve from step 1 to 509 across the kill.
+
+      Both runs ended by outrunning their runtime bound rather than by finishing, which is
+      why reached_step is 659 and not 700. That bounds what was watched and does not qualify
+      it -- 239 steps past the load is not a checkpoint being read, it is a run continuing.
+    recorded_by: philote-dev
+    recorded_at: "2026-08-07T19:50:00.000000Z"

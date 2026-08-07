@@ -28,6 +28,7 @@ from edullm_platform.admission import image_scan_refusal_detail
 from edullm_platform.build_tooling import append_step_outputs
 from edullm_platform.canonical import canonical_json_bytes
 from edullm_platform.cli.actions import PLATFORM_REPOSITORY
+from edullm_platform.cli.configuration import load_resume_demonstrations
 from edullm_platform.cli.release import install_command
 from edullm_platform.client_version import (
     SubmittingClient,
@@ -305,6 +306,14 @@ def main(argv: list[str] | None = None) -> int:
         # a measurement this tree cannot read is a broken checkout rather than an absent
         # measurement, and `edullm check` already refuses that locally.
         run_history = load_run_history(args.config_dir)
+        # WHICH REPOSITORIES HAVE BEEN WATCHED RESUMING, LOADED HERE FOR THE REASON THE
+        # PARAGRAPH ABOVE RECORDS ABOUT THE READING. `edullm check` reads this out of the
+        # same directory through `cli/configuration.py` and refuses a second attempt over
+        # it, so a compile job that did not pass it would refuse every multi-attempt
+        # submission that passed on the submitter's laptop -- the check-and-compile
+        # divergence `tests/test_check_refuses_what_compile_refuses.py` exists for, arriving
+        # in the direction that costs a queue wait rather than a machine.
+        resume_demonstrations = load_resume_demonstrations(args.config_dir)
     except (
         OSError,
         ValidationError,
@@ -373,6 +382,7 @@ def main(argv: list[str] | None = None) -> int:
             image_scan_findings=blocking_findings,
             published_images=published_images,
             daily_ceiling=daily_ceiling,
+            resume_demonstrations=resume_demonstrations,
         )
     except SubmissionRefusedError as exc:
         print(f"submission refused: {exc}", file=sys.stderr)
@@ -488,6 +498,7 @@ def main(argv: list[str] | None = None) -> int:
                 placement_note=placement_note,
                 scan_note=scan_note,
                 run_history=run_history,
+                resume_demonstrations=resume_demonstrations,
                 daily_ceiling=daily_ceiling,
             ),
             encoding="utf-8",
