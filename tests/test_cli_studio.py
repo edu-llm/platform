@@ -668,6 +668,38 @@ def test_an_ssh_session_prints_rather_than_opening_a_browser_nobody_can_see(
     assert "SSH session" in err
 
 
+def test_a_machine_with_no_display_prints_rather_than_opening_a_browser(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: drop the display half of ``no_browser_here``, or stop pinning it in ``invoke``.
+
+    The sibling of the SSH case above and the half that had no case at all, which is how five
+    of these tests came to pass on a laptop and fail on every Linux machine including CI.
+    ``no_browser_here`` asks two questions; the harness pinned the SSH one and inherited the
+    display one, so on macOS ``_is_macos`` short-circuited it and on a headless runner it did
+    not. Nothing was wrong with the verb. What was wrong was that the suite had no opinion
+    about the machine it ran on, and so neither branch was being tested on purpose.
+
+    Written as the *headless* case rather than as a second assertion on the ordinary one
+    because that is the branch nothing exercised. The ordinary branch is now exercised by every
+    other case in this file, which is what pinning ``DISPLAY`` buys.
+    """
+    runner = a_studio(tmp_path, app_status="InService")
+
+    code, out, err = invoke(
+        ["studio", "--project", THE_PROJECT],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+        headless=True,
+    )
+
+    assert code == EXIT_OK
+    assert not pages_opened()
+    assert out.strip() == STUDIO_URL
+    assert "no display" in err
+
+
 def test_a_space_that_had_no_app_says_the_page_is_not_the_notebook(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
