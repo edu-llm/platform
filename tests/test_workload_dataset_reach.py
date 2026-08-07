@@ -40,6 +40,8 @@ state they existed to refuse.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from enum import StrEnum
 from functools import cache
 from typing import Final
 
@@ -61,8 +63,42 @@ S3_URI = re.compile(r"^s3://(?P<bucket>[a-z0-9][a-z0-9.-]*)/")
 #: stopped using ``Fn::Sub``.
 TEMPLATE_S3_ARN: Final = "arn:${AWS::Partition}:s3:::"
 
+class WhyItReadsPastTheLibrary(StrEnum):
+    """Which kind of reading past the published library an entry below describes.
+
+    THE DISTINCTION IS ABOUT THE DEVICE THE READ IMPLIES, AND IT IS THE ONLY THING THE TWO
+    KINDS DISAGREE ABOUT. Both are a workload's program opening a bucket the registered
+    corpora do not live in, so both belong in the same map and both are held to the same
+    completeness check. What differs is what a *placement* has to be able to do before the
+    read is worth granting, and that is a question with two answers rather than one.
+
+    Written as an enum rather than a boolean, because ``needs_no_accelerator=False`` reads
+    as the absence of a property and this is the presence of a different one. A third kind
+    will arrive as a member and a test case rather than as a second flag nobody unpicks.
+    """
+
+    #: The read *is* the work. A program that opens objects, checks their bytes and writes a
+    #: report asks for no device, so the honest placement for it is an unaccelerated one and
+    #: the grant belongs on the role an unaccelerated profile runs containers as.
+    THE_READ_IS_THE_WORK = "the_read_is_the_work"
+
+    #: The read is the prologue to work that does need a device. A fine-tune loads weights
+    #: somebody else trained and then trains on a GPU; the read is inseparable from the
+    #: accelerated run it starts, and the grant belongs on the role that run's placement
+    #: uses.
+    WEIGHTS_TO_START_FROM = "weights_to_start_from"
+
+
+@dataclass(frozen=True)
+class InputBeyondTheLibrary:
+    """One bucket a workload's program reads past the library, and why it reads it."""
+
+    kind: WhyItReadsPastTheLibrary
+    reason: str
+
+
 #: Buckets a workload's program reads that are *not* the published dataset library, mapped
-#: to the reason it reads them.
+#: to why it reads them and to which kind of reading that is.
 #:
 #: WRITTEN OUT RATHER THAN DERIVED, AND THERE IS NOWHERE TO DERIVE IT FROM. Nothing in
 #: ``config/`` binds a workload to an input bucket: the catalog entry carries a repository
@@ -76,15 +112,41 @@ TEMPLATE_S3_ARN: Final = "arn:${AWS::Partition}:s3:::"
 #: ``tests/test_submission_form_options.py`` is: an entry a reviewer can argue with beats an
 #: omission nobody can see. The completeness test below refuses a key the catalog does not
 #: carry, so an entry cannot outlive the workload it describes.
-INPUT_BUCKETS_BEYOND_THE_DATASET_LIBRARY: Final[dict[str, dict[str, str]]] = {
+#:
+#: THE ENTRIES CARRY A KIND, AND THEY DID NOT UNTIL A SECOND KIND ARRIVED. The map held one
+#: workload, and the reachability test below took the whole map as one sort of thing --
+#: "every workload in this map is that kind of work by construction". It was not a
+#: construction; it was one example generalised, and the second entry is the counterexample.
+#: :class:`WhyItReadsPastTheLibrary` is that generalisation withdrawn and replaced by a
+#: declaration, so a reader can see which claim each entry is being held to instead of
+#: inferring it from the fact that there used to be only one.
+INPUT_BUCKETS_BEYOND_THE_DATASET_LIBRARY: Final[dict[str, dict[str, InputBeyondTheLibrary]]] = {
     "edullm-data-validate": {
-        "edullm-landing": (
-            "the candidate side of the dataset owner's airlock. A staged corpus and its "
-            "manifests arrive there and are checked against the published copy before "
-            "anything is promoted, so a validator that cannot read it cannot read the thing "
-            "it is validating. guides/edullm-data.md documents --landing-bucket defaulting "
-            "to it, and records that listing or reading it is the validator's first action "
-            "-- which is also what `--prefix`-less discovery of what is pending needs."
+        "edullm-landing": InputBeyondTheLibrary(
+            kind=WhyItReadsPastTheLibrary.THE_READ_IS_THE_WORK,
+            reason=(
+                "the candidate side of the dataset owner's airlock. A staged corpus and its "
+                "manifests arrive there and are checked against the published copy before "
+                "anything is promoted, so a validator that cannot read it cannot read the "
+                "thing it is validating. guides/edullm-data.md documents --landing-bucket "
+                "defaulting to it, and records that listing or reading it is the validator's "
+                "first action -- which is also what `--prefix`-less discovery of what is "
+                "pending needs."
+            ),
+        ),
+    },
+    "olmo-core-train": {
+        "edullm-olmo-370m-ckpts": InputBeyondTheLibrary(
+            kind=WhyItReadsPastTheLibrary.WEIGHTS_TO_START_FROM,
+            reason=(
+                "the pretrained base checkpoint a fine-tune starts from. A run that is not "
+                "training from scratch loads weights somebody else wrote, and this role "
+                "could read exactly two things -- its own run's prefix under the outputs "
+                "bucket, and the sealed corpora -- neither of which a checkpoint predating "
+                "the run is. infra/iam/batch-gpu-roles.yaml carries the grant and the "
+                "argument, including that the proper route is a sealed model/ entry that "
+                "does not exist yet and that this pair is to be withdrawn when it does."
+            ),
         ),
     },
 }
@@ -122,6 +184,22 @@ def unaccelerated_profiles() -> frozenset[str]:
         profile.name
         for profile in workload_catalog().compute_profiles
         if profile.provisioned and profile.accelerator == "cpu"
+    )
+
+
+def accelerated_profiles() -> frozenset[str]:
+    """The provisioned profiles that carry a device.
+
+    The complement of the set above over the provisioned profiles, and written as its own
+    comprehension rather than as a subtraction so that a third value of ``accelerator``
+    joins neither set silently. ``ComputeProfile.accelerator`` is a two-member ``Literal``
+    today; a subtraction would put a future third value here by default, which is the wrong
+    direction for a set that decides whether a GPU grant is on the right role.
+    """
+    return frozenset(
+        profile.name
+        for profile in workload_catalog().compute_profiles
+        if profile.provisioned and profile.accelerator == "gpu"
     )
 
 
@@ -393,8 +471,8 @@ def test_the_declared_extra_inputs_name_workloads_the_catalog_actually_offers() 
     )
     for workload, buckets in INPUT_BUCKETS_BEYOND_THE_DATASET_LIBRARY.items():
         assert buckets, f"{workload} is listed with no bucket, which records nothing"
-        for bucket, reason in buckets.items():
-            assert reason.strip(), f"{workload} reads {bucket} for no stated reason"
+        for bucket, input_ in buckets.items():
+            assert input_.reason.strip(), f"{workload} reads {bucket} for no stated reason"
         assert not (set(buckets) & buckets_registered_datasets_live_in()), (
             f"{workload} lists a bucket the dataset registry already covers; the check above "
             "requires that of every profile, and repeating it here would make this map look "
@@ -402,17 +480,26 @@ def test_the_declared_extra_inputs_name_workloads_the_catalog_actually_offers() 
         )
 
 
+def inputs_of_kind(kind: WhyItReadsPastTheLibrary) -> tuple[tuple[str, str, str], ...]:
+    """Every ``(workload, bucket, reason)`` in the map read for ``kind``, in a stable order."""
+    return tuple(
+        (workload, bucket, input_.reason)
+        for workload, buckets in sorted(INPUT_BUCKETS_BEYOND_THE_DATASET_LIBRARY.items())
+        for bucket, input_ in sorted(buckets.items())
+        if input_.kind is kind
+    )
+
+
 def test_a_workload_reading_past_the_library_is_runnable_without_an_accelerator() -> None:
     """THE OTHER HALF, AND THE ONE THE CATALOG COMMENT RESTS ON. Mutation: move the airlock
     read to ``infra/iam/batch-gpu-roles.yaml``, so the validator works everywhere except the
     profile it is told to pick.
 
-    Reading objects out of S3 and checking them asks for no device. Every workload in this
-    map is that kind of work by construction -- it reads a bucket the training corpora do
-    not live in -- so there has to be a provisioned profile without an accelerator whose
-    role can reach it. If there is not, the honest description of the entry is that the only
-    way to run it is to rent a GPU to do arithmetic on bytes, at between $0.53 and $55.04 an
-    hour depending on which one the submitter picks.
+    Reading objects out of S3 and checking them asks for no device, so a workload whose
+    program does that and nothing else has to have a provisioned profile without an
+    accelerator whose role can reach the bucket. If there is not, the honest description of
+    the entry is that the only way to run it is to rent a GPU to do arithmetic on bytes, at
+    between $0.53 and $55.04 an hour depending on which one the submitter picks.
 
     The unaccelerated profiles are derived from the catalog's own ``accelerator`` field
     rather than named, so promoting a second CPU shape does not turn this red and renaming
@@ -422,22 +509,100 @@ def test_a_workload_reading_past_the_library_is_runnable_without_an_accelerator(
     submitter to pick ``cpu-32vcpu`` and says the choice is load-bearing rather than advice.
     That sentence is only true while the CPU role is the one that holds the landing-zone
     read, and it is this assertion that fails if somebody moves it.
+
+    **THIS ASKED THE WHOLE MAP UNTIL A SECOND KIND OF ENTRY ARRIVED, AND THE JUSTIFICATION
+    IT GAVE FOR DOING SO WAS THE THING THAT WAS WRONG.** It said every workload in the map
+    is device-free work "by construction -- it reads a bucket the training corpora do not
+    live in". Reading past the library is not a construction that yields anything about
+    devices; it was one entry generalised, and it held only because that entry was a
+    validator.
+
+    A base-checkpoint read is the counterexample. ``olmo-core-train`` reads
+    ``edullm-olmo-370m-ckpts`` to load the weights a fine-tune starts from and then trains
+    on a GPU, so the read is inseparable from accelerated work and there is no placement
+    for it that a CPU shape could serve.
+
+    WHY THE ANSWER WAS NOT TO GRANT THE CPU ROLE AND MOVE ON, WHICH IS THE CHEAPER EDIT AND
+    THE ONE TO REFUSE. Adding ``edullm-olmo-370m-ckpts`` to the CPU workload role would have
+    turned this green in one line, and it would have widened the reach of every container
+    placed on ``cpu-32vcpu`` to a bucket no CPU workload in the catalog reads -- a real
+    grant made to satisfy a test's assumption rather than a workload's need. The map's
+    neighbour below exists precisely to catch grants nobody can name a reason for, so buying
+    this one's silence would have been paid for out of that one. What changed instead is the
+    assumption: the entries declare their kind, and each kind is held to the claim that is
+    true of it.
     """
     without_an_accelerator = unaccelerated_profiles()
+    reading_is_the_work = inputs_of_kind(WhyItReadsPastTheLibrary.THE_READ_IS_THE_WORK)
 
     assert without_an_accelerator, (
         "no provisioned profile declares accelerator: cpu, so there is no unaccelerated "
         "placement for anything and the assertion below cannot hold for the right reason"
     )
-    for workload, buckets in sorted(INPUT_BUCKETS_BEYOND_THE_DATASET_LIBRARY.items()):
-        for bucket, reason in sorted(buckets.items()):
-            reachable = profiles_that_can_read(bucket)
-            assert reachable & without_an_accelerator, (
-                f"{workload} reads {bucket} -- {reason} -- and no provisioned profile "
-                f"without an accelerator can. Profiles that can: {sorted(reachable)}. A "
-                "submitter has to pick one of those or meet AccessDenied, and the catalog "
-                "entry cannot tell them to pick a CPU shape"
-            )
+    assert reading_is_the_work, (
+        "no entry in INPUT_BUCKETS_BEYOND_THE_DATASET_LIBRARY reads past the library for "
+        "work that needs no device, so this iterates nothing; edullm-data-validate and "
+        "edullm-landing are the case it was written about, and an entry losing that kind "
+        "should be an edit somebody argued for rather than this test going quiet"
+    )
+    for workload, bucket, reason in reading_is_the_work:
+        reachable = profiles_that_can_read(bucket)
+        assert reachable & without_an_accelerator, (
+            f"{workload} reads {bucket} -- {reason} -- and no provisioned profile "
+            f"without an accelerator can. Profiles that can: {sorted(reachable)}. A "
+            "submitter has to pick one of those or meet AccessDenied, and the catalog "
+            "entry cannot tell them to pick a CPU shape"
+        )
+
+
+def test_a_workload_reading_weights_to_start_from_can_reach_them_where_it_trains() -> None:
+    """THE SECOND KIND, AND IT IS THE MIRROR OF THE TEST ABOVE RATHER THAN AN EXEMPTION FROM
+    IT. Mutation: put the base-checkpoint read on ``infra/iam/batch-roles.yaml`` alone, so
+    the grant exists, the role diff looks right, and every fine-tune still dies on its first
+    read because a training run is not placed on a CPU shape.
+
+    That mutation is not hypothetical and it is the one a reader should expect. The cheapest
+    way to make the assertion above pass over a base-checkpoint entry was to grant the CPU
+    workload role, and a tree that had done so would hold a grant on the wrong role, a green
+    suite, and a researcher meeting ``AccessDenied`` after the queue wait and the approval.
+    So the claim asked here is the one that is actually load-bearing for this kind of entry:
+    the placement that can reach the bucket has to be one the work can run on.
+
+    Both sets come off the catalog's ``accelerator`` field, so the two tests cannot disagree
+    about what a device is, and neither can be satisfied by renaming a profile.
+
+    WHAT THIS DOES NOT ASSERT, DELIBERATELY. It does not require that *no* unaccelerated
+    profile reaches the bucket. A CPU workload that legitimately needed these weights -- a
+    checksum, an inventory, a conversion -- would be a second entry carrying the other kind,
+    and forbidding the reach here would refuse it on behalf of a decision nobody has made.
+    What is refused is the reach arriving with no entry at all, which the test below owns.
+
+    THIS TEST IS WITHDRAWN WITH THE GRANT. ``edullm-olmo-370m-ckpts`` is a named exception
+    standing in for a sealed ``model/`` entry that does not exist; when that entry lands the
+    weights become an ordinary library read, the map entry goes, and the guard below turns
+    this red rather than letting it sit measuring an empty set.
+    """
+    with_an_accelerator = accelerated_profiles()
+    weights = inputs_of_kind(WhyItReadsPastTheLibrary.WEIGHTS_TO_START_FROM)
+
+    assert with_an_accelerator, (
+        "no provisioned profile declares accelerator: gpu, so there is no accelerated "
+        "placement for anything and the assertion below cannot hold for the right reason"
+    )
+    assert weights, (
+        "no entry in INPUT_BUCKETS_BEYOND_THE_DATASET_LIBRARY reads weights to start from, "
+        "so this iterates nothing. If the base-checkpoint grant in "
+        "infra/iam/batch-gpu-roles.yaml has been withdrawn for the sealed model/ entry it "
+        "names, delete this test with it rather than leaving it green over nothing"
+    )
+    for workload, bucket, reason in weights:
+        reachable = profiles_that_can_read(bucket)
+        assert reachable & with_an_accelerator, (
+            f"{workload} reads {bucket} -- {reason} -- and no provisioned profile with an "
+            f"accelerator can. Profiles that can: {sorted(reachable)}. The read is the "
+            "prologue to training, so a grant that does not reach the placement the "
+            "training runs on is a grant on the wrong role"
+        )
 
 
 def test_nothing_the_workload_roles_read_past_the_library_is_undeclared() -> None:
