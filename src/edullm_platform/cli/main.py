@@ -3958,7 +3958,9 @@ def _data(arguments: argparse.Namespace, *, out: TextIO, err: TextIO) -> int:
     """
     configuration = _configuration(arguments)
     snapshot = load_corpora_snapshot(configuration.directory)
-    rows = corpora(configuration.datasets, snapshot=snapshot)
+    rows = corpora(
+        configuration.datasets, images=configuration.image_tokenizers, snapshot=snapshot
+    )
 
     if arguments.reference_id is None:
         if arguments.json:
@@ -3969,7 +3971,12 @@ def _data(arguments: argparse.Namespace, *, out: TextIO, err: TextIO) -> int:
         return EXIT_OK
 
     try:
-        row = one_corpus(arguments.reference_id, configuration.datasets, snapshot=snapshot)
+        row = one_corpus(
+            arguments.reference_id,
+            configuration.datasets,
+            images=configuration.image_tokenizers,
+            snapshot=snapshot,
+        )
     except CorpusUnknownError:
         refusal = _no_such_corpus(arguments.reference_id, rows)
         if arguments.json:

@@ -69,6 +69,7 @@ from edullm_platform.contracts.execution import (
     ExecutionTargetCatalog,
     UnbackedComputeProfileError,
 )
+from edullm_platform.contracts.image_tokenizers import ImageTokenizerRecord
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.policy import ApprovalPolicy
@@ -147,6 +148,10 @@ def workload_catalog() -> WorkloadCatalog:
 
 def execution_targets() -> ExecutionTargetCatalog:
     return load_yaml(PROJECT_ROOT / "config" / "execution-targets.yaml", ExecutionTargetCatalog)
+
+
+def image_tokenizers() -> ImageTokenizerRecord:
+    return load_yaml(PROJECT_ROOT / "config" / "image-tokenizers.yaml", ImageTokenizerRecord)
 
 
 def resolution_failure(compute_profile: str) -> str | None:
@@ -301,10 +306,10 @@ def test_the_repository_dropdown_offers_every_registration_that_is_not_excused()
 
 
 def corpora_a_run_could_actually_train_on() -> set[str]:
-    """Registered published corpora whose declared tokenizer this platform can build.
+    """Registered published corpora a published image can actually train on.
 
-    The join that makes the dropdown a promise rather than a list, and three conditions
-    because there are three ways a real sealed corpus is not a thing to offer.
+    The join that makes the dropdown a promise rather than a list, and four conditions
+    because there are four ways a real sealed corpus is not a thing to offer.
 
     ``family in TRAINABLE_FAMILIES`` is the safety one, and it is read from the contract
     rather than spelled here so that the form and admission cannot answer differently. It is
@@ -314,18 +319,32 @@ def corpora_a_run_could_actually_train_on() -> set[str]:
     v6 -- same family, same tokenizer, same pinned digest -- so which is current is a fact
     only the corpus's owner holds, and the registry is where they put it.
 
-    ``tokenizer in TOKENIZERS`` is the computed one, and it is a fact about OLMo-core rather
-    than about this registry, which is why it is looked up. Note that a corpus declaring no
-    tokenizer fails it, because ``None`` is not a key in that map, and that is the right
-    answer rather than a lucky one: the offered path builds a model over a vocabulary, and a
-    corpus of pre-tokenization conversation text has no vocabulary to build it over.
+    ``tokenizer in TOKENIZERS`` is the first computed one, and it is a fact about what this
+    platform can express rather than about this registry, which is why it is looked up. Note
+    that a corpus declaring no tokenizer fails it, because ``None`` is not a key in that map,
+    and that is the right answer rather than a lucky one: the offered path builds a model
+    over a vocabulary, and a corpus of pre-tokenization conversation text has no vocabulary
+    to build it over.
+
+    **``tokenizer in a published image`` IS THE FOURTH AND ITS ABSENCE PUT THREE CORPORA ON
+    THIS DROPDOWN THAT NO IMAGE CAN TRAIN.** The condition above it is a claim about what the
+    platform knows how to express; the promise this list makes is that the corpus will run,
+    which is a claim about what an image knows how to build. Two entries were added to
+    ``TOKENIZERS`` ahead of the matching lines in OLMo-core -- the ordering that module
+    insists on in capitals and nothing enforced -- so ``fineweb-edu-750m-v2``,
+    ``fineweb-edu-1b-v6`` and ``formal-proof-premises-500m-v3`` were offered here, and the
+    header of this module says exactly what that costs: for a corpus in this state the option
+    list is not a second lock, it is the only one. ``run_019fdd88-3ac4`` picked the first,
+    spent an approval, allocated a GPU and exited 69.
     """
+    carried = image_tokenizers().tokenizers_some_image_carries()
     return {
         entry["reference_id"]
         for entry in registry("datasets.yaml").get("published", [])
         if entry["dataset_id"].split("/", maxsplit=1)[0] in TRAINABLE_FAMILIES
         and not entry.get("retired", False)
         and entry["tokenizer"] in TOKENIZERS
+        and entry["tokenizer"] in carried
     }
 
 
@@ -409,13 +428,21 @@ def test_a_corpus_whose_tokenizer_nothing_can_build_stays_registered_and_unoffer
     ``tokenizer/bytes-utf8``, which has no OLMo-core equivalent to name and is still a
     missing upstream feature.
 
-    ``fineweb-edu-1b-v6`` left this list, and the paragraph above predicted the exact
-    mechanism: it was on ``tokenizer/smollm2-bpe``, which had an exact OLMo-core equivalent
-    and no line naming it, and "only the second resolves by somebody deciding to resolve
-    it". Somebody did. ``TokenizerConfig.from_hf("HuggingFaceTB/SmolLM2-135M")`` is in both
-    ``TOKENIZERS`` maps now, so the join above started demanding the option and this test
-    started demanding its absence, and the two could not both be satisfied until one of them
-    was corrected. Nobody had to remember either was here.
+    **``fineweb-edu-1b-v6`` LEFT THIS LIST AND HAS COME BACK, AND THE ROUND TRIP IS THE
+    LESSON.** It was excluded on ``tokenizer/smollm2-bpe``; the paragraph above predicted it
+    would resolve when somebody wrote the OLMo-core equivalent, somebody did, and
+    ``TokenizerConfig.from_hf("HuggingFaceTB/SmolLM2-135M")`` went into
+    ``edullm_platform.tokenizers``. What the prediction got wrong is that it treated one map
+    as two: the line landed here and not in ``OLMo-core/.edullm/train_on_corpus.py``, which
+    is the map the container actually looks a tokenizer up in, and the ordering that module
+    insists on -- upstream first, this after -- was not held. So the corpus was offered, and
+    every image refused it. ``run_019fdd88-3ac4`` named its sibling ``fineweb-edu-750m-v2``,
+    was admitted, allocated a GPU and exited 69.
+
+    The exclusion is computed against ``config/image-tokenizers.yaml`` now, which is a
+    reading of what a published image holds. That makes the retirement this docstring
+    promises real for the first time: the day an image is read carrying smollm2, all three of
+    these corpora come back on their own and the assertion below starts demanding them.
 
     ``fineweb-edu-1b-v2`` is on that tokenizer too and stays off the form regardless, because
     it is retired -- which is what stopped the resolution offering two versions of one corpus
@@ -430,15 +457,32 @@ def test_a_corpus_whose_tokenizer_nothing_can_build_stays_registered_and_unoffer
         entry["reference_id"] for entry in registry("datasets.yaml").get("published", [])
     }
     offerable = corpora_a_run_could_actually_train_on()
+    carried = image_tokenizers().tokenizers_some_image_carries()
 
     for reference_id in ("lean4-mathlib-bytes-v3", "math-memory-full-v1"):
         assert reference_id in registered
         assert reference_id not in offerable
         assert reference_id not in options_for("dataset_release")
-    assert "fineweb-edu-1b-v6" in offerable, (
-        "the tokenizer line landed, so the corpus this test used to hold up as unofferable "
-        "is now the worked example of the exclusion retiring itself"
-    )
+
+    # The three the image record took off the form, asserted on the reason rather than on the
+    # names, so that recording an image carrying either tokenizer resolves this by itself.
+    for reference_id, tokenizer in (
+        ("fineweb-edu-750m-v2", "tokenizer/smollm2-bpe"),
+        ("fineweb-edu-1b-v6", "tokenizer/smollm2-bpe"),
+        ("formal-proof-premises-500m-v3", "tokenizer/qwen25-vendored"),
+    ):
+        assert reference_id in registered
+        assert tokenizer in TOKENIZERS, (
+            f"{tokenizer} left the platform's map, so {reference_id} is off the form for the "
+            "other reason now and this case is asserting the wrong thing about it"
+        )
+        assert tokenizer not in carried, (
+            f"a published image carries {tokenizer} now, so {reference_id} is runnable and "
+            "belongs on the form; this loop is what has to go"
+        )
+        assert reference_id not in offerable
+        assert reference_id not in options_for("dataset_release")
+
     assert "regmix-10b-v1" in offerable, (
         "at least one registered corpus must be trainable, or the dropdown offers no real "
         "data at all and the exclusion above has quietly become the rule"
@@ -812,7 +856,7 @@ def refusals_for(dataset_release: str) -> tuple[str, ...]:
     return tuple(refused)
 
 
-def test_the_dataset_box_is_a_choice_because_five_registered_names_are_refused_by_nothing() -> (
+def test_the_dataset_box_is_a_choice_because_eight_registered_names_are_refused_by_nothing() -> (
     None
 ):
     """THE SECOND ASYMMETRY ON THIS FORM, AND THE ONE #232's REASONING DOES NOT REACH.
@@ -872,16 +916,26 @@ def test_the_dataset_box_is_a_choice_because_five_registered_names_are_refused_b
     refuses a real training input to catch one hazard, and undoes a recorded decision to do
     it. Four refusals to prevent one is the wrong trade in a way a count makes obvious.
 
-    Two of the five that remain are the case that bites hardest and is easiest to miss.
+    Two of the eight that remain are the case that bites hardest and is easiest to miss.
     ``lean4-mathlib-bytes-v3`` and ``math-memory-full-v1`` depend on
     ``tokenizer/bytes-utf8``, which OLMo-core has no equivalent for, so the exclusion
     resolves itself the day upstream grows one rather than needing a refusal built here.
 
+    **THREE JOINED ON 2026-08-07 AND EVERY ONE OF THEM WAS ALREADY IN THIS STATE.** They are
+    not new hazards; they are hazards this derivation could not see, because the join it
+    reads asked whether the platform could express a tokenizer and this set is about what a
+    submission actually reaches. ``fineweb-edu-750m-v2``, ``fineweb-edu-1b-v6`` and
+    ``formal-proof-premises-500m-v3`` were *offered*, which is worse than being in this set:
+    the set enumerates names the option list holds back, and these three were not held back
+    by anything at all. ``run_019fdd88-3ac4`` picked the first, was admitted, allocated a GPU
+    and exited 69. The set growing by three is the measurement becoming honest.
+
     SELF-RETIRING IN THE DIRECTION THAT MATTERS. Build the missing refusals and this set
     shrinks; empty it and this test says so, at which point the list has become the second
-    lock #232 was about and can go. Register a corpus that is offered and the set does not
-    move. The names are derived rather than listed, so nothing here needs editing when one
-    is added -- only when what refuses it changes.
+    lock #232 was about and can go. Record an image carrying smollm2 or qwen25 and the three
+    above leave it by becoming runnable. Register a corpus that is offered and the set does
+    not move. The names are derived rather than listed, so nothing here needs editing when
+    one is added -- only when what refuses it changes.
     """
     # Asked before the options are read rather than after, because ``options_for`` refuses
     # a field that is not a choice and would report the mutation as a missing list.
@@ -901,6 +955,9 @@ def test_the_dataset_box_is_a_choice_because_five_registered_names_are_refused_b
     }
 
     assert held_back_only_by_this_form == {
+        "fineweb-edu-1b-v6",
+        "fineweb-edu-750m-v2",
+        "formal-proof-premises-500m-v3",
         "frontload-cl-chat-sft-v1",
         "lean4-mathlib-bytes-v3",
         "math-memory-full-v1",

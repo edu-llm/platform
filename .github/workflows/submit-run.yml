@@ -195,6 +195,22 @@ on:
       # only thing standing between either of them and an immutable lineage record, and
       # nothing about the options moved.
       #
+      # THREE OPTIONS CAME OFF THIS LIST ON 2026-08-07 AND THE SET IS EIGHT, WHICH IS THE
+      # SAME MEASUREMENT FINDING SOMETHING RATHER THAN THE LIST SHRINKING. Every paragraph
+      # above turns on a corpus being admitted and unrunnable, and the derivation that
+      # decided which ones asked whether this platform could *express* the tokenizer -- not
+      # whether an image could *build* it. `tokenizer/smollm2-bpe` and
+      # `tokenizer/qwen25-vendored` are expressible here and are in no published image, so
+      # `fineweb-edu-750m-v2`, `fineweb-edu-1b-v6` and `formal-proof-premises-500m-v3` were
+      # on this dropdown -- which, by the argument above, is the only lock they had, and it
+      # was open. `run_019fdd88-3ac4` picked the first, was admitted, allocated a GPU and
+      # exited 69.
+      #
+      # The join reads `config/image-tokenizers.yaml` now, which is a measurement of what
+      # each published image holds rather than a list of what this platform knows. Recording
+      # an image that carries one of those tokenizers puts its corpora back on this list, and
+      # tests/test_submission_form_options.py will demand it.
+      #
       # WHAT WOULD CHANGE THE ANSWER AGAIN, so this stays a decision rather than a
       # preference. The remaining half is a corpus whose tokenizer nothing here can
       # construct, refused while compiling; build that and the five become refusable rather
@@ -217,10 +233,7 @@ on:
           - olmo-127b-v1
           - olmo-150b-dolma2-v1
           - math-frontload-100m-v1
-          - formal-proof-premises-500m-v3
           - frontload-cl-10b-v1
-          - fineweb-edu-1b-v6
-          - fineweb-edu-750m-v2
           - fineweb2-phase0-equal-bpe-2b-v1
           - fineweb2-phase0-equal-superbpe-2b-v1
           - fineweb2-unimax-bpe-20b-v1

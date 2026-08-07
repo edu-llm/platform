@@ -1,4 +1,4 @@
-"""The seven files a local check loads, and where the CLI gets its directory from.
+"""The eight files a local check loads, and where the CLI gets its directory from.
 
 The finding moved to :mod:`edullm_platform.reviewed_configuration` and is re-exported here,
 because it is not a CLI concern and pretending it was is part of how two shipped verbs came
@@ -21,6 +21,7 @@ from pydantic import ValidationError
 
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.image_scan import ImageScanExceptionRegistry
+from edullm_platform.contracts.image_tokenizers import ImageTokenizerRecord
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
@@ -52,10 +53,10 @@ class ReviewedConfiguration:
     """Every configuration file a local check needs, loaded once and passed around.
 
     Loaded together rather than lazily because the failure they share is the interesting
-    one: a checkout with four of the six files is a broken installation, and finding that
-    out one refusal at a time would report it as four unrelated problems.
+    one: a checkout with five of the seven files is a broken installation, and finding that
+    out one refusal at a time would report it as several unrelated problems.
 
-    ``directory`` is on it for a second reason now. Anything that needs a seventh file --
+    ``directory`` is on it for a second reason now. Anything that needs an eighth file --
     the lane needs two under ``reports/`` -- reads it from here rather than resolving its
     own, so one invocation cannot answer out of two installs.
     """
@@ -67,8 +68,15 @@ class ReviewedConfiguration:
     datasets: DatasetRegistry
     inventory: OrganizationInventory
     image_scan_exceptions: ImageScanExceptionRegistry
+    #: Which tokenizers each published training image was measured to hold. A rule rather
+    #: than a measurement for loading purposes, which is a distinction worth being careful
+    #: about: it *is* a measurement, and it is not optional, because the verdict it decides
+    #: is the one field in this tree that can lose somebody a GPU allocation. An install
+    #: missing it must not fall back to answering out of the platform's own tokenizer map,
+    #: which is the derivation that marked three corpora runnable that no image can train.
+    image_tokenizers: ImageTokenizerRecord
     #: What runs of each shape have actually taken, and ``None`` where this install carries
-    #: no reading. The seventh file, and the only optional one, because it is the only one
+    #: no reading. The eighth file, and the only optional one, because it is the only one
     #: that is a measurement rather than a rule. A missing rule is a broken installation and
     #: a missing measurement is a thing to say out loud, which
     #: :data:`~edullm_platform.run_history.NO_HISTORY_PACKAGED` is.
@@ -76,10 +84,10 @@ class ReviewedConfiguration:
 
 
 def load_reviewed_configuration(directory: Path) -> ReviewedConfiguration:
-    """Read the six rules and the one reading, or say which of them could not be read.
+    """Read the seven rules and the one reading, or say which of them could not be read.
 
-    The reading is optional and the six are not. A directory holding four of the six is a
-    broken installation, and one holding no ``run-history.json`` is an ordinary install from
+    The reading is optional and the seven are not. A directory holding five of the seven is
+    a broken installation, and one holding no ``run-history.json`` is an ordinary install from
     before the first reading was committed, an editable checkout, or a directory a test
     built. What is not tolerated is a reading that will not parse, which
     :func:`~edullm_platform.run_history.load_run_history` raises on: a measurement this tree
@@ -102,6 +110,9 @@ def load_reviewed_configuration(directory: Path) -> ReviewedConfiguration:
             image_scan_exceptions=load_config_file(
                 ConfigFile.IMAGE_EXCEPTIONS, ImageScanExceptionRegistry, directory=directory
             ),
+            image_tokenizers=load_config_file(
+                ConfigFile.IMAGE_TOKENIZERS, ImageTokenizerRecord, directory=directory
+            ),
             run_history=load_run_history(directory),
         )
     except (
@@ -110,8 +121,8 @@ def load_reviewed_configuration(directory: Path) -> ReviewedConfiguration:
         TypeError,
         RunHistoryFormatError,
         # ``load_config_file`` already reports one unreadable file as this class, so that a
-        # lane verb reading a seventh file exits 2 rather than printing a traceback. Caught
-        # and restated rather than let through, because the six are loaded together on
+        # lane verb reading an eighth file exits 2 rather than printing a traceback. Caught
+        # and restated rather than let through, because the seven are loaded together on
         # purpose: what a person needs to be told is that this installation's configuration
         # is broken, and the directory is the part of that they can act on.
         ConfigurationUnreadableError,

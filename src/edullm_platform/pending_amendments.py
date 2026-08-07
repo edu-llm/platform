@@ -1169,12 +1169,16 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "ConfigFile member, which researcher_lane.py imports and this zip carries, so "
                 "a line in a StrEnum moved a Lambda for two reports the sweep never reads. "
                 "The fourteenth entry in this register recorded that coupling as the finding "
-                "rather than a one-off, and this is its third and fourth arrival."
+                "rather than a one-off, and this is its third and fourth arrival. Its fifth "
+                "is config/image-tokenizers.yaml, which is what edullm data now reads a "
+                "corpus's runnability out of instead of guessing at it from this platform's "
+                "own tokenizer map -- a reviewed file, therefore a ConfigFile member, "
+                "therefore these bytes, and the sweep does not read that one either."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function janitor",
-            builds_to="05a5cc589472e7d95800da952b740f438002ec0cd4e094ad0e71173d1e016339",
+            builds_to="9262e483a342ae8d686dcd580816dc606303cd76f311cb99a8b5183e57bb6dd6",
             released="e07efe963ec9cadb79f7345a14d9074c125e359a588e0661f99db687a757e96a",
-            recorded_on=date(2026, 8, 6),
+            recorded_on=date(2026, 8, 7),
         ),
     )
     return one_record_per_function(releases)

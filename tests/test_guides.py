@@ -37,6 +37,7 @@ import yaml
 from edullm_platform.cli.actions import ADMITTED, DECLINED, submission_state
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
+from edullm_platform.contracts.image_tokenizers import ImageTokenizerRecord
 from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.corpora import corpora
 
@@ -546,10 +547,11 @@ def test_the_guide_sends_a_reader_to_the_verb_rather_than_tabulating_the_corpora
     one at a new size went green for ever. The numbers were held by nothing, in the one place
     a researcher would read them.
 
-    A table also cannot carry the column that matters. Five registered corpora are current
-    and refused by nothing and reach a container that exits 69, and which five is a join over
-    ``config/datasets.yaml`` and ``edullm_platform.tokenizers.TOKENIZERS`` that changes on its
-    own the day OLMo-core grows a tokenizer. A page cannot recompute itself.
+    A table also cannot carry the column that matters. Eight registered corpora are current
+    and refused by nothing and reach a container that exits 69, and which eight is a join over
+    ``config/datasets.yaml``, ``edullm_platform.tokenizers.TOKENIZERS`` and
+    ``config/image-tokenizers.yaml`` that changes on its own the day a published image is read
+    again. A page cannot recompute itself.
 
     So the assertion moves with the answer: the section names the verb, and no row of the
     shape the table used to have survives anywhere on the page. Both halves are needed --
@@ -577,7 +579,10 @@ def test_the_guide_sends_a_reader_to_the_verb_rather_than_tabulating_the_corpora
     # answers for the registered corpora the form cannot show.
     offered = set(form_inputs(workflow)["dataset_release"]["options"]) - {"none"}
     registry = load_yaml(PROJECT_ROOT / "config" / "datasets.yaml", DatasetRegistry)
-    runnable = {row.reference_id for row in corpora(registry) if row.runnability.will_run}
+    images = load_yaml(PROJECT_ROOT / "config" / "image-tokenizers.yaml", ImageTokenizerRecord)
+    runnable = {
+        row.reference_id for row in corpora(registry, images=images) if row.runnability.will_run
+    }
 
     assert runnable == offered, (
         "edullm data and the submission form disagree about which corpora will run, so the "
