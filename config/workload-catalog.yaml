@@ -195,20 +195,24 @@ compute_profiles:
     pricing_source: "AWS Price List API get-products AmazonEC2 g6e.48xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-08-02"
     provisioned: true
-  # TWO OF THE THREE BELOW ARE ABOVE THE RATE CEILING AND ONLY gpu-8xa100 IS STILL OFFERABLE.
-  # This read "the two below are provisioned and still need an admin", which described
-  # gpu-8xa100 and gpu-8xh100 when they were the last two entries. gpu-1xh100 was added
-  # between them at $6.88, under the ceiling rather than over it, and both H100 shapes are now
-  # unprovisioned. What the sentence was really about is the rate rule, which is unchanged:
-  # gpu-8xa100 and gpu-8xh100 carry an hourly_rate_usd
-  # above EXCEPTION_RATE_CEILING_USD_PER_HOUR in
-  # src/edullm_platform/contracts/policy.py, so classify_request returns EXCEPTION for any
-  # request naming them whatever its total cost and runtime are. That file records why the
-  # gate is a rate rather than a list of these two names, and config/policy.yaml points at it.
+  # THE RATE CEILING THIS COMMENT DESCRIBED DOES NOT EXIST, AND NO ROW HERE IS GATED BY ITS
+  # PRICE ANY MORE. It said gpu-8xa100 and gpu-8xh100 carried an hourly_rate_usd above
+  # EXCEPTION_RATE_CEILING_USD_PER_HOUR in src/edullm_platform/contracts/policy.py, so
+  # classify_request returned EXCEPTION for any request naming them whatever the total was, and
+  # it warned that editing one of these numbers downward past $20 would move a shape from admin
+  # approval to team-lead approval. Policy v5 withdrew that ceiling for exactly the reason the
+  # warning describes: an approval class that is a function of a price is one a repricing
+  # changes, decided by whoever edits a number. config/policy.yaml records the removal.
   #
-  # So hourly_rate_usd here is no longer only a cost estimate. It is read by the gate, and
-  # editing one of these numbers downward past $20 would move a shape from admin approval to
-  # team-lead approval with nothing else changing.
+  # So hourly_rate_usd is a cost estimate again and nothing else. It feeds
+  # estimated_cost_usd, which decides whether a run is released by nobody or by a team lead,
+  # and it decides nothing about which gate a person stands at.
+  #
+  # WHAT DOES SEND A REQUEST TO AN ADMIN IS capacity_block_backed, which only the last four rows
+  # of this file's compute_profiles carry, and it is a property of how a machine is obtained
+  # rather than of what it costs. gpu-8xa100 and gpu-8xh100 are on-demand shapes that EC2 will
+  # sell whenever it has one, so neither carries the flag and neither needs an admin. That they
+  # place unreliably is config/capacity.yaml's subject and is not an approval question.
   #
   # A100 HAS NO ONE-CARD OR FOUR-CARD FORM ON EC2. H100 HAS A ONE-CARD FORM AND THIS FILE
   # SAID IT DID NOT.
@@ -308,6 +312,98 @@ compute_profiles:
     pricing_source: "AWS Price List API get-products AmazonEC2 p5.48xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-25"
     provisioned: false
+  # THE FOUR BELOW ARE PRICED OFF A DIFFERENT PRODUCT TO THE SEVENTEEN ABOVE, AND A READER
+  # COMPARING A RATE ACROSS THE BOUNDARY IS COMPARING TWO THINGS. Every row above this line
+  # carries an on-demand rate from the Price List API. These four carry AWS's published
+  # effective hourly *reservation* rate for a capacity block, and `pricing_source` says which
+  # on every row so the two can never be mistaken for each other in a diff.
+  #
+  # WHY THAT IS THE RIGHT NUMBER HERE RATHER THAN A SHORTCUT. An on-demand rate is what an hour
+  # costs if you can buy an hour. Nothing in this account can buy an hour of any of these four:
+  # p5en shares the pool that produced 7,654 consecutive InsufficientInstanceCapacity refusals
+  # for p5, and the two P6 shapes have never been asked for at all. The only route to any of
+  # them is `config/capacity-blocks.yaml`, which is prepaid, whole-day and non-cancellable, so
+  # the reservation rate is not an approximation of what an hour costs -- it is what an hour
+  # costs, and the on-demand figure is the hypothetical.
+  #
+  # WHAT THIS DOES TO THE GATE, WHICH IS THE THING TO CHECK BEFORE EDITING ANY OF THEM. Nothing,
+  # and that is the correction rather than a loosening. This said classify_request returns
+  # EXCEPTION for any rate above EXCEPTION_RATE_CEILING_USD_PER_HOUR, that all four are far above
+  # the $20 ceiling, and that every request naming any of them therefore needs an admin whatever
+  # its runtime is. There is no such constant and there has not been since policy v5; the note
+  # above gpu-1xh100 records what happened to it. So for as long as these four rows have existed
+  # they were the most expensive shapes in the catalog and were routing to whichever team lead
+  # was nearest, on the strength of a comment.
+  #
+  # `capacity_block_backed: true` on each row is what sends them to an admin now, and it is
+  # declared rather than inferred from the rate for the same reason the ceiling went: how a
+  # machine is obtained does not change when AWS reprices it. The flag and `pricing_source` are
+  # held to each other by WorkloadCatalog.validate_block_backing_matches_the_price_list, so a row
+  # priced off this price list and left unflagged refuses to load rather than routing somewhere
+  # plausible, and a fifth block shape cannot be added by copying a row and changing the numbers.
+  #
+  # ALL FOUR ARE `provisioned: false` AND NOT ONE OF THEM IS A MISTAKE. A block for none of them
+  # has been bought. `provisioned: true` is what `infra/batch-capacity-block.yaml` earns when it
+  # is deployed against a real reservation id, and it goes back to false in the commit that tears
+  # that stack down, alongside withdrawing the row from `config/execution-targets.yaml`. Flipping
+  # one of these without the queue behind it produces a submission that is admitted, approved and
+  # then sits in RUNNABLE forever, which is the failure `config/capacity.yaml` spends a hundred
+  # lines on.
+  #
+  # 80 GB A100, AND THE CHEAPEST WAY TO GET 640 GB OF DEVICE MEMORY ONTO THIS PLATFORM. Same
+  # machine as gpu-8xa100 with the larger part fitted: p4de.24xlarge against p4d.24xlarge, 80 GB
+  # per card against 40. This row is the one an "eight 80 GB A100 cards" description belongs to,
+  # and the note above gpu-8xa100 records at length that the description was once attached to
+  # that row instead. Anybody who reaches for 80 GB A100 wants this name and not that one.
+  - name: gpu-8xa100-80gb
+    instance_type: p4de.24xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "17.7120"
+    pricing_source: "AWS Capacity Blocks for ML published effective hourly reservation rate, p4de.24xlarge us-east-1"
+    pricing_observed_at: "2026-08-07"
+    provisioned: false
+    capacity_block_backed: true
+  # Eight H200 at 141 GiB each, which is more device memory than gpu-8xh100 for less money than
+  # gpu-8xh100's own block. infra/batch-compute-gpu-shapes.yaml already lists p5en.48xlarge as
+  # the H100 environment's fallback instance type and records it as an exact fit on vCPU and
+  # instance memory, so this profile is the metadata that was missing rather than new ground.
+  - name: gpu-8xh200
+    instance_type: p5en.48xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "54.9200"
+    pricing_source: "AWS Capacity Blocks for ML published effective hourly reservation rate, p5en.48xlarge us-east-1"
+    pricing_observed_at: "2026-08-07"
+    provisioned: false
+    capacity_block_backed: true
+  # BLACKWELL, WHICH IS A NEW ARCHITECTURE RATHER THAN A BIGGER CARD, AND THE ONE ROW HERE WITH A
+  # SOFTWARE RISK IN FRONT OF IT. AWS publishes a minimum of CUDA 12.8 and driver R570 for
+  # p6-b200. The training image's CUDA 12.8 base clears the first on paper; nothing has confirmed
+  # the second on the silicon, because the driver version this platform knows was read off an
+  # A10G. infra/batch-compute-gpu-shapes.yaml excludes p6-b200 from the H100 environment for
+  # exactly that reason, and a block is the first thing that would settle it.
+  - name: gpu-8xb200
+    instance_type: p6-b200.48xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "98.8400"
+    pricing_source: "AWS Capacity Blocks for ML published effective hourly reservation rate, p6-b200.48xlarge us-east-1"
+    pricing_observed_at: "2026-08-07"
+    provisioned: false
+    capacity_block_backed: true
+  # The largest and most expensive machine this catalog prices, and the only one whose container
+  # memory ceiling is a bound rather than a figure -- see src/edullm_platform/execution.py, which
+  # explains what to correct and from where after the first launch.
+  - name: gpu-8xb300
+    instance_type: p6-b300.48xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "112.3200"
+    pricing_source: "AWS Capacity Blocks for ML published effective hourly reservation rate, p6-b300.48xlarge us-east-1"
+    pricing_observed_at: "2026-08-07"
+    provisioned: false
+    capacity_block_backed: true
 workloads:
   # THESE NINE WERE RENAMED, IN TWO WAVES, AND RECORDS WRITTEN BEFORE EITHER WAVE STILL
   # CARRY THE OLD NAMES.
@@ -472,10 +568,23 @@ workloads:
   # makes. How many devices the run gets is priced on the approver's summary before it is
   # released.
   #
-  # TWENTY-FOUR HOURS IS THE POLICY CEILING AND NOT A ROUND NUMBER. config/policy.yaml sets
-  # routine_maximum_runtime_hours to 24, so this is the longest run that still routes to an
-  # ordinary lead approval; a twenty-fifth hour would make every submission an exception and
-  # put a second person in the path of every training job.
+  # TWENTY-FOUR HOURS WAS THE POLICY CEILING AND IS NOW ONLY THIS ONE. config/policy.yaml set
+  # routine_maximum_runtime_hours to 24 when this figure was chosen, so a twenty-fifth hour
+  # made every submission an exception and put a second person in the path of every training
+  # job. That threshold is gone -- `thresholds` now carries automatic_below_cost_usd and
+  # automatic_daily_ceiling_usd and nothing else, and the removed four are recorded in
+  # config/policy.yaml rather than deleted in silence.
+  #
+  # SO RAISING THIS NUMBER NO LONGER MOVES WHO APPROVES ANYTHING. What bounds a long run is
+  # the cost ceiling, which reads the same fact: a run long enough to be worth arguing about
+  # is expensive, and expensive is what that bound sees. This ceiling is now a statement about
+  # what this workload is built to do rather than a lever on the approval path.
+  #
+  # IT ALSO DOES NOT TRUNCATE A CAPACITY BLOCK, which is the question a purchased window
+  # raises. A 24-hour block yields about 23.5 usable hours because AWS begins terminating the
+  # instances thirty minutes before the block ends, and 23.5 is inside this ceiling with half
+  # an hour to spare. A block long enough to need a twenty-fifth hour would need this figure
+  # raised, and that edit is now approval-neutral.
   #
   # IT WAS TWELVE AND THE TWELVE WAS MEASURABLY WRONG, WHICH IS WHY BOTH NUMBERS MOVED
   # TOGETHER. Memory-split's eight seed pairs and P7's 192-checkpoint sweep each land

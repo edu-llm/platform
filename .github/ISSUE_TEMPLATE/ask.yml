@@ -47,6 +47,7 @@ body:
         triages this puts the matching label on, because a form cannot set one conditionally.
       options:
         - access-request
+        - capacity-block
         - dataset-request
         - feedback
         - run-problem
@@ -240,6 +241,79 @@ body:
         commonest cause of a refusal that looks wrong, and it is invisible from everything
         else on this form. Re-installing is one line and it is worth trying before you file.
       placeholder: 3.4.3
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ### If you picked `capacity-block`, these four are what the purchase is decided on
+
+        **A capacity block is paid upfront and cannot be cancelled.** Somebody reserves a
+        dated window of machines, the money is spent when they click, and the window opens on
+        its date whether or not anybody is ready for it. So this ask is answered by arithmetic
+        rather than by judgement, and the four fields below are the arithmetic.
+
+        Before you file, run `edullm check --json --compute <the shape you want>` and paste it
+        into **What it printed** above. It is free, it reaches no network, and it catches the
+        mistakes that otherwise get found on a machine you are already paying for — a launcher
+        starting the wrong number of processes, a command that never writes a checkpoint
+        anywhere a retry can reach. [Capacity blocks](https://github.com/edu-llm/platform/blob/main/guides/capacity-blocks.md)
+        explains what can be reserved and what each one costs.
+
+        Expect weeks rather than days. The earliest offering is usually two to four weeks out,
+        and that is the lead time however urgent the work is.
+
+  - type: input
+    id: peak_gpu_memory
+    attributes:
+      label: How much GPU memory does your run need at peak, and how do you know?
+      description: >-
+        The number that picks the machine, and the one nothing on this platform can measure for
+        you. Say how you arrived at it — measured on a smaller card, computed from parameters
+        and optimizer state, or estimated. An estimate is a fine answer and a wrong confident
+        one is not: the difference between 640 GB and 1440 GB is about $1,400 a day.
+      placeholder: ~500 GB, measured at peak on 4 x A10G with the same batch size
+    validations:
+      required: false
+
+  - type: input
+    id: hours_needed
+    attributes:
+      label: How many hours of compute do you need, and how did you get that number?
+      description: >-
+        Blocks are sold in whole days, so this decides how many you are asking somebody to buy.
+        Extrapolating from a measured step time is worth far more than a guess. Note that
+        AWS starts terminating instances 30 minutes before a block ends, so the usable window
+        is shorter than the number bought.
+      placeholder: about 18 hours, from 1.4 s/step measured on one A10G scaled to 8 cards
+    validations:
+      required: false
+
+  - type: input
+    id: needed_by
+    attributes:
+      label: When do you need this by?
+      description: >-
+        A real date. Offerings can be searched across a range and the cheapest one in that
+        range is what comes back, so a flexible deadline is worth money. A deadline inside two
+        weeks probably cannot be met at all.
+      placeholder: any time before 15 September
+    validations:
+      required: false
+
+  - type: dropdown
+    id: resume_tested
+    attributes:
+      label: Have you tested that your job resumes from a checkpoint?
+      description: >-
+        Writing a checkpoint and resuming from one are different features and only one of them
+        is tested by writing one. A block does not pause while a bug is fixed, so a crash three
+        hours in either costs three hours or costs the whole block, and this field is which.
+      options:
+        - "Yes, I have restarted a run from a checkpoint and it continued"
+        - "It writes checkpoints but I have not tested a resume"
+        - "No, it does not checkpoint"
     validations:
       required: false
 

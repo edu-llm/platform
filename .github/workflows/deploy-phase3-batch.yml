@@ -63,6 +63,63 @@ on:
         required: false
         default: ""
         type: string
+
+      # A PURCHASED CAPACITY BLOCK, WHICH IS THE ONE STACK HERE A PUSH CANNOT DEPLOY.
+      #
+      # Every other template in this workflow reconciles from the file alone, which is why they
+      # are in the push filter and this one is deliberately not. This one needs a `cr-` id that
+      # does not exist until somebody has spent money, so there is nothing for a merge to deploy
+      # and a push path for it would be a promise the workflow cannot keep.
+      #
+      # WHY IT IS A DISPATCH HERE RATHER THAN A LAPTOP COMMAND. The credential that can create
+      # this stack is the deployer role, and the deployer role is reachable only from this
+      # workflow file on main -- its trust pins job_workflow_ref. So the alternative to these
+      # inputs is not a shorter path, it is no path: a block bought on a Saturday with no way to
+      # put a queue in front of it before the window opens.
+      #
+      # ALL FIVE ARE TYPED IN RATHER THAN READ BACK OFF THE RESERVATION, and that is a limit
+      # rather than a preference. Deriving the type and the zone from the id would need
+      # ec2:DescribeCapacityReservations, which this role does not hold; granting it needs
+      # iam:PutRolePolicy, which needs a laptop credential; and infra/README.md calls that a
+      # door that only opens from inside. The template's own guidance covers the risk this
+      # leaves -- read the type, the zone and the id off one row of the console rather than
+      # three -- and its AllowedPattern catches a mistyped shape rather than a wrong one.
+      capacity_block_profile:
+        description: "Capacity block: the compute profile the block was bought for, which names the stack. Leave empty unless you are deploying a purchased block."
+        required: false
+        default: ""
+        type: choice
+        options:
+          - ""
+          - gpu-8xa100-80gb
+          - gpu-8xh200
+          - gpu-8xb200
+          - gpu-8xb300
+      capacity_reservation_id:
+        description: "Capacity block: the cr- id of the purchased reservation, read off the reservation itself."
+        required: false
+        default: ""
+        type: string
+      capacity_block_instance_type:
+        description: "Capacity block: the instance type on that same reservation row, for example p6-b200.48xlarge."
+        required: false
+        default: ""
+        type: string
+      capacity_block_availability_zone:
+        description: "Capacity block: the availability zone on that same reservation row, for example us-east-1d."
+        required: false
+        default: ""
+        type: string
+      capacity_block_subnet_id:
+        description: "Capacity block: the batch network subnet in that zone. infra/batch-network.yaml exports one per zone."
+        required: false
+        default: ""
+        type: string
+      capacity_block_max_vcpus:
+        description: "Capacity block: the whole reservation in vCPU — instances times the vCPU of the type. One p6-b200.48xlarge is 192."
+        required: false
+        default: ""
+        type: string
   push:
     branches:
       - main
@@ -294,6 +351,12 @@ jobs:
             --body infra/admission-state-machine.yaml
           aws cloudformation validate-template \
             --template-url https://s3.${AWS_REGION}.amazonaws.com/sbsandbox-intern-edullm-artifacts/cloudformation-templates/admission-state-machine.yaml
+          aws s3api put-object \
+            --bucket sbsandbox-intern-edullm-artifacts \
+            --key cloudformation-templates/batch-capacity-block.yaml \
+            --body infra/batch-capacity-block.yaml
+          aws cloudformation validate-template \
+            --template-url https://s3.${AWS_REGION}.amazonaws.com/sbsandbox-intern-edullm-artifacts/cloudformation-templates/batch-capacity-block.yaml
 
       # No --capabilities on any deploy here, for the reason the Phase 2 workflow states and
       # checks: CloudFormation demands CAPABILITY_IAM or CAPABILITY_NAMED_IAM only for
@@ -393,6 +456,223 @@ jobs:
             --s3-bucket sbsandbox-intern-edullm-artifacts \
             --s3-prefix cloudformation-templates/checksummed \
             --no-fail-on-empty-changeset
+
+      # THE FOUR CONTAINER NUMBERS, READ OUT OF THE PLATFORM'S OWN TABLE RATHER THAN TYPED.
+      #
+      # infra/batch-capacity-block.yaml takes ContainerVcpus, ContainerMemoryMiB, GpuCount and
+      # SharedMemoryMiB because one template stands behind four shapes. They could have been
+      # four more dispatch fields. They must not be: the person filling this form has just
+      # spent four figures and is working against a clock, and ContainerMemoryMiB is a
+      # six-digit number whose correct value is neither the advertised instance memory nor
+      # anything a console displays -- it is the measured ECS-registered ceiling that
+      # src/edullm_platform/execution.py carries per instance type, with the reasoning for
+      # each. Mistyped high, the job parks in RUNNABLE and the window drains with no error
+      # anywhere. Mistyped low, the run takes an out-of-memory kill hours in.
+      #
+      # So the profile is the only thing named and the numbers are looked up. The instance type
+      # stays a dispatch field and is checked against the catalog here, which is the one of the
+      # five values worth verifying rather than deriving: it is read off the reservation, so a
+      # mismatch means the block that was bought is not the shape being deployed for, and that
+      # is worth a refusal before a stack exists rather than a launch that never places.
+      #
+      # THE INTERPRETER THIS NEEDS IS THE ONE THE REPORT PATH ALREADY INSTALLED, MOVED UP.
+      # It sat below the deploys because only the queue enumeration used it; a block deploy
+      # needs it before them, so the step is here with a condition covering both callers rather
+      # than written twice with a version pin that could drift. An ordinary push deploy matches
+      # neither condition and still installs nothing. Pinned to the version cancel-run.yml
+      # pins, because that workflow runs the same reader over the same file and a skew between
+      # them is a difference nobody would look for.
+      - name: Install the platform tooling
+        if: inputs.describe_run != '' || inputs.capacity_block_profile != ''
+        env:
+          UV_VERSION: "0.11.32"
+        run: |
+          set -euo pipefail
+          pipx install "uv==${UV_VERSION}"
+          installed="$(uv --version)"
+          if [[ "${installed}" != "uv ${UV_VERSION}" && "${installed}" != "uv ${UV_VERSION} "* ]]; then
+            echo "unexpected_uv_version" >&2
+            echo "Expected uv ${UV_VERSION} but PATH answers with: ${installed}" >&2
+            exit 1
+          fi
+          uv sync --locked
+
+      - name: Read the container shape the block's job definition will ask for
+        if: inputs.describe_run == '' && inputs.capacity_block_profile != ''
+        env:
+          PROFILE: ${{ inputs.capacity_block_profile }}
+          INSTANCE_TYPE: ${{ inputs.capacity_block_instance_type }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python - >> "${GITHUB_ENV}" <<'PY'
+          import os
+          from pathlib import Path
+
+          from edullm_platform.config import load_yaml
+          from edullm_platform.contracts.workload import WorkloadCatalog
+          from edullm_platform.execution import CONTAINER_SHAPES
+
+          profile = os.environ["PROFILE"]
+          declared = os.environ["INSTANCE_TYPE"]
+
+          shape = CONTAINER_SHAPES.get(profile)
+          if shape is None:
+              raise SystemExit(
+                  f"unshaped_compute_profile\n{profile} has no container shape in "
+                  "src/edullm_platform/execution.py, so what its job definition should ask "
+                  "for is unknown. Nothing has been deployed."
+              )
+
+          catalog = load_yaml(Path("config/workload-catalog.yaml"), WorkloadCatalog)
+          entries = {entry.name: entry for entry in catalog.compute_profiles}
+          if profile not in entries:
+              raise SystemExit(
+                  f"unknown_compute_profile\n{profile} is not in "
+                  "config/workload-catalog.yaml. Nothing has been deployed."
+              )
+          entry = entries[profile]
+
+          # A BLOCK STACK FOR A SHAPE THAT IS NOT BLOCK BACKED IS THE DOUBLE BILL AGAIN. The
+          # on-demand shapes already have a queue in the deploys above; standing a second one
+          # in front of a reservation for the same shape would leave two queues for it, and the
+          # one that does not belong to the block charges full rate.
+          if not entry.capacity_block_backed:
+              raise SystemExit(
+                  f"profile_is_not_capacity_block_backed\n{profile} is not marked "
+                  "capacity_block_backed in config/workload-catalog.yaml, so it already has an "
+                  "on-demand queue and must not be given a block one. Nothing has been deployed."
+              )
+
+          if entry.instance_type != declared:
+              raise SystemExit(
+                  f"capacity_block_instance_type_mismatch\n{profile} is {entry.instance_type} in "
+                  f"config/workload-catalog.yaml and the dispatch named {declared}. Either the "
+                  "block that was bought is not this shape, or the field was mistyped. "
+                  "Nothing has been deployed."
+              )
+
+          print(f"CONTAINER_VCPUS={shape.vcpus}")
+          print(f"CONTAINER_MEMORY_MIB={shape.memory_mib}")
+          print(f"GPU_COUNT={shape.gpus}")
+          print(f"SHARED_MEMORY_MIB={shape.shared_memory_mib}")
+          PY
+
+      # THE QUEUE IN FRONT OF A PURCHASED BLOCK, DEPLOYED ONLY WHEN A DISPATCH NAMES ONE.
+      #
+      # Skipped on every push and on every dispatch that leaves the profile empty, so an
+      # ordinary deploy neither creates this stack nor touches an existing one. That is the
+      # right default: the stack is per purchase, it is torn down when the window closes, and
+      # reconciling it from a file that cannot know the reservation id would be meaningless.
+      #
+      # ONE STACK PER PROFILE, NAMED FOR THE PROFILE, which is what src/edullm_platform/
+      # stack_templates.py already declares -- four stack names over the one template, because
+      # four shapes in config/workload-catalog.yaml are capacity-block backed. Two blocks of
+      # different shapes can therefore be live at once without either deploy disturbing the
+      # other, and the audit can tell which template each came from.
+      #
+      # NO --no-fail-on-empty-changeset HERE, UNLIKE EVERY DEPLOY ABOVE. Those reconcile and an
+      # empty changeset is the ordinary healthy answer. This one is dispatched by a person who
+      # has just bought something and is asserting that a queue should now exist for it; an
+      # empty changeset means the parameters match a stack that is already there, which during
+      # a window is worth the non-zero exit rather than a green tick that reads as done.
+      - name: Deploy the queue for a purchased capacity block
+        if: inputs.describe_run == '' && inputs.capacity_block_profile != ''
+        env:
+          PROFILE: ${{ inputs.capacity_block_profile }}
+          RESERVATION: ${{ inputs.capacity_reservation_id }}
+          INSTANCE_TYPE: ${{ inputs.capacity_block_instance_type }}
+          ZONE: ${{ inputs.capacity_block_availability_zone }}
+          SUBNET: ${{ inputs.capacity_block_subnet_id }}
+          MAX_VCPUS: ${{ inputs.capacity_block_max_vcpus }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for named in RESERVATION INSTANCE_TYPE ZONE SUBNET MAX_VCPUS; do
+            if [[ -z "${!named}" ]]; then
+              missing="${missing} ${named}"
+            fi
+          done
+          if [[ -n "${missing}" ]]; then
+            echo "capacity_block_dispatch_incomplete" >&2
+            echo "A dispatch naming a profile has to carry every one of the five values the template takes. Missing:${missing}" >&2
+            echo "Nothing has been deployed. Read all of them off the reservation and the network stack, and dispatch again." >&2
+            exit 1
+          fi
+          aws cloudformation deploy \
+            --stack-name "sbsandbox-intern-edullm-capacity-block-${PROFILE}" \
+            --template-file infra/batch-capacity-block.yaml \
+            --s3-bucket sbsandbox-intern-edullm-artifacts \
+            --s3-prefix cloudformation-templates/checksummed \
+            --parameter-overrides \
+              "InstanceType=${INSTANCE_TYPE}" \
+              "CapacityReservationId=${RESERVATION}" \
+              "AvailabilityZone=${ZONE}" \
+              "SubnetId=${SUBNET}" \
+              "MaxvCpus=${MAX_VCPUS}" \
+              "ContainerVcpus=${CONTAINER_VCPUS}" \
+              "ContainerMemoryMiB=${CONTAINER_MEMORY_MIB}" \
+              "GpuCount=${GPU_COUNT}" \
+              "SharedMemoryMiB=${SHARED_MEMORY_MIB}"
+
+      # READ THE TARGETING BACK OFF THE DEPLOYED LAUNCH TEMPLATE, WHICH IS THE ONLY CHECK THAT
+      # STANDS BETWEEN A GREEN DEPLOY AND THE BILL THIS WHOLE STACK EXISTS TO PREVENT.
+      #
+      # The failure it catches makes no noise anywhere else. A GPU compute environment whose
+      # launch template has a null CapacityReservationSpecification does not error, does not go
+      # INVALID and does not warn: it launches on demand instances beside the paid idle block
+      # and bills for both. Every other signal in this workflow -- stack CREATE_COMPLETE,
+      # environment VALID, queue ENABLED -- is identical in that case and in the right one.
+      #
+      # So this asks EC2 what the launch template actually says rather than trusting the
+      # template file, and it asks about the default version, which is the version Batch
+      # resolves. Two properties and both are load bearing. MarketType must read capacity-block,
+      # which is what makes the launch a draw against the reservation rather than a purchase.
+      # CapacityReservationId must equal the id that was dispatched, which is what stops a
+      # correct looking stack drawing against somebody elses reservation or against none.
+      #
+      # ec2:DescribeLaunchTemplateVersions is already granted to this role and was granted on
+      # 2026-08-04, so this check costs no IAM change -- which matters, because the change it
+      # would otherwise need is one only a laptop credential can make.
+      - name: Prove the launch template targets the reservation that was paid for
+        if: inputs.describe_run == '' && inputs.capacity_block_profile != ''
+        env:
+          PROFILE: ${{ inputs.capacity_block_profile }}
+          RESERVATION: ${{ inputs.capacity_reservation_id }}
+        run: |
+          set -euo pipefail
+          launch_template="sbsandbox-intern-edullm-capacity-block-${PROFILE}"
+          observed="${RUNNER_TEMP}/capacity-block-targeting.json"
+          aws ec2 describe-launch-template-versions \
+            --launch-template-name "${launch_template}" \
+            --versions '$Default' \
+            --query "LaunchTemplateVersions[0].LaunchTemplateData.{market:InstanceMarketOptions.MarketType,reservation:CapacityReservationSpecification.CapacityReservationTarget.CapacityReservationId,preference:CapacityReservationSpecification.CapacityReservationPreference}" \
+            --output json > "${observed}"
+          python3 - "${observed}" "${RESERVATION}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          observed = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          expected_reservation = sys.argv[2]
+
+          # CapacityReservationPreference is asserted absent rather than left unread. It and
+          # CapacityReservationTarget are mutually exclusive, and a preference of open is the
+          # value that turns this launch template back into the on demand one -- so a template
+          # carrying both is the money burning case wearing the right target as camouflage.
+          expected = {
+              "market": "capacity-block",
+              "reservation": expected_reservation,
+              "preference": None,
+          }
+          if observed != expected:
+              raise SystemExit(
+                  "the deployed launch template does not target the reservation that was paid "
+                  f"for: expected {expected}, observed {observed}. Do not submit anything to "
+                  "this queue. A job placed through it launches on demand instances beside the "
+                  "idle block and bills for both."
+              )
+          print("CAPACITY_BLOCK_TARGETING_VERIFIED")
+          PY
 
       # RECOVER A CREATE THAT FAILED AND ROLLED BACK, BECAUSE THE STEP BELOW CANNOT.
       #
@@ -964,35 +1244,6 @@ jobs:
 
           print("PHASE4_GPU_SHAPE_VERIFICATION_PASSED")
           PY
-
-      # THE TOOLING THE ENUMERATION BELOW NEEDS, INSTALLED ONLY WHEN A REPORT WAS ASKED FOR.
-      #
-      # This workflow installed no interpreter at all until now, and the two report steps
-      # below were written in python3 for exactly that reason. What changed is that they must
-      # read config/execution-targets.yaml, which is a pydantic contract behind a YAML file
-      # rather than a list of strings -- and reading it any other way would be a second
-      # mechanism for a question cancel-run.yml already answers one way.
-      #
-      # Gated on the dispatch carrying a run id, so a deploy pays nothing for it. A report
-      # pays about twenty seconds, against a search of sixteen queues that takes minutes.
-      #
-      # Pinned to the version cancel-run.yml pins, because these two now run the same reader
-      # over the same file and a version skew between them is a difference nobody would look
-      # for.
-      - name: Install the platform tooling
-        if: inputs.describe_run != ''
-        env:
-          UV_VERSION: "0.11.32"
-        run: |
-          set -euo pipefail
-          pipx install "uv==${UV_VERSION}"
-          installed="$(uv --version)"
-          if [[ "${installed}" != "uv ${UV_VERSION}" && "${installed}" != "uv ${UV_VERSION} "* ]]; then
-            echo "unexpected_uv_version" >&2
-            echo "Expected uv ${UV_VERSION} but PATH answers with: ${installed}" >&2
-            exit 1
-          fi
-          uv sync --locked
 
       # EVERY QUEUE A RUN COULD BE ON, READ OUT OF THE FILE THAT DECIDES WHERE RUNS GO.
       #

@@ -49,6 +49,14 @@ ACCELERATORS = {
     "g6e": ("l40s", 48),
     "p4d": ("a100", 40),
     "p5": ("h100", 80),
+    # The four block-backed families. Their figures are AWS's published per-device MiB divided
+    # into GiB -- 183,359 MiB is 179.06 GiB and 275,040 is 268.59 -- so the two Blackwell rows
+    # are the only ones here that round. config/accelerators.yaml carries the exact MiB and
+    # records that these four are published rather than measured.
+    "p4de": ("a100", 80),
+    "p5en": ("h200", 141),
+    "p6-b200": ("b200", 179),
+    "p6-b300": ("b300", 268),
 }
 
 #: How a GPU profile name spells its device count and its device. The trailing qualifier on
@@ -112,6 +120,12 @@ def accelerator(profile: ComputeProfile) -> tuple[int, int]:
 #: supplied six nodes and started every one of seven runs, and gpu-1xl40s two nodes, while
 #: both sat here being described as unobtainable. What is left is five, and three of those
 #: five are shapes no queue has ever asked for.
+#:
+#: FIVE BECAME NINE ON 2026-08-07 AND THE FOUR THAT JOINED ARE BLOCK-BACKED SHAPES. None of them
+#: has a Batch queue, none has ever placed, and the vocabulary has no verdict for "obtainable
+#: only inside a window somebody has bought". config/capacity.yaml sets out at length why they
+#: are `unreliably` rather than `after_a_wait` today and what moves them: a purchased block, in
+#: the commit that deploys a queue for one.
 SHAPES_THAT_DO_NOT_PLACE = frozenset(
     {
         "gpu-4xl4",
@@ -119,6 +133,10 @@ SHAPES_THAT_DO_NOT_PLACE = frozenset(
         "gpu-8xl40s",
         "gpu-1xh100",
         "gpu-8xh100",
+        "gpu-8xa100-80gb",
+        "gpu-8xh200",
+        "gpu-8xb200",
+        "gpu-8xb300",
     }
 )
 
@@ -147,6 +165,21 @@ SHAPES_ONLY_A_PROBE_HAS_ASKED = frozenset(
         "gpu-4xl4",
         "gpu-8xl4",
         "gpu-8xl40s",
+        # All four block-backed shapes, and they are weaker than everything else in this set
+        # rather than equal to it. The entries above are shapes a probe actually asked about; for
+        # these four no instrument has run at all, and `probe` is recorded because the file has no
+        # value meaning "nobody has looked".
+        #
+        # gpu-8xh200 IS HERE BECAUSE tools/check_placement_verdicts.py REFUSED IT AS `queue`, and
+        # the reasoning is worth keeping. The p5 refusals that settled gpu-8xh100 were raised
+        # across p5en.48xlarge as well, which looks like queue evidence for this shape and is not:
+        # the queue that raised them is gpu-8xh100's, and no queue is mapped to gpu-8xh200 at all.
+        # `queue` is a claim about one queue's own history, and loosening it to "something touched
+        # this instance type" would make it unfalsifiable.
+        "gpu-8xa100-80gb",
+        "gpu-8xh200",
+        "gpu-8xb200",
+        "gpu-8xb300",
     }
 )
 

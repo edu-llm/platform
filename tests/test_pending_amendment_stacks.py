@@ -51,11 +51,16 @@ from edullm_platform.pending_amendments import (
 )
 from edullm_platform.role_drift import DriftDirection, RoleDriftFinding
 from edullm_platform.stack_templates import (
+    CAPACITY_BLOCK_TEMPLATE,
     IAM_TEMPLATE_DIRECTORY,
     STACK_TEMPLATES,
+    DuplicateStackError,
     UnmappedTemplateError,
     applied_from_a_laptop,
+    sole_template_stacks,
     stack_for_template,
+    stacks_for_template,
+    template_by_stack,
     template_for_stack,
 )
 
@@ -202,15 +207,81 @@ def test_a_template_no_stack_is_deployed_from_resolves_to_nothing() -> None:
         stack_for_template("infra/iam/a-template-nobody-applies.yaml")
 
 
-def test_one_template_may_not_be_claimed_by_two_stacks() -> None:
-    # What makes the second step a function rather than a choice. Enforced at import of
-    # `stack_templates`, so this reads the table rather than calling anything.
-    templates = [template for _stack, template in STACK_TEMPLATES]
+def test_one_stack_name_may_not_be_claimed_by_two_templates() -> None:
+    """What makes the second step a function rather than a choice, narrowed to the half that is.
 
-    assert len(set(templates)) == len(templates), (
-        "two stacks claim one template, so which apply clears a change to it is a choice, "
+    THIS ASSERTED THE TEMPLATES WERE UNIQUE AND THE TEMPLATES ARE NO LONGER UNIQUE.
+    ``infra/batch-capacity-block.yaml`` is parameterised on a reservation id, an instance type
+    and an availability zone, so it is deployed once per capacity block somebody buys and the old
+    rule made a second concurrent block an ``UnmappedTemplateError`` at module import -- which
+    took the binary down for people with no block at all. ``stack_templates`` argues the change.
+
+    The name is the half that has to stay unique, and it is the half nothing was checking. A
+    stack name is what CloudFormation acts on, so two rows sharing one is two templates claiming
+    to be what runs under that name, and ``dict(STACK_TEMPLATES)`` took the later one in silence.
+    ``template_for_stack`` would then answer confidently and wrongly, and
+    ``applied_from_a_laptop`` would derive whether a person or a workflow deploys it from the
+    wrong file.
+
+    Mutation: duplicate any row's stack name against a different template. Import raises.
+    """
+    stacks = [stack for stack, _template in STACK_TEMPLATES]
+
+    assert len(set(stacks)) == len(stacks), (
+        "two rows claim one stack name, so which template is deployed under it is a choice, "
         "and a choice made by dictionary order is how the typed field went wrong"
     )
+    with pytest.raises(DuplicateStackError, match="is declared twice"):
+        template_by_stack(
+            (*STACK_TEMPLATES, (STACK_TEMPLATES[0][0], "infra/lineage-bucket.yaml"))
+        )
+
+
+def test_the_derivation_a_role_record_performs_is_a_function_over_every_template_it_can_reach() -> (
+    None
+):
+    """The invariant that survived, stated where it is true rather than over the whole table.
+
+    ``pending_amendments`` derives role, then template, then stack, and the last step has to be
+    a function or a record could report an amendment cleared by an apply that did not happen.
+    Every template a role registry can name is applied exactly once, so it is -- and that is
+    checked here against ``declared_role_templates()`` rather than asserted about the table as a
+    whole, because the whole table now contains one file that is applied four times.
+
+    Mutation: declare a role in a template that is deployed more than once. This fails naming it,
+    where previously the module would not have imported at all.
+    """
+    several = {
+        template
+        for _stack, template in STACK_TEMPLATES
+        if len(stacks_for_template(template)) > 1
+    }
+
+    assert several == {CAPACITY_BLOCK_TEMPLATE}, (
+        "the set of templates deployed more than once has changed, and every one of them has "
+        "to be checked against declared_role_templates() below"
+    )
+    for role_name, template in sorted(declared_role_templates().items()):
+        assert template not in several, (
+            f"{role_name} is declared by {template}, which several stacks deploy, so no single "
+            "apply clears a pending amendment against that role"
+        )
+    assert dict(sole_template_stacks()).keys() <= {stack for stack, _ in STACK_TEMPLATES}
+
+
+def test_a_template_several_stacks_deploy_is_refused_rather_than_answered_with_one() -> None:
+    """The capacity block template, asked the singular question and refusing it.
+
+    Answering one of the four would be worse than raising, and not by a little: a change to that
+    file is realised by redeploying *every* live block, so a caller told about one would report
+    the amendment cleared while a stack costing four figures a day still ran the old template.
+
+    Mutation: make ``stack_for_template`` return ``stacks[0]``. This stops raising, and nothing
+    else in the suite notices.
+    """
+    assert len(stacks_for_template(CAPACITY_BLOCK_TEMPLATE)) == 4
+    with pytest.raises(UnmappedTemplateError, match="is deployed as 4 stacks"):
+        stack_for_template(CAPACITY_BLOCK_TEMPLATE)
 
 
 def test_every_role_a_pending_amendment_could_name_resolves_to_a_stack() -> None:

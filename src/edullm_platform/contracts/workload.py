@@ -13,10 +13,36 @@ from .base import (
 )
 from .validation import require_checkpoint_for_retries
 
-INSTANCE_TYPE_PATTERN = r"^[a-z][a-z0-9]*\.[a-z0-9]+$"
+#: One EC2 instance type, held to exactly one dot with a family in front of it and a size
+#: behind it.
+#:
+#: THE FAMILY MAY CARRY HYPHENS AND IT COULD NOT UNTIL 2026-08-07. This read
+#: ``^[a-z][a-z0-9]*\.[a-z0-9]+$``, which is every instance type AWS had sold this account and
+#: not the ones it now sells: ``p6-b200.48xlarge`` and ``p6-b300.48xlarge`` put the accelerator
+#: in the family name, and under the old pattern a catalog naming either was refused at load
+#: with a validation error rather than at review with an argument. The hyphen groups are spelled
+#: out rather than folded into the character class so that a trailing or doubled hyphen is still
+#: refused; ``[a-z0-9-]*`` would have admitted ``p6-.48xlarge``.
+#:
+#: Still exactly one dot, which is the property :func:`edullm_platform.precision.instance_family`
+#: rests on when it splits a family off the front.
+INSTANCE_TYPE_PATTERN = r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.[a-z0-9]+$"
 CHECKPOINT_DESTINATION_PREFIX_PATTERN = (
     rf"^s3://{SANDBOX_BUCKET_PREFIX}[a-z0-9](?:[a-z0-9.-]{{0,44}}[a-z0-9])?/.+/$"
 )
+
+#: How a compute profile's ``pricing_source`` says its rate came off the capacity block price
+#: list rather than the on-demand one.
+#:
+#: This exists so that ``capacity_block_backed`` is checked rather than trusted, and the two
+#: facts are the same fact: a rate quoted from this price list is a rate you can only pay by
+#: reserving a dated window, because that is the only thing AWS sells at it. A profile priced
+#: this way and not flagged is a shape whose purchase nobody would be asked about; a profile
+#: flagged and priced off the on-demand list is a shape being sent to an admin for a machine
+#: anybody can start. :meth:`WorkloadCatalog.validate_block_backing_matches_the_price_list`
+#: refuses both rather than preferring one field over the other, because there is no way to
+#: tell from here which of the two the editor meant.
+CAPACITY_BLOCK_PRICE_LIST = "AWS Capacity Blocks for ML"
 
 
 def compute_maximum_compute_cost_usd(
@@ -117,6 +143,33 @@ class ComputeProfile(ContractModel):
     pricing_source: str = Field(min_length=1)
     pricing_observed_at: str = Field(min_length=1)
     provisioned: bool
+    #: Whether the only way to obtain this machine is to pre-pay for a dated window of it.
+    #:
+    #: **A DECLARED FIELD RATHER THAN A NAME PATTERN, AND RATHER THAN A RATE.** The thing that
+    #: needs an admin is a purchase that cannot be undone, and neither of the two cheaper ways
+    #: of recognising one is that fact. A name pattern would put the routing rule in a string
+    #: a later profile can be spelled outside of, and the four block-backed names share no
+    #: substring that the on-demand shapes do not: ``gpu-8xh200`` and ``gpu-8xl40s`` differ by
+    #: nothing a regex could use. A rate ceiling was the previous instrument and was withdrawn
+    #: in v5 for the reason ``config/policy.yaml`` records -- it made an approval class a
+    #: function of a price that moves, so a repricing was a change of who may release a run,
+    #: made by whoever edited a number.
+    #:
+    #: **AND IT IS NOT ``provisioned``, WHICH IS THE FIELD IT LOOKS LIKE.** ``provisioned``
+    #: says whether a queue exists for this shape right now, and it is flipped twice per block:
+    #: true when the stack goes up and false when the window closes. This says how the machine
+    #: is obtained at all, and it does not move. A profile that read the first for the second
+    #: would classify a live block as routine on exactly the days it is running, which is every
+    #: day the branch matters.
+    #:
+    #: :func:`~edullm_platform.contracts.policy.classify_request` reads it through
+    #: ``RequestFacts.capacity_block_backed``. Defaulted rather than required, which would
+    #: normally be the wrong way round for a field whose false value is the weaker approval --
+    #: and is safe here only because :meth:`WorkloadCatalog.validate_block_backing_matches_the_price_list`
+    #: refuses a catalog where this disagrees with ``pricing_source``. Without that validator
+    #: the default would be the hole: a fifth block shape priced by somebody who did not read
+    #: this comment would route to a team lead, and nothing would say so.
+    capacity_block_backed: bool = False
 
 
 class WorkloadProfile(ContractModel):
@@ -183,6 +236,58 @@ class WorkloadCatalog(ContractModel):
         if accelerators != {"cpu", "gpu"}:
             raise ValueError("representative CPU and GPU compute profiles are required")
         return self
+
+    @model_validator(mode="after")
+    def validate_block_backing_matches_the_price_list(self) -> Self:
+        """Hold ``capacity_block_backed`` to the price list the row's rate was read off.
+
+        THIS IS WHAT MAKES THE FLAG'S DEFAULT SAFE, and the flag is what decides who releases
+        a run on the shape. ``classify_request`` sends a block-backed profile to a platform
+        admin because the machine behind it is a non-cancellable four-figure purchase, so a
+        flag left at its default on a fifth block shape would route several thousand dollars
+        to whichever team lead was nearest. Nothing else in the tree would notice: the shape
+        would price, check, admit and run, and the only symptom would be an approval that went
+        to the wrong gate.
+
+        Asked of the whole catalog rather than of one profile because that is where the
+        comparison lives -- ``ComputeProfile`` could check its own two fields against each
+        other, and putting it here keeps every rule about the shape of this file in one place
+        and reports every disagreeing row at once instead of the first.
+        """
+        disagreeing = [
+            f"{profile.name} is priced from {profile.pricing_source!r} and declares "
+            f"capacity_block_backed: {str(profile.capacity_block_backed).lower()}"
+            for profile in self.compute_profiles
+            if (CAPACITY_BLOCK_PRICE_LIST in profile.pricing_source)
+            != profile.capacity_block_backed
+        ]
+        if disagreeing:
+            raise ValueError(
+                "capacity_block_backed must be true for exactly the profiles priced from the "
+                f"{CAPACITY_BLOCK_PRICE_LIST} price list, and these disagree: "
+                + "; ".join(disagreeing)
+            )
+        return self
+
+
+def compute_profile_is_capacity_block_backed(
+    catalog: WorkloadCatalog,
+    profile_name: str,
+) -> bool:
+    """Whether the shape this submission names is one only a purchased block provides.
+
+    ``False`` for a name the catalog does not carry, which is the one place here that answers
+    rather than raising. An unregistered profile is already a ``denied_outright`` condition and
+    already holds a request back from the automatic class, so the submission is refused either
+    way; raising would mean a typo in ``--compute`` came back as a traceback out of the
+    classifier instead of as ``unregistered_compute_profile`` out of the check that owns that
+    word. Compare :func:`resolve_compute_profile_for_execution`, which raises because its
+    caller is about to submit a job.
+    """
+    for profile in catalog.compute_profiles:
+        if profile.name == profile_name:
+            return profile.capacity_block_backed
+    return False
 
 
 class ComputeProfileResolutionError(ValueError):

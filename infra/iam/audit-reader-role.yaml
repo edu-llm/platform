@@ -351,6 +351,38 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase4-gpu-iam/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase4-gpu/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase4-gpu-shapes/*
+                  # THE FOUR STACKS IN THIS LIST THAT ARE EXPECTED TO BE ABSENT MOST OF THE
+                  # TIME, and they are named for that reason rather than in spite of it. Each is
+                  # deployed against one purchased capacity block and torn down when that window
+                  # ends, so a listing with none of them is the account's normal state.
+                  #
+                  # A grant on a stack that does not exist reaches nothing -- GetTemplate on an
+                  # absent stack fails at CloudFormation, not at IAM -- so naming them costs no
+                  # access while they are gone. What it buys is that the one window in which the
+                  # account is being billed four figures a day for a machine somebody hand-
+                  # deployed is a window the drift check can actually see into. Leaving the lines
+                  # out until first use would mean discovering the denial at 05:00 on the
+                  # morning after the money was spent.
+                  #
+                  # FOUR ROWS AND ONE TEMPLATE, WHICH IS THE ASYMMETRY infra/batch-capacity-
+                  # block.yaml FORCES ON EVERY TABLE THAT NAMES A STACK. There was one line
+                  # here, sbsandbox-intern-edullm-capacity-block, from when one live block at a
+                  # time was assumed. That assumption was dropped -- the stack is pinned to one
+                  # instance type and one availability zone, so two researchers on two shapes in
+                  # one month is two stacks -- and a single …-capacity-block-*/* line was
+                  # rejected in its place. A star in an IAM resource path matches a slash, which
+                  # is what "A wildcard in a resource path matches a slash" in infra/README.md is
+                  # about, so that one line would grant GetTemplate on every stack whose name
+                  # merely begins with the prefix and on every stack id under it, which is a
+                  # wider read than the four this check makes. Four named lines is the whole set
+                  # that can exist here, because there are
+                  # four block-backed profiles in config/workload-catalog.yaml, and
+                  # tests/test_audit_workflow.py holds this list equal to STACK_TEMPLATES so a
+                  # fifth shape priced without a line here fails there.
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-capacity-block-gpu-8xa100-80gb/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-capacity-block-gpu-8xh200/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-capacity-block-gpu-8xb200/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-capacity-block-gpu-8xb300/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-dataset-validator-iam/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-researcher-iam/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-janitor-iam/*

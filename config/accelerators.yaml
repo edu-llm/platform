@@ -14,13 +14,22 @@
 # in that guide's prose. It reads this file now, and those two columns are generated rather than
 # typed.
 #
-# EVERY FIGURE BELOW WAS MEASURED, AND ALL SEVENTEEN CAME FROM THE SAME CALL. Not one is copied
-# from documentation, inferred from a card's name, or carried over from the comments this file
-# replaces:
+# SEVENTEEN OF THESE FIGURES WERE MEASURED AND ALL SEVENTEEN CAME FROM THE SAME CALL. Not one of
+# those is copied from documentation, inferred from a card's name, or carried over from the
+# comments this file replaces:
 #
 #   AWS_PROFILE=sbsandbox AWS_REGION=us-east-1 aws ec2 describe-instance-types \
 #     --instance-types <the seventeen instance types in config/workload-catalog.yaml> \
 #     --query 'InstanceTypes[].{t:InstanceType,gpus:GpuInfo.Gpus,total:GpuInfo.TotalGpuMemoryInMiB}'
+#
+# THE FOUR BLOCK-BACKED ROWS AT THE END WERE NOT IN THAT CALL AND ARE MARKED WHERE THEY SIT.
+# They were added on 2026-08-07 for the four shapes that exist on this platform only through a
+# purchased capacity block, and the call above could not have produced them: it names the
+# instance types the catalog already priced, and these four were not priced yet. Their figures
+# come from AWS's published instance-type reference instead, which is the instrument this very
+# header argues against, so each row says so on its own line rather than being quietly mixed in
+# with the measured ones. Re-run the call above with the four new types added and the
+# distinction goes away; until somebody does, `published` is what they are.
 #
 # `device` is `GpuInfo.Gpus[].Name`, `devices` is `.Count`, `memory_mib_per_device` is
 # `.MemoryInfo.SizeInMiB`, and `memory_mib_total` is `GpuInfo.TotalGpuMemoryInMiB` -- read
@@ -234,3 +243,63 @@ profiles:
     devices: 8
     memory_mib_per_device: 81920
     memory_mib_total: 655360
+  # THE FOUR ROWS BELOW ARE PUBLISHED RATHER THAN MEASURED, FOR THE REASON THE HEADER GIVES.
+  # Every one of them is a shape this account can obtain only by buying a dated capacity block,
+  # so none has ever been an argument to describe-instance-types from here.
+  #
+  # WHAT THEY WERE READ AGAINST, AND WHY IT IS TRUSTED FURTHER THAN A MARKETING PAGE. AWS's
+  # per-instance-type reference publishes `GpuInfo` verbatim, and it agrees with this file
+  # exactly where the two overlap: it gives p5.48xlarge 81,920 MiB per device, which is the
+  # measured gpu-8xh100 row above, and it gives p5.48xlarge 2,097,152 MiB of instance memory,
+  # which is the advertised figure `src/edullm_platform/execution.py` sizes against. A source
+  # that reproduces the measured rows is the best available stand-in for the call that made
+  # them. It is still not that call.
+  #
+  # 80 GB A100, WHICH IS THE PART THE ROW ABOVE gpu-8xa100 SAYS THIS ACCOUNT DOES NOT HAVE.
+  # p4de.24xlarge is the same machine as p4d.24xlarge with the larger part fitted, so this is
+  # the shape that makes the 40-versus-80 confusion recorded above gpu-8xa100 real rather than
+  # a documentation slip: with both rows present, `gpu-8xa100` and `gpu-8xa100-80gb` are two
+  # different machines and the number is the only thing telling them apart. Identical to the
+  # H100 per-device figure, which is a coincidence of both parts being 80 GiB.
+  - profile: gpu-8xa100-80gb
+    device: A100
+    devices: 8
+    memory_mib_per_device: 81920
+    memory_mib_total: 655360
+  # 141 GiB A CARD, AND THE LARGEST PER-DEVICE FIGURE HERE THAT IS NOT BLACKWELL. AWS's P5
+  # table calls the total "1128 GB", which is 1128 GiB counted in the unit this file's header
+  # is about: 8 x 144,384 MiB is 1,155,072 MiB is 1128 GiB. So the published total and the
+  # published per-device figure agree with each other, and both are GiB wearing a GB label.
+  - profile: gpu-8xh200
+    device: H200
+    devices: 8
+    memory_mib_per_device: 144384
+    memory_mib_total: 1155072
+  # AWS PUBLISHES TWO DIFFERENT TOTALS FOR THIS CARD AND THIS ROW SETTLES WHICH ONE TO USE.
+  # The accelerated-computing table says 1,432 GB of GPU memory and the launch announcement
+  # says 1,440 GB HBM3e. Both are describing the same silicon and the difference is the unit,
+  # which is exactly the A10G finding this file's header opens with: 183,359 MiB is 179.06 GiB,
+  # eight of them is 1,466,872 MiB, and that is 1432.5 GiB -- AWS's 1,432 -- while NVIDIA's
+  # 1,440 is 8 x 180 GB counted in decimal bytes. Neither figure is wrong and neither is the
+  # one to size a batch against, which is why what is recorded here is the MiB.
+  #
+  # IT IS PUBLISHED AND NOT MEASURED, AND describe-instance-types ON A BLOCK-BACKED p6-b200
+  # WOULD SETTLE IT OUTRIGHT. That call costs nothing and needs no instance running, so the
+  # first time a block for this shape is held, run it and promote this row.
+  - profile: gpu-8xb200
+    device: B200
+    devices: 8
+    memory_mib_per_device: 183359
+    memory_mib_total: 1466872
+  # THE SAME DISAGREEMENT AGAIN AND A WIDER ONE. 275,040 MiB a device is 268.59 GiB, eight of
+  # them is 2,200,320 MiB, and that is 2148.75 GiB against the 2,144 GB AWS's own P6 table
+  # publishes for the instance -- about 5 GiB apart, where the B200 pair above reconciled to
+  # within half a GiB. Nothing here can close that from a laptop, and the per-device figure is
+  # the one recorded because it is the one a card actually reports.
+  #
+  # The largest total this platform prices, by a factor of one and a half over gpu-8xb200.
+  - profile: gpu-8xb300
+    device: B300
+    devices: 8
+    memory_mib_per_device: 275040
+    memory_mib_total: 2200320

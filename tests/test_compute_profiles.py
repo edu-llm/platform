@@ -67,6 +67,22 @@ EXPECTED_PROFILE_RATES = {
     "gpu-1xh100": ("p5.4xlarge", Decimal("6.8800")),
     "gpu-8xa100": ("p4d.24xlarge", Decimal("21.9576")),
     "gpu-8xh100": ("p5.48xlarge", Decimal("55.0400")),
+    # THE FOUR BLOCK-BACKED SHAPES, WHOSE RATES ARE A DIFFERENT PRODUCT TO THE SEVENTEEN ABOVE.
+    # Every rate above is on-demand, out of the Price List API. These four are AWS's published
+    # effective hourly reservation rate for a capacity block, because a capacity block is the
+    # only way this account can obtain any of them -- config/workload-catalog.yaml argues that
+    # at length above the rows themselves.
+    #
+    # All four are admin-only whatever else a request says, and this table is not what pins that.
+    # It read "all four are over EXCEPTION_RATE_CEILING_USD_PER_HOUR", which was a claim about a
+    # constant policy v5 had already withdrawn, so for a fortnight the sentence was pinning
+    # nothing and the four shapes were routing to a team lead. `capacity_block_backed: true` in
+    # the catalog is what routes them now, and it is checked against `pricing_source` -- the same
+    # product distinction this comment opens with -- rather than against a rate.
+    "gpu-8xa100-80gb": ("p4de.24xlarge", Decimal("17.7120")),
+    "gpu-8xh200": ("p5en.48xlarge", Decimal("54.9200")),
+    "gpu-8xb200": ("p6-b200.48xlarge", Decimal("98.8400")),
+    "gpu-8xb300": ("p6-b300.48xlarge", Decimal("112.3200")),
 }
 
 
@@ -103,6 +119,11 @@ def facts_for_profile(
         immutable_revision=True,
         immutable_image=True,
         image_scan_reviewed=True,
+        # READ OFF THE PROFILE RATHER THAN PASSED, WHICH IS WHAT MAKES THE PARAMETERISED CASES
+        # BELOW MEAN ANYTHING. Every case in this file walks the shipped catalog, so a hardcoded
+        # False here would assert that a block-backed shape classifies the way an on-demand one
+        # does -- the exact statement the withdrawn rate ceiling used to make falsely.
+        capacity_block_backed=profile.capacity_block_backed,
         estimated_cost_usd=estimated_cost,
         maximum_runtime_hours=maximum_runtime_hours,
         maximum_attempts=maximum_attempts,
@@ -201,28 +222,37 @@ def test_only_the_deliberately_promoted_profiles_are_provisioned() -> None:
     ]
 
 
-def test_a_short_run_on_the_dearest_shape_is_released_by_nobody() -> None:
-    """What the rate ceiling used to catch, asked at the size that used to slip past it.
+def test_a_short_run_on_the_dearest_shape_reaches_an_admin_and_not_because_of_the_price() -> None:
+    """What holds the dearest shape back, asked at the size that slips past every bound.
 
     One hour and one attempt on the most expensive instance this account is priced for is
-    $55.04. Under v4 the rate ceiling made that an admin's call while every request bound
-    was satisfied. Under v5 the only bound is the total, $55.04 is a ninth of it, and
-    nobody releases this.
+    $112.32, which is a nineteenth of the only cost bound v5 left. So nothing about the size
+    of this request holds it back and the classification does not come from the money -- the
+    second assertion says so, against the shipped threshold.
+
+    THIS ASSERTED ``AUTOMATIC`` UNTIL 2026-08-07 AND THAT WAS THE DEFECT RATHER THAN THE
+    FINDING. The reasoning it recorded was sound about v5 and stale about the catalog: the
+    dearest shape stopped being an on-demand p5.48xlarge and became ``gpu-8xb300``, a
+    p6-b300.48xlarge that exists only as a pre-paid, dated, non-cancellable capacity block.
+    Nobody releasing an hour of *that* is a $2,700 purchase made with no approver, and three
+    comments in the tree claimed a withdrawn rate ceiling was preventing it.
 
     Asked of the dearest shape by price rather than by name, so a profile promoted above
-    p5.48xlarge is covered without an edit here, and so that the assertion is about the
-    reasoning rather than about one row of the catalog.
+    p6-b300 is covered without an edit here.
 
-    Mutation: put any per-hour rule back into ``classify_request``. This returns exception
-    or routine and the test says which shape it was about.
+    Mutation: put a per-hour rule back into ``classify_request``. The second assertion still
+    holds and the class is still exception, so this test cannot tell the two rules apart on its
+    own -- ``tests/test_policy.py`` has the pair that can, priced off this same catalog.
+    Mutation: drop the ``capacity_block_backed`` branch. This returns automatic.
     """
     profile = max(SHIPPED_PROFILES, key=lambda candidate: candidate.hourly_rate_usd)
     facts = facts_for_profile(profile, maximum_runtime_hours=Decimal(1), maximum_attempts=1)
 
-    assert profile.name == "gpu-8xh100"
-    assert facts.estimated_cost_usd == Decimal("55.04")
+    assert profile.name == "gpu-8xb300"
+    assert facts.estimated_cost_usd == Decimal("112.32")
     assert facts.estimated_cost_usd < shipped_policy().thresholds.automatic_below_cost_usd
-    assert classify_request(facts, shipped_policy().thresholds) == ApprovalClass.AUTOMATIC
+    assert profile.capacity_block_backed is True
+    assert classify_request(facts, shipped_policy().thresholds) == ApprovalClass.EXCEPTION
 
 
 def test_a_long_run_on_a_cheap_eight_card_shape_is_the_one_a_lead_sees() -> None:
@@ -258,9 +288,10 @@ def test_an_eight_gpu_p_shape_is_no_longer_gated_by_what_it_costs_an_hour(name: 
     and it stays dropped. What this pins is how a shape classifies when it is offerable,
     which must not drift while it is not.
 
-    Mutation: reintroduce ``EXCEPTION_RATE_CEILING_USD_PER_HOUR`` at any value under $21.96.
-    Both rows become exceptions, and the platform goes back to sending the cheaper of two
-    requests to the higher approver.
+    Mutation: give either row ``capacity_block_backed: true``. Both become exceptions, and the
+    platform goes back to sending the cheaper of two requests to the higher approver -- which
+    is what the withdrawn rate ceiling did, and which would now also be false about the machine:
+    EC2 sells both of these on demand when it has one, and the flag says it does not.
     """
     profile = next(profile for profile in SHIPPED_PROFILES if profile.name == name)
     facts = facts_for_profile(profile, maximum_runtime_hours=Decimal(1), maximum_attempts=1)

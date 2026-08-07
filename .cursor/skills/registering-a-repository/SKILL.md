@@ -25,12 +25,26 @@ declares a path that points at nothing.
 - [ ] 1. Confirm it is not already registered
 - [ ] 2. Resolve the base image against what is approved
 - [ ] 3. Write .edullm/Dockerfile
-- [ ] 4. Write the build-caller workflow
-- [ ] 5. Write a first .edullm/run.yaml
-- [ ] 6. Commit and push to an edullm/** branch
-- [ ] 7. Prepare the configuration pull request
-- [ ] 8. Open it, and say what happens next
+- [ ] 4. Write .edullm/verify_image.py
+- [ ] 5. Write the build-caller workflow
+- [ ] 6. Write a first .edullm/run.yaml
+- [ ] 7. Commit and push to an edullm/** branch
+- [ ] 8. Prepare the configuration pull request
+- [ ] 9. Open it, and say what happens next
 ```
+
+Two facts about the environment, because both change what you write and neither is
+discoverable from a research checkout.
+
+**Containers have outbound internet on HTTPS and HTTP.** A run can pull from PyPI, GitHub
+and the Hugging Face Hub. You do not have to bake assets into the image for network reasons,
+though baking them still buys you not failing on somebody else's outage after a GPU has been
+allocated. Nothing can reach in. `guides/the-platform.md` has the shape and the trade-off.
+
+**A project `.venv` can shadow the platform CLI.** `edullm-data` ships a console script also
+called `edullm`, so an active environment depending on it answers `edullm` with a different
+program. `which -a edullm` is the diagnostic; the first line wins. Do not attempt to fix
+`edullm-data`, which is a separate repository.
 
 ### 1. Confirm it is not already registered
 
@@ -64,7 +78,110 @@ runtime. The command a run executes comes from the submission, not from the imag
 Keep it minimal. Every layer is rebuilt on every push to an `edullm/**` branch and the build
 cache is one of two levers on a bill that is not small.
 
-### 4. Write the build-caller workflow
+### 4. Write `.edullm/verify_image.py`
+
+The one assertion the platform cannot make for you, run inside the assembled image on every
+build, before the push. Write it, and a dependency your code needs and your image lacks is a
+red build instead of a billed GPU allocation that dies in the first seconds.
+
+This is not hypothetical and it is why the step exists. All fourteen `olmo3_*` factories in
+OLMo-core hardcode `attn_backend=flash_2`, and the registered image has no flash-attn and no
+compiler to build one, so no olmo3 model could be instantiated on a GPU at all. The way that
+got found out was a researcher waiting four and a half minutes for a card, getting one, and
+losing it eleven seconds later.
+
+**Assert the property directly. Never infer it from constructing something.** This is the
+whole of the guidance and everything below is why.
+
+The obvious check is to build one model per registered size and call it a pass if nothing
+raises. It asserts nothing, and OLMo-core has been running a version of it green this entire
+time. `Attention.__init__` opens with
+
+```python
+if not torch.cuda.is_available() and backend != AttentionBackendName.torch:
+    warnings.warn(f"Backend is set to {backend}, but GPUs are not available. Defaulting to torch.")
+    backend = AttentionBackendName.torch
+```
+
+*before* it calls `assert_supported()`. A builder has no card. So on a builder every olmo3
+config quietly swaps its attention backend for the torch one, the question of whether
+flash-attn is installed is never asked, and the check goes green on an image that cannot
+train a single olmo3 model. **A green like that is worse than no check**, because it asserts
+in a log exactly the property it cannot see.
+
+Ask the library the question instead of asking it to do the work:
+
+```python
+from olmo_core.nn.attention import AttentionBackendName
+
+AttentionBackendName.flash_2.assert_supported()
+```
+
+That is `has_flash_attn_2()`, a test against a module-level import with no device call
+anywhere in it. It answers the same with or without a card, which is what makes a
+builder-green worth something.
+
+**Enumerate, never list.** A hardcoded set of backend names is correct on the day it is typed
+and silently incomplete afterwards — which is this same failure arriving one level up. Read
+what your own configs name, then assert each of those directly. Building the *config* is
+safe: it instantiates no module, so nothing degrades. It is `.build()` that runs the
+constructor, and `.build()` is what you are avoiding.
+
+```python
+from dataclasses import fields, is_dataclass
+
+def backends_named_by(config):
+    """Every attention backend anywhere in this config, without instantiating anything."""
+    seen, stack = set(), [config]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, AttentionBackendName):
+            seen.add(node)
+        elif is_dataclass(node):
+            stack.extend(getattr(node, field.name) for field in fields(node))
+        elif isinstance(node, (list, tuple)):
+            stack.extend(node)
+        elif isinstance(node, dict):
+            stack.extend(node.values())
+    return seen
+
+wanted = set()
+for name in sorted(dir(TransformerConfig)):
+    if name.startswith(("olmo2_", "olmo3_")):
+        wanted |= backends_named_by(getattr(TransformerConfig, name)(vocab_size=100352))
+
+for backend in sorted(wanted, key=str):
+    print(f"asserting {backend}")
+    backend.assert_supported()
+```
+
+The walk is deliberately structural rather than reaching for an attribute path, because the
+path is yours and it moves. Swap `AttentionBackendName` for whatever the next dependency your
+configs assert on turns out to be; the shape does not change. `olmo2_*` factories leave the
+backend unset today, which resolves to torch and needs nothing — reading it off rather than
+assuming it is what keeps that true when it stops being true.
+
+**The platform runs your check twice and compares the answers.** Once as the builder really
+is, and once with `torch.cuda.is_available()` returning True. A check whose verdict changes
+between the two is refused as `self_check_is_device_conditional`, because its green is about
+a code path a GPU machine will not take. This is what catches the vacuous check above, and
+you should expect it to catch you if you write one.
+
+**It runs with no network, with no GPU, and with only `.edullm/` mounted.** No device is
+available and none can be asked for. That is affordable: a backend support test, an import, a
+version assertion and a compiled CUDA extension all load without a driver — neither
+`flash_attn_2_cuda` nor torch 2.9.0's `libtorch_cuda.so` even declares `libcuda.so.1` as a
+dependency. **A check that genuinely reads the device must not go here.** It would go red on
+every build of a correct image, and it is refused as `self_check_needs_a_device`. Put it
+behind your `*-check` workload profile, which is a short run on the smallest GPU shape and is
+what that profile is for.
+
+Exit non-zero, or raise, to refuse the image. Whatever the check printed is reproduced in the
+build log, so print what you assert before you assert it. A repository with no such file is
+not refused — the build says so on every run rather than passing over it silently — so
+leaving this out is a choice you are making rather than a step you can skip unnoticed.
+
+### 5. Write the build-caller workflow
 
 A workflow in the research repository that calls the platform's reusable build. **Check what
 it fires on.** A caller that fires only on `edullm/**` pushes and manual dispatch never fires
@@ -89,7 +206,7 @@ variables endpoint — so the check lives in the reusable build, whose first ste
 empty value with `publisher_role_arn_is_empty` and the variable's name. If you see that, this
 is the step you skipped.
 
-### 5. Write a first `.edullm/run.yaml`
+### 6. Write a first `.edullm/run.yaml`
 
 It holds what is a property of the code, which is the command, the workload profile and a
 suggested machine. Everything else is supplied at submit time.
@@ -98,7 +215,7 @@ suggested machine. Everything else is supplied at submit time.
 write here is a placeholder that gets replaced. Write it anyway. It is what makes the pull
 request reviewable.
 
-### 6. Commit and push to an `edullm/**` branch
+### 7. Commit and push to an `edullm/**` branch
 
 ```bash
 git switch -c edullm/register
@@ -109,7 +226,7 @@ git push -u origin edullm/register
 
 The push is what builds the first image.
 
-### 7. Prepare the configuration pull request
+### 8. Prepare the configuration pull request
 
 ```bash
 edullm add repository --reason "<why this needs a repository of its own>"
@@ -124,7 +241,7 @@ request at. **The workflow does not open it.** This organization forbids Actions
 creating a pull request, and the one setting that would allow it also allows a workflow to
 submit an approving review, which is what protects the very files a registration edits.
 
-### 8. Open it, and say what happens next
+### 9. Open it, and say what happens next
 
 Wait for the run to go green, then open the compare URL. The title is filled in and the body
 is not — it runs to about eleven thousand characters, which is over twice what a URL will

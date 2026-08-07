@@ -1,0 +1,704 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: One purchased EC2 Capacity Block, wired to a launch template, a single-zone compute environment and a queue, for the length of its window and no longer.
+
+# THE ONE ARGUMENT THIS FILE EXISTS TO MAKE: A CAPACITY BLOCK IS A *TARGETED* RESERVATION,
+# AND NOTHING CONSUMES IT UNLESS THE LAUNCH NAMES IT BY ID.
+#
+# That is the whole reason CapacityBlockLaunchTemplate below is not optional decoration. EC2
+# will not hand a targeted reservation to a launch that did not ask for it, so a compute
+# environment pointed at the right instance type in the right zone with no launch template
+# does not fail. It succeeds. It launches ordinary on-demand instances, at on-demand rates,
+# beside a block that has already been paid for in full and is sitting idle for the whole
+# window. You are billed twice for the same machines and nothing anywhere says so: no refusal,
+# no INVALID status, no job stuck in RUNNABLE. The only trace is on the bill, weeks later, and
+# by then the block has expired and the money is gone.
+#
+# A capacity block cannot be cancelled and is not refundable. guides/capacity-blocks.md leads
+# with that property because it is what makes every silent failure here expensive rather than
+# annoying: there is no version of this that ends in getting the money back.
+#
+# So: two lines in LaunchTemplateData, InstanceMarketOptions.MarketType and the reservation id
+# under CapacityReservationTarget, and everything else in this file is in service of them
+# reaching the instance that actually launches.
+#
+# WHY THIS IS PARAMETERISED AND NOT ONE STACK PER SHAPE, WHICH IS THE OPPOSITE OF WHAT
+# infra/batch-compute-gpu-shapes.yaml DOES. Fourteen shapes live in that file as fourteen
+# literal environments because all fourteen are standing infrastructure: they exist whether or
+# not anybody is using them, and a shape's name, ceiling and subnet list are facts about the
+# account rather than about one purchase. None of that is true here. A block is one dated
+# purchase with one reservation id, delivered into one zone, for one instance type, and the id
+# is minted by AWS at purchase time and is unknowable when this file is written. There is
+# nothing to hard-code. config/capacity-blocks.yaml holds the seven shapes that can be bought
+# at all, and this template is the one route each of them takes onto the platform.
+#
+# One or two blocks are held at a time, so this is deployed as one stack per live block and
+# every resource below takes its name from the stack. That is a deviation from every other
+# template in this directory, where names are literals, and it is argued at the compute
+# environment.
+#
+# THE STACK NAME IS sbsandbox-intern-edullm-capacity-block FOR THE FIRST ONE, AND A SUFFIXED
+# NAME FOR A SECOND HELD AT THE SAME TIME. Following infra/iam/researcher-role.yaml's
+# convention: the name belongs in infra/README.md's stack table and in the register at
+# src/edullm_platform/stack_templates.py, and tests/test_deployed_stacks.py fails on a
+# committed template no stack claims. A template deployed under a name that register does not
+# know is invisible to the nightly drift check -- not reported as unaccounted for, not seen at
+# all -- which for a stack that can launch a $55/hour machine is the wrong kind of quiet.
+#
+# WHAT THIS STACK DELIBERATELY DOES NOT CREATE.
+#
+#   - No job definition. sbsandbox-intern-edullm-gpu-8xh100-run and its siblings already exist
+#     in infra/batch-compute-gpu-shapes.yaml, a job definition is not bound to a queue, and the
+#     container shape a p5.48xlarge takes does not change because the machine arrived by
+#     reservation instead of on demand. The execution-targets.yaml row for the block names the
+#     existing -run definition and this stack's queue.
+#   - No log group. /aws/batch/sbsandbox-intern-edullm-gpu is created by
+#     infra/batch-compute-gpu.yaml and the GPU execution role is scoped to it. Since no job
+#     definition is declared here, no awslogs-group string appears in this file at all, so the
+#     coupling tests/test_phase3_infrastructure.py guards is not one this stack can break.
+#   - No IAM. The instance profile, execution role and workload role are the GPU trio from
+#     infra/iam/batch-gpu-roles.yaml, unchanged. Nothing here needs a new principal, and a role
+#     created for a dated window is a role that outlives it.
+#   - No EFA. The blog AWS publishes for this pattern configures EFA network interfaces,
+#     because its worked example is a multi-node NCCL test. Every job definition this platform
+#     carries is single-node and there is no MNP definition to place, so an EFA interface here
+#     would be configuration nothing exercises. It becomes real the day a multi-node job
+#     definition does.
+#
+# TEARDOWN IS THE REVERT, AND IT IS THE STEP THAT GETS FORGOTTEN.
+#
+# When the window ends, deleting this stack is what actually has to happen, and it has to
+# happen in the same change as two edits to reviewed configuration:
+#
+#   - `provisioned: false` in config/workload-catalog.yaml for the profile the block served.
+#   - withdrawing that profile's row from config/execution-targets.yaml.
+#
+# All three together or none of them. The flag is a permanent boolean describing a dated thing,
+# so a profile left promoted after its block expires routes every later submitter to a compute
+# environment that can never place them, and what they see is a job sitting in RUNNABLE with no
+# error against it -- indistinguishable from being queued behind somebody else. That is the
+# same failure config/execution-targets.yaml records for gpu-1xh100 and gpu-8xh100 on
+# 2026-08-04 and it is why those rows were withdrawn.
+#
+# The stack itself is not harmless once the window closes. AWS documents that the compute
+# environment transitions to INVALID when the reservation ends, with a status reason naming the
+# expiry, so what is left behind is a queue attached to a dead environment: it costs no money
+# and it costs attention, which is the resource that is actually short at the end of a block.
+#
+# THE ONE-DIRECTION NOTE ON THE SIBLING QUEUE. sbsandbox-intern-edullm-gpu-8xh100 and
+# sbsandbox-intern-edullm-gpu-1xh100 are still deployed and still ENABLED. They are on-demand
+# compute environments with no launch template and no reservation, so restoring an
+# execution-targets.yaml row that names one of *those* queues during a block window is the
+# double-bill this file opens with, arrived at by paperwork instead of by template. The row
+# restored for a block names the queue this stack creates, which the Outputs below print.
+#
+# WHERE THE TWO AWS DOCUMENTS DISAGREE, AND WHICH ONE IS FOLLOWED.
+#
+# The AWS Batch launch template reference lists "instance market options" among the launch
+# template parameters Batch *ignores*, with the parenthetical "AWS Batch must control Spot
+# Instance configuration". Read literally that says the most important line in this file does
+# nothing. The AWS HPC blog for this exact pattern says the opposite in as many words -- set
+# InstanceMarketOptions.MarketType to capacity-block and supply the reservation id, with a
+# published sample repository doing it -- and the parenthetical explains the disagreement: the
+# reference sentence is about Spot, written before capacity-block was a market type.
+#
+# The blog is followed here, and it is followed with the failure mode in mind: if the reference
+# turns out to be right, this stack still deploys cleanly and still launches instances, and the
+# only symptom is the bill. So the first block deployed through this template is checked from
+# the EC2 console rather than assumed -- the reservation's used-capacity count should move off
+# zero when the first job places. Nothing in this repository can check it, because nothing here
+# holds an AWS credential.
+#
+# NOTHING IN THIS FILE HAS BEEN RUN. It is written against AWS's documentation and against the
+# conventions the sibling templates measured. Every number carried over from
+# infra/batch-compute-gpu-shapes.yaml -- the 500 GiB root, the four ECS agent settings -- was
+# measured there on a real host; everything about capacity blocks specifically is read from
+# documentation and is inference until a block has been through it.
+
+Parameters:
+  # THE ONE TYPE THE RESERVATION COVERS, AND THE PATTERN CATCHES A TYPO RATHER THAN A WRONG
+  # FAMILY. config/capacity-blocks.yaml is the list of what can be bought at all: seven rows,
+  # us-east-1 only, with three near misses named in its `excluded` block precisely because each
+  # is an obvious thing for somebody to propose a second time. A pattern tight enough to hold
+  # that list to seven names would refuse the eighth shape AWS starts selling, which is a stack
+  # that will not deploy during a window somebody has already paid for.
+  InstanceType:
+    Type: String
+    Description: The EC2 instance type the capacity block was purchased for, exactly as it appears on the reservation.
+    AllowedPattern: '^[a-z][a-z0-9-]*\.[a-z0-9]+$'
+    ConstraintDescription: an EC2 instance type, for example p5.48xlarge or p6-b200.48xlarge
+
+  # THE cr- ID OFF THE PURCHASED RESERVATION, AND THE MOST DANGEROUS PARAMETER HERE.
+  #
+  # A transposed character in this value produces a stack that deploys without complaint. EC2
+  # rejects the launch rather than silently falling back to on demand -- the reservation named
+  # does not exist -- so the symptom is every launch failing while the block sits unused for
+  # the whole window, which is the same money lost by the opposite route to the one the header
+  # describes. The pattern below is the only check anything makes on it: CloudFormation cannot
+  # ask EC2 whether this id is real, and neither can this repository.
+  #
+  # Read it from the EC2 console under Capacity Reservations, on the row whose reservation type
+  # is capacity-block, and take the availability zone and instance type off the same row so all
+  # three parameters come from one reading rather than from three.
+  CapacityReservationId:
+    Type: String
+    Description: The cr- id of the purchased capacity block, read off the reservation itself.
+    AllowedPattern: '^cr-[0-9a-f]{8,17}$'
+    ConstraintDescription: a capacity reservation id, for example cr-02168da1478b509e0
+
+  # THE SINGLE ZONE THE BLOCK WAS DELIVERED IN. A capacity block lives in one Availability Zone
+  # and there is no such thing as a multi-zone one, so this is a fact about the purchase rather
+  # than a choice being made here.
+  #
+  # RESTRICTED TO us-east-1 ON PURPOSE. Every subnet, every queue and every role on this
+  # platform is in that region, and config/capacity-blocks.yaml excludes three whole families
+  # for exactly this reason: a block bought elsewhere is a block nothing here can reach. A
+  # refusal at deploy time naming this parameter is a better place to discover that than a
+  # compute environment that comes up and never places anything.
+  AvailabilityZone:
+    Type: String
+    Description: The single Availability Zone the capacity block was delivered in.
+    AllowedPattern: '^us-east-1[a-f]$'
+    ConstraintDescription: a us-east-1 availability zone, for example us-east-1d
+
+  # THE SUBNET IN THAT ZONE. infra/batch-network.yaml exports one per zone as
+  # sbsandbox-intern-edullm-batch-subnet-us-east-1a through -1f, and in the ordinary case the
+  # value passed here is the id behind the export for the zone above.
+  #
+  # WHY THIS IS A PARAMETER RATHER THAN Fn::ImportValue WITH THE ZONE SUBSTITUTED, WHICH WOULD
+  # MAKE THE TWO IMPOSSIBLE TO DISAGREE. Two reasons, and the second is the one that decided
+  # it. A block can be delivered into a zone this VPC has no subnet in -- the network stack
+  # declared no us-east-1e subnet at all until 2026-08-03, for the good reason that no shape
+  # could use one -- and a failed import reports a missing export name rather than a missing
+  # zone, which is a worse sentence to read at the start of a window. And the derived form
+  # would hide the choice: whoever deploys this is reading a reservation off the console and
+  # should be putting the subnet beside the zone deliberately, not discovering afterwards that
+  # the template picked one.
+  #
+  # The cost of the parameter form is that this and AvailabilityZone can disagree. Placement in
+  # the launch template below is what turns that disagreement into a failed launch instead of
+  # a machine outside the reservation.
+  SubnetId:
+    Type: String
+    Description: The subnet in the block's availability zone, ordinarily the network stack's export for that zone.
+    AllowedPattern: '^subnet-[0-9a-f]{8,17}$'
+    ConstraintDescription: a subnet id, for example subnet-0123456789abcdef0
+
+  # THE WHOLE BLOCK, EXPRESSED IN vCPU, AND NOT A SPEND CONTROL.
+  #
+  # AWS's guidance is that maxvCpus be greater than or equal to the total vCPU of the
+  # reservation: instances times the type's vCPU count, so four p5.48xlarge is 4 x 192 = 768.
+  # Anything less leaves paid capacity that Batch will not claim, and the way it refuses is the
+  # one infra/batch-compute-gpu-shapes.yaml documents at length -- the job parks in RUNNABLE
+  # under MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE, which the submitter cannot read
+  # from outside, while the block bills.
+  #
+  # The argument that a ceiling is the wrong place to hold spend down is even plainer here than
+  # it is on the on-demand environments. There is no spend to hold down: the block was charged
+  # upfront, in full, at purchase, and a lower number here does not return a cent of it. It
+  # only decides how much of what has already been bought can be used.
+  MaxvCpus:
+    Type: Number
+    Description: The total vCPU of the block -- instances multiplied by the instance type's vCPU count.
+    MinValue: 1
+
+  # THE FOUR THAT DESCRIBE THE CONTAINER, AND NOT ONE OF THEM SHOULD BE TYPED BY A PERSON.
+  #
+  # They exist because one template stands behind four shapes and a job definition has to say
+  # what it asks for. They are parameters rather than literals for that reason alone, and the
+  # deploy workflow fills all four from CONTAINER_SHAPES in src/edullm_platform/execution.py
+  # rather than from a dispatch field -- which is what stops this being a fifth and sixth place
+  # the same numbers are written down.
+  #
+  # THAT MATTERS MOST FOR ContainerMemoryMiB, WHICH IS THE FIGURE THIS PLATFORM HAS ALREADY
+  # SPENT REAL MONEY GETTING WRONG. It is not the instance's advertised memory: ECS registers
+  # less than the hardware reports, and a definition asking for more than the host registers
+  # does not error -- the job parks in RUNNABLE where the submitter cannot see why, which
+  # during a paid window is the whole window. Ask too little and the run takes an
+  # out-of-memory kill several hours in. execution.py carries the measured ceiling per
+  # instance type and the reasoning for each, including that p6-b200.48xlarge's figure is an
+  # estimate derived from a sibling and p6-b300.48xlarge's is a lower bound.
+  #
+  # A seam test in tests/test_phase3_execution.py compares the definition this template
+  # deploys against the one a run registers for itself, field by field. Both read the same
+  # table, so they cannot disagree; that test is what proves they do not.
+  ContainerVcpus:
+    Type: Number
+    Description: The vCPU the container asks for. Filled from the profile's container shape, not typed.
+    MinValue: 1
+  ContainerMemoryMiB:
+    Type: Number
+    Description: The MiB the container asks for -- the measured ECS-registered ceiling, not the advertised figure.
+    MinValue: 1
+  GpuCount:
+    Type: Number
+    Description: The devices the container asks for. Eight on every block-backed shape so far.
+    MinValue: 1
+  SharedMemoryMiB:
+    Type: Number
+    Description: The /dev/shm size. NCCL needs it and the default 64 MiB is not enough for a multi-GPU run.
+    MinValue: 1
+
+Resources:
+  # -------------------------------------------------------------------------------------
+  # THE LAUNCH TEMPLATE, WHICH IS THE ENTIRE POINT OF THE STACK. Read the header before
+  # editing anything in here: two of these properties are the difference between using a
+  # block and paying for it twice.
+  #
+  # THIS IS ALSO A SECOND COPY OF PFamilyLaunchTemplate, AND THAT IS A COST BEING ACCEPTED
+  # RATHER THAN AN OVERSIGHT. A compute environment takes one launch template. The P-family
+  # template that gives gpu-8xa100 and gpu-8xh100 a 500 GiB root and a fifteen-minute ECS
+  # task cleanup lives in infra/batch-compute-gpu-shapes.yaml, in another stack, and cannot
+  # be referenced from here -- so a block environment that named no launch template of its
+  # own would get the reservation and lose the disk, and a p5 with the AMI's 30 GiB root is
+  # the exact failure that file records: a 37.2 GiB corpus that did not fit, and three jobs
+  # that inherited each other's leftovers. Discovering that inside a paid window is worse
+  # than discovering it on demand, because the window does not stop while somebody fixes it.
+  #
+  # So the block device mapping and the four ECS agent settings below are copied, and the
+  # copy is the thing to be careful about: a size change applied there and not here is a
+  # block window that runs out of disk. They are the numbers that file measured, not new ones.
+  # -------------------------------------------------------------------------------------
+  CapacityBlockLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName:
+        Fn::Sub: ${AWS::StackName}-lt
+      LaunchTemplateData:
+        # THE FIRST OF THE TWO LINES THAT MATTER. Without MarketType capacity-block the launch
+        # is an ordinary on-demand launch and EC2 has no reason to draw it from a reservation
+        # it was not asked for.
+        InstanceMarketOptions:
+          MarketType: capacity-block
+        # THE SECOND, AND THE ONE WITH THE SHARPER FAILURE. CapacityReservationTarget names the
+        # reservation explicitly, which is what a *targeted* reservation requires and what an
+        # open one does not.
+        #
+        # CapacityReservationPreference IS DELIBERATELY ABSENT AND MUST STAY ABSENT. It is the
+        # sibling property, it takes `open` or `none`, and the two are mutually exclusive with
+        # a target. Setting `open` here is the double-bill written down as configuration: EC2
+        # would use any reservation that happens to match, which for a targeted block is none
+        # of them, so every instance launches on demand next to the paid block and nothing
+        # reports it.
+        CapacityReservationSpecification:
+          CapacityReservationTarget:
+            CapacityReservationId:
+              Ref: CapacityReservationId
+        # THE ZONE, STATED A SECOND TIME ON PURPOSE. AWS's guidance for this pattern is that
+        # the block's availability zone and instance type are both copied into the launch
+        # template. Only the zone is copied: the Batch launch template reference is explicit
+        # that instance type and subnets in a launch template are ignored and must be set on
+        # the compute environment, which is where both are set below.
+        #
+        # What this buys is that AvailabilityZone and SubnetId disagreeing becomes a launch
+        # that fails rather than an instance in the wrong zone. It is belt and braces -- a
+        # targeted reservation already constrains the launch to its own zone -- and it is
+        # cheap, which is the right trade on a parameter pair nothing else cross-checks.
+        Placement:
+          AvailabilityZone:
+            Ref: AvailabilityZone
+        # 500 GiB of gp3 in place of the AMI's 30. Copied from PFamilyLaunchTemplate; see the
+        # block above this resource for why the copy exists and what breaks if the two drift.
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 500
+              VolumeType: gp3
+              Throughput: 250
+              DeleteOnTermination: true
+        # The same four ECS agent settings, and the first is the one that matters:
+        # ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION is fifteen minutes against a default of three
+        # hours, and image cleanup cannot touch an image while a container still references it,
+        # so the task cleanup duration gates the other three rather than sitting beside them.
+        #
+        # ECS_CLUSTER and ECS_INSTANCE_ATTRIBUTES are absent and must stay absent: Batch writes
+        # both itself and names them reserved, and setting either from here is documented to
+        # break scheduling and scaling.
+        UserData:
+          Fn::Base64: |
+            MIME-Version: 1.0
+            Content-Type: multipart/mixed; boundary="==BOUNDARY=="
+
+            --==BOUNDARY==
+            Content-Type: text/x-shellscript; charset="us-ascii"
+
+            #!/bin/bash
+            cat <<'ECSCONFIG' >> /etc/ecs/ecs.config
+            ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=15m
+            ECS_IMAGE_CLEANUP_INTERVAL=15m
+            ECS_IMAGE_MINIMUM_CLEANUP_AGE=30m
+            ECS_NUM_IMAGES_DELETE_PER_CYCLE=25
+            ECSCONFIG
+
+            --==BOUNDARY==--
+
+  # -------------------------------------------------------------------------------------
+  # THE COMPUTE ENVIRONMENT, AND IT BREAKS THREE CONVENTIONS THE SIBLING GPU TEMPLATES SET.
+  # Each break is forced by capacity blocks and each is argued at the property. They are:
+  # no ComputeEnvironmentName, BEST_FIT rather than BEST_FIT_PROGRESSIVE, and no
+  # ReplaceComputeEnvironment/UpdatePolicy pair.
+  # -------------------------------------------------------------------------------------
+  CapacityBlockComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      # NO ComputeEnvironmentName, WHICH IS THE FIRST BREAK AND THE ONE THAT LOOKS WRONG.
+      # Every other compute environment in infra/ names itself, and a reader coming from those
+      # files should expect sbsandbox-intern-edullm-capacity-block here.
+      #
+      # It cannot be. BEST_FIT below means this environment cannot take an infrastructure
+      # update in place, so any edit that reaches ComputeResources is a CloudFormation
+      # replacement -- and CloudFormation cannot replace a resource whose physical name is
+      # fixed, because the new one would collide with the old one before the old one is gone.
+      # A named environment here turns every subsequent deploy into a failed update during a
+      # window that is already running.
+      #
+      # The generated name costs nothing that is actually used. Nothing in reviewed
+      # configuration names a compute environment: config/execution-targets.yaml names a
+      # *queue*, and the queue below keeps a stable name and swaps whichever environment is
+      # current underneath it. That is exactly the replacement AWS describes for the end of a
+      # block -- attach a new environment to the existing queue in place of the expired one --
+      # and here CloudFormation performs it rather than a person.
+      Type: MANAGED
+      State: ENABLED
+      # No ServiceRole, so Batch uses AWSServiceRoleForBatch, as every other Batch stack here
+      # does. See infra/README.md; it was created by a person for the CPU environment.
+      #
+      # No ReplaceComputeEnvironment and no UpdatePolicy, which is the third break. Both are
+      # meaningful only for an in-place infrastructure update, and BEST_FIT cannot take one, so
+      # writing `ReplaceComputeEnvironment: false` here would be a false claim about how this
+      # stack updates and `JobExecutionTimeoutMinutes` would be a promise nothing keeps. The
+      # honest statement is that this environment is single-use, which AWS says in as many
+      # words, and that the procedure for a template edit during a live window is to disable
+      # the queue and wait -- the same procedure infra/batch-compute-gpu-shapes.yaml prescribes
+      # for a long run, for the same reason and with more money on it.
+      ComputeResources:
+        Type: EC2
+        # BEST_FIT, AND EVERY OTHER ENVIRONMENT IN THIS ACCOUNT IS BEST_FIT_PROGRESSIVE. This
+        # is the second break and it is not a preference: AWS documents BEST_FIT as a
+        # requirement for a compute environment backed by a capacity block.
+        #
+        # WHAT IT COSTS, STATED PLAINLY, BECAUSE IT IS THE REASON THE OTHERS ARE PROGRESSIVE.
+        # BEST_FIT compute environments cannot have allocationStrategy, instanceTypes,
+        # launchTemplate, subnets, tags, ec2Configuration or updatePolicy updated in place --
+        # the API refuses with a message naming exactly that list -- so this environment is
+        # replaced rather than edited, which is what the missing name above is for.
+        #
+        # WHAT IT DOES NOT COST. BEST_FIT_PROGRESSIVE earns its keep by moving to a second
+        # instance type when the first pool is dry, which is how gpu-8xa100 and gpu-8xh100
+        # survive a P-family shortage. There is no second type here and there must not be:
+        # the reservation covers one. A progressive strategy with one type degrades to
+        # retrying the same request anyway, so the property being unavailable takes nothing
+        # away that this environment could have used.
+        AllocationStrategy: BEST_FIT
+        # ZERO, AND THE USUAL REASON FOR ZERO IS WRONG HERE.
+        #
+        # Everywhere else in this account zero means an idle GPU bills nothing. A block bills
+        # whether or not a single instance is running -- the whole window was charged upfront
+        # at purchase -- so during the window this setting saves no money at all. Saying that
+        # out loud matters, because the sibling comment reasoning carried over unexamined would
+        # be an argument for a number rather than a reason for it.
+        #
+        # What zero buys is the two ends. Before the window, Batch continuously attempts to
+        # allocate and EC2 declines until the reservation becomes active, so a job submitted
+        # the day before waits in RUNNABLE and is placed the moment the block opens -- which is
+        # the operating procedure guides/capacity-blocks.md prescribes, and it exists because
+        # a full day on an eight-card shape prices above the bound that lets a run start on its
+        # own, so the approval has to happen on somebody's own time rather than on the block's.
+        # After the window, the environment goes INVALID and a nonzero floor would have Batch
+        # trying to hold instances against a reservation that no longer exists.
+        #
+        # AWS OFFERS A NONZERO OPTION AND IT IS NOT TAKEN. Their guidance is that if instance
+        # launch time or container pulls are unusually slow, minvCpus should be set equal to
+        # the whole reservation so the machines are held for the window. The cost of zero is
+        # real and is churn: Batch terminates instances when the queue empties and relaunches
+        # them when it fills, and each cycle spends minutes of a window somebody paid for. If
+        # that turns out to bite, MinvCpus becomes a parameter -- which is an edit to this file
+        # with a measurement attached, not a flag somebody sets at deploy time.
+        MinvCpus: 0
+        MaxvCpus:
+          Ref: MaxvCpus
+        # EXACTLY ONE INSTANCE TYPE, AND HERE THAT IS STRICTER THAN THE RULE THE OTHER GPU
+        # TEMPLATES FOLLOW RATHER THAN THE SAME RULE RESTATED.
+        #
+        # infra/batch-compute-gpu.yaml argues for one type per environment on the ground that a
+        # second type silently changes the price a submitter was quoted. That argument holds
+        # here too, and a second one sits on top of it: the reservation covers one type, so a
+        # second name in this list is a type the block cannot supply. Batch would place a job
+        # on it the moment it fits the ResourceRequirements, launch it on demand at full rate,
+        # and park it beside a paid block that goes on sitting idle.
+        #
+        # THE SIBLING ENVIRONMENT FOR THIS EXACT SHAPE LISTS TWO, AND COPYING IT WOULD BE THE
+        # MISTAKE. gpu-8xh100 in infra/batch-compute-gpu-shapes.yaml lists p5.48xlarge and
+        # p5en.48xlarge, deliberately and with a long argument: 6,815 consecutive
+        # InsufficientInstanceCapacity failures made a fallback worth 15% above the estimate.
+        # That reasoning is about scarcity, and a capacity block is the purchase that makes
+        # scarcity not apply. The fallback that saves an on-demand environment is the thing
+        # that wastes a reserved one.
+        InstanceTypes:
+          - Ref: InstanceType
+        InstanceRole:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/sbsandbox-intern-edullm-batch-gpu-instance
+        # ONE SUBNET, IN THE BLOCK'S ZONE, AND THIS IS THE PROPERTY MOST LIKELY TO BE
+        # "IMPROVED" BY SOMEBODY COPYING A SIBLING.
+        #
+        # Every other GPU environment here lists four, five or six subnets, and every one of
+        # those lists is right for an on-demand environment: more zones is more pools to place
+        # in. A capacity block exists in exactly one Availability Zone. A second subnet is a
+        # zone where the reservation does not exist, and Batch reaching it produces either a
+        # launch that fails or -- if the market options above ever stop taking effect -- an
+        # on-demand instance somewhere the block is not.
+        #
+        # infra/batch-network.yaml exports one subnet per zone. The value passed here is
+        # ordinarily the export for the zone named in AvailabilityZone; see that parameter for
+        # why it is passed rather than imported.
+        Subnets:
+          - Ref: SubnetId
+        SecurityGroupIds:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-security-group-id
+        # THE LINE THE WHOLE GPU ESTATE TURNS ON, CARRIED HERE UNCHANGED AND FOR THE SAME
+        # REASON. infra/batch-compute-gpu.yaml states it at length: omitted, this defaults to
+        # the plain ECS_AL2023 AMI, which has no NVIDIA driver and no container runtime hook.
+        # The instance launches, joins the cluster, accepts the job and runs it on the CPU at
+        # GPU prices, producing a result that looks successful. Nothing fails.
+        #
+        # On a capacity block that failure costs the whole window rather than an hour, and it
+        # costs it after the money is already spent and cannot be recovered. This is the one
+        # property in this file whose absence is invisible from every angle except the log
+        # stream where a container reports the device it found.
+        Ec2Configuration:
+          - ImageType: ECS_AL2023_NVIDIA
+        LaunchTemplate:
+          LaunchTemplateId:
+            Ref: CapacityBlockLaunchTemplate
+          # A concrete version rather than $Latest or $Default, matching PFamilyLaunchTemplate
+          # and for the reason recorded there: Batch resolves the substitution variables once,
+          # when the environment is created or updated, so a later edit to the template above
+          # would not reach an environment that named $Latest. A version number is a property
+          # of the environment, so editing the launch template changes this stack in the same
+          # deploy instead of leaving it on the version it was born with.
+          Version:
+            Fn::GetAtt: CapacityBlockLaunchTemplate.LatestVersionNumber
+        # NO UpdateToLatestImageVersion, WHICH THE SIBLINGS ALL SET TO true. It acts only
+        # during an infrastructure update, and BEST_FIT cannot take one, so setting it here
+        # would read as a promise that the AMI moves forward and deliver nothing. The AMI is
+        # whatever Batch resolves when this environment is created, which for something that
+        # lives for the length of one block is the current one.
+        Tags:
+          Name:
+            Fn::Sub: ${AWS::StackName}
+          Project: edullm
+          # On the instances themselves, so a machine in the console can be traced back to the
+          # block that paid for it without anybody holding both facts in their head. It is also
+          # the one thing that separates a block instance from an on-demand one at a glance,
+          # which is the check the header asks for after the first deploy.
+          CapacityReservationId:
+            Ref: CapacityReservationId
+
+  CapacityBlockJobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      # THE QUEUE IS THE NAMED THING, BECAUSE IT IS THE ONLY NAME REVIEWED CONFIGURATION USES.
+      # config/execution-targets.yaml names a job_queue and a job_definition per profile, never
+      # a compute environment, so a stable queue over a replaceable environment is the shape
+      # that lets the environment be single-use without the configuration row moving.
+      #
+      # Taking the name from the stack is the deviation the header flags. The alternative was a
+      # literal, sbsandbox-intern-edullm-capacity-block, which every other template in this
+      # directory would have used -- and which makes a second concurrent block undeployable,
+      # because a Batch queue name is unique per account and region. Two blocks at once is
+      # something config/capacity-blocks.yaml expects. Since every stack this repository
+      # deploys already carries the sbsandbox-intern-edullm- prefix by convention and by the
+      # check in tools/verify_deployed_stacks.py, the derived name inherits it rather than
+      # dropping it.
+      #
+      # The cost is that the string is not readable off this file, so the Outputs below print
+      # it: that is what gets pasted into the execution-targets.yaml row.
+      JobQueueName:
+        Fn::Sub: ${AWS::StackName}
+      State: ENABLED
+      Priority: 1
+      # ONLY TWO OF THE THREE CANCELS THE OTHER QUEUES CARRY, AND THE MISSING ONE IS MISSING ON
+      # PURPOSE. Every GPU queue in this account cancels a RUNNABLE job after 1800 seconds
+      # under CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY, because on an on-demand queue a job that
+      # cannot be placed for half an hour is a job nobody is going to be able to place.
+      #
+      # ON THIS QUEUE THAT STATE IS THE INTENDED OPERATING MODE. The procedure in
+      # guides/capacity-blocks.md is to submit the day before the window opens, so the job is
+      # admitted, approved and waiting when the block becomes active rather than while somebody
+      # hunts for a team lead at 11:30 UTC. Before the window, Batch attempts the allocation
+      # and EC2 declines, and the job sits in exactly the state that cancel is written to kill.
+      # Carrying it would destroy the one submission the guide asks for, thirty minutes after
+      # it was made, roughly twenty-three hours before the machine it was waiting for arrives.
+      # Raising the number does not rescue it either: Batch caps MaxTimeSeconds at 86400 and
+      # "the day before" sits against that boundary.
+      #
+      # WHAT THAT COSTS, WHICH IS REAL. A job that will genuinely never place -- a block that
+      # was released for a failed payment, a reservation id with a character wrong -- now sits
+      # in RUNNABLE with nothing to end it. There is no automatic answer available that can
+      # tell that job from the one waiting correctly for tomorrow, so the control is a person:
+      # whoever bought the block confirms the reservation reached `scheduled` rather than
+      # `payment-failed`, and watches the first placement. That is a weaker guard than a
+      # timeout and it is the honest one.
+      #
+      # The two MISCONFIGURATION cancels stay at 1800 unchanged. Both describe a job that is
+      # statically wrong -- asking for more vCPU than the ceiling, or a resource shape no
+      # instance type here registers -- and neither becomes right when a window opens.
+      JobStateTimeLimitActions:
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT
+          State: RUNNABLE
+      # One compute environment, as every queue here has exactly one. Adding the shape's
+      # on-demand environment as a second entry is the obvious "fallback" and it is the
+      # double-bill again: a job that could not be placed on the block would launch a
+      # p5.48xlarge at $55.04/hour beside one already paid for.
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment:
+            Ref: CapacityBlockComputeEnvironment
+
+  # -------------------------------------------------------------------------------------
+  # THE JOB DEFINITION, AND IT IS IN THIS FILE RATHER THAN THE ON-DEMAND ESTATE ON PURPOSE.
+  #
+  # Every other shape's definition lives in infra/batch-compute-gpu-shapes.yaml beside its
+  # queue, and putting this one there would have been the smaller diff. It would also have
+  # left a b200 job definition standing in the on-demand estate permanently, which is a shape
+  # somebody can submit against on a day when no block exists at all -- $113.93/hour for a
+  # machine nobody reserved, admitted by a platform that had no way to tell the difference.
+  # A definition that exists only while a block exists cannot be used that way. It is created
+  # by the purchase and deleted with the stack when the window ends.
+  #
+  # WHAT THIS DEFINITION IS FOR, WHICH IS NOT RUNNING JOBS. No submission uses it. The
+  # admission state machine registers a per-run definition from CONTAINER_SHAPES in
+  # src/edullm_platform/execution.py, because Batch has no submit-time image override and a
+  # run has to pin the digest its own manifest declared. This is the deployed shape that
+  # registration is checked against, and the name config/execution-targets.yaml points at:
+  # the run's log stream prefix is derived from it, so a row naming a definition that does not
+  # exist yields logs filed under a name nothing accounts for. Deploying it is what makes the
+  # row true.
+  # -------------------------------------------------------------------------------------
+  CapacityBlockJobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      # NAMED OFF THE STACK, LIKE THE QUEUE, BECAUSE ONE TEMPLATE STANDS BEHIND FOUR SHAPES.
+      # The siblings can write sbsandbox-intern-edullm-gpu-8xa100-run as a literal; this file
+      # is deployed once per profile and a literal would collide on the second one. The
+      # resulting name is the queue's with -run on the end, which is the convention every
+      # other shape follows.
+      JobDefinitionName:
+        Fn::Sub: ${AWS::StackName}-run
+      Type: container
+      PlatformCapabilities:
+        - EC2
+      PropagateTags: true
+      # ONE ATTEMPT, AND ON A BLOCK THE USUAL ARGUMENT FOR RETRIES INVERTS. Elsewhere a retry
+      # costs another hour of on-demand rate and may clear a transient fault. Here the window
+      # is paid for either way, so a retry costs nothing extra -- but a training command that
+      # died of its own bug will die again identically, and the second attempt spends window
+      # rather than money. The submission overrides this from the manifest in any case; see
+      # RETRY_ONLY_WHAT_A_RETRY_FIXES for which failures a retry is allowed to answer.
+      RetryStrategy:
+        Attempts: 1
+      # AN HOUR, WHICH IS A FLOOR AND NOT THE CEILING A BLOCK RUN WANTS. Every submission
+      # carries its own Timeout computed from the workload's maximum_runtime_hours, so this
+      # value is what an unoverridden definition would get and nothing more -- it is
+      # JOB_DEFINITION_TIMEOUT_FLOOR_SECONDS, the same figure the siblings carry. Raising it
+      # here would not lengthen a real run by a second and would read as though it might.
+      Timeout:
+        AttemptDurationSeconds: 3600
+      ContainerProperties:
+        # The same digest every GPU shape pins. A submission replaces it with the digest its
+        # own manifest declared, which is the one the ECR scan gated admission on.
+        Image:
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:50e2488ab3c77e859a8fe3e6d4a06d7d54f5c852bc7c5dd201fb9db53bff455b
+        ExecutionRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
+        JobRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-workload
+        # All four from the profile's container shape, passed in rather than written here.
+        # See the parameters for why, and for what asking too much or too little costs.
+        ResourceRequirements:
+          - Type: VCPU
+            Value:
+              Fn::Sub: ${ContainerVcpus}
+          - Type: MEMORY
+            Value:
+              Fn::Sub: ${ContainerMemoryMiB}
+          - Type: GPU
+            Value:
+              Fn::Sub: ${GpuCount}
+        Secrets:
+          - Name: WANDB_API_KEY
+            ValueFrom:
+              Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-fnwEVp
+        # Declared rather than omitted, because ContainerOverrides can only override a key the
+        # definition already declares -- an absent Command here is a submission whose command
+        # is silently dropped.
+        Command:
+          - python
+          - -c
+          - Fn::Sub: 'print("${AWS::StackName}-run: no command override was supplied")'
+        Environment:
+          - Name: EDULLM_OUTPUT_BUCKET
+            Value: sbsandbox-intern-edullm-outputs
+          - Name: EDULLM_OUTPUT_PREFIX
+            Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
+        LinuxParameters:
+          SharedMemorySize:
+            Ref: SharedMemoryMiB
+        # THE LOG GROUP IS NOT CREATED HERE AND MUST NOT BE. infra/batch-compute-gpu.yaml
+        # creates /aws/batch/sbsandbox-intern-edullm-gpu and every GPU shape writes into it;
+        # a group per block would scatter one project's runs across four groups that come and
+        # go with purchases, and `edullm logs` would have to know which. Declaring it here
+        # would also have this stack try to create a group that already exists and fail.
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: /aws/batch/sbsandbox-intern-edullm-gpu
+            # THE PREFIX A RUN WILL ACTUALLY WRITE UNDER, AND IT HAS TO BE DERIVED RATHER THAN
+            # SPELLED. execution.py builds it as the deployed definition's name with this
+            # project's resource prefix removed -- capacity-block-gpu-8xb200-run -- so a
+            # literal here, or a profile parameter that could be passed a different profile
+            # than the stack name carries, would file a run's logs under a prefix `edullm
+            # logs` does not look in. Splitting the stack name leaves one source for both.
+            awslogs-stream-prefix:
+              Fn::Sub:
+                - ${Shape}-run
+                - Shape:
+                    Fn::Select:
+                      - 1
+                      - Fn::Split:
+                          - sbsandbox-intern-edullm-
+                          - Ref: AWS::StackName
+            awslogs-region:
+              Ref: AWS::Region
+        Privileged: false
+
+Outputs:
+  # THE STRING THAT GOES IN config/execution-targets.yaml. It is the stack name, restated here
+  # so nobody has to know that rule; CloudFormation returns the ARN for a job queue rather than
+  # the name, and the row wants the name.
+  JobQueueName:
+    Description: The job_queue value for this block's row in config/execution-targets.yaml.
+    Value:
+      Fn::Sub: ${AWS::StackName}
+  JobQueueArn:
+    Value:
+      Ref: CapacityBlockJobQueue
+  ComputeEnvironmentArn:
+    Value:
+      Ref: CapacityBlockComputeEnvironment
+  # Printed so the reservation this stack is consuming can be read back off the stack rather
+  # than off whatever note the parameter was typed from. The check after the first deploy is
+  # that this reservation's used capacity moves off zero when a job places; nothing in this
+  # repository can perform it, because nothing here holds an AWS credential.
+  CapacityReservationId:
+    Description: The reservation this stack targets, echoed for the post-deploy check.
+    Value:
+      Ref: CapacityReservationId
+  LaunchTemplateId:
+    Value:
+      Ref: CapacityBlockLaunchTemplate

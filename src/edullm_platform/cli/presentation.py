@@ -928,11 +928,19 @@ def _why_not_automatic(
     inventory: OrganizationInventory,
     environment: ApprovalEnvironment,
 ) -> list[str]:
-    """The sentence a routine run earns, which is always "here is what to change".
+    """The sentence a non-automatic run earns, which is always "here is what to change".
 
     There are two reasons a run reaches a lead under v5 and this names whichever holds. A
     submitter told the figure and the bound can see how far over they are; one told only the
     class cannot.
+
+    **AN EXCEPTION IS ANSWERED FIRST AND ANSWERED ALONE**, matching
+    ``classify_request``'s own ordering for the reason ``notifications.messages._why_this_gate``
+    gives: the first test that holds is the one that decided the route, and a block-backed run
+    that is also over the bound would otherwise be told it is at the admin gate because of the
+    money. It is not. The money is under the bound on a short block and the gate would be the
+    same either way, so naming the cost here would send somebody off to shrink a run that no
+    reduction moves.
 
     The last line is the fallback and it is reachable, unlike the version of this that
     preceded v5. ``classify_request`` also holds back a digest whose registry scan findings
@@ -944,6 +952,14 @@ def _why_not_automatic(
     """
     cost = preflight.cost
     assert cost is not None  # only called with a priced submission
+    if preflight.approval_class is ApprovalClass.EXCEPTION:
+        return [
+            (
+                "this shape exists only as a capacity block, which is paid upfront and cannot "
+                "be cancelled, so a platform admin releases it rather than a team lead"
+            ),
+            approvers_said(inventory, environment),
+        ]
     limits = policy.thresholds
     reasons: list[str] = []
     if cost.cells > 1:

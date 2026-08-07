@@ -91,6 +91,24 @@ def usage_of(verb: str) -> str:
     return verbs()[verb].format_usage()
 
 
+def flags_of(verb: str) -> set[str]:
+    """Every long flag one verb's usage line names, as whole names and not as substrings.
+
+    **WHICH USED TO BE ``flag in usage_of(verb)`` AND IS THE MISTAKE A PREFIX MAKES SILENT.**
+    A usage line is a string, so a substring test says ``ask`` takes ``--hours`` the moment
+    ``ask`` grows ``--hours-needed``. What followed was not a small wrong answer: the case below
+    read that as "this verb parses a duration by hand", drove ``ask`` with ``--hours nope``,
+    collected the refusal ``ask`` correctly makes about something else entirely, and reported
+    that one mistake exits two ways. The verb under suspicion was innocent and the flag it was
+    accused over is on four other verbs.
+
+    Tokenised on the flag name itself, so ``--hours`` and ``--hours-needed`` are two flags here
+    as they are two flags to argparse. Every population in this file that asks which verbs carry
+    a flag goes through this rather than through ``in``.
+    """
+    return set(re.findall(r"--[a-z0-9][a-z0-9-]*", usage_of(verb)))
+
+
 def _is_a_choice_group(token: str) -> bool:
     """Whether argparse rendered this slot as the set of values it accepts."""
     return token.startswith("{") and token.endswith("}")
@@ -149,8 +167,9 @@ def argv_for(verb: str) -> list[str]:
             continue
         argv.append(RUN_ID if "run_id" in token.lower() else "a-value")
         index += 1
+    takes = flags_of(verb)
     for flag, value in A_VALUE_FOR.items():
-        if flag not in argv and flag in usage:
+        if flag not in argv and flag in takes:
             argv += [flag, value]
     # ``status`` takes its run id optionally, so the bracket-stripping above drops it, and
     # a ``status`` driven with no id lists your submissions and never reaches the dispatch
@@ -322,9 +341,9 @@ def test_every_flag_this_file_fills_in_is_a_flag_some_verb_still_takes() -> None
     for a flag that does not exist is simply never supplied, and ``submit`` would quietly
     stop reaching the dispatch that half of these cases are about.
     """
-    every_usage = " ".join(usage_of(verb) for verb in verbs())
+    every_flag = {flag for verb in verbs() for flag in flags_of(verb)}
 
-    assert all(flag in every_usage for flag in A_VALUE_FOR)
+    assert all(flag in every_flag for flag in A_VALUE_FOR)
 
 
 def test_every_choice_this_file_fills_in_is_still_a_choice_that_verb_takes() -> None:
@@ -381,7 +400,7 @@ def test_a_number_that_is_not_a_number_is_one_class_whichever_flag_carried_it(
     alone, because they are added to ``submit`` by the same function and would have to be
     fixed on both.
     """
-    carrying = sorted(verb for verb in verbs() if flag in usage_of(verb))
+    carrying = sorted(verb for verb in verbs() if flag in flags_of(verb))
     runner = a_platform(tmp_path)
 
     codes = {

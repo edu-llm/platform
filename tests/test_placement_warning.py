@@ -76,6 +76,10 @@ SCANNED_AT = "2026-07-26T22:07:12.000000Z"
 #: for its copy: a shape quietly becoming reliable should be a test edit rather than a silent
 #: one. The set is read back out of the shipped file below rather than trusted from here, so
 #: this is the second opinion and not the source.
+#:
+#: THE FOUR BLOCK-BACKED SHAPES JOINED ON 2026-08-07 and every one of them warns, which is the
+#: behaviour to want: a submitter reaching for one is reaching for a machine that exists only
+#: inside a window somebody has to buy first, and the warning is the only place they hear so.
 SHAPES_THAT_DO_NOT_PLACE = frozenset(
     {
         "gpu-4xl4",
@@ -83,16 +87,37 @@ SHAPES_THAT_DO_NOT_PLACE = frozenset(
         "gpu-8xl40s",
         "gpu-1xh100",
         "gpu-8xh100",
+        "gpu-8xa100-80gb",
+        "gpu-8xh200",
+        "gpu-8xb200",
+        "gpu-8xb300",
     }
 )
 
-#: Of those five, the two a queue established and the three only a probe has asked about.
+#: Of those nine, the two a queue established and the seven only a probe has asked about.
 #: They get different sentences and the split is the point: the probe's refusals are what the
 #: eight corrections to ``config/capacity.yaml`` overturned, so a submitter reading one needs
 #: to know they are reading the weaker instrument. Held as two named sets rather than derived
 #: from the file, so moving a shape between them is a line in a diff.
+#:
+#: THE FOUR BLOCK-BACKED SHAPES ARE ALL ON THE PROBE SIDE AND ARE WEAKER STILL. No instrument has
+#: actually run for any of them; ``probe`` is recorded because the vocabulary has no value meaning
+#: "nobody has looked". ``gpu-8xh200`` is the one to notice: it was written as queue-measured on
+#: the strength of the p5 refusals, which were raised across ``p5en.48xlarge`` too, and
+#: ``tools/check_placement_verdicts.py`` refused it because the queue that raised them is
+#: ``gpu-8xh100``'s and no queue is mapped to ``gpu-8xh200`` at all.
 REFUSALS_A_QUEUE_MEASURED = frozenset({"gpu-1xh100", "gpu-8xh100"})
-REFUSALS_ONLY_A_PROBE_MEASURED = frozenset({"gpu-4xl4", "gpu-8xl4", "gpu-8xl40s"})
+REFUSALS_ONLY_A_PROBE_MEASURED = frozenset(
+    {
+        "gpu-4xl4",
+        "gpu-8xl4",
+        "gpu-8xl40s",
+        "gpu-8xa100-80gb",
+        "gpu-8xh200",
+        "gpu-8xb200",
+        "gpu-8xb300",
+    }
+)
 
 #: The shapes that do place and make you queue. They warn too, and about something else: a
 #: measured wait rather than a machine that may never come. Held apart from the set above

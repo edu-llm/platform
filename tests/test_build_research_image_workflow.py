@@ -1154,6 +1154,83 @@ def test_the_accelerator_gate_stands_between_the_build_and_the_push() -> None:
     assert build["env"]["PLATFORM_TOOLING"] == "${{ github.workspace }}/platform"
 
 
+def test_the_repositorys_own_self_check_stands_between_the_build_and_the_push() -> None:
+    """The assertion the platform cannot write, run where the platform's own ones run.
+
+    A repository is the only party that knows which backends its own configs name and
+    whether its image carries them, and until this ran nothing asked: run
+    run_019fde30-1d27-7096-8bd9-3ef9b7748d7b bought that fact for a gpu-1xa10g allocation
+    and died eleven seconds into it.
+
+    Mutation: move it below `docker push`, or into a step of its own -- a separate step can
+    only run after this one, the tag is immutable, and an image refused once it is in the
+    registry is a commit that can never be published correctly.
+    """
+    build = step(_job("publish"), "Build and push image")
+    script = build["run"]
+
+    assert "tools/verify_image_self_check.py" in script
+    assert script.index("verify_image_self_check.py") < script.index("docker push")
+    # It reads the assembled image, so it must come after the build rather than merely
+    # before the push.
+    assert script.index("docker build") < script.index("verify_image_self_check.py")
+    # Mutation: pass a relative root. The invocation is inside a subshell that has cd'd into
+    # the platform tooling checkout, where `.edullm/` is this repository's own, so a
+    # relative root would run the platform's file against somebody else's image.
+    assert 'research_checkout="${PWD}"' in script
+    assert "--repository-root " in script
+    assert script.index('research_checkout="${PWD}"') < script.rindex(
+        "verify_image_self_check.py"
+    )
+
+
+@pytest.mark.slow
+def test_an_image_whose_repository_refuses_it_is_never_pushed(tmp_path: Path) -> None:
+    """Executed rather than read. Mutation: let the gate advise instead of refuse.
+
+    The accelerator gate above it already passes here, so this is the second `uv` call
+    failing rather than the first, which is what makes it a test of this gate and not of
+    that one.
+    """
+    stub_bin = tmp_path / "bin"
+    write_stub(
+        stub_bin,
+        "docker",
+        'printf "%s\\n" "$*" >> "${RUNNER_TEMP}/docker-calls.txt"\n'
+        'if [[ "${1-} ${2-}" == "image inspect" ]]; then\n'
+        f'  echo "{PUBLISHED_IMAGE_CREATED}"\n'
+        "fi\n",
+    )
+    write_stub(
+        stub_bin,
+        "uv",
+        'printf "%s\\n" "$*" >> "${RUNNER_TEMP}/uv-calls.txt"\n'
+        'if [[ "$*" == *verify_image_self_check.py* ]]; then\n'
+        '  echo "self_check_raised" >&2\n'
+        "  exit 1\n"
+        "fi\n",
+    )
+
+    result = run_step_script(
+        step(_job("publish"), "Build and push image")["run"],
+        cwd=tmp_path,
+        env=_build_environment(tmp_path, ""),
+        stub_bin=stub_bin,
+    )
+
+    assert result.returncode == 1
+    assert "self_check_raised" in result.stderr
+    calls = (tmp_path / "docker-calls.txt").read_text(encoding="utf-8")
+    assert "build" in calls
+    assert "push" not in calls
+    # Both gates were reached and in this order, which is what makes the accelerator gate
+    # still the first thing an image is judged on.
+    uv_calls = (tmp_path / "uv-calls.txt").read_text(encoding="utf-8")
+    assert uv_calls.index("verify_image_accelerator.py") < uv_calls.index(
+        "verify_image_self_check.py"
+    )
+
+
 @pytest.mark.slow
 def test_an_image_whose_torch_cannot_reach_a_card_is_never_pushed(tmp_path: Path) -> None:
     """Executed rather than read. Mutation: let the gate advise instead of refuse.

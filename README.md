@@ -18,6 +18,8 @@ Then the guide for what you are actually doing:
 | [Running an evaluation](guides/olmo-eval-full.md) | olmo-eval-full, for scoring a model against a task suite |
 | [Validating a corpus](guides/edullm-data.md) | edullm-data, for checking and publishing a dataset |
 
+**[Capacity blocks](guides/capacity-blocks.md)** is the one to read when the machine you need is one EC2 will not sell this account on demand. It covers what can be reserved, what it costs, and what a researcher does differently when their run has a dated window rather than a queue.
+
 The three above need nothing installed and no AWS account. If you would rather work in a terminal than in the Actions UI, `uv tool install --force git+https://github.com/edu-llm/platform` puts the `edullm` command on your path, and `edullm --version` has to read 3.4.8 or higher afterwards, because below that `submit` unquotes your command and the submission is refused. It prices a submission offline before it sends it, and submits, follows and stops runs. Re-running that same line is how you upgrade, whichever way the tool was installed. `uv tool upgrade` follows the ref the install named, so it upgrades one made from the bare URL above and answers `Nothing to upgrade` to one pinned at a release tag, however far behind that one is. If you installed before v4.2.2, when the package was called `edullm-platform` rather than `edullm`, run `uv tool uninstall edullm-platform` **before** that install line and not after: both installs own the same `edullm` executable and uv deletes it with the old entry, which leaves you with a healthy-looking `uv tool list` and no command. [Day one](guides/day-one.md) is the short way through it and [from a terminal](guides/the-platform.md#from-a-terminal) is the reference.
 
 Working through Cursor, Claude Code or Codex rather than typing the commands yourself? [**A skill for your coding agent**](skills/README.md) is one file to drop into your own repository, and it is what stops an agent writing a shell script that talks to AWS.
@@ -43,6 +45,7 @@ Open an issue. **@philote-dev reads these.** Include the workflow run link: it c
 - `access-request` when you cannot see the Run button, or a submission says you are not on the roster
 - `run-problem` when a run was refused, failed, or is stuck
 - `dataset-request` when you need a corpus that is not on the form
+- `capacity-block` when your run needs a machine EC2 will not sell on demand, and somebody has to reserve one
 - `feedback` when something works but gets in your way
 
 `edullm ask --kind <kind>` files the same thing from a terminal and attaches which version and which reviewed configuration you were on.

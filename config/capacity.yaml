@@ -18,9 +18,16 @@
 # WHY IT IS NOT A FIELD ON THE CATALOG'S PROFILES, WHICH IS WHERE IT BELONGS. ComputeProfile is
 # a contract model with extra="forbid", and its structural digest is recorded in
 # fixtures/goldens/contract-models.json, so an `availability` field beside `provisioned` is a
-# re-record rather than a config edit -- the same reason EXCEPTION_RATE_CEILING_USD_PER_HOUR sits in
-# src/edullm_platform/contracts/policy.py instead of in config/policy.yaml, which carries the
-# same kind of pointer. When that happens, `places` folds into ComputeProfile and this goes away.
+# re-record rather than a config edit. When that happens, `places` folds into ComputeProfile and
+# this goes away.
+#
+# THAT COST IS REAL AND IT IS NOT A REASON ON ITS OWN, which this comment used to imply by
+# pointing at EXCEPTION_RATE_CEILING_USD_PER_HOUR as a constant that sat in
+# src/edullm_platform/contracts/policy.py for the same reason. There is no such constant -- policy
+# v5 withdrew it -- and `capacity_block_backed` was added to ComputeProfile on 2026-08-07 with the
+# re-record it costs, because the approval gate for a non-cancellable purchase is worth a golden
+# regeneration. What keeps `places` out is that it is a fact about the account's neighbours rather
+# than about the machine, not the price of the re-record.
 #
 # WHAT PLACEMENT IS, AND WHY IT IS A THIRD THING NEXT TO provisioned AND backed. A profile can
 # be priced in config/workload-catalog.yaml, provisioned with a compute environment, and backed
@@ -436,3 +443,53 @@ profiles:
   - profile: gpu-8xh100
     places: unreliably
     measured_by: queue
+  # THE FOUR BLOCK-BACKED SHAPES, AND THE HONEST ANSWER FOR ALL FOUR TODAY IS `unreliably`.
+  #
+  # WHAT THIS FILE WOULD LIKE TO SAY ABOUT THEM AND CANNOT YET. A shape whose machines exist only
+  # inside a purchased window is one that places, on dates, and the vocabulary for that is
+  # `after_a_wait` with the window's dates in the `wait` sentence -- not a fourth verdict, for the
+  # reason `src/edullm_platform/placement.py` gives about every verdict needing a branch behind
+  # it. That is what these rows become on the day a block is bought, in the same commit that
+  # deploys `infra/batch-capacity-block.yaml` and flips `provisioned` in the catalog.
+  #
+  # IT CANNOT BE WRITTEN NOW BECAUSE NO BLOCK HAS BEEN BOUGHT, AND THE READER ENFORCES THAT
+  # RATHER THAN TRUSTING IT. `read_capacity` requires a `wait` on an `after_a_wait` entry and
+  # additionally requires `measured_by: queue`, because a wait is a thing only a queue can have
+  # observed. There is no window, so there are no dates, so there is no sentence -- and writing
+  # `after_a_wait` with an invented one would be the file describing a machine that does not
+  # exist on a date nobody has paid for.
+  #
+  # `measured_by` IS THE FIELD THIS SET STRAINS, AND ALL FOUR CARRY THE WEAKEST VALUE IT HAS.
+  # Nothing has queued for a p4de, a p5en, a p6-b200 or a p6-b300 as one of these profiles, and no
+  # `create-fleet --type instant` has asked either. The file has two instruments and neither means
+  # "nobody has looked", so all four carry `probe`, which is the weakest statement available and is
+  # still stronger than the truth. Read them as unmeasured.
+  #
+  # gpu-8xh200 WAS WRITTEN AS `queue` FIRST AND tools/check_placement_verdicts.py WAS RIGHT TO
+  # REFUSE IT. The argument for it was that the 7,654 InsufficientInstanceCapacity refusals
+  # recorded above gpu-8xh100 were raised across p5.48xlarge and p5en.48xlarge both, so the pool
+  # behind this instance type has been asked, hard, and answered no. That is true and it is not
+  # what `queue` means here. Those refusals were raised by the gpu-8xh100 compute environment,
+  # which lists p5en as a fallback instance type; no queue is mapped to gpu-8xh200, so no queue
+  # can have measured anything about *this profile*. The checker states it in those terms and the
+  # distinction is worth keeping: `queue` is a claim about a specific queue's own history, and
+  # letting it mean "some environment somewhere touched this instance type" would make it
+  # unfalsifiable. The evidence is real, it is recorded above gpu-8xh100 where it was gathered,
+  # and it is not this row's to cite.
+  #
+  # WHY `unreliably` IS RIGHT RATHER THAN MERELY DEFENSIBLE. It is what a submitter needs to hear.
+  # None of these four has a Batch queue behind it -- all four are `provisioned: false` -- so a
+  # submission naming one is refused before placement is ever reached, and the substitution this
+  # file drives should be steering people to a shape that runs.
+  - profile: gpu-8xa100-80gb
+    places: unreliably
+    measured_by: probe
+  - profile: gpu-8xh200
+    places: unreliably
+    measured_by: probe
+  - profile: gpu-8xb200
+    places: unreliably
+    measured_by: probe
+  - profile: gpu-8xb300
+    places: unreliably
+    measured_by: probe

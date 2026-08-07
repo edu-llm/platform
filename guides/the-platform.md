@@ -50,7 +50,7 @@ Ask for all three through the [ask](https://github.com/edu-llm/platform/issues/n
 
 ## Choosing a machine
 
-`compute_profile` is a closed dropdown, and it is the most expensive field on the form by a wide margin. **Two ranges, and reading the wrong one is how people plan a run they cannot have.** Seventeen shapes are priced, from $0.53 an hour to $55.04. Fourteen of them can be started, and that range stops at $30.13. Nothing infers the field from what you are running, and nothing refuses a small job on a large machine.
+`compute_profile` is a closed dropdown, and it is the most expensive field on the form by a wide margin. **Two ranges, and reading the wrong one is how people plan a run they cannot have.** Twenty-one shapes are priced, from $0.53 an hour to $112.32. Fourteen of them can be started, and that range stops at $30.13. Nothing infers the field from what you are running, and nothing refuses a small job on a large machine.
 
 **The three that are priced and cannot be started.** `gpu-8xh100` and `gpu-1xh100` catch people, because eight H100s at $55.04 an hour is the number everybody remembers and 640 GB has no peer in the catalogue. EC2 has never sold this account a p5 of either size: `config/capacity.yaml` records 7,654 refusals for the eight-card shape and 4,060 for the single-card one, both over a day, and not one instance from either. So both read `provisioned: false` and naming one is refused with `unprovisioned_compute_profile`, before anything is dispatched and before anybody is asked to release it. `gpu-1xa10g-sagemaker` is the third and nothing was ever built for it. Both profile tables carry a column that says which is which, in [training a model](olmo-core.md#one-big-card).
 
@@ -71,12 +71,13 @@ Your image is unaffected by this field. It is built from your commit for one arc
 
 ## Approval
 
-There are two answers, and `edullm check` prints which one the per-run rule gives before you submit anything.
+There are three answers, and `edullm check` prints which one the per-run rule gives before you submit anything.
 
 | What `check` prints | Who releases it |
 | --- | --- |
 | `automatic` | Nobody, unless the day's ceiling below has been reached |
 | `routine` | Any of the eight team leads |
+| `exception` | A platform admin, and only a capacity block reaches it |
 
 **One cell, under $500 worst case, and nobody releases it.** No lead, no wait, unless the day's ceiling below has been reached. It is still recorded and still attributed to you, and you still have to be on the roster and running registered code. What you skip is the queue, not the checks.
 
@@ -92,7 +93,9 @@ There are two answers, and `edullm check` prints which one the per-run rule give
 
 Everything else waits for a person. Any of the eight team leads can release any group's run, so you are not blocked on one individual. But nobody is paged, so if a run has been waiting, ask.
 
-**There is no admin tier and no rate ceiling.** A third class called `exception` exists in the code and no submission reaches it. It is kept for capacity blocks, which nothing has built. Eight A100s at $21.96 an hour for one hour is $21.96, and it starts on its own like anything else under the bound. If a page or a refusal sends you to find an admin, that page is out of date.
+**There is no rate ceiling, and the admin tier is one thing rather than a price.** `exception` used to mean any shape over $20 an hour and it does not any more: an approval class that is a function of a price is one a repricing changes, so policy v5 withdrew it. Eight A100s at $21.96 an hour for one hour is $21.96 and starts on its own like anything else under the bound. If a page or a refusal sends you to find an admin for a shape you can start today, that page is out of date.
+
+**What does reach an admin is a capacity block, and it is about the purchase rather than the total.** The shapes marked `capacity_block_backed` in `config/workload-catalog.yaml` -- `gpu-8xa100-80gb`, `gpu-8xh200`, `gpu-8xb200` and `gpu-8xb300` -- exist only as a pre-paid, dated window of a machine that EC2 will not sell this account by the hour. That purchase is charged upfront, in full, and cannot be cancelled, so a person who can commit the money releases it rather than whichever lead is nearest. It routes that way whatever the run costs: a short block on the cheapest of the four prices below several routine on-demand runs and still commits money nobody can get back, while a long `gpu-8xl40s` run costs more and commits nothing until it starts. Cost is what a lead is shown; reversibility is what an admin is for. [Capacity blocks](capacity-blocks.md) is the guide for the rest of it.
 
 If you are approving, it is not a formality. Before you release a run you are shown its cost, its machine, the team it is booked to, whether the submitter will be attributed, and whether it waived any check.
 
@@ -153,6 +156,29 @@ Set for you. You never supply these, and a value you set yourself is one the rec
 
 The three dataset variables come from the registry entry behind the field you picked rather than from anything you typed.
 
+**`EDULLM_CHECKPOINT_DIR` and `EDULLM_OUTPUT_PREFIX` hold `s3://` URIs, not filesystem paths.** This is the one line in this table worth reading twice, because getting it wrong loses everything a run did and raises nothing while doing it. `pathlib.Path("s3://bucket/key")` is `PosixPath("s3:/bucket/key")`, a *relative local path*, so a program that hands the value to `Path()`, `os.makedirs` or `open()` writes into a directory called `s3:` beside itself, on a disk that goes away with the machine. The run exits zero. The prefix stays empty. Nothing in the run says so, and the nightly audit is what eventually notices.
+
+Two registered repositories have now done exactly this — one gating a checkpoint load on `os.path.exists()` against the URI, which is false on every attempt, and one taking the value as a save folder. Pass it to whatever your library calls its **remote** or **URI** destination. If your trainer only writes locally, write locally and upload; do not hand it the variable and hope.
+
+Submission refuses a command that never expands `$EDULLM_CHECKPOINT_DIR` under a workload profile that promised checkpoints. That check reads your command text and it cannot read your program, so it catches the run that forgot the variable and not the run that misuses the value. This paragraph is the only thing standing in front of the second one.
+
+## What a container can reach
+
+**Containers have outbound internet.** A training job can `pip install`, clone from GitHub, pull weights and tokenizers from the Hugging Face Hub, and reach Weights and Biases. Nothing needs baking into your image for network reasons alone.
+
+| Direction | What is allowed |
+| --- | --- |
+| Outbound, HTTPS | Anywhere |
+| Outbound, HTTP | Anywhere |
+| Outbound, anything else | Nothing. No SSH, no FTP, no arbitrary ports |
+| Inbound | Nothing at all. There is no ingress rule |
+
+This is worth stating plainly because a repository author cannot tell from the outside, and the correct design differs completely depending on the answer: with egress, nothing needs doing; without it, every repository has to bake its assets into its image at build time and every Hub fetch is a bug. Several guides here already assume it — the three corpora whose tokenizers are fetched from the Hub at container start only work because of this — and until now nothing said so.
+
+**It is public subnets with an internet gateway rather than a NAT gateway, and `infra/batch-network.yaml` argues the trade.** The container needs to reach ECR, S3 and CloudWatch Logs and nothing needs to reach it, so the two honest shapes were public subnets with public IPs, or private subnets behind a NAT gateway carrying exactly the same traffic in the same direction at a monthly cost. The security group has no ingress rule at all, which is what actually keeps the hosts unreachable; a public IP with no open port is not an exposure. The template also records the alternative it did not take: VPC endpoints for ECR, S3 and Logs would remove the internet path entirely, at about the cost of the NAT, and that is a hardening decision this phase deferred rather than missed.
+
+**Two things follow for you.** A dependency resolved at container start is a dependency that can fail at container start, on somebody else's outage, after you have been allocated a GPU — so pin what you can and prefer the image. And an egress path is an egress path: your job can send anywhere, so treat what you put in it accordingly.
+
 ## Fan-out
 
 A fan-out runs your command once per cell. Give the form a `fanout_size` and a `fanout_index_parameter` naming what varies, such as `seed` or `shard`.
@@ -200,6 +226,14 @@ edullm --version
 **One-time, for an install made before v4.2.2 and for nothing else.** The distribution used to be called `edullm-platform` while the command was `edullm`, which is why `uv tool uninstall edullm` used to answer `not installed` to somebody holding the binary. Run `uv tool uninstall edullm-platform` **before** the install line above rather than after it: an install of `edullm` does not replace an `edullm-platform` one, both own the same `edullm` executable, and uv deletes that file with the old entry without noticing the new install still needs it. The wrong order leaves `uv tool list` reporting a healthy `edullm` and `command not found` in the shell, which re-running the install line repairs. Where the old name was never installed it exits 2 with ``error: `edullm-platform` is not installed``, which is expected.
 
 **Read that version back, and read 3.4.8 or higher.** Below it, `submit` strips the quoting off your command on the way to the form and the compile job refuses the submission two minutes later. The fix travels with the install rather than with the platform, so an old install stays broken until that first line is run again. [Day one](day-one.md#install-the-tool-then-read-the-version-back) prints the refusal it earns, so you can recognise it.
+
+**If `edullm` answers with a traceback, or with a help page you do not recognise, something else on your PATH owns the name.** The usual something else is your project's own virtual environment: `edullm-data` ships a console script called `edullm` too, so a checkout whose `.venv` depends on it — OLMo-core's does — puts that binary in front of the tool this page is about whenever the environment is active. Nothing warns you. The two are different programs with the same name, and the one you want is the platform CLI declared by `edullm = "edullm_platform.cli:main"`.
+
+```
+which -a edullm
+```
+
+That prints every `edullm` on your PATH, in the order the shell will try them. If the first line is inside a `.venv`, that is your answer. Run the platform tool by an unambiguous path, deactivate the environment for the submission step, or run it with `uvx --from git+https://github.com/edu-llm/platform edullm`. Do not try to fix it by editing `edullm-data`; it is a different repository and its entry point is not a mistake.
 
 You need [uv](https://docs.astral.sh/uv/) and a `gh` that is logged in with `gh auth login`. That is the whole of it for the five verbs below. `check`, `submit`, `status`, `logs` and `cancel` drive `git` and `gh` rather than holding a credential of their own, so they can do what you can do and nothing more, and there is no AWS account anywhere in this. All five were run on 2026-08-06 with `AWS_PROFILE`, both key variables and both configuration paths pointed at nothing, and all five answered normally.
 

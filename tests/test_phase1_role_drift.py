@@ -656,6 +656,89 @@ def test_an_extra_trust_condition_is_reported_as_narrower(
     assert directions(report) == [DriftDirection.NARROWER]
 
 
+def an_instance_type_gate(template: TemplateRole, *, operator: str) -> TemplateRole:
+    """The template with one more ``Deny`` on ``ec2:RunInstances``, gated on two types.
+
+    Modelled on ``DenyInstanceTypesOutsideTheCatalog`` in
+    ``infra/iam/researcher-role.yaml``, which is the statement that made the pair of tests
+    below necessary, and parameterised on the operator because the whole question is
+    whether the two operators move the role in opposite directions.
+    """
+    payload = copy.deepcopy(template.model_dump(mode="json"))
+    payload["inline_policies"][0]["statements"].append(
+        {
+            "sid": "DenyInstanceTypesOutsideTheCatalog",
+            "effect": "Deny",
+            "action_match": {"element": "Action", "actions": ["ec2:RunInstances"]},
+            "resource_match": {"element": "Resource", "resources": ["*"]},
+            "conditions": [
+                {
+                    "operator": operator,
+                    "condition_key": "ec2:InstanceType",
+                    "values": ["g5.xlarge", "p6-b200.48xlarge"],
+                }
+            ],
+        }
+    )
+    return TemplateRole.model_validate(payload)
+
+
+def a_type_the_account_has_not_caught_up_with(payload: dict[str, Any]) -> None:
+    payload["inline_policies"][0]["statements"][-1]["conditions"][0]["values"].remove(
+        "p6-b200.48xlarge"
+    )
+
+
+def test_a_deny_over_a_negated_operator_the_account_is_behind_on_is_narrower(
+    publisher_template: TemplateRole,
+) -> None:
+    """Mutation: drop the negation test in ``compare_conditions``. This reports WIDER.
+
+    **THE SHAPE EVERY ALLOW-LIST UNDER infra/iam/ IS ACTUALLY SPELLED IN**, and the one this
+    got backwards until 2026-08-07. A ``Deny`` over ``StringNotLike`` fires for every value
+    *not* in the list, so a deployed list two entries short denies two more instance types
+    than the template does. The account grants less, which is a pending deploy.
+
+    It was reported ``WIDER`` -- the label for a role that grants something its template
+    does not, which is a security finding -- and ``PendingAmendment.__post_init__`` refuses
+    to record one of those, on the correct grounds that no deploy explains a role ahead of
+    its template. So the register could not hold the one finding that was exactly what it
+    is for. ``edullm-researcher`` sat in that state the day four block-backed instance types
+    were added to the catalog.
+    """
+    template = an_instance_type_gate(publisher_template, operator="StringNotLike")
+    deployed = altered(
+        deployed_exactly_as_declared(template), a_type_the_account_has_not_caught_up_with
+    )
+
+    report = compare(deployed, template)
+
+    assert directions(report) == [DriftDirection.NARROWER]
+    assert "p6-b200.48xlarge" in details(report)
+
+
+def test_a_deny_over_a_positive_operator_the_account_is_behind_on_is_still_wider(
+    publisher_template: TemplateRole,
+) -> None:
+    """The control for the test above, and the reason the fix is not a blanket inversion.
+
+    Same ``Deny``, same missing value, positive operator. ``StringLike`` fires only for
+    values *in* the list, so a deployed list two entries short denies two fewer types than
+    the template does and the account permits something the template refuses. That is
+    ``WIDER`` and was always reported correctly; a fix that flipped every condition's values
+    would have broken it, which is why :func:`~edullm_platform.role_drift._is_negated` asks
+    about the operator rather than about the effect.
+    """
+    template = an_instance_type_gate(publisher_template, operator="StringLike")
+    deployed = altered(
+        deployed_exactly_as_declared(template), a_type_the_account_has_not_caught_up_with
+    )
+
+    report = compare(deployed, template)
+
+    assert directions(report) == [DriftDirection.WIDER]
+
+
 def test_a_shorter_session_than_the_template_asks_for_is_reported_as_narrower(
     publisher_template: TemplateRole,
 ) -> None:

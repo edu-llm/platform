@@ -861,6 +861,51 @@ jobs:
             uv run --frozen python tools/verify_image_accelerator.py \
               --image-reference "${image_reference}"
           )
+          # AND THE ONE ASSERTION THE PLATFORM CANNOT WRITE, RUN WHERE THE PLATFORM MAKES
+          # ITS OWN. The gate above asks the question whose right answer is the same in
+          # every registered image. This one runs `.edullm/verify_image.py` out of the
+          # checkout being built, inside the assembled image, and lets a repository refuse
+          # its own build. That is the only way a fact of the shape all fourteen olmo3_*
+          # factories hardcode attn_backend=flash_2 and this image has no flash-attn can be
+          # caught by anything, because it is a fact about a codebase nobody on the platform
+          # side maintains. Run run_019fde30-1d27-7096-8bd9-3ef9b7748d7b bought that one for
+          # the price of a gpu-1xa10g allocation and eleven seconds of it.
+          #
+          # THE CHECK IS RUN TWICE AND THAT IS THE LOAD-BEARING PART. A builder has no card,
+          # and a library that quietly degrades without one turns a build-time assertion
+          # into a statement about the fallback: OLMo-core replaces the configured attention
+          # backend with the torch one before it ever asks whether the configured one is
+          # supported, so constructing a model on a builder asserts nothing and goes green.
+          # The second pass runs the same check in the same image with
+          # torch.cuda.is_available returning True, and a verdict that changes between the
+          # two is refused. It is what stops this gate from being defeated by the most
+          # obvious wrong way to write a check for it.
+          #
+          # A repository with no such file is not refused; the tool names that state on
+          # every build, which is the same posture the accelerator gate takes toward an
+          # image with no torch.
+          #
+          # Same position as the gate above and for the same two reasons: after `docker
+          # build` because it reads the assembled image, and inside this step because the
+          # push is the last line here and the ECR tag is immutable, so an image refused
+          # after its push is a commit that can never be published correctly.
+          #
+          # It costs no GPU and cannot ask for one -- the container is started with no
+          # --gpus and the runner has no device -- which tools/verify_image_self_check.py
+          # argues at length and which bounds what may be written in that file.
+          #
+          # The root is passed as an absolute path resolved before the subshell, because
+          # the subshell changes directory into the tooling checkout, where a relative root
+          # would find the `.edullm/` belonging to this repository. The working directory
+          # of this step is the research checkout, which is the same place DOCKERFILE_PATH
+          # and BUILD_CONTEXT are relative to.
+          research_checkout="${PWD}"
+          (
+            cd "${PLATFORM_TOOLING}"
+            uv run --frozen python tools/verify_image_self_check.py \
+              --image-reference "${image_reference}" \
+              --repository-root "${research_checkout}"
+          )
           docker push "${image_reference}"
 
       # The digest that leaves this workflow is the one the registry stored, not the one

@@ -186,7 +186,22 @@ The last column is `places`. `reliably` and `unreliably` are usually a probe ask
 
 **It stays in the catalogue on purpose, and the refusal is why.** Withdrawing it would move you from `unprovisioned_compute_profile`, which says the shape is real and priced and has nothing behind it and then lists what does, to `unregistered_compute_profile`, whose whole detail is the name you typed. That is the refusal a misspelling earns, and getting it for a correctly spelled shape sends you looking for a typo you did not make.
 
-**No shape here needs an admin, and no rate sends a run anywhere.** This section used to say that everything at or above `gpu-8xa100` went to an admin, because the platform routed every profile over $20 an hour that way whatever the run cost in total. Policy v5 deleted that ceiling and there is no admin tier left to route to. Measured on 2026-08-06, a one-hour single-attempt check on `gpu-8xa100` at $21.96 an hour and one on `gpu-8xl40s` at $30.13 an hour both come back `automatic`, which is released by nobody at all. What routes a run is its worst-case total, and [approval](the-platform.md#approval) has the figure.
+**No shape in either table above needs an admin, and no rate sends a run anywhere.** This section used to say that everything at or above `gpu-8xa100` went to an admin, because the platform routed every profile over $20 an hour that way whatever the run cost in total. Policy v5 deleted that ceiling and no rate routes anything now. Measured on 2026-08-06, a one-hour single-attempt check on `gpu-8xa100` at $21.96 an hour and one on `gpu-8xl40s` at $30.13 an hour both come back `automatic`, which is released by nobody at all. What routes a run is its worst-case total, and [approval](the-platform.md#approval) has the figure. The one thing that does reach an admin is the block-backed table below, and it is a fact about the purchase rather than about the rate.
+
+Four more eight-card shapes exist and none of them can be submitted to today. They are backed by [capacity blocks](capacity-blocks.md) — dated windows somebody buys in advance — rather than by a queue, so `edullm check` refuses all four with `unprovisioned_compute_profile` until a block has actually been bought and wired up. They are listed here so that a researcher who needs more than 640 GB knows the route exists and asks, rather than concluding the platform tops out at `gpu-8xh100`.
+
+| Compute profile | Devices | Memory | Rate | Placing |
+| --- | --- | --- | --- | --- |
+| `gpu-8xa100-80gb` | 8 x A100 | 655,360 MiB | $17.712/hr | **refused** |
+| `gpu-8xh200` | 8 x H200 | 1,155,072 MiB | $54.92/hr | **refused** |
+| `gpu-8xb200` | 8 x B200 | 1,466,872 MiB | $98.84/hr | **refused** |
+| `gpu-8xb300` | 8 x B300 | 2,200,320 MiB | $112.32/hr | **refused** |
+
+Those rates are what a reserved hour costs rather than an on-demand one, because on-demand is not available for any of them, and they are the only rates in this guide that are not a Price List figure. The launcher rule below applies unchanged: all four are eight-device machines and need eight processes.
+
+**These four are the only shapes on the platform that need a platform admin rather than a team lead**, and it is the purchase rather than the price that sends them there. A block is charged upfront, in full, and cannot be cancelled, so `classify_request` answers `exception` for any run naming one whatever the total comes to. Nothing else in either table above reaches that class. [Approval](the-platform.md#approval) has the rest of it.
+
+If you want one, file `edullm ask --kind capacity-block`. Expect weeks rather than days — the earliest offering is usually two to four weeks out — and expect to be asked for your peak GPU memory, your hours, and whether you have tested that your job resumes from a checkpoint.
 
 **Your command must start one process per device.** Nothing wraps what you type, so the launcher goes in the command:
 

@@ -37,7 +37,12 @@ __all__ = [
     "ASK_KINDS",
     "ASK_KIND_FOR",
     "ASK_QUEUE_LABEL",
+    "CAPACITY_BLOCK_FIELDS",
+    "CAPACITY_BLOCK_KIND",
+    "RESUME_TESTED_ANSWERS",
     "SELF_SERVICE_KINDS",
+    "capacity_block_refusals",
+    "capacity_block_section",
     "issue_body",
     "register_repository_form",
     "routed_to_ask",
@@ -150,12 +155,129 @@ def register_repository_form(
 #: which is the same seam ``ADMISSION_JOB`` sits on. The four templates collapse into one
 #: triage form under a plan this module does not own, and the day that lands this list is red
 #: rather than quietly filing asks under labels nothing counts.
+#:
+#: ``capacity-block`` is the one kind here that asks somebody to spend money that cannot be
+#: got back. A block is charged upfront and is not cancellable, so the ask is a purchase
+#: request wearing an issue's clothes, and it is a kind of its own rather than an
+#: ``access-request`` because what it needs is a decision about several thousand dollars
+#: rather than a name added to a list.
+#: The one kind of ask that has required fields, spelled once and then spelled nowhere else so
+#: that the parser, the kind list and the checks below cannot come to disagree about which kind
+#: they are talking about.
+CAPACITY_BLOCK_KIND: Final = "capacity-block"
+
 ASK_KINDS: Final[tuple[str, ...]] = (
     "access-request",
+    CAPACITY_BLOCK_KIND,
     "dataset-request",
     "feedback",
     "run-problem",
 )
+
+#: The four numbers a capacity block purchase is decided on, as ``(form id, what it asks)``.
+#:
+#: **REQUIRED HERE AND OPTIONAL ON THE FORM, AND THAT IS NOT AN INCONSISTENCY.**
+#: ``.github/ISSUE_TEMPLATE/ask.yml`` is one triage form serving five kinds, and a GitHub form
+#: cannot make a field required conditionally on a dropdown. So the form asks all four under a
+#: heading saying they are what the purchase is decided on, and marks them ``required: false``
+#: because marking them true would block somebody filing a ``run-problem``. A CLI has the kind
+#: on the command line before it validates anything, so it can do what the form cannot, and
+#: this is the door where the requirement is expressible.
+#:
+#: WHY REQUIRING THEM IS WORTH A REFUSAL AT ALL. A block is charged upfront and cannot be
+#: cancelled, so the ask is answered by arithmetic rather than by judgement: peak memory picks
+#: the machine, hours picks how many whole days are bought, the date decides whether any
+#: offering can meet it, and a tested resume decides whether a crash costs an hour or the whole
+#: window. An ask missing any of them cannot be priced, so it costs the asker a round trip and
+#: two more weeks of lead time -- which is the thing this verb exists to save.
+#:
+#: The ids are the form's own field ids, so the two doors produce an issue with the same
+#: headings and ``tools/report_asks.py`` reads one shape. ``tests/test_cli_ask.py`` holds them
+#: equal to the form.
+CAPACITY_BLOCK_FIELDS: Final[tuple[tuple[str, str], ...]] = (
+    ("peak_gpu_memory", "peak GPU memory the run needs, and how you arrived at it"),
+    ("hours_needed", "hours of compute needed, and how you got that number"),
+    ("needed_by", "the date you need it by"),
+    ("resume_tested", "whether a resume from a checkpoint has been tested"),
+)
+
+#: What ``--resume-tested`` takes, and the sentence each token becomes in the issue.
+#:
+#: Short tokens on the command line and the form's own three options in the body, so an issue
+#: filed from a terminal reads exactly like one filed from the browser and whoever answers it
+#: does not have to learn two vocabularies. A free-text field here would accept "probably",
+#: which is the one answer that is worse than "no": it reads as a yes to somebody skimming and
+#: it is what somebody who has not tested a resume writes.
+RESUME_TESTED_ANSWERS: Final[dict[str, str]] = {
+    "tested": "Yes, I have restarted a run from a checkpoint and it continued",
+    "writes-only": "It writes checkpoints but I have not tested a resume",
+    "none": "No, it does not checkpoint",
+}
+
+
+def capacity_block_refusals(kind: str, answers: dict[str, str | None]) -> list[Refusal]:
+    """Every missing field at once, or nothing, and nothing at all for the other four kinds.
+
+    One refusal naming all of them rather than one per field. The action is the same whichever
+    is absent -- go and find the number -- so four entries carrying one code would be four
+    things to match on that mean one thing, and a caller fixing them one per attempt is the
+    round trip this refusal exists to prevent.
+
+    The mirror case is a field supplied on a kind that has no use for it, which is refused
+    rather than dropped. A flag a verb accepts and ignores is one somebody goes on passing while
+    believing it arrived, and the shape of that mistake here is a purchase argued for in fields
+    nobody reading a ``run-problem`` will look at.
+    """
+    supplied = {name: value for name, value in answers.items() if value}
+    if kind != CAPACITY_BLOCK_KIND:
+        if not supplied:
+            return []
+        flags = ", ".join(f"--{name.replace('_', '-')}" for name in sorted(supplied))
+        return [
+            Refusal(
+                code="ask_field_belongs_to_another_kind",
+                detail=(
+                    f"{flags} describes a capacity block purchase and this is a "
+                    f"{kind!r} ask, which nothing prices. Drop the flags or pass "
+                    f"--kind {CAPACITY_BLOCK_KIND}."
+                ),
+            )
+        ]
+    missing = [name for name, _ in CAPACITY_BLOCK_FIELDS if not answers.get(name)]
+    if not missing:
+        return []
+    asked = dict(CAPACITY_BLOCK_FIELDS)
+    return [
+        Refusal(
+            code="capacity_block_ask_is_incomplete",
+            detail=(
+                "a capacity block is charged upfront and cannot be cancelled, so it is "
+                "priced from four numbers rather than judged, and these are missing: "
+                + "; ".join(
+                    f"--{name.replace('_', '-')} ({asked[name]})" for name in missing
+                )
+                + ". An estimate you can say the basis of is a fine answer and an absent "
+                "one costs a round trip and another two weeks of lead time."
+            ),
+        )
+    ]
+
+
+def capacity_block_section(answers: dict[str, str | None]) -> str:
+    """The four answers as part of what the asker said, in the order the form asks them.
+
+    Appended to the sentence somebody typed rather than kept beside it, because these arrived
+    on flags the asker chose to pass and they are the asker's words. ``issue_body``'s footer is
+    the other thing, four facts about the install that nobody typed, and the ``---`` it draws
+    keeps that boundary. Only called once every field is present, so there is no absent case.
+    """
+    lines = ["", "", "## What the purchase is decided on", ""]
+    for name, asked in CAPACITY_BLOCK_FIELDS:
+        value = answers[name]
+        assert value is not None  # capacity_block_refusals has already refused an absence
+        lines.append(f"- **{asked}**: {value}")
+    return "\n".join(lines) + "\n"
+
 
 #: The label that puts an ask in the queue, which is a separate fact from what kind it is.
 #:

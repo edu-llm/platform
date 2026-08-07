@@ -130,7 +130,12 @@ from edullm_platform.cli.intake import (
     ADD_KINDS,
     ASK_KINDS,
     ASK_QUEUE_LABEL,
+    CAPACITY_BLOCK_FIELDS,
+    CAPACITY_BLOCK_KIND,
+    RESUME_TESTED_ANSWERS,
     SELF_SERVICE_KINDS,
+    capacity_block_refusals,
+    capacity_block_section,
     issue_body,
     register_repository_form,
     routed_to_ask,
@@ -777,6 +782,25 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
     ask.add_argument("--title", required=True, help="one line, as somebody scanning would read it")
     ask.add_argument("--detail", help="what you want, and what you have already tried")
     ask.add_argument("--run", help="a run this is about, where it is about one")
+    # The four a capacity block is priced from. Not `required=True`, which argparse would apply
+    # to every kind and would make `edullm ask --kind feedback` demand a GPU memory figure.
+    # `capacity_block_refusals` does it the only way one parser serving five kinds can: after
+    # `--kind` is read, so the requirement lands on the one kind that has it, and it lands as a
+    # refusal carrying a code rather than as argparse's exit 2.
+    ask.add_argument(
+        "--peak-gpu-memory",
+        help="peak GPU memory one run of this needs, with how you arrived at it",
+    )
+    ask.add_argument(
+        "--hours-needed",
+        help="hours of compute the work needs, with how you got the number",
+    )
+    ask.add_argument("--needed-by", help="a real date you need the block by")
+    ask.add_argument(
+        "--resume-tested",
+        choices=sorted(RESUME_TESTED_ANSWERS),
+        help="whether a restart from a checkpoint has been tested, not just written",
+    )
     _add_json(ask)
 
     run = verb_parser("run", WHAT_A_VERB_DOES["run"])
@@ -4169,26 +4193,46 @@ def _ask(
     The configuration is loaded for one field and it is worth the read. Which reviewed
     configuration answered is the fact behind most refusals that look wrong, and it is the
     one thing a person filing an ask about a refusal cannot be expected to know.
+
+    Every refusal is collected before any of them is printed, which is the same promise
+    ``check`` makes and is worth more here than it looks: somebody filing their first
+    ``capacity-block`` ask can be missing the detail and all four numbers, and answering that
+    one refusal per attempt is five runs of a verb whose whole purpose is to save a round trip.
     """
+    # The tokens argparse accepted become the form's own three sentences here, so an issue filed
+    # from a terminal and one filed from the browser read the same to whoever answers it.
+    answers: dict[str, str | None] = {
+        name: getattr(arguments, name) for name, _ in CAPACITY_BLOCK_FIELDS
+    }
+    answers["resume_tested"] = RESUME_TESTED_ANSWERS.get(arguments.resume_tested or "")
+    refusals: list[Refusal] = []
     if not arguments.detail:
-        refusal = Refusal(
-            code="no_ask_detail",
-            detail=(
-                "pass --detail with what you want and what you have already tried. One or "
-                "two sentences will do, and a title on its own costs the person answering a "
-                "round trip."
-            ),
+        refusals.append(
+            Refusal(
+                code="no_ask_detail",
+                detail=(
+                    "pass --detail with what you want and what you have already tried. One or "
+                    "two sentences will do, and a title on its own costs the person answering "
+                    "a round trip."
+                ),
+            )
         )
+    refusals.extend(capacity_block_refusals(arguments.kind, answers))
+    if refusals:
         if arguments.json:
-            emit(refusal_document("ask", [refusal]), out=out)
+            emit(refusal_document("ask", refusals), out=out)
         else:
-            print(render_refusals([refusal]), end="", file=err)
+            print(render_refusals(refusals), end="", file=err)
         return EXIT_REFUSED
+
+    detail = arguments.detail
+    if arguments.kind == CAPACITY_BLOCK_KIND:
+        detail += capacity_block_section(answers)
 
     configuration = _configuration(arguments)
     actions = PlatformActions(runner, repository=arguments.platform_repository)
     body = issue_body(
-        detail=arguments.detail,
+        detail=detail,
         submitter=github_login(runner, allow_network=True),
         version=installed_version().version,
         config_directory=str(configuration.directory),

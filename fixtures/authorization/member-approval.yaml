@@ -19,6 +19,7 @@ request:
   dataset_registered: true
   dataset_is_a_corpus: true
   compute_profile_registered: true
+  capacity_block_backed: false
   immutable_revision: true
   immutable_image: true
   image_scan_reviewed: true

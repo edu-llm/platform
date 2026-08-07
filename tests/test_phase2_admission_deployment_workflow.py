@@ -19,6 +19,8 @@ from workflow_support import (
     write_stub,
 )
 
+from tools.build_admission_lambda import ADMISSION_CONFIG
+
 WORKFLOW_FILE = ".github/workflows/deploy-phase2-admission.yml"
 WORKFLOW_PATH = WORKFLOWS_ROOT / "deploy-phase2-admission.yml"
 PHASE1_WORKFLOW_PATH = WORKFLOWS_ROOT / "deploy-phase1-ecr.yml"
@@ -90,6 +92,41 @@ def test_the_push_paths_are_exactly_the_templates_this_workflow_deploys() -> Non
 
     assert deployed | {WORKFLOW_FILE} == watched
     assert not [path for path in watched if path.startswith("infra/iam/")]
+
+
+def test_no_file_packaged_into_the_validator_zip_is_watched_here() -> None:
+    """Mutation: add config/workload-catalog.yaml to the push filter.
+
+    THIS LOOKS LIKE A BUG AND IS THE FIX. The seven files in ``ADMISSION_CONFIG`` are copied
+    into the validator's zip, so editing one of them changes what the deployed function should
+    contain -- and none of them is in the filter, which reads exactly like the omission that
+    lets a change merge and never reach AWS. It is the opposite.
+
+    A push deploy reconciles the stack against the template, and the template pins
+    ``S3ObjectVersion`` on a specific upload of the zip. Nothing about a config edit moves that
+    pin. So a filter that fired on ``config/workload-catalog.yaml`` would deploy, produce an
+    empty change set, exit green, and leave the previous bytes running -- a success signal
+    asserting a release that did not happen. Today's absence of a deploy at least agrees with
+    the absence of a release.
+
+    What actually carries a config change into the account is a rebuild of the zip, an upload,
+    and an edit to the ``S3ObjectVersion`` line in the template -- and that template *is*
+    watched here, so the deploy fires on the edit that is genuinely deployable.
+    ``infra/admission-state-machine.yaml`` records the four times this seam has been met,
+    including the one that phrases the rule: promoting a compute profile is a Lambda release.
+
+    The guard against forgetting is not this filter. It is
+    ``tests/test_released_bundles.py``, which goes red the moment a packaged file changes
+    without a release being recorded, and which cannot be satisfied without producing exactly
+    the template edit this filter watches for.
+    """
+    watched = set(_load_workflow()["on"]["push"]["paths"])
+
+    packaged = {f"config/{name}" for name in ADMISSION_CONFIG}
+    assert not (packaged & watched), (
+        "a packaged config file in the push filter deploys an unchanged S3ObjectVersion and "
+        "reports success for a release that did not happen"
+    )
 
 
 def test_every_expression_names_something_that_actually_exists() -> None:
@@ -181,10 +218,7 @@ def test_no_deploy_acknowledges_an_iam_capability_because_no_template_needs_one(
     # Asserted against the parsed commands rather than the file text, because the file
     # says all of the above in a comment.
     flags = [
-        token
-        for script in _run_scripts()
-        for command in aws_commands(script)
-        for token in command
+        token for script in _run_scripts() for command in aws_commands(script) for token in command
     ]
 
     assert "--capabilities" not in flags

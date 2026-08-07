@@ -34,19 +34,26 @@ class ApprovalClass(StrEnum):
     #: :func:`classify_request` for the three things that hold a single cheap cell back.
     AUTOMATIC = "automatic"
     ROUTINE = "routine"
-    #: NO RUN CLASSIFIES AS THIS UNDER v5, AND THE MEMBER IS NOT GOING AWAY.
+    #: ONE THING CLASSIFIES AS THIS AND IT IS A CAPACITY BLOCK.
     #:
-    #: :func:`classify_request` returned this for a request over a ``routine_maximum_``
-    #: bound, for an unreviewed image scan, and for a compute profile priced above a rate
-    #: ceiling. All three are gone: the first two are a team lead's to release and the
-    #: third was withdrawn because rate is the wrong instrument. What is left for an admin
-    #: is a capacity block, which is a dated purchase nobody has designed yet.
+    #: Under v4 :func:`classify_request` returned this for a request over a
+    #: ``routine_maximum_`` bound, for an unreviewed image scan, and for a compute profile
+    #: priced above a rate ceiling. All three are gone: the first two are a team lead's to
+    #: release and the third was withdrawn because rate is the wrong instrument -- it made
+    #: who releases a run a function of a price that moves.
     #:
-    #: It stays because 19 of the first 158 runs were recorded under it and every one of
-    #: those records is parsed back through :class:`ApprovalClassValue`, and because
-    #: :func:`~edullm_platform.contracts.admission.ApprovalEnvironment.for_approval_class`
-    #: and the admin branch of ``evaluate_authorization`` are the machinery a capacity
-    #: block will route through. ``admit`` also labels a manifest-hash mismatch with it,
+    #: What replaced them is narrower and is a property of the machine rather than of the
+    #: request: a compute profile whose only route to hardware is a pre-paid, dated,
+    #: non-cancellable window of it. ``RequestFacts.capacity_block_backed`` carries that fact
+    #: and ``config/workload-catalog.yaml`` declares it. Between 2026-08-06 and this change
+    #: nothing returned this member at all, and the four block-backed shapes added in the
+    #: meantime were routing to whichever team lead was nearest -- which is the gap
+    #: ``config/policy.yaml`` was already describing as filled when it said
+    #: ``exception_approver_roles`` exists for capacity blocks.
+    #:
+    #: It would have stayed a member even with nothing returning it, because 19 of the first
+    #: 158 runs were recorded under it and every one of those records is parsed back through
+    #: :class:`ApprovalClassValue`. ``admit`` also labels a manifest-hash mismatch with it,
     #: which is a refusal wearing a class rather than a run taking a route.
     EXCEPTION = "exception"
 
@@ -135,6 +142,20 @@ class RequestFacts(ContractModel):
     #: and reports nothing wrong. Three places in the tree build one of these.
     dataset_is_a_corpus: bool
     compute_profile_registered: bool
+    #: Whether the shape this request names is one only a purchased capacity block provides.
+    #:
+    #: Required rather than defaulted, for the reason ``image_scan_reviewed`` and
+    #: ``dataset_is_a_corpus`` are: the answer this fact carries when nobody supplies it is
+    #: "no", which routes a four-figure non-cancellable purchase to whichever team lead is
+    #: nearest instead of to a platform admin. Three places in the tree build one of these and
+    #: only one of them is production, so spelling it is cheap and forgetting it is not.
+    #:
+    #: A FACT ABOUT THE MACHINE AND NOT ABOUT THE PRICE, which is the whole of why it is here
+    #: rather than being derived from ``estimated_cost_usd``. A one-hour block on the cheapest
+    #: block shape prices below several routine on-demand runs, and it still commits money that
+    #: cannot be got back; a long run on ``gpu-8xl40s`` costs more and commits nothing until it
+    #: starts. Cost is what a lead is shown, and reversibility is what an admin is for.
+    capacity_block_backed: bool
     immutable_revision: bool
     immutable_image: bool
     #: Whether this image's scan findings have been seen: clean of the severities policy
@@ -212,15 +233,24 @@ def classify_request(
     facts: RequestFacts,
     thresholds: PolicyThresholds,
 ) -> ApprovalClass:
-    """Whether anybody is asked about this request, and that is the whole of the question.
+    """Whether anybody is asked about this request, and which of two gates they stand at.
 
-    **THERE ARE TWO ANSWERS AND THERE USED TO BE THREE.** Under v4 this returned
-    ``EXCEPTION`` for a request over one of five ceilings, and an admin released it. Under
-    v5 a team lead releases everything a person releases at all, so what is left here is a
-    single line: is this one cell whose worst case is under
-    ``automatic_below_cost_usd``. Above that line, or in more than one cell, a lead sees it.
-    ``ApprovalClass.EXCEPTION`` is still a member and this function no longer returns it;
-    the reasoning is on the member.
+    **THERE ARE THREE ANSWERS, THERE WERE TWO, AND BEFORE THAT THERE WERE THREE DIFFERENT
+    ONES.** Under v4 this returned ``EXCEPTION`` for a request over one of five ceilings, and
+    an admin released it. v5 removed all five, because a team lead releases everything that
+    turns on how big or how long or how scanned a request is. That left cost as the only
+    instrument and no route to an admin at all, which was correct for about a day: the four
+    block-backed shapes landed with ``config/policy.yaml`` still saying
+    ``exception_approver_roles`` existed for capacity blocks and nothing sending one there.
+
+    ``capacity_block_backed`` is the branch that makes that sentence true, and it is tested
+    **first** so that it cannot be reached past. Every test below it describes a request that a
+    person releases and answers ``ROUTINE``, so a block-backed fan-out, or a block-backed run
+    whose image scan is unreviewed, would take a lead's gate on the strength of a fact that has
+    nothing to do with who owns the purchase. Neither of those is hypothetical -- a sweep is
+    exactly what somebody buys a block for. What the ordering costs is that a block-backed
+    request whose inputs do not resolve is labelled ``exception`` on the record of its own
+    refusal, and that is the right label: an admin is who it would have been put to.
 
     ``estimated_cost_usd`` is the figure an approver is shown, not a second one derived
     here. Both production callers set it from
@@ -257,6 +287,8 @@ def classify_request(
     release. It returns routine rather than exception for them: the record says a person
     would have been asked, and no person was, because the request was refused.
     """
+    if facts.capacity_block_backed:
+        return ApprovalClass.EXCEPTION
     if facts.fanout_size > 1:
         return ApprovalClass.ROUTINE
     if not facts.image_scan_reviewed:

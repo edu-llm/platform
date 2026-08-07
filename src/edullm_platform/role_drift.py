@@ -900,6 +900,39 @@ def _restriction(effect: str, *, extra: bool) -> DriftDirection:
     return _grant(effect, extra=not extra)
 
 
+def _is_negated(operator: str) -> bool:
+    """Whether this condition operator matches the requests its values do *not* describe.
+
+    **THE VALUES INSIDE A NEGATED OPERATOR MOVE THE ROLE THE OTHER WAY, AND FOR A ``Deny``
+    THAT IS THE DIFFERENCE BETWEEN A SECURITY FINDING AND A DEPLOY SOMEBODY OWES.**
+    ``compare_conditions`` treats a condition's values as an OR, which is right:
+    ``StringLike ec2:InstanceType`` accepting one more type matches one more request. A
+    ``StringNotLike`` accepting one more type matches one *fewer*, so the same edit moves
+    the role in the opposite direction, and inside a ``Deny`` -- which is how every
+    allow-list in ``infra/iam/`` is actually spelled -- it flips once more on top of that.
+
+    Read off ``infra/iam/researcher-role.yaml`` on 2026-08-07, where the account was four
+    instance types behind the template on a ``Deny`` over ``StringNotLike``. The deployed
+    role denied *more* than the template did, which is a role waiting for a deploy; this
+    reported it ``WIDER``, which is the label for a role that grants something the template
+    does not, and ``PendingAmendment`` refuses to record one of those on the grounds that no
+    pending deploy explains it. So the one finding that was exactly a pending deploy was the
+    one finding that could not be filed as one.
+
+    Substring rather than a list, and the vocabulary is closed enough for it: every negated
+    IAM condition operator spells ``Not`` -- ``StringNotEquals``, ``StringNotLike``,
+    ``StringNotEqualsIgnoreCase``, ``NumericNotEquals``, ``DateNotEquals``, ``ArnNotEquals``,
+    ``ArnNotLike``, ``NotIpAddress`` -- and no other one does. ``NumericLessThan`` is the
+    near miss a reader checks for and it does not contain the substring. A list would have to
+    be extended the day AWS adds an operator, and the day it is not extended is a ``Deny``
+    read backwards.
+
+    Applied after the ``ForAllValues:``/``ForAnyValue:`` prefix and the ``IfExists`` suffix,
+    both of which may wrap a negated operator and neither of which changes this answer.
+    """
+    return "Not" in operator
+
+
 class _Comparison:
     """One role compared against one template, accumulating findings as it goes."""
 
@@ -1019,6 +1052,13 @@ class _Comparison:
         are an OR, so adding one to an ``Allow`` widens the role instead. Comparing whole
         conditions as opaque strings gets the second case exactly backwards, which is why
         this does not.
+
+        **AND THE SECOND LEVEL FLIPS AGAIN ON A NEGATED OPERATOR**, which this did not
+        account for until 2026-08-07. ``StringNotLike`` accepting one more value matches one
+        fewer request, so the OR argument above runs backwards for it; :func:`_is_negated`
+        is where that is decided and why. Every allow-list under ``infra/iam/`` is spelled as
+        a ``Deny`` over a ``Not`` operator, so this was the shape the rule was most often
+        asked about and the shape it answered wrongly.
         """
         by_deployed = {(one.operator, one.condition_key): one for one in deployed}
         by_template = {(one.operator, one.condition_key): one for one in template}
@@ -1045,15 +1085,17 @@ class _Comparison:
                     f"{key[0]} {key[1]} accepts {', '.join(gained)} where the template "
                     f"accepts {', '.join(lost)}",
                 )
+            # `extra` is about the request set the condition matches rather than about the
+            # size of the value list, and for a negated operator those are opposites.
             elif gained:
                 self.report(
-                    _grant(effect, extra=True),
+                    _grant(effect, extra=not _is_negated(key[0])),
                     element,
                     f"{key[0]} {key[1]} accepts values the template does not: {', '.join(gained)}",
                 )
             elif lost:
                 self.report(
-                    _grant(effect, extra=False),
+                    _grant(effect, extra=_is_negated(key[0])),
                     element,
                     f"{key[0]} {key[1]} does not accept values the template does: "
                     f"{', '.join(lost)}",

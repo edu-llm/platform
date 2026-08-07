@@ -370,7 +370,52 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
     # nothing here compares the two, so the register cannot tell a run that has not happened
     # from a run that will never contain the stack. Where the role lives in an IAM stack,
     # say the apply and say it is a laptop one.
-    amendments: tuple[PendingAmendment, ...] = ()
+    #
+    # A SEVENTH RECORD, AND IT COULD NOT HAVE BEEN WRITTEN AT ALL UNTIL THE COMPARATOR WAS
+    # CORRECTED IN THE SAME COMMIT. `infra/iam/researcher-role.yaml` gained four instance
+    # types on 2026-08-07 for the four block-backed compute profiles, in the `Deny` over
+    # `StringNotLike ec2:InstanceType` that holds the lane to the catalog. `role_drift`
+    # read a shorter deployed list on a negated operator as WIDER -- the label for a role
+    # that grants something its template does not -- and `__post_init__` refuses one of
+    # those, on the correct grounds that no pending deploy explains a role that is ahead of
+    # its template. So the one finding that was exactly a pending deploy was the one
+    # finding this registry could not hold. `_is_negated` is that fix and this is the record
+    # it made writable.
+    #
+    # WHAT IS ACTUALLY BEHIND, AND IT IS THE LANE RATHER THAN THE QUEUE. This statement
+    # governs `ec2:RunInstances` as `edullm run` and `edullm shell` call it. A Batch job
+    # placed on a capacity block does not pass through it -- Batch launches through the
+    # compute environment's instance profile -- so a block window is not waiting on this
+    # apply. What is waiting on it is a researcher typing `edullm run --compute gpu-8xb200`,
+    # which would be refused at RunInstances by a policy the template says permits it.
+    amendments: tuple[PendingAmendment, ...] = (
+        PendingAmendment(
+            role_name="edullm-researcher",
+            reason=(
+                "infra/iam/researcher-role.yaml added p4de.24xlarge, p5en.48xlarge, "
+                "p6-b200.48xlarge and p6-b300.48xlarge to DenyInstanceTypesOutsideTheCatalog "
+                "when the four block-backed compute profiles were priced, and the role has "
+                "not been applied since. The deployed role is narrower than the template: it "
+                "denies RunInstances on all four, so the lane verbs refuse a shape the "
+                "catalog prices. Nothing about a Batch submission is affected, on a capacity "
+                "block or otherwise, because Batch launches through the compute "
+                "environment's instance profile rather than through this role. Re-take the "
+                "capture with tools/capture_phase3_evidence.py --target researcher-role after "
+                "the apply, and delete this record in the same commit."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'lane' statement 2 conditions",
+                    detail=(
+                        "StringNotLike ec2:InstanceType does not accept values the template "
+                        "does: p4de.24xlarge, p5en.48xlarge, p6-b200.48xlarge, "
+                        "p6-b300.48xlarge"
+                    ),
+                ),
+            ),
+        ),
+    )
     # The role-is-declared check used to be a loop here. It is in ``__post_init__`` now,
     # because the same lookup is the first step of deriving ``cleared_by`` and two places
     # asking the same question is how the answers part company.
@@ -1150,12 +1195,20 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "without escaping it, so a run named <!channel> notified the whole workspace "
                 "every time it ended. messages.escaped now converts the three characters "
                 "Slack parses, per field and before the line is assembled so the link the "
-                "approval message builds survives."
+                "approval message builds survives. The digest moved again on 2026-08-07 for "
+                "the four block-backed compute profiles, reached through NOTIFIER_CONFIG in "
+                "tools/build_notifier_lambda.py, which names workload-catalog.yaml, and "
+                "through the contract the notifier imports; and for capacity_block_backed on "
+                "ComputeProfile and RequestFacts. What it reads the catalog for is describing "
+                "a run in a message, no run can name any of the four while they are "
+                "unprovisioned, and _why_this_gate already carried the exception sentence and "
+                "was already tested, so nothing the deployed notifier prints for a reachable "
+                "run moves. The escape is still the reason to cut the release."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function notifier",
-            builds_to="15058807c08d7bddefbfa7413ee737a3ecd910de0955f4e6879cf0b2ddf75d8d",
+            builds_to="14e2fb190a2205388e5682f786595c31c7f253859540a984ea38a63c7f8af5f6",
             released="d78c4a48482558039e7affc51331ec558e5880f8e48876bafb567fe683ee67b9",
-            recorded_on=date(2026, 8, 6),
+            recorded_on=date(2026, 8, 7),
         ),
         PendingRelease(
             function="janitor",
@@ -1169,12 +1222,86 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "ConfigFile member, which researcher_lane.py imports and this zip carries, so "
                 "a line in a StrEnum moved a Lambda for two reports the sweep never reads. "
                 "The fourteenth entry in this register recorded that coupling as the finding "
-                "rather than a one-off, and this is its third and fourth arrival."
+                "rather than a one-off, and this is its third and fourth arrival. A fifth and "
+                "a sixth followed it through the same import on 2026-08-07: a ConfigFile "
+                "member for config/capacity-blocks.yaml, and capacity_block_backed on "
+                "ComputeProfile. The janitor stops expired lane instances and classifies "
+                "nothing, so it reads that field no more than it reads the rest of a compute "
+                "profile."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function janitor",
-            builds_to="05a5cc589472e7d95800da952b740f438002ec0cd4e094ad0e71173d1e016339",
+            builds_to="edc4cb2be56b10939f956ee2da623613db8bfac638f89a21611ba2ca33f7c628",
             released="e07efe963ec9cadb79f7345a14d9074c125e359a588e0661f99db687a757e96a",
-            recorded_on=date(2026, 8, 6),
+            recorded_on=date(2026, 8, 7),
+        ),
+        # A FIFTEENTH, SIXTEENTH AND SEVENTEENTH, ALL FOUR ZIPS MOVING FOR ONE CHANGE, AND THE
+        # WINDOW IS UNREACHABLE BY ANY SUBMITTER RATHER THAN MERELY HARMLESS. Four compute
+        # profiles were priced for shapes obtainable only through a purchased capacity block:
+        # gpu-8xa100-80gb, gpu-8xh200, gpu-8xb200 and gpu-8xb300. config/workload-catalog.yaml is
+        # in both ADMISSION_CONFIG and NOTIFIER_CONFIG, and contracts/workload.py moved as well,
+        # so the validator and the notifier carry the change twice over.
+        #
+        # WHY NOBODY CAN MEET THE DIFFERENCE, WHICH IS A STRONGER CLAIM THAN THE USUAL "BYTES AND
+        # NO BEHAVIOUR" AND IS WORTH CHECKING RATHER THAN TRUSTING. All four profiles carry
+        # `provisioned: false` and none has an execution target, so a submission naming one is
+        # refused before placement is reached -- by `edullm check` on a laptop, and by admission if
+        # somebody skips it. The deployed validator would refuse the four names because it has
+        # never heard of them; the tree refuses them because they have no queue. Both refuse, for
+        # different reasons, and the submitter sees a refusal either way. The window closes on
+        # nothing.
+        #
+        # The one difference a reader might expect and will not find is a cost or approval change.
+        # This said all four are far above EXCEPTION_RATE_CEILING_USD_PER_HOUR so neither version
+        # could classify them more weakly, and that constant went with policy v5. The conclusion
+        # survives its reasoning: all four carry `capacity_block_backed: true`, which
+        # classify_request answers EXCEPTION for, and the deployed validator refuses the four
+        # names outright because it has never heard of them. Neither version releases one on a
+        # team lead's say-so.
+        #
+        # INSTANCE_TYPE_PATTERN WIDENED IN THE SAME CHANGE AND IT CANNOT STRAND A DEPLOYED ZIP.
+        # It learned to accept a hyphen in the family, for p6-b200.48xlarge and p6-b300.48xlarge.
+        # Widening only ever accepts more, so no payload or catalog the old pattern admitted is
+        # refused by the new one -- and the catalog is packaged inside the zip that validates it,
+        # so the deployed function reads the old pattern against the old catalog and agrees with
+        # itself. The regeneration of fixtures/goldens/contract-models.json in this commit is that
+        # reconstraint and nothing else.
+        PendingRelease(
+            function="validator",
+            reason=(
+                "Four block-backed compute profiles priced in "
+                "config/workload-catalog.yaml, which ADMISSION_CONFIG packages, and a "
+                "widened INSTANCE_TYPE_PATTERN in contracts/workload.py so that "
+                "p6-b200.48xlarge and p6-b300.48xlarge validate at all. All four profiles "
+                "are provisioned: false with no execution target, so both the deployed zip "
+                "and this tree refuse a submission naming one, and no submitter can meet the "
+                "difference. Widening a pattern accepts more and never less. Rebuilt on the "
+                "same day for the capacity_block_backed field on ComputeProfile and "
+                "RequestFacts, which is the change that makes classify_request answer "
+                "EXCEPTION for those four names. That is a real difference in what the "
+                "deployed zip would decide and it is still unreachable for the same reason: "
+                "the deployed validator has never heard of the four profiles and refuses them "
+                "as unregistered, and the release that gives any of them a queue packages this "
+                "field along with it."
+            ),
+            cleared_by=f"uv run python {RELEASE_COMMAND} --function validator",
+            builds_to="fdddb38bc524af5bc2bc943c26004667c00607e704b9d20894459cf5cc07e0c7",
+            released="2cda942e9518cf23b6042a5b5ab35d550557a0784acfc9c3ee2d593844e9064c",
+            recorded_on=date(2026, 8, 7),
+        ),
+        PendingRelease(
+            function="recorder",
+            reason=(
+                "Moved through the contract rather than through configuration: the recorder "
+                "imports contracts/workload.py, where INSTANCE_TYPE_PATTERN widened. It "
+                "writes result manifests and reads no compute profile, so nothing it does "
+                "differs across the release. Rebuilt on the same day for the "
+                "capacity_block_backed field added to ComputeProfile in that same module, "
+                "which the recorder reads no more than it read the pattern."
+            ),
+            cleared_by=f"uv run python {RELEASE_COMMAND} --function recorder",
+            builds_to="6e0bc40e9671c9166366dc1637edace5fcbfa0cd2cb32fc703b3c38b9fa66f38",
+            released="1c2d5c6d7f7e52f6b4ef07d6c69f2777a08ce94c3e850d0e1f4ad70def1e5b7b",
+            recorded_on=date(2026, 8, 7),
         ),
     )
     return one_record_per_function(releases)

@@ -467,6 +467,7 @@ def test_the_step_is_not_a_gate_because_admission_admits_the_person_it_describes
             dataset_registered=True,
             dataset_is_a_corpus=True,
             compute_profile_registered=True,
+            capacity_block_backed=False,
             immutable_revision=True,
             immutable_image=True,
             image_scan_reviewed=True,

@@ -123,6 +123,10 @@ class ConfigFile(StrEnum):
     IMAGE_EXCEPTIONS = "image-exceptions.yaml"
     EXECUTION_TARGETS = "execution-targets.yaml"
     CAPACITY = "capacity.yaml"
+    #: What can be *reserved in advance* and what the reservation costs, which is the opposite
+    #: question to :attr:`CAPACITY`'s. That one records whether EC2 will sell a shape on demand;
+    #: this one records the dated blocks that exist precisely because it will not.
+    CAPACITY_BLOCKS = "capacity-blocks.yaml"
     ACCELERATORS = "accelerators.yaml"
     RUN_HISTORY = "run-history.json"
     ASKS = "reports/asks.yaml"

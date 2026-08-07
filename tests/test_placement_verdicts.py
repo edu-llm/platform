@@ -698,7 +698,11 @@ def test_an_agreeing_account_exits_zero_and_says_what_it_checked(
     assert "Every recorded verdict is one the queues support" in printed.out
     # Every profile appears whether or not anything is wrong with it, because the row saying a
     # queue has settled nothing is what tells a reader the green tick is narrower than it looks.
-    assert printed.out.count("| `gpu-") + printed.out.count("| `cpu-") == 17
+    #
+    # Twenty-one since 2026-08-07, when the four block-backed shapes were priced. All four report
+    # that no queue has settled anything, which is exactly the row this count exists to keep in
+    # the report rather than filtering out as uninteresting.
+    assert printed.out.count("| `gpu-") + printed.out.count("| `cpu-") == 21
     assert "nothing submitted, so the queue has measured nothing" in printed.out
 
 
