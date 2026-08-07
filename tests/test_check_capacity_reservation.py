@@ -25,6 +25,7 @@ from tools.check_capacity_reservation import (
     describe,
     expected_instance_type,
     read_reservation,
+    subnet_in_zone,
     verdict_for,
 )
 
@@ -171,6 +172,66 @@ def test_a_settled_block_prints_the_dispatch_inputs_it_implies() -> None:
     assert "capacity_block_instance_type      p6-b200.48xlarge" in rendered
     assert "capacity_block_availability_zone  us-east-1d" in rendered
     assert "capacity_block_max_vcpus          192" in rendered
+
+
+def test_the_subnet_is_resolved_from_the_export_that_publishes_it() -> None:
+    """The one dispatch input that is neither on the reservation row nor in configuration.
+
+    infra/batch-network.yaml creates a subnet per zone and exports each one, and the deploy
+    wants the id rather than the export name. The zone is on the reservation, so the id is
+    derivable -- and deriving it is worth it, because a subnet in the wrong zone is a stack that
+    deploys and then never places anything.
+    """
+
+    class Exports:
+        def get_paginator(self, _: str) -> object:
+            class Pager:
+                def paginate(self) -> list[dict[str, list[dict[str, str]]]]:
+                    return [
+                        {
+                            "Exports": [
+                                {
+                                    "Name": "sbsandbox-intern-edullm-batch-subnet-us-east-1a",
+                                    "Value": "subnet-aaaa",
+                                },
+                                {
+                                    "Name": "sbsandbox-intern-edullm-batch-subnet-us-east-1d",
+                                    "Value": "subnet-dddd",
+                                },
+                            ]
+                        }
+                    ]
+
+            return Pager()
+
+    assert subnet_in_zone(Exports(), "us-east-1d") == "subnet-dddd"
+    assert subnet_in_zone(Exports(), "us-east-1f") is None
+
+    rendered = describe(
+        verdict_for(
+            reservation(),
+            profile="gpu-8xb200",
+            instance_type="p6-b200.48xlarge",
+            vcpus_per_instance=192,
+            subnet_id="subnet-dddd",
+        )
+    )
+    assert "capacity_block_subnet_id          subnet-dddd" in rendered
+
+
+def test_an_unresolved_subnet_asks_for_the_export_rather_than_going_quiet() -> None:
+    """Mutation: print an empty value. A blank beside five filled fields reads as "none needed",
+    and the deploy would take an empty subnet and fail late."""
+    rendered = describe(
+        verdict_for(
+            reservation(),
+            profile="gpu-8xb200",
+            instance_type="p6-b200.48xlarge",
+            vcpus_per_instance=192,
+        )
+    )
+
+    assert "sbsandbox-intern-edullm-batch-subnet-us-east-1d" in rendered
 
 
 def test_the_usable_window_is_reported_shorter_than_the_bought_one() -> None:

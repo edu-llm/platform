@@ -123,6 +123,33 @@ def read_reservation(client: Any, reservation_id: str) -> Reservation:
     )
 
 
+#: What infra/batch-network.yaml calls the subnet it creates in a given zone. The deploy wants
+#: the subnet id rather than the export name, and the zone is a property of the reservation, so
+#: this is the one dispatch input that is derivable but not readable off the reservation row.
+SUBNET_EXPORT = "sbsandbox-intern-edullm-batch-subnet-{zone}"
+
+
+def subnet_export_name(zone: str) -> str:
+    return SUBNET_EXPORT.format(zone=zone)
+
+
+def subnet_in_zone(client: Any, zone: str) -> str | None:
+    """The batch subnet id in the block's zone, read from the export that publishes it.
+
+    None rather than an exception when it cannot be found, because a missing subnet does not
+    change the verdict on the reservation and this tool's answer about the money should not
+    depend on a second call succeeding. What it costs is one input the reader looks up by hand.
+    """
+    wanted = subnet_export_name(zone)
+    paginator = client.get_paginator("list_exports")
+    for page in paginator.paginate():
+        for export in page.get("Exports", []):
+            if export.get("Name") == wanted:
+                value = export.get("Value")
+                return None if value is None else str(value)
+    return None
+
+
 def expected_instance_type(profile: str, catalog_path: Path) -> str:
     entries = {
         entry.name: entry for entry in load_yaml(catalog_path, WorkloadCatalog).compute_profiles
@@ -139,6 +166,7 @@ def verdict_for(
     profile: str | None = None,
     instance_type: str | None = None,
     vcpus_per_instance: int | None = None,
+    subnet_id: str | None = None,
 ) -> Verdict:
     """The whole decision, as a pure function of what EC2 said.
 
@@ -219,7 +247,12 @@ def verdict_for(
             f"  capacity_block_instance_type      {reservation.instance_type}",
             f"  capacity_block_availability_zone  {reservation.availability_zone}",
             f"  capacity_block_max_vcpus          {vcpus_per_instance * reservation.total_instances}",
-            "  capacity_block_subnet_id          the batch-subnet export for that zone",
+            "  capacity_block_subnet_id          "
+            + (
+                subnet_id
+                if subnet_id is not None
+                else f"look up the {subnet_export_name(reservation.availability_zone)} export"
+            ),
         ]
     return Verdict(
         EXIT_ON_TRACK,
@@ -296,11 +329,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"EC2 could not be asked: {exc}", file=sys.stderr)
             return EXIT_UNUSABLE
 
+        # Only once the reservation is settled, so an unsettled check stays a single EC2 call and
+        # a failed payment is reported without waiting on a second service to answer.
+        subnet: str | None = None
+        if reservation.state in SETTLED and arguments.profile is not None:
+            try:
+                subnet = subnet_in_zone(
+                    session.client("cloudformation"), reservation.availability_zone
+                )
+            except Exception:  # noqa: BLE001 - one dispatch input is not worth failing the check
+                subnet = None
+
         verdict = verdict_for(
             reservation,
             profile=arguments.profile,
             instance_type=instance_type,
             vcpus_per_instance=vcpus,
+            subnet_id=subnet,
         )
         if verdict.exit_code != EXIT_NOT_YET or not arguments.watch:
             stream = sys.stdout if verdict.exit_code == EXIT_ON_TRACK else sys.stderr
