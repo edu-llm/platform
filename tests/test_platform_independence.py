@@ -52,9 +52,18 @@ from tests.cli_support import CONFIG_DIR
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parents[1]
 
-#: The code a researcher installs, which is the population this is about. ``tools/`` runs on
-#: the Ubuntu runner and on the owner's laptop and never on a researcher's Windows machine,
-#: so it is out -- named here rather than left to a glob, so that widening it is a decision.
+#: The code a researcher installs, which is the population this is about. The Python under
+#: ``tools/`` runs on the Ubuntu runner and on the owner's laptop and never on a researcher's
+#: Windows machine, so it is out -- named here rather than left to a glob, so that widening
+#: it is a decision.
+#:
+#: ONE THING UNDER ``tools/`` DOES REACH A RESEARCHER'S WINDOWS MACHINE NOW, AND IT IS STILL
+#: NOT IN THIS SWEEP. ``tools/set-up-a-laptop.ps1`` is run on exactly the machines this file
+#: is about, so the sentence above stopped being true of the directory on 2026-08-06. It is
+#: out for a different reason rather than by oversight: this sweep reads ``subprocess.run``
+#: calls out of Python, that file is PowerShell, and nothing in it is imported or packaged.
+#: What polices it is ``tests/test_setup_script.py``, which holds it to the shell script step
+#: for step, and the install-line rules in ``tests/test_cli_install_command.py``.
 SHIPPED: Final = (PROJECT_ROOT / "src" / "edullm_platform", PROJECT_ROOT / "client" / "src")
 
 #: A registered repository, so the scaffold has a workload to resolve and writes a real spec.

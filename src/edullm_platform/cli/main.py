@@ -63,6 +63,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import platform
 import shlex
 import shutil
 import sys
@@ -81,6 +83,7 @@ from pydantic import ValidationError
 
 from edullm_platform.cli.actions import (
     CANCEL_WORKFLOW,
+    EDULLM_VERSION_FIELD,
     PLATFORM_REPOSITORY,
     PRINTED_RUN_ID,
     REGISTER_WORKFLOW,
@@ -93,14 +96,35 @@ from edullm_platform.cli.actions import (
     read_report_sections,
     read_run_facts,
     read_submission_runs,
+    registration_compare_url,
     report_ceiling_seconds,
     submit_ceiling_seconds,
+)
+from edullm_platform.cli.browser import (
+    no_browser_here,
+    open_a_browser,
+    sweep_stale_handoffs,
+    write_handoff,
 )
 from edullm_platform.cli.configuration import (
     ConfigurationUnreadableError,
     ReviewedConfiguration,
     find_config_directory,
     load_reviewed_configuration,
+)
+from edullm_platform.cli.console import (
+    CONSOLE_PLACES,
+    SIGNIN_TOKEN_MINUTES,
+    console_destination,
+    could_not_reach_the_sign_in_endpoint,
+    could_not_read_a_credential,
+    export_credentials_argv,
+    login_url,
+    opened_said,
+    session_string,
+    signin_token,
+    signin_token_url,
+    where_said,
 )
 from edullm_platform.cli.intake import (
     ADD_KINDS,
@@ -117,39 +141,71 @@ from edullm_platform.cli.intake import (
     routed_to_ask,
 )
 from edullm_platform.cli.lane import (
+    AWS_BROKER,
     AWS_LOGIN_COMMAND,
+    AWS_PROFILE_VARIABLE,
     GPU_AMI_PARAMETER,
+    PLATFORM_NETWORK_NAME,
     SESSION_PLUGIN,
     LaneExpiry,
     LaneRequest,
     WorkingTierSettings,
+    ZoneAttempt,
     agent_online_argv,
+    another_zone_may_answer,
     assume_lane_argv,
+    aws_config_path,
+    carry_back_script,
     command_line,
+    command_not_found_said,
     credentials_environment,
     default_compute_profile,
     expiry_for_a_new_machine,
+    find_lane_machines_argv,
     find_machine_argv,
+    find_subnets_argv,
     instance_type_for,
+    lane_machines,
     lane_refusals,
+    lane_subnets,
     load_working_tier_settings,
     machine_already_running,
+    machine_for_project,
+    missing_broker_refusal,
     missing_plugin_refusal,
+    no_machine_to_stop,
+    no_zone_had_this_shape,
     notebook_forward_argv,
     person_from_caller_arn,
     placement_said,
     placement_verdict,
     placement_warning,
+    plugin_install_commands,
+    priced_as,
+    read_aws_config,
+    refusal_code,
     remote_command_argv,
     remote_script,
+    resolve_aws_profile,
     run_instances_argv,
     shell_session_argv,
     ssh_proxy_command,
+    subnets_to_try,
+    terminate_argv,
+    what_stopping_did,
+    what_the_machine_carries,
+    whose_machine_refusals,
+    work_directory,
     working_uri,
+    zones_offering,
+    zones_offering_argv,
 )
 from edullm_platform.cli.machine import (
     check_document,
+    corpora_document,
     emit,
+    envelope,
+    one_corpus_document,
     refusal_document,
     status_document,
     status_listing_document,
@@ -160,14 +216,18 @@ from edullm_platform.cli.preflight import (
     Refusal,
     SubmissionRequest,
     first_validation_message,
+    price_what_is_known,
     resolve_team,
     run_preflight,
     said_once,
+    untracked_the_image_will_not_see,
     working_tree_refusals,
 )
 from edullm_platform.cli.presentation import (
     approvers_said,
     plain_decimal,
+    render_corpora,
+    render_one_corpus,
     render_preflight,
     render_refusals,
     render_run_facts,
@@ -188,6 +248,50 @@ from edullm_platform.cli.spec import (
     find_spec,
     load_spec,
 )
+from edullm_platform.cli.studio import (
+    PRESIGNED_URL_SECONDS,
+    STUDIO_CONFIG_FILE,
+    OwnedSpace,
+    RunningApp,
+    StudioRequest,
+    StudioSettings,
+    StudioShape,
+    accumulation_said,
+    already_running_said,
+    apps_by_space,
+    could_not_resolve_the_image,
+    create_app_argv,
+    create_space_argv,
+    create_user_profile_argv,
+    delete_app_argv,
+    describe_app_argv,
+    describe_domain_argv,
+    describe_user_profile_argv,
+    idle_said,
+    idle_shutdown,
+    image_account_argv,
+    image_arn_for,
+    list_apps_argv,
+    list_spaces_argv,
+    load_studio_settings,
+    monthly_volume_cost,
+    nothing_to_stop,
+    owned_spaces,
+    presigned_url_argv,
+    price_said,
+    project_collides_with_a_profile,
+    running_app,
+    shape_for,
+    space_belongs_to_somebody_else,
+    space_name_for,
+    space_named,
+    spaces_said,
+    starting_said,
+    studio_document,
+    studio_name_for,
+    studio_refusals,
+    unpriced_shape,
+)
 from edullm_platform.cli.workspace import (
     CommandRunner,
     GitFacts,
@@ -199,6 +303,14 @@ from edullm_platform.cli.workspace import (
 )
 from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.contracts.identity import RUN_ID_REGEX
+from edullm_platform.contracts.repository_registry import UnknownRepositoryError
+from edullm_platform.corpora import (
+    Corpus,
+    CorpusUnknownError,
+    corpora,
+    load_corpora_snapshot,
+    one_corpus,
+)
 from edullm_platform.researcher_lane import load_lane_settings
 
 __all__ = [
@@ -296,28 +408,37 @@ _PARSER_STYLE: Final[Mapping[str, Any]] = {
     **_NO_ARGPARSE_COLOUR,
 }
 
-#: The five verbs that work, and the line each shows in ``--help`` and in the orientation a
+#: Every verb that works, and the line each shows in ``--help`` and in the orientation a
 #: bare ``edullm`` prints. One table rather than two so those two can never drift.
+#:
+#: This said five until 2026-08-06 and had since the exploration route landed four more. The
+#: table below is the only thing that knows how many there are, so a comment above it saying
+#: so is a copy of it that nothing compares, which is the argument
+#: ``tests/test_cli_no_hardcoded_bounds.py`` now makes structurally.
 BUILT_TODAY: Final = {
     "check": "price a submission here, and write a first spec if there is none",
     "submit": "dispatch the submission workflow",
     "status": "what your runs are doing",
     "logs": "the last lines a run printed",
     "cancel": "stop a run",
+    "data": "the corpora a run may name, and which of them will actually run",
     "add": "teach the platform about a repository, dataset, shape, model or person",
     "ask": "file an ask that a person answers",
     "run": "ship this working tree to a machine and stream the output back",
     "shell": "a terminal on a machine of your own, or a notebook on it",
+    "stop": "end the machine those two started, and say what it cost",
+    "studio": "open your SageMaker Studio space, or --stop it",
+    "console": "open the AWS console in your browser, signed in as you",
 }
 
 #: What each built verb does, in the sentence its own ``--help`` opens with.
 #:
-#: A SECOND TABLE BESIDE ``BUILT_TODAY`` BECAUSE THEY ANSWER TWO QUESTIONS. That one is the
-#: line in a list of five, read by somebody choosing a verb, and it has to fit beside four
-#: others. This is the paragraph above the flags, read by somebody who has already chosen
-#: and wants to know what they are about to run. ``edullm check --help`` printed fifteen
-#: flags and never said what ``check`` was for, which made the most-read page in the tool
-#: the one page that answered nothing.
+#: A SECOND TABLE BESIDE ``BUILT_TODAY`` BECAUSE THEY ANSWER TWO QUESTIONS. That one is one
+#: line of the list :data:`BUILT_TODAY` holds, read by somebody choosing a verb, and it has to
+#: fit beside every other line in it. This is the paragraph above the flags, read by somebody
+#: who has already chosen and wants to know what they are about to run. ``edullm check
+#: --help`` printed fifteen flags and never said what ``check`` was for, which made the
+#: most-read page in the tool the one page that answered nothing.
 #:
 #: The unbuilt verbs are not here. Theirs is derived from :data:`NOT_BUILT_YET` in
 #: :func:`build_parser_and_verbs`, so a plan cannot be described twice and differently, and
@@ -346,6 +467,11 @@ WHAT_A_VERB_DOES: Final = {
         "Stops one admitted run, with the reason you give. The run's history then records "
         "that reason instead of a failure."
     ),
+    "data": (
+        "Lists the registered corpora with their size, tokenizer, shard dtype and licence, "
+        "and says which of them a run can actually name and start. Reaches no network. Name "
+        "one to see it in full."
+    ),
     "add": (
         "Produces a change to the reviewed configuration rather than a grant to you. A "
         "repository is opened as a pull request from here, and the other kinds are refused "
@@ -364,6 +490,23 @@ WHAT_A_VERB_DOES: Final = {
     "shell": (
         "A terminal on a machine of your own, or with --notebook a Jupyter you open in a "
         "browser on your laptop. The same machine edullm run uses for this project."
+    ),
+    "stop": (
+        "Terminates the machine you have for this project and says what it ran up. Your "
+        "files in the scratch bucket survive it; the machine's own disk does not. Nobody "
+        "else's machine is reachable from here."
+    ),
+    "studio": (
+        "Opens the SageMaker Studio space for one project in your browser, after saying what "
+        "an hour of it costs. The project names the space: the same one brings back the same "
+        "disk, a new one makes a new space. With no --project it lists the spaces you have. "
+        "--stop ends the compute and keeps the disk. Nothing here is checked, priced against "
+        "a policy or recorded as a run you can cite."
+    ),
+    "console": (
+        "Opens the AWS console in your browser, signed in as you, with exactly the "
+        "permissions your own commands have. Nobody here has a console password, so this is "
+        "the only way in. Name a place to land somewhere other than the front door."
     ),
 }
 
@@ -396,6 +539,12 @@ NOT_BUILT_YET: Final[dict[str, str]] = {}
 #:
 #: Read a second time by :func:`_no_such_verb`, which keeps both out of the spellings it
 #: offers for a word it does not know. They are the two that spend money ungated.
+#:
+#: **``stop`` IS A LANE VERB AND IS DELIBERATELY NOT IN THIS TUPLE**, which is worth saying
+#: because its absence looks like an omission. This list is two things and ``stop`` is neither:
+#: it takes no command for somebody else's program, so there is nothing to split at a ``--``,
+#: and it spends nothing, so keeping it out of the spellings offered for an unknown word would
+#: hide the one verb somebody reaching for "kill", "halt" or "terminate" is looking for.
 LANE_VERBS: Final = ("run", "shell")
 
 #: Words that are a request for the help rather than a guess at a verb. ``help`` is a verb in
@@ -589,6 +738,25 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         ),
     )
 
+    data = verb_parser("data", WHAT_A_VERB_DOES["data"])
+    data.add_argument(
+        "reference_id",
+        nargs="?",
+        help="one corpus, in full; omit for the list",
+    )
+    # NOT A FILTER AND NOT A PAGE SIZE. The default view already names every corpus that
+    # will not run and every one that is superseded, so what this adds is the registered
+    # names that are inputs to a corpus rather than corpora -- the tokenizers, the vendor
+    # mirror and the one text corpus. A submission naming any of them is refused before it
+    # costs anything, which is why they are not in front of somebody choosing.
+    data.add_argument(
+        "--all",
+        action="store_true",
+        dest="everything",
+        help="every registered name, inputs to a corpus included, in one table",
+    )
+    _add_json(data)
+
     add = verb_parser("add", WHAT_A_VERB_DOES["add"])
     # A POSITIONAL WITH `choices` RATHER THAN A FLAG, BECAUSE A MISTYPED KIND AND A KIND THAT
     # GOES THROUGH A PERSON ARE DIFFERENT FACTS. argparse answers the first with the list for
@@ -651,16 +819,88 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         help="forward Jupyter to your laptop instead of opening a terminal",
     )
 
+    stop = verb_parser("stop", WHAT_A_VERB_DOES["stop"])
+    # NOT ``_add_lane_arguments``, AND THE THREE FLAGS IT WOULD ADD ARE THE ARGUMENT. --compute,
+    # --hours and --spot all describe a machine about to be bought. This verb acts on one that
+    # exists, whose shape, lifetime and market were settled when it started, so each of them
+    # would be a flag a researcher could pass, watch be accepted, and have no effect -- which is
+    # the shape of mistake ``_add_lane_arguments``' own note about --team argues against.
+    #
+    # AND NO ``--instance``, WHICH IS THE FLAG THIS VERB WILL NOT HAVE. It is the natural next
+    # request and it is the one way past the fence: the machine acted on is whatever came back
+    # from a describe filtered on the caller's own person tag, so an id typed here would be an
+    # id that filter never saw. ``infra/iam/researcher-role.yaml`` does not fence this from
+    # underneath -- see ``find_lane_machines_argv`` -- so the absence of the flag is the fence.
+    stop.add_argument("--project", required=True, help="the machine for this project")
+
+    studio = verb_parser("studio", WHAT_A_VERB_DOES["studio"])
+    # ``--project`` IS NOT ``required=True`` HERE AND IT IS ON ``stop``, WHICH LOOKS LIKE AN
+    # OVERSIGHT AND IS TWO DELIBERATE THINGS. argparse's answer to a missing required flag is a
+    # usage line and exit 2, which is right for a verb that can do nothing at all without one.
+    # This verb can do two: with no project it lists the spaces somebody has, and with --stop
+    # and no project it stops every app of theirs that is running. Both are useful answers to
+    # somebody who cannot remember what they called something, which is precisely the person a
+    # usage line helps least.
+    studio.add_argument(
+        "--project",
+        help=(
+            "the project, which is also the space: the same one resumes the same disk with "
+            "your files on it, a new one makes a new space. There is no default, because a "
+            "default would put two unrelated pieces of work under one name and one bill. "
+            "Leave it off to list what you have"
+        ),
+    )
+    studio.add_argument(
+        "--instance-type",
+        help=(
+            "a SageMaker shape other than the default, from the ones "
+            f"{STUDIO_CONFIG_FILE} prices. Not an EC2 instance type: Studio has its own "
+            "rate card and its own ml. names."
+        ),
+    )
+    studio.add_argument(
+        "--stop",
+        action="store_true",
+        help=(
+            "end the compute and keep the disk. With --project it stops that one space, and "
+            "without one it stops every app you have running. The domain stops an idle app "
+            "on its own eventually, and this is what stops paying for it now"
+        ),
+    )
+    _add_print_url(studio)
+    _add_json(studio)
+
+    console = verb_parser("console", WHAT_A_VERB_DOES["console"])
+    # A POSITIONAL AND NOT A FLAG, BECAUSE THE WORD IS THE WHOLE COMMAND. `edullm console logs`
+    # is the sentence somebody says out loud, and `--at logs` is the same sentence with an
+    # apology in front of it. `choices` rather than a free string: argparse answers an unknown
+    # one with the list, which is the discovery this verb would otherwise need a --list for.
+    console.add_argument(
+        "where",
+        nargs="?",
+        default="home",
+        choices=CONSOLE_PLACES,
+        help=(
+            "the page to land on. Every one of these is reachable by navigating from any "
+            "other, so this is a shortcut rather than a limit on what you may look at"
+        ),
+    )
+    _add_print_url(console)
+
     built: dict[str, argparse.ArgumentParser] = {
         "check": check,
         "submit": submit,
         "status": status,
         "logs": logs,
         "cancel": cancel,
+        "data": data,
         "add": add,
         "ask": ask,
         "run": run,
         "shell": shell,
+        "stop": stop,
+        "studio": studio,
+        "console": console,
     }
     for verb, plan in NOT_BUILT_YET.items():
         # THE SENTENCE IS THE PLAN'S, READ RATHER THAN REWRITTEN. An unbuilt verb's help
@@ -710,6 +950,30 @@ def _add_json(parser: argparse.ArgumentParser) -> None:
         help=(
             "print one JSON document on stdout instead of the paragraphs, whatever the "
             "outcome. The exit code is unchanged."
+        ),
+    )
+
+
+def _add_print_url(parser: argparse.ArgumentParser) -> None:
+    """The escape hatch for the two verbs that would otherwise open a browser.
+
+    **IT EXISTS FOR THE MACHINE THAT HAS NO BROWSER, AND THE DEFAULT IS STILL TO OPEN ONE.**
+    Printing a four-thousand-character credential for a person to carry is the failure
+    ``cli/browser.py`` documents at length; it is also the only thing that works on a headless
+    box, in a script, or where somebody wants to paste the URL into a browser on a different
+    machine entirely. So it stays reachable and stops being the default.
+
+    It is not needed for the ordinary remote case. :func:`~edullm_platform.cli.browser.
+    no_browser_here` already detects an SSH session and a display-less Linux box and prints
+    without being asked; this flag is for saying so when the detection cannot know -- a
+    container with a display it cannot use, a person driving the tool from an editor.
+    """
+    parser.add_argument(
+        "--print-url",
+        action="store_true",
+        help=(
+            "print the sign-in URL instead of opening a browser. For a machine with no "
+            "browser on it, or a script. This happens on its own over SSH"
         ),
     )
 
@@ -1112,6 +1376,8 @@ def main(
                 err=stderr,
                 dispatched=dispatched,
             )
+        if verb == "data":
+            return _data(arguments, out=stdout, err=stderr)
         if verb == "add":
             return _add(
                 arguments,
@@ -1133,7 +1399,14 @@ def main(
                 runner=command_runner,
                 out=stdout,
                 err=stderr,
+                cwd=here,
             )
+        if verb == "stop":
+            return _stop(arguments, runner=command_runner, out=stdout, err=stderr)
+        if verb == "studio":
+            return _studio(arguments, runner=command_runner, out=stdout, err=stderr)
+        if verb == "console":
+            return _console(arguments, runner=command_runner, out=stdout, err=stderr)
     except KeyboardInterrupt:
         # CAUGHT BECAUSE IT IS NOT AN ``Exception`` AND SO SLIPPED PAST EVERYTHING BELOW.
         # The handler two blocks down exists so that a researcher never meets a traceback,
@@ -1291,10 +1564,6 @@ def _check(
 # the lane, which run and shell share
 # ---------------------------------------------------------------------------------------
 
-#: The Name tag prefix and the group name ``infra/batch-network.yaml`` gives the platform's VPC.
-#: Read rather than pinned, so a redeploy that moves an id moves the lane with it.
-PLATFORM_NETWORK_NAME: Final = "sbsandbox-intern-edullm-batch"
-
 #: How often the agent is asked whether it has registered. Five seconds against a wait measured
 #: in minutes, which is often enough that the answer arrives promptly and rare enough that the
 #: waiting costs a handful of calls rather than hundreds.
@@ -1343,25 +1612,58 @@ def _lane_session(
     module could answer with no account at all was the last thing it did. Both reads are pure
     local file reads off ``configuration.directory``, so putting them first costs nothing and
     makes an installation that cannot find its own numbers say so immediately.
+
+    **THREE LOCAL WALLS BEFORE THE FIRST CALL, IN THE ORDER A NEWCOMER FAILS THEM.** The broker
+    binary, then the session plugin, then a profile to run under. The broker is first because it
+    precedes the other two rather than sitting beside them: the AWS session the third one selects
+    is minted by the first, so a laptop without it fails every later step for a reason none of
+    them names. Until 2026-08-06 nothing checked for it at all and the fifteen people who have
+    never been able to get it fell through to a shell "command not found" out of
+    ``credential_process`` -- not a refusal, no code, nothing to search for, and no route to the
+    queue that could actually help them.
     """
     settings = load_working_tier_settings(configuration.directory)
     hours = arguments.hours or load_lane_settings(configuration.directory).default_lifetime_hours
-    if shutil.which(SESSION_PLUGIN) is None:
-        print(render_refusals((missing_plugin_refusal(),)), end="", file=err)
+    if shutil.which(AWS_BROKER) is None:
+        print(render_refusals((missing_broker_refusal(),)), end="", file=err)
         return EXIT_UNUSABLE
-    identity = runner(("aws", "sts", "get-caller-identity", "--output", "json"))
+    if shutil.which(SESSION_PLUGIN) is None:
+        print(_missing_plugin_said(), end="", file=err)
+        return EXIT_UNUSABLE
+    # THE PROFILE IS RESOLVED HERE AND HANDED TO THE TWO CALLS BELOW RATHER THAN EXPORTED. Both
+    # take the ambient environment overlaid with what they are given, so a profile in `env` is
+    # the same thing to `aws` as one in the shell -- and this process does not mutate an
+    # environment it shares with whatever started it. Past `assume-role` there is nothing to
+    # carry: `credentials_environment` puts the lane's own keys in `env` for every later call,
+    # and AWS_PROFILE beside them would be a second answer to a question already answered.
+    aws_config = aws_config_path(os.environ, home=Path.home())
+    resolved = resolve_aws_profile(
+        read_aws_config(aws_config),
+        declared=os.environ.get(AWS_PROFILE_VARIABLE),
+        path=aws_config,
+    )
+    if resolved.refusal is not None:
+        print(render_refusals((resolved.refusal,)), end="", file=err)
+        return EXIT_UNUSABLE
+    if resolved.said is not None:
+        print(resolved.said, file=err)
+    # ``None`` and not an empty mapping where nothing was chosen, so that a person who set
+    # AWS_PROFILE themselves gets the call this made before any of this existed.
+    profile = None if resolved.profile is None else {AWS_PROFILE_VARIABLE: resolved.profile}
+    identity = runner(("aws", "sts", "get-caller-identity", "--output", "json"), env=profile)
     if not identity.ok:
-        print(_no_aws_session(identity.stderr), end="", file=err)
+        print(_no_aws_session(identity.stderr, opens_a_session=True), end="", file=err)
         return EXIT_UNREACHABLE
     facts = json.loads(identity.stdout)
     person = person_from_caller_arn(str(facts["Arn"])) or ""
-    # ANNOUNCED BEFORE ANYTHING IS BOUGHT, WHICH IS WHAT MAKES THE DEFAULT DEFENSIBLE RATHER
-    # THAN A SURPRISE. The objection to answering this flag is that it spends money nobody
-    # asked for; the verb spends money on every reading and the question was only which shape,
-    # so what the researcher is owed is the name and the rate, before the machine exists.
+    # RESOLVED HERE BECAUSE THE REFUSALS AND THE PLACEMENT WARNING BELOW ARE ABOUT A SHAPE, AND
+    # PRINTED LATER BECAUSE A SHAPE THIS CHOSE IS ONLY NEWS WHERE A MACHINE IS ABOUT TO START.
+    # It was announced here for its first hours, above the branch that finds an existing machine,
+    # so a second invocation read "this starts gpu-1xl4: g6.xlarge at $0.8048/hour" and then
+    # "found that machine rather than starting one" -- two sentences that cannot both be true,
+    # and the rate belonged to a shape the person was not being given, because reuse does not
+    # check that the machine it found is the shape anybody asked for.
     defaulted = None if arguments.compute else default_compute_profile(configuration)
-    if defaulted is not None:
-        print("\n".join(_wrapped(defaulted.said, indent="")), file=err)
     request = LaneRequest(
         project=arguments.project or "",
         person=person,
@@ -1382,13 +1684,18 @@ def _lane_session(
     if warning is not None:
         print("\n".join(_wrapped(warning, indent="")), file=err)
 
+    # THE SAME PROFILE THIS RESOLVED, BECAUSE THIS IS THE LAST CALL MADE AS THE PERSON. It is
+    # the one that turns their credential into the lane's, and a resolution that reached
+    # GetCallerIdentity and not this would prove an identity and then assume from a different
+    # one -- or from none, which is the failure it exists to remove.
     assumed = runner(
         assume_lane_argv(
             account=str(facts["Account"]),
             project=request.project,
             person=request.person,
             lifetime_hours=hours,
-        )
+        ),
+        env=profile,
     )
     if not assumed.ok:
         print(_cannot_enter_the_lane(assumed.stderr), end="", file=err)
@@ -1412,6 +1719,12 @@ def _lane_session(
             settings=settings,
         )
 
+    # STILL BEFORE ANYTHING IS BOUGHT, WHICH IS THE PROPERTY THAT MAKES THE DEFAULT DEFENSIBLE
+    # RATHER THAN A SURPRISE: the objection to answering this flag is that it spends money nobody
+    # named, and this is the last line before the call that spends it.
+    if defaulted is not None:
+        print("\n".join(_wrapped(defaulted.said, indent="")), file=err)
+
     expiry = expiry_for_a_new_machine(datetime.now(tz=UTC), hours)
     started = _start_a_machine(
         request,
@@ -1419,6 +1732,11 @@ def _lane_session(
         settings=settings,
         expiry=expiry.value,
         spot=bool(arguments.spot),
+        # WHETHER THE PERSON CHOSE THIS SHAPE, WHICH ONLY THE ALL-ZONES-OUT REFUSAL READS. A
+        # defaulted shape that cannot start is worse than a typed one: the researcher did not
+        # pick it, so "pass --compute for a different one" is advice they cannot act on until
+        # somebody tells them they never passed it in the first place.
+        defaulted=defaulted is not None,
         runner=runner,
         environment=environment,
         err=err,
@@ -1441,15 +1759,32 @@ def _start_a_machine(
     settings: WorkingTierSettings,
     expiry: str,
     spot: bool,
+    defaulted: bool,
     runner: CommandRunner,
     environment: dict[str, str],
     err: TextIO,
 ) -> str | int:
-    """Launch one, and wait until Systems Manager has heard from it.
+    """Launch one in whichever zone will have it, and wait until Systems Manager answers.
 
-    The image, the subnet and the security group are all resolved rather than pinned. An AMI id
+    The image, the subnets and the security group are all resolved rather than pinned. An AMI id
     ages out, a subnet id is a fact about a stack somebody may redeploy, and a hard-coded security
     group is the one that stops having zero ingress rules without anybody noticing.
+
+    **IT TAKES THE FIRST ZONE THAT WILL SELL ONE RATHER THAN THE FIRST SUBNET EC2 LISTS, WHICH
+    IS WHAT THIS FUNCTION SHIPPED DOING.** ``describe-subnets`` came back as a bare list of ids
+    and this took ``[0]`` of it, which for this account is ``us-east-1f`` every time. At 09:52
+    UTC on 2026-08-06 that zone had no ``g6.xlarge`` and three attempts in a row were refused by
+    it, because there was no way for a second attempt to be anywhere else. ``g6.xlarge`` is the
+    shape ``default_compute_profile`` picks when nobody passes ``--compute``, so one zone
+    running short is every first command failing at once.
+
+    **THE LOOP STOPS ON ANYTHING IT DOES NOT RECOGNISE, AND THAT IS THE EXPENSIVE HALF TO GET
+    WRONG.** ``another_zone_may_answer`` is what decides, and :data:`~edullm_platform.cli.lane.
+    ZONE_SHAPED_REFUSALS` carries the argument: a refusal that allocated nothing may be asked
+    again somewhere else, and a call whose outcome could not be read may not, because a second
+    ``RunInstances`` after an unreadable first is how one command leaves two machines billing.
+    An authorization denial and a vCPU quota both stop here on the first zone and are reported
+    exactly as they always were.
     """
     image = runner(
         (
@@ -1465,20 +1800,7 @@ def _start_a_machine(
         ),
         env=environment,
     )
-    subnets = runner(
-        (
-            "aws",
-            "ec2",
-            "describe-subnets",
-            "--filters",
-            f"Name=tag:Name,Values={PLATFORM_NETWORK_NAME}-*",
-            "--query",
-            "Subnets[].SubnetId",
-            "--output",
-            "json",
-        ),
-        env=environment,
-    )
+    subnets = runner(find_subnets_argv(), env=environment)
     groups = runner(
         (
             "aws",
@@ -1493,32 +1815,66 @@ def _start_a_machine(
         ),
         env=environment,
     )
-    subnet_ids = json.loads(subnets.stdout or "[]")
+    declared = lane_subnets(subnets.stdout)
     group_ids = json.loads(groups.stdout or "[]")
-    if not image.ok or not subnet_ids or not group_ids:
+    if not image.ok or not declared or not group_ids:
         print(_no_network_for_the_lane(), end="", file=err)
         return EXIT_UNREACHABLE
 
     instance_type = instance_type_for(configuration, request.compute_profile)
     # Already refused where it is None, and mypy has no way to know that.
     assert instance_type is not None
-    launched = runner(
-        run_instances_argv(
-            request=request,
-            instance_type=instance_type,
-            image_id=image.text,
-            subnet_id=subnet_ids[0],
-            security_group_id=group_ids[0],
-            expires_at_value=expiry,
-            settings=settings,
-            spot=spot,
-        ),
-        env=environment,
+    # ASKED AFTER THE SUBNETS AND BEFORE THE LAUNCH, BECAUSE IT NARROWS A LIST RATHER THAN
+    # GATING ONE. The us-east-1e subnet is declared for p5 and nothing else, so a g6 sent there
+    # is one refusal spent on a zone that can never answer; a call that fails here leaves every
+    # subnet a candidate, which costs at most that one refusal back.
+    offerings = runner(zones_offering_argv(instance_type), env=environment)
+    candidates = subnets_to_try(
+        declared, offered_in=zones_offering(offerings.stdout) if offerings.ok else frozenset()
     )
-    if not launched.ok:
-        print(_launch_refused(launched.stderr), end="", file=err)
+
+    attempts: list[ZoneAttempt] = []
+    # None rather than "" for the found machine, because an empty id is a launch that answered
+    # nothing and is not the same thing as every zone having refused -- collapsing them would
+    # print a refusal naming no zones at all.
+    machine: str | None = None
+    for candidate in candidates:
+        launched = runner(
+            run_instances_argv(
+                request=request,
+                instance_type=instance_type,
+                image_id=image.text,
+                subnet_id=candidate.subnet,
+                security_group_id=group_ids[0],
+                expires_at_value=expiry,
+                settings=settings,
+                spot=spot,
+            ),
+            env=environment,
+        )
+        if launched.ok:
+            machine = launched.text
+            break
+        if not another_zone_may_answer(launched.stderr):
+            print(_launch_refused(launched.stderr), end="", file=err)
+            return EXIT_UNREACHABLE
+        attempts.append(ZoneAttempt(zone=candidate.zone, said=launched.stderr))
+        print(f"no {instance_type} in {candidate.zone}, trying another zone", file=err)
+    if machine is None:
+        # ``attempts`` cannot be empty here: ``declared`` was checked above and
+        # ``subnets_to_try`` falls through rather than emptying the list, so every candidate
+        # either produced a machine or produced a refusal that was recorded.
+        print(
+            _no_zone_had_it(
+                instance_type=instance_type,
+                profile=request.compute_profile,
+                attempts=attempts,
+                defaulted=defaulted,
+            ),
+            end="",
+            file=err,
+        )
         return EXIT_UNREACHABLE
-    machine = launched.text
     print(f"starting {machine}, waiting for it to answer", file=err)
     deadline = time.monotonic() + settings.boot_wait_seconds
     while time.monotonic() < deadline:
@@ -1530,7 +1886,43 @@ def _start_a_machine(
     return EXIT_UNREACHABLE
 
 
-def _no_aws_session(said: str) -> str:
+def _missing_plugin_said() -> str:
+    """The plugin refusal and, under it, the commands AWS documents for this laptop.
+
+    **THE THREE FACTS ARE MEASURED HERE AND THE MESSAGE IS DECIDED IN ``cli/lane.py``, WHICH
+    IS THE SEAM ``gh_config_directory`` ALREADY SITS ON.** That module runs no process and
+    reads no environment, so it cannot ask which operating system this is; what it can do is
+    pick the right one of AWS's five installers once somebody tells it, which is what makes
+    the Windows text assertable from a Mac. ``dpkg`` decides only which Linux package family
+    to name and is not consulted about the other two platforms.
+
+    **THE COMMANDS ARE PRINTED UNDER THE BLOCK RATHER THAN INSIDE IT, AND THAT IS THE WHOLE
+    REASON THIS FUNCTION EXISTS.** ``render_refusals`` wraps a detail at 76 columns, so a
+    ``curl "..." -o "..."`` carried in one arrives split across four indented lines and has
+    to be reassembled before it runs -- which is most of the work this message was rewritten
+    to remove. Printed here they are one line each, exactly as AWS gives them.
+    """
+    refusal = missing_plugin_refusal(
+        system=platform.system(),
+        machine=platform.machine(),
+        has_dpkg=shutil.which("dpkg") is not None,
+    )
+    commands = plugin_install_commands(
+        system=platform.system(),
+        machine=platform.machine(),
+        has_dpkg=shutil.which("dpkg") is not None,
+    )
+    return "".join(
+        [
+            render_refusals((refusal,)),
+            "\n",
+            *(f"  {command}\n" for command in commands),
+            "\n",
+        ]
+    )
+
+
+def _no_aws_session(said: str, *, opens_a_session: bool) -> str:
     """No credential at all, which is the first thing a newcomer hits and is not a refusal.
 
     **IT NAMES THE COMMAND, BECAUSE THERE IS EXACTLY ONE AND ASSUMING IT IS KNOWN IS HOW A
@@ -1539,14 +1931,54 @@ def _no_aws_session(said: str) -> str:
     account comes from the broker and from nothing else -- there are no long-lived keys to
     fall back on and creating one is refused -- so the way is ``sb-aws-creds login``, and a
     refusal that will not say so is asking the reader to go and find out.
+
+    **AND THEN IT SAYS WHAT TO DO WHEN THAT COMMAND IS NOT A COMMAND, WHICH IS THE CASE FOR
+    THE FIFTEEN PEOPLE MOST LIKELY TO READ THIS.** ``sb-aws-creds`` is a private package
+    published out of another repository: ``guides/the-platform.md`` records ``npm view
+    sb-aws-creds`` answering 404 on 2026-08-06, so there is no public install line and there
+    is not going to be one. Naming the command and stopping there sends everybody who does
+    not already have the broker into a shell error, which reads as a broken refusal rather
+    than as a missing prerequisite, and gives them nothing to do next. The route the guide
+    settled on is named here instead, at the moment somebody needs it.
+
+    **``opens_a_session`` IS WHAT KEEPS THE PREREQUISITE COUNT TRUE FOR EACH CALLER, AND IT
+    IS NOT DECORATION.** :func:`_lane_session` runs three local checks before it makes this
+    call, so a reader who reached this from ``run`` or ``shell`` has already got past all of
+    them and needs to be told there is no further wall behind this one -- a person who has
+    just been sent to install something assumes there is. :func:`_stop` and :func:`_studio`
+    open no session, check no plugin and are deliberately usable on a laptop whose plugin has
+    broken, so the same sentence there would invent a prerequisite the verb does not have.
+    One paragraph asserting a fact about a gate the caller never ran is the shape of defect
+    this whole message is being repaired for.
+
+    **THE COUNT IN THE ``opens_a_session`` BRANCH MOVED ON 2026-08-06 AND THAT IS THE WHOLE
+    HAZARD OF WRITING ONE DOWN.** It said the login was the second and last of two things and
+    named the plugin as the first. Then the broker binary and the profile it writes became
+    checks of their own in front of this call, which made it the last of four rather than the
+    second of two, and the sentence went on being published while being wrong about both the
+    order and the number. It is written here as "all of them are behind you" rather than as a
+    figure, because what a reader needs at this point is to know that nothing else is
+    missing, and that is the part which stays true when a fifth check lands.
     """
+    prerequisites = (
+        "Everything else these verbs want on your laptop is already there: this found the "
+        "broker and the Session Manager plugin on your PATH and resolved a profile before it "
+        "asked AWS anything, so a session is the last of it and there is no wall behind this."
+        if opens_a_session
+        else "That is the only thing this verb wants on your laptop. It opens no session on "
+        "the machine, so the Session Manager plugin the other lane verbs need is not a "
+        "prerequisite here."
+    )
     return "\n".join(
         [
             "",
             *_wrapped(
                 "AWS would not say who you are, so no machine was asked for. The lane needs an "
                 f"AWS session the way the recorded path needs gh: run `{AWS_LOGIN_COMMAND}`, "
-                "complete the browser approval it opens, and run this again. "
+                f"complete the browser approval it opens, and run this again. {prerequisites} "
+                f"If your shell has no `{AWS_LOGIN_COMMAND.split()[0]}` at all, that broker is "
+                "a private package with no public install line, and `edullm ask --kind "
+                "access-request` is the route to it. "
                 f"What AWS said: {said.strip()}",
                 indent="",
             ),
@@ -1586,12 +2018,45 @@ def _no_network_for_the_lane() -> str:
 
 
 def _launch_refused(said: str) -> str:
+    """What EC2 said, verbatim, for every refusal a second zone could not answer.
+
+    Still the right message for those. An authorization denial, a malformed parameter and a
+    vCPU quota are all the same in every zone, so quoting AWS once and stopping is both the
+    fastest answer and the only honest one -- the loop above is what makes sure this is not
+    also reached for the one refusal that is about a zone rather than about the request.
+    """
     return "\n".join(
         [
             "",
             *_wrapped(
                 "EC2 would not start the machine, and nothing is billing. What it said: "
                 f"{said.strip()}",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+def _no_zone_had_it(
+    *, instance_type: str, profile: str, attempts: Sequence[ZoneAttempt], defaulted: bool
+) -> str:
+    """Every zone refused, wrapped for a terminal.
+
+    The sentence is ``cli/lane.py``'s, for the reason that module composes every other line
+    that quotes a decision it made: what was tried, in what order, and whether the shape was
+    chosen by the person are all facts the launch holds and this file would have to be handed.
+    """
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                no_zone_had_this_shape(
+                    instance_type=instance_type,
+                    profile=profile,
+                    attempts=attempts,
+                    defaulted=defaulted,
+                ),
                 indent="",
             ),
             "",
@@ -1626,6 +2091,11 @@ def _machine_never_answered(machine: str, settings: WorkingTierSettings) -> str:
 # run
 # ---------------------------------------------------------------------------------------
 
+#: What a POSIX shell exits with when it cannot find the command it was given. Not this
+#: binary's own exit code and never returned by it: it is read off the remote sentinel, where
+#: it is the status of the researcher's own line on the machine.
+COMMAND_NOT_FOUND: Final = 127
+
 
 def _run(
     arguments: argparse.Namespace,
@@ -1655,13 +2125,16 @@ def _run(
     print(
         "\n".join(
             _wrapped(
-                f"Your files go to {uri} and survive the machine. Nothing here is recorded as "
-                "citable, and nothing was checked.",
+                f"Your files go to {uri} and land in "
+                f"{work_directory(session.request.project)} on the machine, which is where "
+                "the command runs. Nothing here is recorded as citable, and nothing was "
+                "checked.",
                 indent="",
             )
         ),
         file=out,
     )
+    print("\n".join(_wrapped(what_the_machine_carries(), indent="")), file=out)
     print(file=out)
 
     command = command_line(arguments.command)
@@ -1675,6 +2148,11 @@ def _run(
             command=remote_script(uri=uri, project=session.request.project, command=command),
         ),
         env=session.environment,
+        # THE SESSION READS NO KEYSTROKES AND MUST NOT DIE FOR WANT OF SOMEWHERE TO READ THEM.
+        # `SubprocessRunner._a_stdin_nobody_closes` carries what the plugin does with end of
+        # file on descriptor 0 and what it cost. `edullm shell` deliberately does not ask for
+        # this, because there the researcher is typing.
+        stdin_stays_open=True,
     )
     print(_without_the_sentinel(streamed.stdout), end="", file=out)
     status = _remote_status(streamed.stdout)
@@ -1693,6 +2171,12 @@ def _run(
         return EXIT_UNREACHABLE
     if status != 0:
         print(f"the command exited {status}", file=err)
+        # ONE STATUS GETS A SENTENCE AND THE REST GET THE NUMBER, BECAUSE ONE OF THEM IS ABOUT
+        # THE MACHINE AND THE REST ARE ABOUT THE RESEARCHER'S PROGRAM. 127 is the shell saying
+        # it could not find the command at all, which is a fact about what is installed here,
+        # and it is what the first `edullm run` anybody ever made came back with.
+        if status == COMMAND_NOT_FOUND:
+            print("\n".join(_wrapped(command_not_found_said(), indent="")), file=err)
         return EXIT_REFUSED
     return EXIT_OK
 
@@ -1761,11 +2245,21 @@ def _shell(
     runner: CommandRunner,
     out: TextIO,
     err: TextIO,
+    cwd: Path,
 ) -> int:
     """A terminal on a machine of your own, or a notebook forwarded to your browser.
 
     **NOTHING HERE CALLS ``run_preflight`` EITHER.** ``tests/test_lane_verdicts.py`` holds both
     verbs to that, and the reason is the same one: nothing is recorded, approved or cited.
+
+    **IT SHIPS THE TREE AND CARRIES IT BACK, WHICH IT DID NOT UNTIL THE TWO VERBS WERE
+    MEASURED AGAINST EACH OTHER.** ``run``'s help says it ships this working tree; ``shell``
+    said nothing about a tree and shipped none, and the session it opened stood in the Systems
+    Manager agent's own directory. So the person who debugged something at a prompt and then
+    scripted it with ``run`` was working on two different machines' worth of state: different
+    files, a different directory, a different shell and a different ``PATH``. The three
+    ``cwd``-shaped lines below are the same three ``run`` performs, in the same order, and
+    ``tests/test_lane_environment.py`` holds them to it.
     """
     configuration = _configuration(arguments)
     if after_the_dashes:
@@ -1776,19 +2270,26 @@ def _shell(
         return session
 
     settings = session.settings
-    uri = working_uri(person=session.request.person, project=session.request.project)
+    project = session.request.project
+    uri = working_uri(person=session.request.person, project=project)
     print("\n".join(_wrapped(session.expiry.said(session.machine), indent="")), file=out)
-    print(
-        "\n".join(
-            _wrapped(
-                f"Anything you want to keep goes in {uri}, which survives the machine. Nothing "
-                "here is recorded as citable, and nothing was checked.",
-                indent="",
-            )
-        ),
-        file=out,
-    )
     if arguments.notebook:
+        # THE FORWARD SHIPS NOTHING AND SAYS SO, WHICH IS NOT AN INCONSISTENCY WITH THE BRANCH
+        # BELOW. It opens a tunnel and runs nothing on the machine, and the Jupyter it reaches
+        # is one the researcher started themselves -- from a shell, which is the branch that
+        # does the shipping. Syncing here would mean a second session on the way to a port
+        # forward, to fetch a tree for a process that is already running.
+        print(
+            "\n".join(
+                _wrapped(
+                    f"Anything you want to keep goes in {uri}, which survives the machine. "
+                    "Nothing here is recorded as citable, and nothing was checked.",
+                    indent="",
+                )
+            ),
+            file=out,
+        )
+        print("\n".join(_wrapped(what_the_machine_carries(), indent="")), file=out)
         print(
             "\n".join(
                 _wrapped(
@@ -1804,6 +2305,19 @@ def _shell(
         print(
             "\n".join(
                 _wrapped(
+                    f"This directory goes to {uri} and lands in {work_directory(project)} on "
+                    "the machine, which is where the shell opens. What is there when you "
+                    "leave is carried back. Nothing here is recorded as citable, and nothing "
+                    "was checked.",
+                    indent="",
+                )
+            ),
+            file=out,
+        )
+        print("\n".join(_wrapped(what_the_machine_carries(), indent="")), file=out)
+        print(
+            "\n".join(
+                _wrapped(
                     "For an editor over SSH, put this in your ssh config for a host of any "
                     "name, then point the editor at that host:",
                     indent="",
@@ -1811,21 +2325,99 @@ def _shell(
             ),
             file=out,
         )
-        print(f"\n  {ssh_proxy_command(session.machine)}\n", file=out)
+        print(f"\n  {ssh_proxy_command(session.machine, system=platform.system())}\n", file=out)
     print(file=out)
 
-    opened = runner(
-        notebook_forward_argv(session.machine, settings=settings, local_port=LOCAL_NOTEBOOK_PORT)
-        if arguments.notebook
-        else shell_session_argv(session.machine),
-        env=session.environment,
-    )
-    print(opened.stdout, end="", file=out)
+    # THE SAME UPLOAD ``run`` MAKES, WITH THE SAME EXCLUSION, BEFORE THE SESSION OPENS. It is
+    # skipped for the forward, which reaches no shell and no directory.
+    if not arguments.notebook:
+        runner(
+            ("aws", "s3", "sync", str(cwd), uri, "--exclude", ".git/*", "--only-show-errors"),
+            env=session.environment,
+        )
+
+    # EVERYTHING THIS VERB HAS TO SAY IS SAID BEFORE THE CHILD IS STARTED, AND THEN PUSHED OUT.
+    # From here the child owns the terminal and writes to the same descriptors directly, so
+    # anything still sitting in this process's buffer would surface in the middle of the
+    # researcher's session, or after it.
+    out.flush()
+    err.flush()
+
+    try:
+        runner(
+            notebook_forward_argv(
+                session.machine, settings=settings, local_port=LOCAL_NOTEBOOK_PORT
+            )
+            if arguments.notebook
+            else shell_session_argv(session.machine, uri=uri, project=project),
+            env=session.environment,
+            # **THE WHOLE OF WHAT MAKES THIS VERB A TERMINAL RATHER THAN A TRANSCRIPT.** Without
+            # it the runner captures both streams and this printed them once the child was gone:
+            # a researcher saw an empty screen for as long as they sat there, typed into it
+            # blind, and met their whole session at the end. Nobody had ever run this verb
+            # through to a usable prompt on any platform.
+            #
+            # It carries the forwarded notebook too, and there the same capture was worse: that
+            # session never exits on its own, so the plugin's "Waiting for connections" -- the
+            # one line saying the tunnel is up and the browser is worth opening -- was held
+            # behind a pipe until Ctrl-C, and then printed as the person walked away.
+            hands_over_the_terminal=True,
+        )
+    except KeyboardInterrupt:
+        # CTRL-C IS HOW BOTH OF THESE END, SO IT IS NOT AN INTERRUPTION AND IS NOT REPORTED AS
+        # ONE. It is what the notebook branch tells the person to type four lines above, and it
+        # is how anybody leaves a forwarded port. The handler in `main` would otherwise answer
+        # 130 and say that nothing is running that this started -- in the one verb where a GPU
+        # machine is running and billing, which makes the reassurance false as well as wrong.
+        # The expiry printed at the top is what the person actually needs, and they have it.
+        pass
+    # AFTER THE SESSION AND NOT INSIDE IT, WHICH IS THE ONLY MOMENT A SHELL HAS. ``run`` syncs
+    # back when its command returns; a shell has no such moment until the researcher leaves, and
+    # this is it -- including after Ctrl-C, which is why it is below the handler rather than in
+    # the ``try``. Without it, standing somebody in /work/<project> would be a trap: the
+    # paragraph above says what is there is carried back, and an hour of work would go with the
+    # machine.
+    if not arguments.notebook:
+        carried = runner(
+            remote_command_argv(
+                session.machine, command=carry_back_script(uri=uri, project=project)
+            ),
+            env=session.environment,
+            stdin_stays_open=True,
+        )
+        if not carried.ok:
+            print(_nothing_was_carried_back(uri, project), end="", file=err)
+            return EXIT_UNREACHABLE
     # THE SESSION'S OWN EXIT STATUS IS NOT THE RESEARCHER'S VERDICT AND IS NOT REPORTED AS ONE.
     # A shell that the person left with Ctrl-D and a shell they left after a failed command exit
     # the same way, and neither is a statement about anything. run reads a sentinel because it
     # asked one question; this asked none.
     return EXIT_OK
+
+
+def _nothing_was_carried_back(uri: str, project: str) -> str:
+    """**THE ONE THING THIS VERB REPORTS A FAILURE FOR, BECAUSE WORK IS AT STAKE.**
+
+    Everything else a shell does is the researcher's business and its exit status says nothing.
+    This is different: the paragraph printed on the way in promised that what is in the work
+    directory when they leave is carried back, and if the carry failed that promise is false
+    while the machine is still ticking towards its expiry. It names the directory and the
+    address so the person can do it themselves from another shell, which costs one command and
+    is the whole remedy.
+    """
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                f"the session ended but {work_directory(project)} could not be carried back to "
+                f"{uri}, so anything you did in there is on the machine and nowhere else. The "
+                "machine is still running until its expiry. edullm shell again and "
+                f"`aws s3 sync . {uri}` from inside it is the remedy.",
+                indent="",
+            ),
+            "",
+        ]
+    )
 
 
 def _shell_takes_no_command(given: Sequence[str]) -> str:
@@ -1841,6 +2433,923 @@ def _shell_takes_no_command(given: Sequence[str]) -> str:
             ),
             "",
             f"  edullm run --project {'...'} --compute ... -- {' '.join(given)}",
+            "",
+        ]
+    )
+
+
+# ---------------------------------------------------------------------------------------
+# stop
+# ---------------------------------------------------------------------------------------
+
+
+def _stop(
+    arguments: argparse.Namespace,
+    *,
+    runner: CommandRunner,
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """End the machine this person has for this project, and say what it cost.
+
+    **IT DOES NOT GO THROUGH ``_lane_session``, WHICH IS THE FIRST THING SOMEBODY WILL TRY TO
+    TIDY.** That function's job is to hand back a machine, and it starts one where it finds
+    none. A verb whose whole purpose is that nothing is billing must not be able to buy an
+    instance on a mistyped project, so the two share the identity call and the lane entry and
+    nothing after them. ``tests/test_cli_stop.py`` pins that no ``run-instances`` is ever
+    reachable from here.
+
+    **IT NEEDS NO SESSION MANAGER PLUGIN, AND THAT IS A PROPERTY RATHER THAN AN OVERSIGHT.**
+    Every other lane verb opens a session and refuses without the plugin. This one makes one
+    EC2 call and opens nothing, so a laptop whose plugin has broken can still end a machine it
+    can no longer connect to -- which is exactly the laptop most likely to need this verb.
+    """
+    configuration = _configuration(arguments)
+    settings = load_working_tier_settings(configuration.directory)
+    identity = runner(("aws", "sts", "get-caller-identity", "--output", "json"))
+    if not identity.ok:
+        print(_no_aws_session(identity.stderr, opens_a_session=False), end="", file=err)
+        return EXIT_UNREACHABLE
+    facts = json.loads(identity.stdout)
+    person = person_from_caller_arn(str(facts["Arn"])) or ""
+    project = arguments.project or ""
+    refusals = whose_machine_refusals(person=person, project=project)
+    if refusals:
+        print(render_refusals(refusals), end="", file=err)
+        return EXIT_REFUSED
+
+    assumed = runner(
+        assume_lane_argv(
+            account=str(facts["Account"]),
+            project=project,
+            person=person,
+            # THE SESSION'S DECLARED LIFETIME AND NEVER THE MACHINE'S. The trust policy demands
+            # a non-empty ``lifetime`` session tag and this satisfies it; the machine's own
+            # lifetime is on its ExpiresAt tag and this verb is about to make it moot. Reading
+            # the lane's default keeps the number one that reviewed configuration chose rather
+            # than one written here.
+            lifetime_hours=load_lane_settings(configuration.directory).default_lifetime_hours,
+        )
+    )
+    if not assumed.ok:
+        print(_cannot_enter_the_lane(assumed.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+    environment = credentials_environment(json.loads(assumed.stdout)["Credentials"])
+
+    found = runner(find_lane_machines_argv(person=person), env=environment)
+    if not found.ok:
+        print(_could_not_look_for_a_machine(found.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+    machines = lane_machines(found.stdout)
+    machine = machine_for_project(machines, project=project)
+    if machine is None:
+        # EXIT_OK AND NOT A REFUSAL. Nothing has to change: the state this verb exists to
+        # produce is already the state. A cleanup verb that exited non-zero on the second call
+        # would be one nobody could put in a script, and the mistyped-project case -- the one
+        # reading of this that is genuinely wrong -- is answered by naming the projects that do
+        # have machines rather than by an exit code nobody reads.
+        print(
+            "\n".join(_wrapped(no_machine_to_stop(machines, project=project), indent="")), file=out
+        )
+        return EXIT_OK
+
+    ended = runner(terminate_argv(machine.machine), env=environment)
+    if not ended.ok:
+        # ALREADY GONE IS NOT A FAILURE, AND THIS IS ONE HALF OF NOT FIGHTING THE JANITOR. The
+        # sweep runs every five minutes and the window between this verb's describe and its
+        # terminate is open to it. A machine EC2 no longer knows about is a machine that is not
+        # billing, which is what was asked for.
+        if refusal_code(ended.stderr) == "InvalidInstanceID.NotFound":
+            print(
+                "\n".join(
+                    _wrapped(
+                        f"{machine.machine} is already gone -- EC2 no longer has it, so "
+                        "something ended it between this command looking and this command "
+                        "acting. Nothing of yours is billing for this project.",
+                        indent="",
+                    )
+                ),
+                file=out,
+            )
+            return EXIT_OK
+        print(_could_not_end_the_machine(machine.machine, ended.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+
+    for paragraph in what_stopping_did(
+        machine,
+        now=datetime.now(tz=UTC),
+        profile=priced_as(configuration, machine.instance_type),
+        # THE MACHINE'S OWN PROJECT TAG AND NOT THE FLAG. They agree here by construction, the
+        # flag being what matched it, and reading the tag is what keeps the printed prefix the
+        # one this machine actually synced to rather than the one it was asked for.
+        uri=working_uri(person=person, project=machine.project),
+        object_expiry_days=settings.object_expiry_days,
+    ):
+        print("\n".join(_wrapped(paragraph, indent="")), file=out)
+        print(file=out)
+    return EXIT_OK
+
+
+def _studio(
+    arguments: argparse.Namespace,
+    *,
+    runner: CommandRunner,
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """Open this person's Studio space, or stop it, having first said what it costs.
+
+    **IT ENTERS THE LANE THE WAY EVERY OTHER AWS-TOUCHING VERB DOES.** The researcher role's
+    own policy allows ``Action: "*"`` narrowed by seven denies, none of which names a
+    SageMaker Studio action, and ``InternSandboxBoundary`` v5 is an ``AdminCeiling`` allow
+    with denies that do not either -- so every call below is permitted without an IAM change.
+    That was measured with ``iam simulate-principal-policy`` against the deployed role rather
+    than reasoned about, because reasoning about an effective policy is how people end up
+    building against permissions that do not exist.
+
+    **IT DOES NOT GO THROUGH ``_lane_session``, FOR ``_stop``'S REASON AND ONE MORE.** That
+    function starts an EC2 instance where it finds none, and it demands the Session Manager
+    plugin. Studio is reached through a browser, so a laptop with no plugin can use this verb,
+    which is most of why Studio is the exploration surface at all.
+
+    **THE ORDER OF THE CALLS IS THE VERB.** Identity, then every space in the domain, then --
+    on the path that starts something -- price, domain, profile, space, app. Everything before
+    the app is free and idempotent, so a first invocation sets somebody up without anybody
+    doing it by hand, and the one call that costs money happens last and after the rate has
+    already been printed.
+
+    **ONE ``ListSpaces`` SERVES ALL THREE MODES**, which is why it is made here rather than in
+    each of them. It answers "which spaces are mine" for the listing, "which of mine is this
+    project's" for a start, and "which of mine could be running" for a stop, and the ownership
+    field it carries is what makes each of those an answer about the caller rather than a guess.
+    """
+    configuration = _configuration(arguments)
+    settings = load_studio_settings(configuration.directory)
+    wanted = arguments.instance_type
+    shape = shape_for(settings, wanted)
+    if shape is None:
+        # BEFORE THE IDENTITY CALL, BECAUSE IT NEEDS NEITHER A NETWORK NOR A CREDENTIAL. A
+        # misspelled shape answered with "log in first" is a refusal about the wrong thing.
+        unpriced: tuple[Refusal, ...] = (unpriced_shape(settings, str(wanted)),)
+        if arguments.json:
+            emit(refusal_document("studio", unpriced), out=out)
+        else:
+            print(render_refusals(unpriced), end="", file=err)
+        return EXIT_REFUSED
+
+    identity = runner(("aws", "sts", "get-caller-identity", "--output", "json"))
+    if not identity.ok:
+        # ``opens_a_session=False`` FOR THE REASON THE DOCSTRING ABOVE ALREADY GIVES. Studio is
+        # reached through a browser and checks no Session Manager plugin, so it is `_stop`'s
+        # case and not `_lane_session`'s: naming the plugin here would invent a prerequisite
+        # this verb does not have, in front of somebody whose laptop does not need one.
+        print(_no_aws_session(identity.stderr, opens_a_session=False), end="", file=err)
+        return EXIT_UNREACHABLE
+    facts = json.loads(identity.stdout)
+    person = person_from_caller_arn(str(facts["Arn"])) or ""
+    studio_name = studio_name_for(person)
+    project = arguments.project or ""
+    request = StudioRequest(
+        person=person,
+        studio_name=studio_name,
+        project=project,
+        space=space_name_for(studio_name, project),
+    )
+    refusals = studio_refusals(request)
+    if refusals:
+        if arguments.json:
+            emit(refusal_document("studio", refusals), out=out)
+        else:
+            print(render_refusals(refusals), end="", file=err)
+        return EXIT_REFUSED
+
+    assumed = runner(
+        assume_lane_argv(
+            account=str(facts["Account"]),
+            # THE SESSION NAME NEEDS A PROJECT AND THE TWO PROJECTLESS MODES HAVE NONE. This
+            # value reaches the trust policy's session tag and the session name, and neither is
+            # a cost attribution: what tags a space and an app is ``studio_tags``, which is
+            # built from the real project and is never reached on these two paths.
+            project=request.project or "studio",
+            person=request.person,
+            lifetime_hours=load_lane_settings(configuration.directory).default_lifetime_hours,
+        )
+    )
+    if not assumed.ok:
+        print(_cannot_enter_the_lane(assumed.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+    environment = credentials_environment(json.loads(assumed.stdout)["Credentials"])
+
+    listed = runner(list_spaces_argv(settings), env=environment)
+    if not listed.ok:
+        print(_could_not_list_studio_spaces(listed.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+    mine = owned_spaces(listed.stdout, owner=request.studio_name)
+
+    if arguments.stop:
+        return _stop_the_studio_apps(
+            request,
+            settings=settings,
+            shape=shape,
+            mine=mine,
+            runner=runner,
+            environment=environment,
+            out=out,
+            err=err,
+            as_document=bool(arguments.json),
+        )
+    if not request.project:
+        return _list_the_studio_spaces(
+            request,
+            settings=settings,
+            shape=shape,
+            mine=mine,
+            runner=runner,
+            environment=environment,
+            out=out,
+            err=err,
+            as_document=bool(arguments.json),
+        )
+    return _open_the_studio_space(
+        request,
+        settings=settings,
+        shape=shape,
+        mine=mine,
+        listed=listed.stdout,
+        runner=runner,
+        environment=environment,
+        out=out,
+        err=err,
+        as_document=bool(arguments.json),
+        print_url=bool(arguments.print_url),
+    )
+
+
+def _list_the_studio_spaces(
+    request: StudioRequest,
+    *,
+    settings: StudioSettings,
+    shape: StudioShape,
+    mine: tuple[OwnedSpace, ...],
+    runner: CommandRunner,
+    environment: dict[str, str],
+    out: TextIO,
+    err: TextIO,
+    as_document: bool,
+) -> int:
+    """What this person has, which is what a bare ``edullm studio`` now answers.
+
+    **IT USED TO REFUSE HERE AND THE REVERSAL IS THE POINT.** ``--project`` names the space, so
+    a person who cannot remember what they called last week's project cannot reach last week's
+    disk, and the tool that knows is the one that was refusing to say. The argument against
+    *defaulting* the project is untouched and is in the flag's own help; refusing to guess and
+    refusing to answer were never the same act.
+
+    Exit 0 with nothing to show, because having no spaces is a true and ordinary state rather
+    than an error, and :func:`no_spaces_said` is what turns it into an instruction.
+    """
+    running = runner(list_apps_argv(settings), env=environment)
+    if not running.ok:
+        print(_could_not_list_studio_spaces(running.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+    apps = apps_by_space(running.stdout)
+    if as_document:
+        emit(
+            {
+                **envelope("studio"),
+                **studio_document(
+                    request=request,
+                    settings=settings,
+                    shape=shape,
+                    app=None,
+                    spaces=mine,
+                    apps=apps,
+                ),
+                "stopped": False,
+                "refused": False,
+                "refusals": [],
+            },
+            out=out,
+        )
+        return EXIT_OK
+    for line in spaces_said(mine, apps, settings):
+        print("\n".join(_wrapped(line, indent="")) if line else "", file=out)
+    return EXIT_OK
+
+
+def _stop_the_studio_apps(
+    request: StudioRequest,
+    *,
+    settings: StudioSettings,
+    shape: StudioShape,
+    mine: tuple[OwnedSpace, ...],
+    runner: CommandRunner,
+    environment: dict[str, str],
+    out: TextIO,
+    err: TextIO,
+    as_document: bool,
+) -> int:
+    """End the compute and keep the disks, which is the verb's whole reason for existing.
+
+    **WITH NO ``--project`` IT STOPS EVERY APP THE CALLER HAS RUNNING, AND THAT IS THE END-OF-DAY
+    COMMAND.** Once a person may have six spaces, a stop that demanded to be told which one
+    would be six commands and a memory test, run by somebody who is leaving -- which is the
+    exact shape of the failure that produced a 69-hour ``ml.g4dn.xlarge`` bill. Stopping is
+    safe to do broadly in a way that terminating a lane machine is not: the disk and every file
+    on it belong to the space and survive, so the worst outcome of stopping too much is
+    starting it again.
+
+    **EXIT_OK WHERE THERE IS NOTHING TO STOP**, which is ``_stop``'s ruling and holds here for
+    the same reason: the state this exists to produce is already the state, and a cleanup
+    command nobody can run twice is one nobody puts in a script. The refusal's *code* is still
+    published under ``--json``, because "there was nothing running" and "I stopped something"
+    are different facts to a program even where they are the same outcome to a person.
+    """
+    running = runner(list_apps_argv(settings), env=environment)
+    if not running.ok:
+        print(_could_not_list_studio_spaces(running.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+    apps = apps_by_space(running.stdout)
+    targets = tuple(
+        space
+        for space in mine
+        if space.name in apps and (not request.project or space.name == request.space)
+    )
+
+    if not targets:
+        told = nothing_to_stop(mine, project=request.project)
+        if as_document:
+            emit(
+                {
+                    **envelope("studio"),
+                    **studio_document(
+                        request=request,
+                        settings=settings,
+                        shape=shape,
+                        app=None,
+                        spaces=mine,
+                        apps=apps,
+                    ),
+                    "stopped": False,
+                    "refused": False,
+                    "refusals": [{"code": told.code, "detail": told.detail}],
+                },
+                out=out,
+            )
+        else:
+            print("\n".join(_wrapped(told.detail, indent="")), file=out)
+        return EXIT_OK
+
+    stopped: list[OwnedSpace] = []
+    for space in targets:
+        ended = runner(delete_app_argv(settings=settings, space=space.name), env=environment)
+        if not ended.ok:
+            print(
+                _could_not_stop_the_studio_app(space.name, ended.stderr, stopped=stopped),
+                end="",
+                file=err,
+            )
+            return EXIT_UNREACHABLE
+        stopped.append(space)
+
+    monthly = monthly_volume_cost(stopped, settings)
+    named = ", ".join(space.name for space in stopped)
+    said = (
+        f"Stopped {'the app on' if len(stopped) == 1 else 'the apps on'} {named}. The hourly "
+        "charge has ended. Your files are on each space's own volume and are not affected, and "
+        f"those volumes go on costing about ${monthly:.2f} a month. Running edullm studio "
+        "--project <name> again brings the same disk back under a new app."
+    )
+    if as_document:
+        emit(
+            {
+                **envelope("studio"),
+                **studio_document(
+                    request=request,
+                    settings=settings,
+                    shape=shape,
+                    app=None,
+                    spaces=mine,
+                    apps=apps,
+                ),
+                "stopped": True,
+                "stopped_spaces": [space.name for space in stopped],
+                "said": said,
+                "refused": False,
+                "refusals": [],
+            },
+            out=out,
+        )
+    else:
+        print("\n".join(_wrapped(said, indent="")), file=out)
+    return EXIT_OK
+
+
+def _open_the_studio_space(
+    request: StudioRequest,
+    *,
+    settings: StudioSettings,
+    shape: StudioShape,
+    mine: tuple[OwnedSpace, ...],
+    listed: str,
+    runner: CommandRunner,
+    environment: dict[str, str],
+    out: TextIO,
+    err: TextIO,
+    as_document: bool,
+    print_url: bool,
+) -> int:
+    """Open this project's space, making it where there is none. Price first, always.
+
+    **THE OWNERSHIP CHECK COMES BEFORE EVERYTHING AND IS WHY DERIVING A NAME IS SAFE.**
+    ``space_name_for`` produces an address and nothing more; what settles whether this verb may
+    touch it is ``OwnershipSettingsSummary.OwnerUserProfileName`` as ``ListSpaces`` reported it.
+    A derived name that lands on somebody else's space is refused rather than opened, which
+    matters because the domain's execution role is shared and Studio would let it through.
+
+    **A RUNNING APP IS ANSWERED WITH ITS LINK AND NEVER WITH A SECOND APP.** Studio permits
+    more than one app on a space, so "start or resume" read carelessly is a second instance on
+    the same person's name, billing beside the first, with nothing in either the console or
+    this verb saying which one anybody is looking at.
+    """
+    existing = space_named(listed, request.space)
+    if existing is not None and existing.owner != request.studio_name:
+        taken: tuple[Refusal, ...] = (
+            space_belongs_to_somebody_else(request, owner=existing.owner),
+        )
+        if as_document:
+            emit(refusal_document("studio", taken), out=out)
+        else:
+            print(render_refusals(taken), end="", file=err)
+        return EXIT_REFUSED
+
+    # THE SPACE'S OWN SIZE AND NOT THE CONFIGURED ONE. The configured number is what a space
+    # this verb creates gets; the twenty in the domain were made by hand at a tenth of it, and
+    # quoting the wrong one is a disk cost that is wrong by ten times in the reassuring
+    # direction.
+    volume = (
+        settings.volume_gib
+        if existing is None or existing.volume_gib is None
+        else existing.volume_gib
+    )
+
+    app: RunningApp | None = None
+    if existing is not None:
+        described = runner(
+            describe_app_argv(settings=settings, space=request.space), env=environment
+        )
+        app = running_app(described.stdout) if described.ok else None
+
+    idle = idle_shutdown(runner(describe_domain_argv(settings), env=environment).stdout)
+
+    print("\n".join(_wrapped(price_said(shape, settings, volume_gib=volume), indent="")), file=err)
+    print(file=err)
+    print("\n".join(_wrapped(idle_said(idle, shape), indent="")), file=err)
+    print(file=err)
+
+    if app is None or not app.is_billing:
+        # ASKED FOR BEFORE ANYTHING IS CREATED, BECAUSE THE SPACE NEEDS IT TOO AND A LOOKUP
+        # THAT FAILS HALFWAY WOULD LEAVE A PROFILE AND NO SPACE.
+        published = runner(image_account_argv(), env=environment)
+        if not published.ok or not published.text:
+            unreadable: tuple[Refusal, ...] = (could_not_resolve_the_image(),)
+            if as_document:
+                emit(refusal_document("studio", unreadable), out=out)
+            else:
+                print(render_refusals(unreadable), end="", file=err)
+            return EXIT_UNREACHABLE
+        image = image_arn_for(settings, shape, account=published.text)
+        if existing is None:
+            # THE PROFILE AND THE SPACE ARE CREATED BEFORE THE APP AND BOTH ARE FREE. Neither
+            # call allocates an instance, so the ordinary first invocation sets somebody up
+            # entirely and the only thing they had to know was the verb.
+            made = _make_the_studio_space(
+                request,
+                settings=settings,
+                shape=shape,
+                image_arn=image,
+                runner=runner,
+                environment=environment,
+                out=out,
+                err=err,
+                as_document=as_document,
+            )
+            if made is not None:
+                return made
+            mine = (
+                *mine,
+                OwnedSpace(
+                    name=request.space,
+                    project=request.project,
+                    volume_gib=settings.volume_gib,
+                    status="Pending",
+                ),
+            )
+            print("\n".join(_wrapped(accumulation_said(mine, settings), indent="")), file=err)
+            print(file=err)
+        started = runner(
+            create_app_argv(settings=settings, request=request, shape=shape, image_arn=image),
+            env=environment,
+        )
+        if not started.ok:
+            print(_could_not_start_the_studio_app(request, started.stderr), end="", file=err)
+            return EXIT_UNREACHABLE
+
+    # **MINTED LAST, AND AIMED AT WHERE THE SPACE ACTUALLY IS.** The five minutes on this
+    # credential is a ceiling the API enforces, so the only way to spend it well is to cut it
+    # immediately before it is redeemed and to point it somewhere that exists now.
+    # ``presigned_url_argv`` carries the measurement behind both halves of that.
+    running_now = app is not None and app.is_billing
+    signed = runner(
+        presigned_url_argv(settings=settings, request=request, app_is_running=running_now),
+        env=environment,
+    )
+    if not signed.ok:
+        print(_could_not_sign_in_to_studio(request, signed.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+
+    if as_document:
+        # THE URL IS NOT IN THE DOCUMENT AND ``cli/studio.py`` SAYS WHY. It is a bearer
+        # credential with a five-minute life, and a document is the thing somebody redirects
+        # into a file and pastes into an issue.
+        emit(
+            {
+                **envelope("studio"),
+                **studio_document(
+                    request=request,
+                    settings=settings,
+                    shape=shape,
+                    app=app,
+                    spaces=mine,
+                    idle=idle,
+                ),
+                "stopped": False,
+                "refused": False,
+                "refusals": [],
+            },
+            out=out,
+        )
+        return EXIT_OK
+    told = (
+        already_running_said(app, request)
+        if app is not None and app.is_billing
+        else starting_said(request)
+    )
+    print("\n".join(_wrapped(told, indent="")), file=err)
+    print(file=err)
+    _hand_over_a_url(
+        signed.text,
+        print_only=print_url,
+        good_for=f"{PRESIGNED_URL_SECONDS // 60} minutes",
+        out=out,
+        err=err,
+    )
+    return EXIT_OK
+
+
+def _hand_over_a_url(
+    url: str,
+    *,
+    print_only: bool,
+    good_for: str,
+    out: TextIO,
+    err: TextIO,
+) -> None:
+    """Get one sign-in URL in front of a person, by the best route this machine has.
+
+    **THE URL GOES TO STDOUT AND EVERY EXPLANATION GOES TO STDERR, WHENEVER IT GOES ANYWHERE.**
+    That is what makes ``edullm studio --project x --print-url | pbcopy`` a thing that works
+    rather than a thing that copies three paragraphs and a URL. It is the split the rest of this
+    file already keeps -- the price, the idle warning and the accumulation count are all on
+    stderr -- and it matters more here, because the one line on stdout is a credential a script
+    is about to use.
+
+    **AND IT IS PRINTED ONLY WHEN NO BROWSER TOOK IT.** Printing it as well as opening it would
+    put a live bearer credential into the scrollback of every person who never needed to see it,
+    which is most of them, and would leave the four-thousand-character paste sitting there
+    looking like the thing they were supposed to do.
+    """
+    if print_only:
+        print(_url_was_printed(good_for, because=None), end="", file=err)
+        print(url, file=out)
+        return
+    elsewhere = no_browser_here(os.environ)
+    if elsewhere is not None:
+        print(_url_was_printed(good_for, because=elsewhere), end="", file=err)
+        print(url, file=out)
+        return
+    # SWEPT HERE RATHER THAN ON A TIMER OR AT EXIT, BECAUSE THIS IS THE ONE MOMENT THE PROCESS
+    # IS CERTAINLY ABOUT TO WRITE ANOTHER ONE. A sweep that ran anywhere else would be a
+    # background job this binary does not have.
+    sweep_stale_handoffs(older_than_seconds=PRESIGNED_URL_SECONDS)
+    page = write_handoff(url)
+    if not open_a_browser(page):
+        print(
+            _url_was_printed(good_for, because="no browser on this machine would take it"),
+            end="",
+            file=err,
+        )
+        print(url, file=out)
+        return
+    print(
+        "\n".join(
+            _wrapped(
+                f"Opened it in your browser. The link is good for {good_for}, and it was "
+                "handed straight to the browser rather than printed, because it is a "
+                "credential and it is far too long to copy by hand. Pass --print-url if you "
+                "need the URL itself.",
+                indent="",
+            )
+        ),
+        file=err,
+    )
+
+
+def _url_was_printed(good_for: str, *, because: str | None) -> str:
+    """Why there is a URL on stdout, said above it rather than after it.
+
+    Above, because a person whose terminal has just been handed four thousand characters has
+    scrolled past anything printed underneath by the time they look.
+    """
+    opening = (
+        "Here is the sign-in URL."
+        if because is None
+        else f"No browser was opened here, because {because}. Here is the sign-in URL."
+    )
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                f"{opening} It is good for {good_for} and it signs in as you, so treat it as a "
+                "password: anybody who has it inside that window is you. It is one line, "
+                "however many your terminal wraps it into.",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+def _console(
+    arguments: argparse.Namespace,
+    *,
+    runner: CommandRunner,
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """Sign the caller in to the AWS console, which nobody here can otherwise do.
+
+    **IT ASSUMES NO ROLE, WHICH EVERY OTHER AWS-TOUCHING VERB DOES.** ``cli/console.py`` argues
+    it at length: this verb grants nothing and spends nothing, so a console showing a different
+    principal than the person's own commands see would be a worse answer than no console. It is
+    also why there is no ``--project`` -- there is nothing here to attribute.
+
+    **AND IT MAKES NO AWS API CALL AT ALL.** One ``aws configure export-credentials`` to read the
+    credential the person already has, and one HTTPS GET to AWS's sign-in endpoint. That is the
+    whole of it, which is why it needs nobody to be granted anything and works on the day
+    somebody's IAM permissions are the narrowest they will ever be.
+    """
+    exported = runner(export_credentials_argv())
+    if not exported.ok:
+        refusals: tuple[Refusal, ...] = (could_not_read_a_credential(exported.stderr),)
+        print(render_refusals(refusals), end="", file=err)
+        return EXIT_UNREACHABLE
+    try:
+        credentials = json.loads(exported.stdout)
+    except ValueError:
+        credentials = {}
+    session = session_string(credentials if isinstance(credentials, Mapping) else {})
+    if not session:
+        unreadable: tuple[Refusal, ...] = (could_not_read_a_credential(exported.stdout),)
+        print(render_refusals(unreadable), end="", file=err)
+        return EXIT_UNREACHABLE
+
+    identity = runner(("aws", "sts", "get-caller-identity", "--output", "json"))
+    if not identity.ok:
+        print(_no_aws_session(identity.stderr, opens_a_session=False), end="", file=err)
+        return EXIT_UNREACHABLE
+    person = person_from_caller_arn(str(json.loads(identity.stdout)["Arn"])) or "yourself"
+
+    settings = load_studio_settings(_configuration(arguments).directory)
+    print("\n".join(_wrapped(where_said(arguments.where, person=person), indent="")), file=err)
+    print(file=err)
+
+    token = signin_token(signin_token_url(session))
+    if not token:
+        unreachable: tuple[Refusal, ...] = (could_not_reach_the_sign_in_endpoint(),)
+        print(render_refusals(unreachable), end="", file=err)
+        return EXIT_UNREACHABLE
+
+    print("\n".join(_wrapped(opened_said(), indent="")), file=err)
+    print(file=err)
+    _hand_over_a_url(
+        login_url(
+            token=token,
+            destination=console_destination(
+                arguments.where,
+                region=settings.region,
+                person=person,
+                domain_id=settings.domain_id,
+            ),
+        ),
+        print_only=bool(arguments.print_url),
+        good_for=f"{SIGNIN_TOKEN_MINUTES} minutes",
+        out=out,
+        err=err,
+    )
+    return EXIT_OK
+
+
+def _make_the_studio_space(
+    request: StudioRequest,
+    *,
+    settings: StudioSettings,
+    shape: StudioShape,
+    image_arn: str,
+    runner: CommandRunner,
+    environment: dict[str, str],
+    out: TextIO,
+    err: TextIO,
+    as_document: bool,
+) -> int | None:
+    """Make the user profile and the space, or say why that could not be done.
+
+    ``None`` for "there is a space now", which is the only state the caller may go on from.
+
+    **THE SECOND ``describe-user-profile`` IS THE FIX FOR THE DEFECT THAT PRODUCED THIS
+    REWRITE.** Profiles and spaces share one namespace, so a space name that is already a
+    profile's is refused by ``CreateSpace`` with a sentence about user profiles -- true, and
+    incomprehensible to somebody who typed a project name. Asking first turns it into
+    :func:`project_collides_with_a_profile`, which names the project and the remedy. It costs
+    one free call and only on the path that creates a space, which a person walks once per
+    project.
+    """
+    profile = runner(
+        describe_user_profile_argv(settings=settings, name=request.studio_name), env=environment
+    )
+    if not profile.ok:
+        made = runner(create_user_profile_argv(settings=settings, request=request), env=environment)
+        if not made.ok:
+            print(_could_not_make_a_studio_space(request, made.stderr), end="", file=err)
+            return EXIT_UNREACHABLE
+    collision = runner(
+        describe_user_profile_argv(settings=settings, name=request.space), env=environment
+    )
+    if collision.ok:
+        collided: tuple[Refusal, ...] = (project_collides_with_a_profile(request),)
+        if as_document:
+            emit(refusal_document("studio", collided), out=out)
+        else:
+            print(render_refusals(collided), end="", file=err)
+        return EXIT_REFUSED
+    made = runner(
+        create_space_argv(settings=settings, request=request, shape=shape, image_arn=image_arn),
+        env=environment,
+    )
+    if not made.ok:
+        print(_could_not_make_a_studio_space(request, made.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+    return None
+
+
+def _could_not_list_studio_spaces(said: str) -> str:
+    """SageMaker would not say what exists, so nothing was decided and nothing was touched."""
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                "SageMaker would not list the spaces in the domain, so this could not tell "
+                "which of them are yours and did nothing at all. Nothing was started, nothing "
+                "was stopped and nothing changed about what is billing. That is a call that "
+                f"failed rather than anything about what you typed. What AWS said: {said.strip()}",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+def _could_not_make_a_studio_space(request: StudioRequest, said: str) -> str:
+    """Setting somebody up failed, so nothing was started and nothing is billing."""
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                f"SageMaker would not create the space {request.space}, so nothing was "
+                "started and nothing is billing. That is a call that failed rather than "
+                f"anything about what you typed. What AWS said: {said.strip()}",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+def _could_not_start_the_studio_app(request: StudioRequest, said: str) -> str:
+    """The one call that costs money did not go through, which is the cheap failure."""
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                f"SageMaker would not start an app on {request.space}, so nothing is "
+                "billing by the hour. Your space and its volume are there either way. What "
+                f"AWS said: {said.strip()}",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+def _could_not_sign_in_to_studio(request: StudioRequest, said: str) -> str:
+    """A link that could not be minted, over an app that may well be running.
+
+    **IT NAMES ``--stop`` AND THAT IS THE POINT OF THE SENTENCE.** This is the one failure
+    here that can leave an instance billing with no way in, so a message that stopped at "the
+    URL failed" would leave somebody paying for a machine they cannot reach and cannot see.
+    """
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                "SageMaker would not mint a sign-in URL. If an app was started just now it is "
+                f"running and it is billing, so run edullm studio --stop --project "
+                f"{request.project} if you do not want it. What AWS said: {said.strip()}",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+def _could_not_stop_the_studio_app(space: str, said: str, *, stopped: Sequence[OwnedSpace]) -> str:
+    """Stopping failed, which is the failure worth being blunt about: it is still costing.
+
+    **IT NAMES WHAT DID STOP, BECAUSE A ``--stop`` WITH NO PROJECT ACTS ON SEVERAL.** A message
+    that reported only the failure would leave somebody believing none of them stopped, and the
+    remedy for that belief is running it again, which is harmless but is not what they need to
+    know. What they need to know is which one is still on the meter.
+    """
+    already = (
+        ""
+        if not stopped
+        else f"{', '.join(one.name for one in stopped)} did stop and {'is' if len(stopped) == 1 else 'are'} no longer billing. "
+    )
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                f"SageMaker would not stop the app on {space}, so it is still running and "
+                f"still billing by the hour. {already}Running this again is the remedy. That "
+                "is a call that failed rather than anything about what you typed. What AWS "
+                f"said: {said.strip()}",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+def _could_not_look_for_a_machine(said: str) -> str:
+    """EC2 would not say what this person has, so nothing was ended.
+
+    Separate from the message below, because the two leave different worlds behind. This one
+    acted on nothing and whatever is running is still running; that one names a machine that is
+    still billing and has to be dealt with.
+    """
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                "EC2 would not say which machines you have, so nothing was ended and anything "
+                "you had is still running. That is a call that failed rather than anything "
+                f"about what you typed, and running this again is the remedy. What AWS said: "
+                f"{said.strip()}",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+def _could_not_end_the_machine(machine: str, said: str) -> str:
+    """**THE ONE MESSAGE HERE THAT HAS TO NAME A MACHINE, BECAUSE ONE IS STILL BILLING.**
+
+    The same rule :func:`_machine_never_answered` follows. Somebody who typed this verb did so
+    to stop paying for something, and a refusal that did not name what is still running would
+    leave them with the charge and no id. The expiry is what bounds it, so it is said: the
+    janitor stops this machine at its ExpiresAt tag whatever happens to this command.
+    """
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                f"{machine} could not be ended, so it is still running and still billing. Its "
+                "expiry tag still holds, so the janitor stops it on schedule whatever happens "
+                "next, and running this again is worth trying first. What AWS said: "
+                f"{said.strip()}",
+                indent="",
+            ),
             "",
         ]
     )
@@ -1957,7 +3466,7 @@ def _nothing_to_scaffold(
             code="unregistered_repository",
             detail=(
                 f"run edullm add repository --reason '<why>' to register {repository!r}, "
-                "which opens the pull request that does it. config/repositories.yaml "
+                "which prepares the pull request that does it. config/repositories.yaml "
                 f"carries no entry for it, so nothing here can be submitted and no "
                 f"{SPEC_PATH} was written. Registered today: {registered}."
             ),
@@ -1993,12 +3502,13 @@ def _submit(
     submitter = github_login(runner, allow_network=True)
     declared = arguments.spec if arguments.spec else find_spec(cwd)
     spec = load_spec(declared) if declared is not None else None
-    preflight = _preflight(
-        arguments, configuration, facts, spec, submitter, spec_path=declared
-    )
+    preflight = _preflight(arguments, configuration, facts, spec, submitter, spec_path=declared)
 
     if preflight.refused and not arguments.force:
-        print(render_refusals(preflight.refusals), end="", file=err)
+        # THE VERB, SO THE LINE A READER COPIES IS THE COMMAND THEY RAN. The fields block
+        # composes one invocation carrying every flag nothing has answered, and offering
+        # ``edullm check`` to somebody who typed ``submit`` would make them edit it first.
+        print(render_refusals(preflight.refusals, verb="submit"), end="", file=err)
         print(
             "Nothing was dispatched. Every one of these is a refusal admission makes too, "
             "so submitting anyway costs a queue wait and reaches the same answer.",
@@ -2018,7 +3528,11 @@ def _submit(
         _say_where_the_team_came_from(preflight, err=err)
     _say_whether_this_edullm_is_current(runner, repository=arguments.platform_repository, err=err)
     dispatched_at = datetime.now(UTC)
-    actions.dispatch(SUBMIT_WORKFLOW, _submission_form(preflight.request))
+    actions.dispatch(
+        SUBMIT_WORKFLOW,
+        _submission_form(preflight.request, edullm_version=installed_version().version),
+        courtesy=(EDULLM_VERSION_FIELD,),
+    )
     print(f"dispatching {SUBMIT_WORKFLOW} ... queued", file=out)
     if arguments.no_wait:
         print(
@@ -2068,11 +3582,7 @@ def _submit(
         )
         return EXIT_OK
     if compiled is None:
-        print(
-            "compiling. The run id is issued by the compile job; edullm status will carry "
-            "it once that job has finished.",
-            file=out,
-        )
+        print("\n".join(_wrapped(_no_run_id_yet_said(outcome.status), indent="")), file=out)
         return EXIT_OK
     print(file=out)
     print(str(compiled.get("run_id") or "unknown"), file=out)
@@ -2083,6 +3593,40 @@ def _submit(
     else:
         print("\n".join(_wrapped(_waiting_said(environment, configuration), indent="")), file=out)
     return EXIT_OK
+
+
+def _no_run_id_yet_said(status: str | None) -> str:
+    """What the wait actually ended on, which is two states and used to be one word.
+
+    THIS SAID "compiling." WHATEVER THE RUN WAS DOING, AND ON 2026-08-06 IT WAS QUEUED.
+    GitHub Actions was not starting runs, both jobs read ``queued`` with no conclusion, and
+    a first-time submitter read the word and concluded their run had started. The word was
+    wrong on any slow queue and the outage only made it likely to be seen.
+
+    ``status`` is the run's own, read by :meth:`~edullm_platform.cli.actions
+    .PlatformActions.wait_for_the_compiled_submission` on every poll to learn whether the
+    run had finished, so naming the state costs no request. ``queued`` is the one state
+    worth its own sentence: nothing has started, so nothing is compiling, and the thing to
+    wait on is a runner rather than a job.
+
+    NOTHING ELSE IS NAMED "compiling" EITHER, AND THAT IS DELIBERATE RATHER THAN TIMID. The
+    run's status is ``in_progress`` from the moment ``identify`` starts, and ``compile``
+    needs ``identify`` and ``resolve`` before it -- so a run that is running is not
+    necessarily a run that is compiling, and the per-job answer that would settle it costs a
+    second request for a word. What is known is that the job has published nothing yet, so
+    that is what is said.
+    """
+    if status == "queued":
+        return (
+            "queued. GitHub has not started this run, so nothing is compiling and no run id "
+            "has been minted. The submission is dispatched and intact; what it is waiting "
+            "for is a runner. The page above says the same thing, and edullm status will "
+            "carry the run id once the compile job has run."
+        )
+    return (
+        "no run id yet. The run id is issued by the compile job, which has not published "
+        "one; edullm status will carry it once that job has finished."
+    )
 
 
 def _waiting_said(environment: str, configuration: ReviewedConfiguration) -> str:
@@ -2159,13 +3703,19 @@ def _say_whether_this_edullm_is_current(
         print(file=err)
 
 
-def _submission_form(request: SubmissionRequest) -> dict[str, str]:
-    """``SubmissionInputs`` field for field, which is what the form is.
+def _submission_form(request: SubmissionRequest, *, edullm_version: str | None) -> dict[str, str]:
+    """``SubmissionInputs`` field for field, plus the one input that is not one of them.
 
     ``image_digest`` is deliberately absent rather than empty. The workflow derives it from
     the declared commit and the field survives only as an override for a deliberate
     rebuild-and-pin; sending a value this binary made up would be that override, aimed at
     nothing.
+
+    ``edullm_version`` is passed in rather than read here, so that both answers are
+    reachable from a test. Its absence is the ordinary state of a maintainer's editable
+    install and it is left off the form entirely rather than sent empty, because an empty
+    string and a missing field mean the same thing on the far side and only one of them
+    invites somebody to parse it.
     """
     fields = {
         "repository": request.repository,
@@ -2192,6 +3742,15 @@ def _submission_form(request: SubmissionRequest) -> dict[str, str]:
     if request.fanout_size is not None and request.fanout_index_parameter is not None:
         fields["fanout_size"] = str(request.fanout_size)
         fields["fanout_index_parameter"] = request.fanout_index_parameter
+    # WHICH INSTALL TYPED THIS, WHICH IS NOT A FIELD OF THE SUBMISSION AND IS SENT ANYWAY.
+    # A submission the compile job refuses cannot say whether the thing it is refusing was
+    # typed that way or was altered on the way here, and the defect of 2026-08-06 was
+    # exactly the second: this function joined the command with a plain space, the quotes
+    # came off, and the refusal told the submitter to quote what they had already quoted.
+    # Nothing gates on the value -- see src/edullm_platform/client_version.py -- and
+    # `dispatch` is told it may drop this field rather than fail over it.
+    if edullm_version is not None:
+        fields[EDULLM_VERSION_FIELD] = edullm_version
     return fields
 
 
@@ -2395,6 +3954,82 @@ def _cancel(
 
 
 # ---------------------------------------------------------------------------------------
+# data
+# ---------------------------------------------------------------------------------------
+
+
+def _data(arguments: argparse.Namespace, *, out: TextIO, err: TextIO) -> int:
+    """What corpora exist, what is in each, and which of them a run can actually start.
+
+    **REACHES NO NETWORK, HOLDS NO CREDENTIAL, AND EXITS 0 UNLESS A NAME WAS WRONG.** It
+    judges no submission, so there is nothing here for the merits to refuse. Naming a corpus
+    the registry does not carry is exit 1, because that is a claim about an input somebody
+    typed and it is the one thing this verb can be wrong about.
+
+    **WHY THIS VERB EXISTS AT ALL, IN ONE PARAGRAPH.** Before it there were three ways to
+    find out what corpora there are, and the documented one was to name a bad dataset and
+    read the refusal. That list is names and nothing else: no size, no tokenizer, no licence,
+    and no indication that five of the names in it reach a container which exits 69. The
+    other two are a hand-typed table in a guide whose numbers nothing holds, and a dropdown
+    in the Actions UI, which is the thing this binary exists to avoid opening.
+
+    **AND WHY IT DOES NOT WALK THE BUCKET.** The sealed tier is a registry with manifests.
+    Listing ``s3://edullm-data/pretrain/reservoir-dolma2/v1/`` returns ten thousand shard
+    names and answers none of the questions above; the facts a chooser wants are in three
+    files that are already digest-pinned. Fifteen of the thirty-five people on the roster
+    hold no AWS role, so a verb that read the bucket would be the only verb in the set that
+    works for some people and refuses others.
+    """
+    configuration = _configuration(arguments)
+    snapshot = load_corpora_snapshot(configuration.directory)
+    rows = corpora(configuration.datasets, snapshot=snapshot)
+
+    if arguments.reference_id is None:
+        if arguments.json:
+            emit(corpora_document(rows, snapshot=snapshot), out=out)
+        else:
+            said = render_corpora(rows, snapshot=snapshot, everything=arguments.everything)
+            print(said, end="", file=out)
+        return EXIT_OK
+
+    try:
+        row = one_corpus(arguments.reference_id, configuration.datasets, snapshot=snapshot)
+    except CorpusUnknownError:
+        refusal = _no_such_corpus(arguments.reference_id, rows)
+        if arguments.json:
+            emit(refusal_document("data", [refusal]), out=out)
+        else:
+            print(render_refusals([refusal]), end="", file=err)
+        return EXIT_REFUSED
+    if arguments.json:
+        emit(one_corpus_document(row, snapshot=snapshot), out=out)
+    else:
+        print(render_one_corpus(row, snapshot=snapshot), end="", file=out)
+    return EXIT_OK
+
+
+def _no_such_corpus(reference_id: str, rows: Sequence[Corpus]) -> Refusal:
+    """A name the registry does not carry, answered with the nearest one that it does.
+
+    **IT SUGGESTS AND IT DOES NOT LIST**, which is the opposite of what the
+    ``unregistered_dataset`` refusal does, and the two are right for different reasons. That
+    one is met by somebody who has already filled in a submission, so the alternatives are
+    what they need. This one is met by somebody who is *browsing*, and the whole list is one
+    command away with no argument at all -- so printing twenty-nine names in front of
+    somebody who mistyped one is answering a question they did not ask.
+
+    ``get_close_matches`` at the cutoff :func:`_no_such_verb` uses on verbs, so a near miss
+    on a corpus and a near miss on a verb are near by the same measure.
+    """
+    registered = sorted(row.reference_id for row in rows)
+    near = get_close_matches(reference_id, registered, n=1, cutoff=0.6)
+    detail = f"{reference_id!r} is not a corpus config/datasets.yaml carries."
+    if near:
+        detail += f" Did you mean {near[0]}?"
+    return Refusal(code="unregistered_dataset", detail=detail + " edullm data lists them all.")
+
+
+# ---------------------------------------------------------------------------------------
 # add, ask
 # ---------------------------------------------------------------------------------------
 
@@ -2448,23 +4083,49 @@ def _add(
         ),
     )
     print(f"dispatching {REGISTER_WORKFLOW} ... queued", file=out)
+    # WHERE THE PULL REQUEST GETS OPENED, SAID HERE BECAUSE HERE IS WHERE THE PERSON IS.
+    # The workflow writes the registration and pushes a branch, and stops: the organization
+    # forbids Actions from opening a pull request, and the setting that would allow it also
+    # allows approving one, which is what protects the files this registration edits. So the
+    # last step is a click, and telling somebody about it only in a workflow log would send
+    # them from a terminal into the Actions UI to find a link.
+    #
+    # This costs no second call to GitHub. The branch is derived from the repository name
+    # rather than discovered, so the URL is knowable before the run has finished -- which is
+    # also why it is qualified with "once the run above is green" rather than presented as
+    # live. What this cannot carry is the prefilled body, which the run composes out of the
+    # diff it wrote and prints in its own summary.
+    compare = registration_compare_url(repository, platform_repository=arguments.platform_repository)
     submitter = github_login(runner, allow_network=True)
     run = actions.wait_for_a_new_run(REGISTER_WORKFLOW, actor=submitter, after=dispatched_at)
     if run is None:
         print(
             "dispatched, and the workflow run it started could not be found within the poll "
-            f"window. It is on its way; the {REGISTER_WORKFLOW} page carries the pull request "
-            "it opens.",
+            f"window. It is on its way; the {REGISTER_WORKFLOW} page carries the branch it "
+            "pushes and the body to paste.",
             file=out,
         )
-        return EXIT_OK
-    print(str(run.get("html_url") or ""), file=out)
+    else:
+        print(str(run.get("html_url") or ""), file=out)
     print(
         "\n".join(
             _wrapped(
-                "It opens a pull request against the reviewed configuration, which somebody "
-                "merges and then deploys. Nothing is registered until both have happened, "
-                "and edullm check refuses this repository until they have.",
+                "It writes the registration and pushes it to a branch. It does not open the "
+                "pull request, because this organization forbids Actions from opening one. "
+                "Once that run is green, open it here, and paste the body the run's summary "
+                "prints -- it is too long to carry in the link:",
+                indent="",
+            )
+        ),
+        file=out,
+    )
+    print(compare, file=out)
+    print(
+        "\n".join(
+            _wrapped(
+                "Somebody merges that pull request and then deploys. Nothing is registered "
+                "until both have happened, and edullm check refuses this repository until "
+                "they have.",
                 indent="",
             )
         ),
@@ -2957,7 +4618,19 @@ def _preflight(
     would therefore have kept refusing exactly what ``check`` had just cleared, which is a
     worse defect than the one being fixed.
     """
-    refusals: list[Refusal] = working_tree_refusals(facts, spec_path=spec_path)
+    # WHAT THE BUILD READS AND WHAT THE COMMAND NAMES, SO THE TREE CHECK CAN TELL AN
+    # UNTRACKED FILE THAT MATTERS FROM ONE THAT CANNOT. Both come out of files this verb has
+    # already opened: the Dockerfile path is the registry's, and the command is the spec's.
+    # Neither is spelled here, because a repository may register another path and a
+    # hardcoded one would refuse the wrong file.
+    dockerfile_path = _registered_dockerfile_path(arguments, facts, configuration)
+    command = spec.argv if spec is not None else ()
+    refusals: list[Refusal] = working_tree_refusals(
+        facts, spec_path=spec_path, dockerfile_path=dockerfile_path, command=command
+    )
+    untracked = untracked_the_image_will_not_see(
+        facts, spec_path=spec_path, dockerfile_path=dockerfile_path, command=command
+    )
     if unscaffoldable is not None:
         refusals.append(unscaffoldable)
     elif spec is None:
@@ -2984,10 +4657,25 @@ def _preflight(
     # ``submitted_commit`` rather than ``commit_sha``, because that is the one the request
     # below is built from. Where no ``--commit`` was given the two are the same value.
     if spec is None or team is None or missing or facts.submitted_commit is None:
+        # PRICED ANYWAY, WHICH IS THE WHOLE OF WHY THIS BRANCH IS NOT A BARE RETURN. Every
+        # field that stops the request being built here -- the team, the experiment, the
+        # dataset -- is a field the price does not read, so a verb whose own help says it
+        # prices a submission was printing three refusals and no number on the first
+        # invocation a researcher makes. What it can answer it answers; what it cannot it
+        # leaves ``None`` and the terminal says which.
+        partial = _partial_request(arguments, spec, facts, team)
+        shape = price_what_is_known(partial, configuration)
         return Preflight(
-            request=_partial_request(arguments, spec, facts, team),
+            request=partial,
             refusals=said_once(refusals),
             team_source=team_source,
+            branch=facts.branch,
+            workload=shape.workload,
+            compute=shape.compute,
+            dataset=configuration.datasets.reference_for(partial.dataset_release),
+            cost=shape.cost,
+            history=shape.history,
+            untracked=untracked,
         )
 
     request = SubmissionRequest(
@@ -3026,6 +4714,7 @@ def _preflight(
         request=preflight.request,
         refusals=said_once((*refusals, *preflight.refusals)),
         team_source=preflight.team_source,
+        branch=facts.branch,
         workload=preflight.workload,
         compute=preflight.compute,
         dataset=preflight.dataset,
@@ -3034,6 +4723,7 @@ def _preflight(
         approval_class=preflight.approval_class,
         approving_environment=preflight.approving_environment,
         history=preflight.history,
+        untracked=untracked,
     )
 
 
@@ -3060,6 +4750,8 @@ def _missing_required(
                     "neighbours. It registers nothing, so any lower-case hyphenated name "
                     "will do."
                 ),
+                asks_for="--experiment",
+                example="a-first-run",
             )
         )
     if not arguments.dataset:
@@ -3071,6 +4763,11 @@ def _missing_required(
                     "it reads nothing. Absent and none are different answers and only one "
                     "of them is a statement."
                 ),
+                asks_for="--dataset",
+                # ``none`` and not a release, because the copyable line has to be one a
+                # reader may run unchanged, and naming a corpus for somebody is the guess
+                # the detail above says the tool must not make.
+                example="none",
             )
         )
     if spec is not None and not (arguments.compute or spec.suggested_compute):
@@ -3105,13 +4802,45 @@ def _rate_span(configuration: ReviewedConfiguration) -> str:
     return f"${plain_decimal(min(rates))} to ${plain_decimal(max(rates))} an hour"
 
 
+def _registered_dockerfile_path(
+    arguments: argparse.Namespace,
+    facts: GitFacts,
+    configuration: ReviewedConfiguration,
+) -> str | None:
+    """Where this repository's build recipe lives, or ``None`` where nothing says.
+
+    Read from ``config/repositories.yaml`` rather than written here. Every registered
+    repository happens to name ``.edullm/Dockerfile`` today and the field exists so that one
+    of them can name something else, so a constant would refuse a file that is not the
+    recipe and clear the one that is.
+
+    ``None`` for a directory nothing registers, which is a repository already refused by
+    ``unregistered_repository``. Nothing is known about what its build would read, so the
+    untracked question falls back to what the command names.
+    """
+    named = arguments.repository or facts.repository
+    if not named:
+        return None
+    try:
+        return configuration.repositories.repository_by_name(named).dockerfile_path
+    except UnknownRepositoryError:
+        return None
+
+
 def _partial_request(
     arguments: argparse.Namespace,
     spec: RunSpec | None,
     facts: GitFacts,
     team: str | None,
 ) -> SubmissionRequest:
-    """Whatever is known, so a refusal can still say what it was refusing."""
+    """Whatever is known, so a refusal can still say what it was refusing.
+
+    **THE FOUR BOUNDS ARE HERE BECAUSE THEY ARE FOUR OF THE FIVE FACTORS IN THE PRICE.**
+    They were dropped, which was harmless while this request was only ever printed back at
+    a reader, and stopped being harmless when ``price_what_is_known`` began reading it: a
+    ``--hours 2`` run would have been priced at the profile's twenty-four and a fan-out at
+    one cell, so the number would have been wrong rather than absent.
+    """
     return SubmissionRequest(
         repository=arguments.repository or facts.repository or "",
         commit_sha=facts.submitted_commit or "",
@@ -3122,6 +4851,16 @@ def _partial_request(
         experiment=arguments.experiment or "",
         wandb_project=arguments.wandb_project or team or "",
         command=spec.argv if spec else (),
+        maximum_runtime_hours=_decimal_hours(arguments.hours),
+        maximum_attempts=arguments.attempts,
+        fanout_size=arguments.fanout_size
+        or (spec.fanout.size if spec is not None and spec.fanout is not None else None),
+        fanout_index_parameter=arguments.fanout_index_parameter
+        or (
+            spec.fanout.index_parameter
+            if spec is not None and spec.fanout is not None
+            else None
+        ),
     )
 
 

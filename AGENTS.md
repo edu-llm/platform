@@ -15,12 +15,24 @@ than the refusal you were trying to get around.
 Install and version.
 
 ```bash
+uv tool uninstall edullm-platform
 uv tool install --force git+https://github.com/edu-llm/platform
 edullm --version
 ```
 
 Unpinned on purpose. That line is true after every release and re-running it is the upgrade,
 where a tag written here would be a version this file has to be edited for.
+
+The first line is a one-time repair for an install made before v4.2.2, and only for that. The
+distribution used to be called `edullm-platform` while the command was `edullm`, so `uv tool
+list` printed a word nobody types and `uv tool uninstall edullm` answered `not installed` to
+somebody holding the binary. It is `edullm` now, and the two names agree. **Run it before the
+install and not after.** Both entries own the same `edullm` executable, and uv deletes that
+file when it removes the old entry without noticing the new install still needs it, so the
+wrong order leaves `uv tool list` reporting a healthy `edullm` and nothing on the path. If you
+have already done it that way round, re-run the install line. On a machine that never had the
+old name it prints ``error: `edullm-platform` is not installed`` and exits 2, which is the
+expected answer and costs nothing.
 
 `uv tool upgrade` follows the ref the install named, so what it does depends on how the tool got
 here. From the bare URL above it re-resolves the default branch and upgrades. From a release
@@ -36,18 +48,81 @@ far behind the install is. Re-install with `--force`, which is the upgrade for b
 | `edullm status` | Names your recent submissions, or describes one run. |
 | `edullm logs` | The last lines one run printed. |
 | `edullm cancel` | Stops one admitted run, with a reason that goes on the record. |
+| `edullm data` | The registered corpora, with size, tokenizer, shard dtype and licence, and which of them a run can actually start. Reaches no network. Name one for the detail. |
 | `edullm add` | Teaches the platform about a repository, dataset, shape, model or person. Produces a configuration pull request. |
 | `edullm ask` | Files one ask for something you need yourself. Produces an issue somebody answers. |
 | `edullm run` | Ships this working tree to a machine of your own and streams the output of the command after a bare `--` back. Ungated, and no run anybody can cite. |
 | `edullm shell` | A terminal on that same machine, or a notebook on it with `--notebook`. |
+| `edullm stop` | Ends the machine those two started, and says what it ran up and where your files are. |
+| `edullm studio` | Opens the Studio space for one `--project` in your browser. Bare, it lists the spaces you have; `--stop` ends compute and keeps the disk. |
+| `edullm console` | Opens the AWS console in your browser, signed in as you. Name a place -- `studio`, `work`, `outputs`, `logs`, `batch` -- to land somewhere other than the front door. |
 
-Nine verbs, all built. A bare `edullm` prints the list, and `edullm <verb> --help` prints what
-that verb takes.
+Every verb in `BUILT_TODAY` is here and all of them are built. A bare `edullm` prints the list,
+and `edullm <verb> --help` prints what that verb takes.
 
-The last two are the exploration route and they are not the submission path. Nothing they do
+The last five are the exploration route and they are not the submission path. Nothing they do
 is checked against the registry, priced, approved or written to a lineage record, so what
 comes off them is a thing you saw rather than a result anybody can cite. Reach for `check` and
 `submit` for anything that is meant to count.
+
+**Studio is where exploration goes, and `edullm run` is what the lane still wins.** The two
+overlapped and Studio won most of the argument: it uses the same instance types, it clones a
+repository, its disk survives, it needs no Session Manager plugin and a notebook on it reads as
+a document. Reproducibility never argued for the lane here, because nobody re-runs a prototype
+and the run somebody cites goes through `submit`. What has no Studio equivalent is `edullm
+run` -- ship a working tree to a GPU, run one command, stream it back, discard the machine --
+and `edullm shell` onto the exact shape you are about to submit to.
+
+**`--project` names the Studio space, so a person has as many spaces as they have projects.**
+The same project resumes the same disk with the files as they were left; a new one makes a new
+space. `edullm studio` with no project lists what you have, because the project name is the only
+way back to a disk and forgetting it would otherwise be permanent. Nothing deletes a space.
+
+**Both browser verbs open the browser themselves, and neither prints a URL unless you ask.**
+`edullm studio` used to print a sign-in URL of several thousand characters and ask somebody to
+carry it into a browser before it expired. That is not a thing that works, and the expiry is a
+ceiling AWS enforces rather than a setting anybody here can raise, so the fix was to make the
+process that mints the credential the process that spends it. Pass `--print-url` for the URL
+instead, which is what a script or a machine with no browser wants; over SSH it happens without
+being asked.
+
+**`edullm console` is the only way into the AWS console, because nobody here has a password.**
+The broker issues CLI credentials and nothing else, so federation is the only route that exists.
+It signs in as the caller with exactly their own permissions, grants nobody anything, and its
+session outlives a Studio URL by a wide margin. Use it for looking at a bucket, a log group or a
+bill. It does not replace `edullm studio`: a presigned URL lands inside JupyterLab with the
+person's files open, and the console lands on a page about spaces.
+
+**The domain stops an idle app on its own, and `edullm studio --stop` is what stops paying for
+it now.** The idle timeout is a domain setting somebody can change, so the verb reads it and
+prints what it read rather than restating a number; an unattended GPU app already ran here for
+three nights before that setting existed. Do not quote a Studio rate or a timeout from memory or
+from a document, because `edullm studio` reads both and they move.
+
+**`edullm stop` terminates rather than stopping, and that is worth knowing before you type it.**
+The machine's own disk goes with it. The scratch prefix survives, `edullm run` syncs that prefix
+down before your command and back up after it, and a new machine for the same project picks up
+where the old one left off. Stopping instead would leave a machine no verb here can find and
+nothing reclaims, billing its volume for ever. It reaches only a machine tagged with your own
+source identity, and there is deliberately no flag that names an instance id.
+
+## Never pick a corpus off a refusal
+
+`edullm data` is the list. Every other route to it is worse and two of them are actively
+misleading. The `unregistered_dataset` refusal prints names and nothing else, so it cannot
+tell you that some of the names in it reach a container which exits 69 after the machine has
+been paid for. The dropdown on the submission form is names only and needs the Actions UI.
+And a table in a guide is a table somebody typed.
+
+Registered is not runnable, and the gap is not small. A corpus whose tokenizer this platform
+can resolve and the training image cannot build is refused by nothing here: it compiles,
+classifies routine, spends an approval and allocates the machine. `edullm data` is the only
+thing that says so before the money is spent, and `edullm data --json` puts it under
+`verdict` for a script to branch on.
+
+Registering a corpus that does not exist yet is a person's job rather than a command.
+`edullm add dataset` refuses, because the entry pins facts out of the sealed bucket that need
+an AWS role this binary does not hold. File it with `edullm ask --kind dataset-request`.
 
 ## Start with `check`, always
 

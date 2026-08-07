@@ -72,6 +72,7 @@ from edullm_platform.execution import (
     batch_submit_request,
     resolve_execution_target,
 )
+from edullm_platform.phase3_evidence import BATCH_TIMEOUT_STATUS_REASON
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = PROJECT_ROOT / "config"
@@ -475,6 +476,55 @@ def test_a_retry_fires_on_a_lost_host_and_on_nothing_else(attempts: int) -> None
         {"OnReason": "OutOfMemoryError*", "Action": "EXIT"},
         {"OnExitCode": "*", "Action": "EXIT"},
     ]
+
+
+def test_an_attempt_stopped_at_its_time_bound_matches_no_rule_and_is_therefore_retried() -> None:
+    """Mutation: read the three rules as covering every way an attempt can end.
+
+    THE FAILURE THAT MATTERS IS THE ONE MATCHING NOTHING, AND THE RULE SET LOOKS EXHAUSTIVE.
+    A reader checks the three entries, sees ``OnExitCode: "*"`` at the bottom, and concludes
+    that everything not a lost host exits. That reading is wrong in the one case that spends
+    money: an attempt Batch stops for outrunning ``attemptDurationSeconds`` carries the
+    status reason ``Job attempt duration exceeded timeout`` and no container exit code at
+    all, so the catch-all has no exit code to catch. Batch documents an unmatched
+    ``EvaluateOnExit`` as retried, on ``AWS::Batch::JobDefinition EvaluateOnExit`` and on the
+    job definition parameters page.
+
+    Combined with every compute environment being ``Type: EC2`` rather than SPOT -- pinned by
+    ``test_every_compute_environment_buys_on_demand_rather_than_spot`` -- the one second
+    attempt this platform reliably pays for is the one on the run that could not finish in
+    its bound, given the same bound again. That is the arm least likely to be helped by
+    restarting, and it is why ``checkpoint_commands.unverified_resume_note`` exists.
+
+    Asserted against the reason string rather than against a comment, so a rule set that grew
+    an entry covering the timeout would make this fail and be read rather than merely land.
+    """
+    contract = {
+        "interval_minutes": 30,
+        "destination_prefix": "s3://sbsandbox-intern-edullm-checkpoints/runs/",
+        "resume_required": True,
+    }
+    rules = request_for(maximum_attempts=2, checkpoint=contract)["RetryStrategy"][
+        "EvaluateOnExit"
+    ]
+
+    matched = [
+        rule
+        for rule in rules
+        # No container exit code, so no OnExitCode rule applies whatever it globs; no
+        # container reason either, so no OnReason rule does. Only OnStatusReason can see
+        # this failure at all, and it sees a string that is not a host fault.
+        if "OnExitCode" not in rule
+        and "OnReason" not in rule
+        and BATCH_TIMEOUT_STATUS_REASON.startswith(rule["OnStatusReason"].removesuffix("*"))
+    ]
+
+    assert matched == [], (
+        f"a rule now matches {BATCH_TIMEOUT_STATUS_REASON!r}. Batch retries an attempt "
+        "matching nothing, and the reasoning in config/policy.yaml and in "
+        "checkpoint_commands.unverified_resume_note turns on the timeout being that case. "
+        f"Read both before landing this: {matched}"
+    )
 
 
 def test_no_exit_rule_begins_with_an_asterisk_because_batch_refuses_one() -> None:

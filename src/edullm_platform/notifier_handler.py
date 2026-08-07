@@ -64,12 +64,14 @@ from functools import cache
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
 
+from edullm_platform.accelerators import AcceleratorRecord
 from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.lifecycle_projection import CheckpointLister
 from edullm_platform.notifications.approval import (
     APPROVAL_DETAIL_TYPE,
     PLATFORM_EVENT_SOURCE,
     ApprovalRequestedFacts,
+    load_accelerators,
     load_policy,
     read_approval_requested,
 )
@@ -266,6 +268,7 @@ def message_for(
     catalogs: Catalogs,
     policy: Callable[[], ApprovalPolicy],
     history: Callable[[], RunHistory | None],
+    accelerators: Callable[[], tuple[AcceleratorRecord, ...]],
     intent_reader: IntentReader | None,
     lineage_bucket: str,
     cell_lister: CellLister | None,
@@ -286,12 +289,12 @@ def message_for(
     Every reader is asked in turn and each answers ``None`` for an envelope that is not its
     own, which is the same shape ``read_run_ended`` already had for a non-terminal event.
 
-    ``policy`` and ``history`` arrive as callables rather than as values, and the laziness is
-    the point rather than a style. Nine deliveries in ten are Batch state changes owing a
-    run-ended line, and that line reads neither file. Loading both eagerly would make every
-    one of those invocations pay for two reads it does not use, and would make a run-ended
-    message fail on a deployment whose policy file was missing, which is a message about a
-    run that demonstrably happened lost to a file it never opens.
+    ``policy``, ``history`` and ``accelerators`` arrive as callables rather than as values,
+    and the laziness is the point rather than a style. Nine deliveries in ten are Batch state
+    changes owing a run-ended line, and that line reads none of the three. Loading them
+    eagerly would make every one of those invocations pay for reads it does not use, and
+    would make a run-ended message fail on a deployment whose policy file was missing, which
+    is a message about a run that demonstrably happened lost to a file it never opens.
     """
     ended = read_run_ended(
         envelope,
@@ -305,7 +308,13 @@ def message_for(
         return render_run_ended(ended)
 
     asked: ApprovalRequestedFacts | None = (
-        read_approval_requested(envelope, catalogs=catalogs, policy=policy(), history=history())
+        read_approval_requested(
+            envelope,
+            catalogs=catalogs,
+            policy=policy(),
+            history=history(),
+            accelerators=accelerators(),
+        )
         if _is_an_approval(envelope)
         else None
     )
@@ -329,6 +338,7 @@ def handler(
     catalogs: Catalogs | None = None,
     policy: ApprovalPolicy | None = None,
     history: RunHistory | None = None,
+    accelerators: Sequence[AcceleratorRecord] | None = None,
     intent_reader: IntentReader | None = None,
     cell_lister: CellLister | None = None,
     checkpoint_lister: CheckpointLister | None = None,
@@ -344,10 +354,11 @@ def handler(
     and a test that got a real boto3 client behind its fake transport would reach the account
     from the suite. A caller that supplied none is the deployed function.
 
-    ``policy`` and ``history`` come from the same packaged directory the catalogs come from,
-    and both are read at most once per invocation and only when an approval request arrives.
-    ``history`` is ``None`` where no reading is packaged, which the approval message says
-    rather than treating as a shape nothing has run.
+    ``policy``, ``history`` and ``accelerators`` come from the same packaged directory the
+    catalogs come from, and each is read at most once per invocation and only when an
+    approval request arrives. ``history`` is ``None`` where no reading is packaged, which the
+    approval message says rather than treating as a shape nothing has run; ``accelerators``
+    is empty there, and the message drops the clause naming the machine's memory.
     """
     del context
 
@@ -356,6 +367,9 @@ def handler(
     loaded = catalogs if catalogs is not None else Catalogs.load(directory)
     rules = cache(lambda: policy if policy is not None else load_policy(directory))
     reading = cache(lambda: history if history is not None else load_run_history(directory))
+    cards = cache(
+        lambda: tuple(accelerators) if accelerators is not None else load_accelerators(directory)
+    )
     reader, lister, cells = intent_reader, checkpoint_lister, cell_lister
     if transport is None and reader is None and lister is None and cells is None:
         storage = _default_s3_client()
@@ -374,6 +388,7 @@ def handler(
                 catalogs=loaded,
                 policy=rules,
                 history=reading,
+                accelerators=cards,
                 intent_reader=reader,
                 lineage_bucket=bucket,
                 cell_lister=cells,

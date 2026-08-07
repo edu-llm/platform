@@ -32,7 +32,11 @@ from edullm_platform.cli.main import (
     RETIRED,
     build_parser_and_verbs,
 )
-from tests.test_cli_no_hardcoded_bounds import WRITTEN_BOUND
+from tests.test_cli_no_hardcoded_bounds import (
+    WRITTEN_BOUND,
+    count_claims,
+    point_it_at_the_tree,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 AGENTS = PROJECT_ROOT / "AGENTS.md"
@@ -309,6 +313,25 @@ def test_the_document_writes_no_bound_the_configuration_owns(document: Path) -> 
     )
 
 
+@pytest.mark.parametrize("document", AGENT_DOCUMENTS, ids=lambda path: path.name)
+def test_the_document_writes_no_count_the_tree_owns(document: Path) -> None:
+    """The half above cannot reach, and the same rule from the same module rather than a second.
+
+    A configuration owns a threshold and the tree owns a count, so `edullm check --json` is
+    the wrong place to send a reader for how many verbs there are. What it is right about is
+    the shape of the mistake: the document is a copy, the copy is what goes stale, and
+    nothing compares them. AGENTS.md counts the verbs today and is correct today, which is
+    exactly the state every claim in the 2026-08-06 sweep was in when it was written.
+    """
+    text = " ".join(document.read_text(encoding="utf-8").split())
+    written = [
+        (f"{document.name}:{line}", said, countable)
+        for line, said, countable in count_claims([(1, text)])
+    ]
+
+    assert not written, point_it_at_the_tree(written, where=document.name)
+
+
 def test_the_rule_names_every_exit_code_the_binary_can_return() -> None:
     """Mutation: document 0, 1 and 2 and leave 3 and 130 out.
 
@@ -551,18 +574,28 @@ def test_the_registration_skill_writes_the_three_files_the_verb_does_not() -> No
     """Mutation: describe `edullm add repository` and stop there.
 
     THE SPLIT IS THE WHOLE DESIGN AND IT IS EASY TO MISS. tools/register_repository.py edits
-    five platform files, runs a local verification and opens the configuration pull request.
-    It does not write the research repository's .edullm/Dockerfile, its build-caller workflow
-    or a first .edullm/run.yaml, and system-overview.md's agent layer assigns exactly those
-    three to the skill. A registration with the pull request merged and none of the three
-    written is a repository that is registered and has never built an image, which is the
-    state open-instruct-scored-rewards is in and the reason #217 exists.
+    eight platform files, reads the repository being registered, and opens the configuration
+    pull request. It does not write the research repository's .edullm/Dockerfile, its
+    build-caller workflow, that repository's AWS_ECR_PUBLISHER_ROLE_ARN variable or a first
+    .edullm/run.yaml, and system-overview.md's agent layer assigns those to the skill. A
+    registration with the pull request merged and none of them done is a repository that reads
+    as registered and can never build an image.
+
+    NO REPOSITORY IS NAMED AS AN EXAMPLE OF THAT STATE, ON PURPOSE. This docstring used to
+    name one, the repository acquired both files the next day, and the sentence stayed --
+    which is the same defect one level up from the one the tool now checks for. The state is
+    describable without an instance, and whether any repository is currently in it is a
+    question tools/verify_registered_dockerfiles.py answers every morning.
     """
     text = REGISTERING.read_text(encoding="utf-8")
 
     for artifact in (".edullm/Dockerfile", ".edullm/run.yaml"):
         assert artifact in text, f"the registration skill never writes {artifact}"
     assert "workflow" in text
+    # The fourth thing, added 2026-08-06. It is not a file, which is why it was missed by a
+    # list of files and why a repository could satisfy every assertion above and still publish
+    # nothing.
+    assert "AWS_ECR_PUBLISHER_ROLE_ARN" in text
 
 
 def test_the_registration_skill_resolves_against_the_approved_base_images() -> None:

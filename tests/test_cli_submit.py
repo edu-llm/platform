@@ -1,10 +1,14 @@
 """``edullm submit``: what reaches the form, and what stops it reaching the form at all.
 
-THE FORM MAPPING IS THE PART WORTH TESTING HARDEST, because nothing downstream can notice
-it being wrong. ``submit-run.yml``'s ``workflow_dispatch`` accepts any field name and
-silently ignores one it does not declare, so a CLI sending ``dataset`` where the form says
-``dataset_release`` dispatches successfully, compiles against a missing required field and
-refuses -- with a message about the form rather than about the typist.
+THE FORM MAPPING IS THE PART WORTH TESTING HARDEST, because a name this binary gets wrong
+fails in one of two ways and neither one says "the typist". A field the form declares under
+another spelling -- ``dataset`` where it says ``dataset_release`` -- is a required field
+nobody filled in, and the compile job refuses it with a message about the form. A field the
+form does not declare at all is worse and this file used to say it was harmless: GitHub
+validates dispatch inputs against the workflow file at the ref and answers 422 ``Unexpected
+inputs provided``, so nothing is queued and the submitter is told only that ``gh`` could not
+dispatch. ``PlatformActions.dispatch`` takes a ``courtesy`` set for the one field that is
+allowed to meet that answer; everything else here has to be exactly right.
 
 Nothing here reaches GitHub. ``FakeRunner`` answers ``gh`` and raises on anything it was
 not told about, which is also what holds the second property this file cares about: a
@@ -22,9 +26,19 @@ from pathlib import Path
 
 import pytest
 
-from edullm_platform.cli.actions import PLATFORM_REPOSITORY, SUBMIT_WORKFLOW
+from edullm_platform.cli.actions import (
+    EDULLM_VERSION_FIELD,
+    PLATFORM_REPOSITORY,
+    SUBMIT_WORKFLOW,
+)
 from edullm_platform.cli.configuration import load_reviewed_configuration
-from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED
+from edullm_platform.cli.main import (
+    EXIT_OK,
+    EXIT_REFUSED,
+    EXIT_UNREACHABLE,
+    _submission_form,
+)
+from edullm_platform.cli.preflight import SubmissionRequest
 from edullm_platform.cli.presentation import who_may_release
 from edullm_platform.cli.release import install_command, installed_version
 from edullm_platform.contracts.admission import ApprovalEnvironment
@@ -51,6 +65,20 @@ WORKFLOW_RUN = {
 
 #: The endpoint the version probe reads, spelled as the prefix ``FakeRunner`` matches on.
 RELEASES = ("gh", "api", f"repos/{PLATFORM_REPOSITORY}/releases/latest")
+
+#: A resolved form, for the two cases that are about what ``_submission_form`` writes rather
+#: than about what a working tree resolves to.
+A_REQUEST = SubmissionRequest(
+    repository="OLMo-core",
+    commit_sha="a" * 40,
+    workload_profile="olmo-core-check",
+    compute_profile="cpu-32vcpu",
+    dataset_release="none",
+    team="scratch",
+    experiment="an-experiment",
+    wandb_project="onboarding",
+    command=("python", "-c", "print(1)"),
+)
 
 
 def submitting(
@@ -126,6 +154,11 @@ def test_every_field_the_form_declares_is_sent_under_the_name_the_form_declares(
     against, so comparing to its own field names is the only check that stays true when
     somebody adds a sixteenth input -- and a list written out here would be a second roster
     of the form that agrees with it until the next change.
+
+    One field is subtracted by name. ``edullm_version`` is on the workflow's form and is
+    not a submission field, because it says which install typed the dispatch rather than
+    anything about the run; ``tests/test_phase2_submit_run_workflow.py`` holds the same
+    exception on the other side and holds it to one name.
     """
     root, runner = submitting(tmp_path, workload="olmo-core-check", compute="gpu-1xt4")
 
@@ -145,7 +178,7 @@ def test_every_field_the_form_declares_is_sent_under_the_name_the_form_declares(
 
     assert code == EXIT_OK, out + err
     fields = dispatched_fields(runner)
-    assert set(fields) <= set(SubmissionInputs.model_fields)
+    assert set(fields) - {EDULLM_VERSION_FIELD} <= set(SubmissionInputs.model_fields)
     required = {
         name
         for name, field in SubmissionInputs.model_fields.items()
@@ -207,6 +240,156 @@ def test_the_command_reaches_the_form_as_text_a_shell_split_would_recover(
         f"bash -lc reads one word as its program and this gives it {len(recovered) - 2}, "
         "which is the refusal the compile job raises after check has already exited 0"
     )
+
+
+def test_the_install_that_is_dispatching_names_itself_on_the_form(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: leave it off, which is what shipped and what cost a morning.
+
+    The compile job cannot tell a submitter who wrote an unquoted command from one whose
+    install unquoted a correct one, so the refusal it raised told everybody to quote a
+    program half of them had already quoted. Nothing else on the dispatch says which
+    binary typed it: ``github.actor`` is the same person from a laptop and from the
+    Actions tab, and a workflow run does not expose the inputs it was dispatched with.
+    """
+    root, runner = submitting(tmp_path)
+
+    code, out, err = invoke(
+        [
+            "submit",
+            "--dataset",
+            "regmix-10b-v1",
+            "--experiment",
+            "an-experiment",
+            "--no-wait",
+        ],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert dispatched_fields(runner)[EDULLM_VERSION_FIELD] == installed_version().version
+
+
+@pytest.mark.parametrize(
+    ("version", "sent"),
+    [
+        pytest.param("3.7.1", {EDULLM_VERSION_FIELD: "3.7.1"}, id="an install"),
+        pytest.param(None, {}, id="a source tree"),
+    ],
+)
+def test_a_checkout_with_no_installed_distribution_leaves_the_field_off_rather_than_empty(
+    version: str | None, sent: dict[str, str]
+) -> None:
+    """Mutation: send an empty string. It means the same thing and invites parsing anyway.
+
+    Every maintainer runs from an editable checkout at some point and ``installed_version``
+    answers ``None`` for one, so this is a real state rather than a defensive branch. The
+    workflow's own field defaults to empty and the compile job strips it, so an empty
+    string would arrive as absence with an extra step in front of it.
+    """
+    form = _submission_form(A_REQUEST, edullm_version=version)
+
+    assert {name: form[name] for name in form if name == EDULLM_VERSION_FIELD} == sent
+
+
+def test_a_platform_that_does_not_take_the_version_still_takes_the_submission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: let the 422 through, or retry on any failure at all.
+
+    GitHub validates dispatch inputs against the workflow file at the ref and answers 422
+    for one it does not declare, so an install newer than ``main`` cannot submit at all
+    until the workflow half of a change has merged. That window is opened by a merge train
+    reordering two halves and by anybody installing from a branch, and what it costs is
+    every submission rather than the courtesy this field carries. The retry drops the
+    field and dispatches; the submission is the thing that was asked for.
+    """
+    root, runner = submitting(tmp_path)
+    answered = itertools.count()
+
+    def dispatch(argv: tuple[str, ...]) -> object:
+        if next(answered) == 0:
+            return failed(
+                'HTTP 422: Unexpected inputs provided: ["edullm_version"] '
+                "(https://api.github.com/repos/edu-llm/platform/actions/workflows/"
+                "submit-run.yml/dispatches)"
+            )
+        return ok("")
+
+    runner._answers[("gh", "workflow", "run")] = dispatch  # type: ignore[assignment]
+
+    code, out, err = invoke(
+        [
+            "submit",
+            "--dataset",
+            "regmix-10b-v1",
+            "--experiment",
+            "an-experiment",
+            "--no-wait",
+        ],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    dispatches = runner.ran("gh", "workflow", "run")
+    assert code == EXIT_OK, out + err
+    assert len(dispatches) == 2
+    assert EDULLM_VERSION_FIELD in " ".join(dispatches[0])
+    assert EDULLM_VERSION_FIELD not in " ".join(dispatches[1])
+    assert "--dataset" not in err
+
+
+@pytest.mark.parametrize(
+    ("stderr", "expected"),
+    [
+        pytest.param("HTTP 401: Bad credentials", "Bad credentials", id="not about a field"),
+        pytest.param(
+            'HTTP 422: Unexpected inputs provided: ["dataset_release"]',
+            "dataset_release",
+            id="about a field this binary must get right",
+        ),
+        pytest.param(
+            'HTTP 422: Unexpected inputs provided: ["edullm_version", "dataset_release"]',
+            "dataset_release",
+            id="about that field and one more",
+        ),
+    ],
+)
+def test_a_dispatch_refused_for_anything_else_is_not_retried_without_a_field(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stderr: str, expected: str
+) -> None:
+    """Mutation: retry whenever the first attempt fails, or drop whatever the 422 names.
+
+    A blanket retry doubles every authentication failure and every network failure. Worse,
+    it turns a required field this binary misspelled into a submission dispatched without
+    it -- which compiles against a missing field and refuses, with a message about the form
+    rather than about the typist. Only the field the caller said may be lost may be lost,
+    and a 422 naming that field beside another is still a 422 about the other one.
+    """
+    root, runner = submitting(tmp_path)
+    runner._answers[("gh", "workflow", "run")] = failed(stderr)
+
+    code, _out, err = invoke(
+        [
+            "submit",
+            "--dataset",
+            "regmix-10b-v1",
+            "--experiment",
+            "an-experiment",
+            "--no-wait",
+        ],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_UNREACHABLE
+    assert len(runner.ran("gh", "workflow", "run")) == 1
+    assert expected in err
 
 
 def test_no_image_digest_is_sent_so_the_workflow_derives_it_from_the_commit(
@@ -419,6 +602,66 @@ def test_a_compile_job_that_published_nothing_is_not_waited_out(
     assert "published no" in out + err
     # Two asks at most: one before the status was known, one to learn it.
     assert len(runner.ran("gh", "run", "download")) <= 2
+
+
+def test_a_queued_run_is_reported_as_queued_rather_than_as_compiling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: print one word for both states, which is what shipped.
+
+    A submission dispatched into a backed-up queue reached the ceiling and was handed back
+    "compiling. The run id is issued by the compile job", on a run whose jobs both read
+    ``queued`` with empty conclusions. The submitter concluded their run had started. On
+    2026-08-06 GitHub Actions was not starting anything, which made it likely to be read
+    that morning rather than wrong only that morning: any queue long enough to outlast the
+    wait produces it.
+
+    The fact was already in hand. The poll asks the run endpoint on every attempt to learn
+    whether the run has finished, and that answer carries ``queued`` or ``in_progress``, so
+    telling them apart costs no request -- the status was being compared against one value
+    and dropped.
+    """
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    root, runner = submitting(tmp_path, compiled=None, run_status="queued")
+
+    code, out, err = invoke(
+        ["submit", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "queued." in out
+    assert "nothing is compiling" in out
+    assert "compiling. The run id" not in out
+    # Still says where the answer will come from, which is the half that was right.
+    assert "edullm status" in out
+
+
+def test_a_run_that_is_not_queued_is_not_told_which_job_is_running_either(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: keep "compiling" for every state that is not ``queued``.
+
+    ``compile`` needs ``identify`` and ``resolve``, so a run reads ``in_progress`` from the
+    moment the first of those starts and "compiling" is a guess about which job holds it.
+    The per-job status that would settle it is a second request for one word. What the poll
+    knows is that no run id has been published, so that is what is said.
+    """
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    root, runner = submitting(tmp_path, compiled=None, run_status="in_progress")
+
+    code, out, err = invoke(
+        ["submit", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "no run id yet" in out
+    assert "compiling" not in out
 
 
 def test_an_automatic_submission_is_told_nobody_is_waiting_on_a_person(

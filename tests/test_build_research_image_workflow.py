@@ -317,9 +317,67 @@ def test_every_job_checks_the_caller_contract_before_anything_else() -> None:
         assert contract["env"]["WORKFLOW_FILE_PATH"] == "${{ job.workflow_file_path }}"
         assert contract["env"]["EVENT_NAME"] == "${{ github.event_name }}"
         assert contract["env"]["AWS_REGION"] == "${{ inputs.aws_region }}"
+        assert contract["env"]["PUBLISHER_ROLE_ARN"] == "${{ inputs.publisher_role_arn }}"
         scripts.add(contract["run"])
 
     assert len(scripts) == 1, "every job must enforce the identical caller contract"
+
+
+@pytest.mark.slow
+def test_an_unset_publisher_variable_is_refused_by_name_rather_than_by_a_credential_error(
+    tmp_path: Path,
+) -> None:
+    """THE ONE PRECONDITION OF A REGISTRATION THIS PLATFORM CANNOT READ FOR ITSELF.
+
+    ``AWS_ECR_PUBLISHER_ROLE_ARN`` is a repository variable in each research repository, set
+    by hand, with no organization variable behind it -- so six repositories carry six copies
+    and nothing here compares them. Nothing here can:
+    ``repos/{owner}/{repo}/actions/variables`` answers 401 to a token that is not a
+    collaborator, and the stored collaborator token that would read it is what
+    ``test_the_repository_holds_no_secret_a_branch_could_read`` forbids by name.
+
+    So the check runs where the value already is. ``required: true`` does not help, because
+    Actions counts an empty string as supplied: an unset variable arrives as ``""``, reaches
+    ``configure-aws-credentials``, and answers "Credentials could not be loaded", which sends
+    the reader to OIDC federation rather than to a setting nobody made. That is the state
+    ``edullm-p1`` published nothing from for days while reading as fully registered.
+
+    The message is asserted to name the variable and to say the value is per repository,
+    because a reader who fixes one repository and assumes the others inherit has fixed one
+    repository.
+    """
+    contract = step(_job("publish"), CONTRACT_STEP)
+
+    result = run_step_script(
+        contract["run"],
+        cwd=tmp_path,
+        env=_contract_environment(PUBLISHER_ROLE_ARN=""),
+    )
+
+    assert result.returncode == 1
+    assert "publisher_role_arn_is_empty" in result.stderr
+    assert "AWS_ECR_PUBLISHER_ROLE_ARN" in result.stderr
+    assert "per repository" in result.stderr
+    # Not folded into the four-property loop above it, whose sentence is about GitHub
+    # Enterprise Server and would send somebody to entirely the wrong place.
+    assert "GitHub Enterprise Server" not in result.stderr
+
+
+def test_the_publisher_guard_runs_before_any_credential_step_in_every_job() -> None:
+    """Mutation: guard the ARN in a step after configure-aws-credentials.
+
+    The whole value of the refusal is that it arrives instead of the credential error rather
+    than after it, so its position relative to that action is the assertion.
+    """
+    for job_name in ("verify", "deny", "publish"):
+        names = [candidate.get("name", "") for candidate in _job(job_name)["steps"]]
+        uses = [candidate.get("uses", "") for candidate in _job(job_name)["steps"]]
+
+        assert names[0] == CONTRACT_STEP
+        credential_steps = [
+            index for index, action in enumerate(uses) if CREDENTIALS_ACTION in action
+        ]
+        assert all(index > 0 for index in credential_steps), job_name
 
 
 def _contract_environment(**overrides: str) -> dict[str, str]:
@@ -330,6 +388,14 @@ def _contract_environment(**overrides: str) -> dict[str, str]:
         "WORKFLOW_FILE_PATH": WORKFLOW_PATH_INPUT,
         "EVENT_NAME": "push",
         "AWS_REGION": "us-east-1",
+        # Shaped like an ARN but with the account redacted the way the committed captures
+        # redact it, because `test_tracked_tree_contains_no_aws_account_id_patterns` refuses
+        # any twelve-digit literal in the tree and does not care that this one is invented.
+        # The guard only asks whether anything arrived at all; a caller whose variable is
+        # unset arrives with the empty string, which is the case the test below sets.
+        "PUBLISHER_ROLE_ARN": (
+            "arn:aws:iam::<aws-account-id>:role/sbsandbox-intern-edullm-ecr-publisher"
+        ),
     }
     environment.update(overrides)
     return environment

@@ -11,7 +11,7 @@ description: >-
 # Registering a repository
 
 Registration is two halves and they are easy to confuse. **The platform half** edits reviewed
-configuration files and is opened as a pull request by a workflow. **The repository half** is
+configuration files and reaches a pull request a workflow prepares and a person opens. **The repository half** is
 three files in the codebase being registered, and nothing writes them for you. A repository
 whose pull request merged and whose three files are missing is registered and can never build
 an image, which has already happened once here.
@@ -28,8 +28,8 @@ declares a path that points at nothing.
 - [ ] 4. Write the build-caller workflow
 - [ ] 5. Write a first .edullm/run.yaml
 - [ ] 6. Commit and push to an edullm/** branch
-- [ ] 7. Open the configuration pull request
-- [ ] 8. Say what happens next
+- [ ] 7. Prepare the configuration pull request
+- [ ] 8. Open it, and say what happens next
 ```
 
 ### 1. Confirm it is not already registered
@@ -72,6 +72,23 @@ for a branch named anything else, and that is exactly how a registered repositor
 zero images while looking correct. If the work lives on a branch that is not `edullm/**`, say
 so, and say the two ways out, which are renaming the branch or dispatching the caller by hand.
 
+**Then set `AWS_ECR_PUBLISHER_ROLE_ARN` as a repository variable, which the workflow you just
+wrote reads and which nothing gives you.** Settings, then Secrets and variables, then Actions,
+then Variables, on the research repository itself. `gh variable set` does it from a terminal,
+given the name, the value and the repository.
+
+The ARN is the one `infra/README.md` records for `sbsandbox-intern-edullm-ecr-publisher`. It
+is set per repository, by hand, in each: **there is no organization variable behind it**, so
+the repositories that already have one tell you nothing about this one, and registering a
+repository does not create it.
+
+Until 2026-08-06 this step was in no document at all. `edullm-p1` read as fully registered and
+published nothing for days because of exactly that. It is not a step the platform can check for
+you either — a token scoped to `edu-llm/platform` is refused by every other repository's
+variables endpoint — so the check lives in the reusable build, whose first step refuses an
+empty value with `publisher_role_arn_is_empty` and the variable's name. If you see that, this
+is the step you skipped.
+
 ### 5. Write a first `.edullm/run.yaml`
 
 It holds what is a property of the code, which is the command, the workload profile and a
@@ -92,7 +109,7 @@ git push -u origin edullm/register
 
 The push is what builds the first image.
 
-### 7. Open the configuration pull request
+### 7. Prepare the configuration pull request
 
 ```bash
 edullm add repository --reason "<why this needs a repository of its own>"
@@ -102,11 +119,20 @@ edullm add repository --reason "<why this needs a repository of its own>"
 needs a repository of its own rather than a workload profile in one that is already
 registered.
 
-The command prints the workflow run page. The pull request appears there.
+The command prints two links: the workflow run page, and the compare URL to open the pull
+request at. **The workflow does not open it.** This organization forbids Actions from
+creating a pull request, and the one setting that would allow it also allows a workflow to
+submit an approving review, which is what protects the very files a registration edits.
 
-### 8. Say what happens next
+### 8. Open it, and say what happens next
 
-Tell the user plainly. The pull request has to be merged by the platform owner and then
+Wait for the run to go green, then open the compare URL. The title is filled in and the body
+is not — it runs to about eleven thousand characters, which is over twice what a URL will
+carry, so the run's job summary prints it in a block to copy into the description. Copy the
+whole of it; it records which claims were checked against the repository, which ones nothing
+can check, and the follow-ups.
+
+Then tell the user plainly. The pull request has to be merged by the platform owner and then
 deployed, and **nothing is registered until both have happened.** A merged configuration
 change does nothing in the account until somebody deploys, and that has already cost one
 incident. `edullm check` keeps refusing this repository until then.

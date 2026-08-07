@@ -19,7 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -27,6 +27,14 @@ from pydantic import ValidationError
 from edullm_platform.admission import image_scan_refusal_detail
 from edullm_platform.build_tooling import append_step_outputs
 from edullm_platform.canonical import canonical_json_bytes
+from edullm_platform.cli.actions import PLATFORM_REPOSITORY
+from edullm_platform.cli.release import install_command
+from edullm_platform.client_version import (
+    SubmittingClient,
+    defect_note,
+    read_client_version,
+    submitted_by_said,
+)
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.identity import new_run_id
@@ -40,6 +48,7 @@ from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.daily_ceiling import CeilingReading, read_the_day
 from edullm_platform.errors import SubmissionRefusedError
 from edullm_platform.image_resolution import PublishedImage
 from edullm_platform.placement import (
@@ -49,6 +58,7 @@ from edullm_platform.placement import (
     read_capacity,
 )
 from edullm_platform.run_history import RunHistoryFormatError, load_run_history
+from edullm_platform.run_index import RunIndexFormatError, from_document
 from edullm_platform.submission import (
     SubmissionInputs,
     compile_submission,
@@ -133,6 +143,50 @@ def read_published_images(
     return published, summary, findings
 
 
+def read_the_days_ceiling(
+    index: Path | None, *, policy: ApprovalPolicy, now: datetime
+) -> CeilingReading | None:
+    """What the day's ledger says, or ``None`` where no ceiling is configured.
+
+    **THE ORDER OF THESE TWO QUESTIONS IS THE WHOLE OF WHAT KEEPS THIS HONEST.** An unset
+    ceiling is asked about first and answers ``None``, which changes nothing anywhere. Every
+    other outcome, including every way the ledger fails, is a reading -- and a reading that
+    could not be taken routes to a lead. The reverse order would let a platform with no
+    ceiling configured start sending runs to a lead the first time a fetch failed, and, far
+    worse, would make "the index is missing" and "no ceiling is set" the same answer.
+
+    Three things go wrong here and all three are the same verdict with different sentences.
+    The workflow did not hand over an index, which is a job that changed shape. There is no
+    file where it said, which is a fetch that failed or a branch that does not exist. The
+    file will not parse, which is a document somebody has to look at. A reader of the log
+    has to be able to tell those apart to fix any of them, and none of them may quietly
+    become "the day is empty".
+    """
+    ceiling = policy.thresholds.automatic_daily_ceiling_usd
+    if ceiling is None:
+        return None
+    if index is None:
+        return read_the_day(
+            None,
+            ceiling_usd=ceiling,
+            now=now,
+            unreadable_because=(
+                "this job was given no --run-index, so nothing here can say what the day "
+                "has already committed"
+            ),
+        )
+    try:
+        runs = from_document(json.loads(index.read_text(encoding="utf-8")))
+    except (OSError, ValueError, KeyError, TypeError, RunIndexFormatError) as exc:
+        return read_the_day(
+            None,
+            ceiling_usd=ceiling,
+            now=now,
+            unreadable_because=f"the run index at {index} could not be read ({exc})",
+        )
+    return read_the_day(runs, ceiling_usd=ceiling, now=now)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inputs", required=True, type=Path)
@@ -143,10 +197,28 @@ def build_parser() -> argparse.ArgumentParser:
     # an unbuilt commit the first time the workflow forgot to pass the file.
     parser.add_argument("--published-images", required=True, type=Path)
     parser.add_argument("--submitter", required=True)
+    # NOT REQUIRED, AND THE DEFAULT IS THE HONEST ONE. A dispatch from the Actions tab
+    # names no install, which is a legitimate path rather than a fault, so absence is the
+    # ordinary case and reads as "this cannot be known" everywhere below. Nothing is
+    # refused on it: see edullm_platform.client_version for why a floor here would cost
+    # more than it could buy.
+    parser.add_argument("--client-version", default="")
     parser.add_argument("--repository-url", required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--summary", type=Path)
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument(
+        "--run-index",
+        type=Path,
+        default=None,
+        help=(
+            "the run-index.json off machine/run-index, which is what says how much of "
+            "today has already been committed by runs nobody released. Optional only "
+            "because a policy carrying no automatic_daily_ceiling_usd has nothing to "
+            "compare against; where a ceiling is set, not passing this routes the "
+            "submission to a team lead rather than waving it through"
+        ),
+    )
     parser.add_argument(
         "--run-id",
         help=(
@@ -158,8 +230,34 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _say_what_the_install_explains(
+    refusal: str, *, client: SubmittingClient, install: str
+) -> None:
+    """Print the version sentence for the refusals a known defect explains, and no others.
+
+    Both refusal paths get it because a defect could surface either way, and a helper is
+    what stops the two arms of that answering differently.
+    """
+    note = defect_note(refusal, client=client, install=install)
+    if note is not None:
+        print(note, file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    # Read first and printed first, so the log says which install typed this above whatever
+    # happens next. On stdout rather than beside the refusals, because it is a fact about
+    # every submission rather than a complaint about this one.
+    #
+    # FLUSHED, AND THE FIRST LIVE RUN IS WHY. stdout is block-buffered when it is not a
+    # terminal and stderr is not, so on a runner this line was held until the process
+    # exited and arrived *below* the refusal it was supposed to introduce -- naming the
+    # install after the paragraph that needed it. Nothing in this file's own output
+    # revealed that, because everything else it prints goes to stderr.
+    client = read_client_version(args.client_version)
+    print(submitted_by_said(client), flush=True)
+    installs_with = install_command(repository=PLATFORM_REPOSITORY)
 
     try:
         payload = json.loads(args.inputs.read_text(encoding="utf-8"))
@@ -256,6 +354,13 @@ def main(argv: list[str] | None = None) -> int:
         # a checkpoint written against a retired corpus has to keep naming that corpus, and
         # a refusal nobody can lift would make lying about it the only route.
         require_a_dataset_release_that_is_current(inputs.dataset_release, datasets=registry)
+        # Read before compiling because the class this raises is decided inside
+        # compile_submission, and read here rather than inside it for the reason every other
+        # environmental fact is passed in: that function is given loaded configuration and
+        # opens no file.
+        daily_ceiling = read_the_days_ceiling(
+            args.run_index, policy=policy, now=datetime.now(UTC)
+        )
         submission = compile_submission(
             inputs,
             run_id=args.run_id or new_run_id(),
@@ -267,12 +372,20 @@ def main(argv: list[str] | None = None) -> int:
             image_scan_summary=image_scan_summary,
             image_scan_findings=blocking_findings,
             published_images=published_images,
+            daily_ceiling=daily_ceiling,
         )
     except SubmissionRefusedError as exc:
         print(f"submission refused: {exc}", file=sys.stderr)
+        _say_what_the_install_explains(str(exc), client=client, install=installs_with)
         return EXIT_REFUSED
     except ValidationError as exc:
         print(f"the submission does not compile into a valid manifest: {exc}", file=sys.stderr)
+        # AFTER THE REFUSAL AND NOT INSTEAD OF IT. The refusal above names the field and
+        # what is wrong with it, which is right for a submitter who really did type an
+        # unquoted command. What it cannot know is that an old install may have unquoted a
+        # correct one, so the note contradicts its remedy rather than replacing it, and
+        # both readers get a line they can act on.
+        _say_what_the_install_explains(str(exc), client=client, install=installs_with)
         return EXIT_REFUSED
 
     # After compiling rather than before it, because the profile to ask about is the one
@@ -318,6 +431,14 @@ def main(argv: list[str] | None = None) -> int:
     if scan_note is not None:
         print(scan_note, file=sys.stderr)
 
+    # ON THE LOG WHATEVER THE VERDICT, AND THE UNDER CASE IS THE ONE WORTH ARGUING FOR. A
+    # ceiling that speaks only when it fires is a ceiling nobody can tell apart from one
+    # that is switched off, which is exactly the state this platform was in about every
+    # other cost control it thought it had. Printing the running total on every compile
+    # makes the mechanism observable on the ordinary day, and it is one line.
+    if daily_ceiling is not None:
+        print(daily_ceiling.said, file=sys.stderr)
+
     document = {
         "run_id": submission.run_id,
         "submitter": args.submitter,
@@ -329,6 +450,29 @@ def main(argv: list[str] | None = None) -> int:
         # is what an approver releases, and a field folded into the hashed document changes
         # the digest of every record written before that field existed.
         "experiment": submission.experiment,
+        # THE SAME VERDICT THE NOTE ABOVE PRINTS, WRITTEN DOWN RATHER THAN ONLY PRINTED.
+        # The approval message #337 added carries a clause naming an unreviewed scan as one
+        # of the three things holding a cheap single cell back from releasing itself, and
+        # that clause reads this field off the envelope. Nothing put it in the document, so
+        # the clause was unreachable: an absent field reads as reviewed, which is the
+        # permissive direction and exactly the one a lead should not be defaulted into.
+        # A sibling for the same reason `experiment` is -- it is a fact about how the image
+        # was judged, not about what will run, and the manifest is hashed.
+        "image_scan_reviewed": submission.facts.image_scan_reviewed,
+        # WHICH INSTALL TYPED THIS, AND WHY IT IS WRITTEN HERE RATHER THAN ANYWHERE DEEPER.
+        # Nothing this platform stores has ever recorded a client version, which is the
+        # recorded reason it is impossible to say whether anybody is on a current edullm.
+        # This artifact is the cheapest place that changes: it is already uploaded for
+        # every submission, already downloaded by `edullm status`, and carries no digest
+        # anybody has published. The lineage record would be the natural home and is the
+        # expensive one -- RunManifest is content-addressed and CompiledSubmission.experiment
+        # records what a field added to it costs -- so the question is answerable from here
+        # over the artifact retention window rather than forever, which is the whole of
+        # what was asked for.
+        #
+        # `None` for a dispatch from the Actions tab, which names no install and is not
+        # wrong for it.
+        "edullm_version": client.said,
     }
     args.output.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -344,6 +488,7 @@ def main(argv: list[str] | None = None) -> int:
                 placement_note=placement_note,
                 scan_note=scan_note,
                 run_history=run_history,
+                daily_ceiling=daily_ceiling,
             ),
             encoding="utf-8",
         )
@@ -356,6 +501,17 @@ def main(argv: list[str] | None = None) -> int:
                 ("approval_class", submission.approval_class.value),
                 ("environment", submission.approving_environment.value),
                 ("manifest_sha256", submission.manifest_sha256),
+                # WHAT THIS SUBMISSION IS AUTHORISED TO COMMIT, HANDED TO THE JOB THAT
+                # WRITES THE INDEX. It is the figure this job just computed, the one the
+                # approver page prints and the one the class was chosen against, and
+                # recording it is what lets the next submission read the day. Passed as a
+                # step output rather than recomputed downstream, because a second
+                # implementation of the arithmetic is a second answer to the question the
+                # ceiling is comparing.
+                (
+                    "maximum_compute_cost_usd",
+                    str(submission.cost.maximum_compute_cost_usd),
+                ),
             ),
         )
 

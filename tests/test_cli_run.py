@@ -150,6 +150,59 @@ def test_an_existing_machine_for_this_project_is_reused_rather_than_doubled(
     assert runner.ran("aws", "ec2", "run-instances") == []
 
 
+def test_nothing_claims_to_start_a_shape_when_a_machine_was_found_instead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: print ``DefaultedCompute.said`` where the profile is resolved, above the
+    branch that looks for an existing machine, which is where it went in first.
+
+    That ordering had the verb say "this starts gpu-1xl4: g6.xlarge at $0.8048/hour" and then
+    "found that machine rather than starting one", three lines apart. Both cannot be true, and
+    the rate was the worse half: reuse does not check that the machine it found is the shape
+    anybody asked for, so the figure quoted belonged to a machine the person was not getting.
+
+    Asserted on the reuse path with no ``--compute`` -- the only combination that produced it --
+    and paired with the launch path below, because a fix that simply stopped printing the
+    sentence would pass this and take the announcement with it.
+    """
+    runner = a_laptop(tmp_path, existing=LANE_INSTANCE)
+
+    code, out, err = invoke(
+        ["run", "--project", "mixlaw", "--", "python", "-V"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert runner.ran("aws", "ec2", "run-instances") == []
+    assert "starts" not in out + err, out + err
+
+
+def test_a_defaulted_shape_is_still_named_with_its_rate_when_one_does_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: delete the announcement rather than moving it past the reuse branch.
+
+    The pair to the test above, and the reason it is a pair. The objection to answering
+    ``--compute`` at all is that it spends money nobody named, and the answer is that the shape
+    and its hourly rate are printed before the call that spends it. A fix for the reuse case
+    that dropped the sentence would satisfy the other test and give up the whole defence.
+    """
+    runner = a_laptop(tmp_path)
+
+    code, out, err = invoke(
+        ["run", "--project", "mixlaw", "--", "python", "-V"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert runner.ran("aws", "ec2", "run-instances") != []
+    assert "/hour" in out + err, out + err
+
+
 def test_a_reused_machine_is_told_the_expiry_its_tag_carries_and_not_a_fresh_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -178,6 +231,34 @@ def test_a_reused_machine_is_told_the_expiry_its_tag_carries_and_not_a_fresh_one
     assert code == EXIT_OK, out + err
     printed = set(re.findall(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", out))
     assert printed == {LANE_EXISTING_EXPIRY}, out
+
+
+def test_the_session_is_given_a_stdin_the_caller_s_own_cannot_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**THE VERB SIDE OF THE DEFECT THAT KILLED EVERY RUN WITHOUT A KEYBOARD.**
+    Mutation: drop the flag, or set it on the sync instead.
+
+    ``session-manager-plugin`` treats end of file on its standard input as the person hanging up
+    and exits before the command's output comes back, so a ``run`` that inherited descriptor 0
+    worked in a terminal and failed under ``nohup``, in CI, behind ``< /dev/null`` and under
+    every agent -- reporting only that the session ended without saying what the command did.
+    Measured against this account on 2026-08-06.
+
+    The sync is checked too, and it is checked for the opposite: it is an ``aws s3`` call that
+    reads nothing, and a pipe there would be a descriptor opened for no reason on every run.
+    """
+    runner = a_laptop(tmp_path)
+
+    invoke(
+        ["run", "--project", "mixlaw", "--compute", "gpu-1xt4", "--", "python", "-V"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert runner.held_stdin_open_for("aws", "ssm", "start-session") == [True]
+    assert not any(runner.held_stdin_open_for("aws", "s3", "sync"))
 
 
 def test_a_remote_command_that_failed_is_reported_as_refused_with_its_status(
@@ -254,6 +335,11 @@ def test_the_expiry_is_printed_before_anything_starts(
     The slice is done when a researcher "loses it on a schedule they were warned about". The tag
     is what the janitor reads and the line is the warning. A machine that expires silently
     teaches thirty-five people that the platform destroys work.
+
+    Read with the wrapping taken back out, because these are paragraphs written for a terminal
+    and the line breaks fall wherever the width puts them. This asserted against the raw stream
+    and went red on a sentence that had not changed, only moved: a clause added above it pushed
+    the wrap into the middle of the phrase.
     """
     runner = a_laptop(tmp_path)
 
@@ -265,7 +351,7 @@ def test_the_expiry_is_printed_before_anything_starts(
     )
 
     assert "expires" in out
-    assert "Nothing here is recorded as citable" in out
+    assert "Nothing here is recorded as citable" in " ".join(out.split())
 
 
 def test_nothing_this_verb_prints_carries_an_ansi_escape(

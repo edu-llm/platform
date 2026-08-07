@@ -1,5 +1,23 @@
 [project]
-name = "edullm-platform"
+# THE DISTRIBUTION IS NAMED AFTER THE COMMAND, AND IT WAS NOT FOR THE FIRST FOUR MAJORS.
+# It read `edullm-platform` while `[project.scripts]` below installed `edullm`, so uv's
+# three verbs disagreed about what this is called. `uv tool list` printed
+# `edullm-platform`, which nobody had typed; `uv tool uninstall edullm` answered "`edullm`
+# is not installed" to somebody looking at the binary; and `uv tool install edullm` failed
+# on the way in. Only the third of those reads as a naming quirk. The other two read as
+# wrong answers, and thirty-five people were about to type the command name because it is
+# the only name any of them ever sees.
+#
+# The import package stays `edullm_platform`. A distribution whose name differs from its
+# module is ordinary Python packaging, nothing outside this file and
+# `edullm_platform.cli.release` reads the distribution name, and renaming the module would
+# have touched every file in the tree to fix a thing no researcher can see.
+#
+# tests/test_cli_install_command.py holds this to `[project.scripts]` so the two cannot
+# drift apart again. Anybody installed before the rename holds `edullm-platform` and is not
+# upgraded by an install of `edullm`; `uv tool uninstall edullm-platform` once is the whole
+# of the fix and it is written beside every install line in the tree.
+name = "edullm"
 # MOVED BY THE PULL REQUEST THAT EARNS IT, AND `.github/workflows/release-tag.yml` TAGS WHAT
 # IT FINDS HERE. It read 0.1.0 from the first commit to the day the CLI shipped, so
 # `edullm --version` answered the same thing for an install from today and one from six
@@ -17,8 +35,8 @@ name = "edullm-platform"
 #
 # 0.2.0 rather than 0.1.1 because 0.1.0 was never released and nothing was ever installed
 # from a tag; the first tag this repository has should not look like the second.
-# WHY THIS IS A MINOR RATHER THAN A PATCH. edullm run and edullm shell no longer require --compute; without it they start the cheapest catalogue shape whose card has bfloat16 and that capacity records as placing, and say which and at what hourly rate before anything starts.
-version = "3.8.0"
+# WHY THIS IS A MINOR RATHER THAN A PATCH. edullm studio opens the browser itself instead of printing a sign-in URL nobody could copy in time, and lands in the running app rather than on a host that does not resolve; edullm console is new and opens the AWS console signed in as you
+version = "4.5.0"
 requires-python = ">=3.12"
 dependencies = [
   "pydantic>=2,<3",
@@ -67,19 +85,20 @@ reader = [
 # needs on day one -- `docs-frank/reference/system-overview.md` counts twelve of the
 # fourteen surfaces that reach a researcher as this one command:
 #
-#   uv tool install --force git+https://github.com/edu-llm/platform@v3.8.0
+#   uv tool install --force git+https://github.com/edu-llm/platform@v4.5.0
 #
 # THAT LINE IS TESTED RATHER THAN PROOFREAD, by tests/test_cli_install_command.py, which
 # holds it to the one in `edullm_platform.cli.release`. What used to be written here was
 # `uv tool install edullm --from git+https://github.com/edu-llm/platform@<tag>`, and it
-# had never been run: `--from` names the distribution, the distribution is
-# `edullm-platform`, `edullm` is only the console script, and uv answers "Package name
-# (`edullm-platform`) provided with `--from` does not match install request (`edullm`)".
-# It had already been copied into two transcripts by the time anybody typed it, which is
-# why the copy is now a test rather than a comment.
+# had never been run: back then the distribution was `edullm-platform` while `edullm` was
+# only the console script, so uv answered "Package name (`edullm-platform`) provided with
+# `--from` does not match install request (`edullm`)". It had already been copied into two
+# transcripts by the time anybody typed it, which is why the copy is now a test rather
+# than a comment. The names agree now, and the bare URL is still the line: neither name is
+# on any index, so `uv tool install edullm` answers "not found in the package registry".
 #
 # `--force` is also the upgrade, because it is the one line that is right for both installs
-# in the field. `uv tool upgrade edullm-platform` follows the git ref the install named: it
+# in the field. `uv tool upgrade edullm` follows the git ref the install named: it
 # re-resolves the default branch for an install from the bare URL and does upgrade it, and
 # it answers `Nothing to upgrade`, with `--reinstall` too, for one pinned at a release tag,
 # which is the install every release note hands out. So the obvious command tells some

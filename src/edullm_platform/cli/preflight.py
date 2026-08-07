@@ -14,6 +14,7 @@ is the dataset registered, and a corpus      ``contracts.dataset_registry.Datase
 is the dataset still the current one         ``submission.require_a_dataset_release_that_is_current``
 is the compute profile real and provisioned  ``contracts.workload.resolve_compute_profile_for_execution``
 does the command start one process per card  ``launchers.require_a_process_for_every_device``
+does vLLM read the size the command names    ``launchers.require_a_tensor_parallel_flag_vllm_reads``
 does it save where a retry will look         ``checkpoint_commands.require_a_save_folder_a_retry_can_find``
 can the card run the dtype it asks for       ``precision.require_bfloat16_only_where_the_hardware_has_it``
 is the command startable and still quoted    ``contracts.manifest.RunManifest``
@@ -44,15 +45,35 @@ derived from one, so constructing the manifest is what buys every rule at once r
 a reimplementation of each. The one field a laptop cannot fill is the image digest: it is
 whatever the registry published for the declared commit, and asking the registry needs a
 credential this binary does not hold and must not. :data:`UNRESOLVED_IMAGE_DIGEST` stands
-in its place, is never printed, and the two checks that depend on it -- whether the commit
-published an image at all, and whether that image's scan findings have been read -- are
-reported as deferred rather than as passed. Reporting them as passed is the failure this
-paragraph exists to prevent; ``adarsh-rajesh-first-run.md`` is a transcript of what it
-costs when a submitter believes a clean preflight means a submission will go through.
+in its place, is never printed, and the checks that depend on it -- which image the commit
+published, and whether that image's scan findings have been read -- are reported as
+deferred rather than as passed. Reporting them as passed is the failure this paragraph
+exists to prevent; ``adarsh-rajesh-first-run.md`` is a transcript of what it costs when a
+submitter believes a clean preflight means a submission will go through.
 
-**IT IS TWO CHECKS DEFERRED AND NOT MORE, WHICH IS WHY THE VERB IS WORTH RUNNING.** Of the
-seven compile-time refusals ``system-overview.md`` lists under "The submission path", five
-are decided here.
+**WHAT IS DEFERRED IS :data:`DEFERRED_TO_SUBMIT` AND NOTHING ELSE, WHICH IS WHY THE VERB IS
+WORTH RUNNING.** That used to be an assertion this paragraph made and it is now a test.
+``tests/test_check_refuses_what_compile_refuses.py`` walks both paths out of the source,
+holds every refusal the compile job can raise against every refusal this module makes, and
+fails on a difference nothing accounts for.
+
+It was written because there was one. ``require_a_tensor_parallel_flag_vllm_reads`` was
+called by ``submission.compile_submission`` and by :func:`_check_command` never, so a sweep
+naming a tensor-parallel width the vLLM server will not read cleared this verb and was
+refused after the dispatch -- the same shape as the quoting rule before it, and found the
+same way, by somebody reading rather than by anything going red. The call is here now, and
+so is the test that would have said so.
+
+**THIS PARAGRAPH QUOTED A COUNT OUT OF ``system-overview.md`` UNTIL 2026-08-06 AND
+``config/reports/surfaces.yaml`` QUOTED A DIFFERENT ONE OFF THE SAME LIST.** Both were copies
+of a list that had moved under them, both were right when they were typed, and neither was
+checkable against anything but a document. What is checkable is this tree: the compile step's
+rules are the calls in ``submission.compile_submission``, this verb's are the calls in
+:func:`run_preflight` and :func:`_check_command`, and every refusal either can raise is a
+``SubmissionRefusedError`` subclass in ``edullm_platform/errors.py`` carrying its own
+``reason_code``. Counting those is what the test above does, so the two documents cannot
+disagree because neither is being asked. ``tests/test_cli_no_hardcoded_bounds.py`` holds any
+count this file writes to the same standard.
 """
 
 from __future__ import annotations
@@ -88,6 +109,7 @@ from edullm_platform.contracts.workload import (
     resolve_compute_profile_for_execution,
 )
 from edullm_platform.errors import (
+    AmbiguousImageError,
     ExperimentNotASlugError,
     NoPublishedImageError,
     RetiredDatasetReleaseError,
@@ -96,7 +118,10 @@ from edullm_platform.errors import (
     UnregisteredWorkloadProfileError,
     WorkloadProfileRepositoryMismatchError,
 )
-from edullm_platform.launchers import require_a_process_for_every_device
+from edullm_platform.launchers import (
+    require_a_process_for_every_device,
+    require_a_tensor_parallel_flag_vllm_reads,
+)
 from edullm_platform.manifest_helpers import build_request_facts, compute_manifest_cost_inputs
 from edullm_platform.precision import require_bfloat16_only_where_the_hardware_has_it
 from edullm_platform.run_history import HistoryAnswer, history_for
@@ -111,12 +136,15 @@ __all__ = [
     "SUBMITTER_UNKNOWN",
     "UNRESOLVED_IMAGE_DIGEST",
     "Preflight",
+    "Priced",
     "Refusal",
     "SubmissionRequest",
     "first_validation_message",
+    "price_what_is_known",
     "resolve_team",
     "run_preflight",
     "said_once",
+    "untracked_the_image_will_not_see",
     "validation_messages",
     "working_tree_refusals",
 ]
@@ -138,9 +166,15 @@ SCRATCH_TEAM: Final = "scratch"
 #: the workflow derive it from the commit.
 UNRESOLVED_IMAGE_DIGEST: Final = "sha256:" + "0" * 64
 
-#: The two checks a laptop cannot make, named so the output can say so rather than imply a
-#: clean bill of health. Both need the container registry, which needs a credential this
+#: The checks a laptop cannot make, named so the output can say so rather than imply a
+#: clean bill of health. Each needs the container registry, which needs a credential this
 #: binary holds none of.
+#:
+#: **THIS LIST IS WHAT MAKES A GAP HONEST RATHER THAN A GAP,** and
+#: ``tests/test_check_refuses_what_compile_refuses.py`` is what keeps it complete: every
+#: refusal the compile job can make is either asked here or named here, and a compile-time
+#: rule added without either goes red rather than shipping as a submission cleared locally
+#: and turned away after the dispatch.
 DEFERRED_TO_SUBMIT: Final = (
     (
         # The word the refusal itself carries, so a reader told the check was deferred
@@ -149,6 +183,14 @@ DEFERRED_TO_SUBMIT: Final = (
         (
             "Whether this commit published an image. A push to edullm/** builds one, and "
             "the submission workflow holds the credential that asks the registry."
+        ),
+    ),
+    (
+        AmbiguousImageError.reason_code,
+        (
+            "Which image, where that commit published more than one at the same instant. "
+            "The registry holds the push times and this cannot ask for them, so the "
+            "compile step is where a tie is seen and refused rather than guessed at."
         ),
     ),
     (
@@ -173,6 +215,21 @@ class Refusal:
 
     code: str
     detail: str
+    #: The flag that answers this, for the refusals that are a field nobody has filled in
+    #: rather than something being wrong. ``--team``, ``--experiment``, ``--dataset``.
+    #:
+    #: **THREE REFUSALS THAT ARE ONE QUESTION READ AS THREE PROBLEMS, AND THAT IS WHAT THIS
+    #: FIXES.** A first invocation asks for all three at once, and a reader met with three
+    #: stanzas under three codes goes looking for three things that are wrong with their
+    #: checkout. Nothing is wrong with it: the tool has not been told what the run is.
+    #: :func:`~edullm_platform.cli.presentation.render_refusals` collects everything
+    #: carrying this into one block with one copyable line, and prints the detail of each
+    #: underneath unchanged, because the explanations are the part worth keeping.
+    asks_for: str = ""
+    #: A value that would satisfy ``asks_for``, for the one line a reader can copy. Never a
+    #: value the tool picks on their behalf: it goes into a command they run, not into a
+    #: submission.
+    example: str = ""
 
 
 #: What every check that needs the submitter says when there is no submitter to have.
@@ -256,6 +313,12 @@ class Preflight:
     #: How the team was arrived at, printed beside it because "from the roster, not from
     #: you" is the difference between a value somebody chose and one nothing checked.
     team_source: str = ""
+    #: The branch the working tree is standing on, or ``None`` where git named none. Printed
+    #: rather than merely carried: the repository and the commit say what would be
+    #: submitted, and the branch is what a reader recognises. A researcher who cannot see
+    #: any of the three has no way to tell that this read the tree they think they are in,
+    #: and the walkthroughs that find these defects happen on a branch.
+    branch: str | None = None
     workload: WorkloadProfile | None = None
     compute: ComputeProfile | None = None
     dataset: PublishedDatasetReference | None = None
@@ -270,6 +333,10 @@ class Preflight:
     #: ``exceeded`` sat here until v5 and carried which routine ceiling a request had
     #: crossed. There are no routine ceilings now, so the field could only ever be empty.
     history: HistoryAnswer | None = None
+    #: The untracked paths this refuses nothing for, carried so the output can say it saw
+    #: them. See :func:`untracked_the_image_will_not_see` for why they are counted rather
+    #: than refused and rather than passed over.
+    untracked: tuple[str, ...] = ()
 
     @property
     def refused(self) -> bool:
@@ -317,6 +384,12 @@ def run_preflight(
             dataset=configuration.datasets.reference_for(request.dataset_release),
         )
 
+    # THE PRICE SURVIVES A REFUSAL FROM HERE DOWN, BECAUSE FROM HERE DOWN IT IS KNOWN. Both
+    # profiles resolved, so the five factors are in hand whatever the rest of the request
+    # turns out to be wrong about, and a verb advertised as pricing a submission should not
+    # go quiet about the number the moment it also has something to refuse.
+    shape = price_what_is_known(request, configuration)
+
     manifest, manifest_refusals = _build_manifest(request, workload)
     refusals.extend(manifest_refusals)
     if manifest is None:
@@ -327,6 +400,8 @@ def run_preflight(
             workload=workload,
             compute=compute,
             dataset=configuration.datasets.reference_for(request.dataset_release),
+            cost=shape.cost,
+            history=shape.history,
         )
 
     refusals.extend(_check_command(manifest, configuration.catalog))
@@ -340,8 +415,16 @@ def run_preflight(
             workload=workload,
             compute=compute,
             dataset=configuration.datasets.reference_for(request.dataset_release),
+            cost=shape.cost,
+            history=shape.history,
         )
-    cost, facts = priced
+    manifest_cost, facts = priced
+    # ONE PRICE OR NONE, NEVER TWO. The manifest's arithmetic is what classifies the request
+    # and what the approver page will show; the shape's is what the terminal prints, and it
+    # exists so that a half-described run still gets a figure. They read the same five
+    # factors out of the same catalog, and this is what keeps a later edit from letting them
+    # drift into quoting a submitter one number and a lead another.
+    assert shape.cost is None or shape.cost == manifest_cost
     tripped = tuple(
         condition
         for condition in denied_outright_conditions(facts, configuration.policy)
@@ -369,10 +452,128 @@ def run_preflight(
         compute=compute,
         dataset=configuration.datasets.reference_for(request.dataset_release),
         manifest=manifest,
-        cost=cost,
+        # ``shape.cost`` rather than ``cost``, and the two are the same five factors on every
+        # request that is not refused for its runtime. Where it is, this is ``None`` and the
+        # figure stays out of the terminal and out of the document, which is what
+        # ``price_what_is_known`` declined it for. ``facts`` was still classified from the
+        # manifest's own arithmetic, because that is the number admission would use.
+        cost=shape.cost,
         approval_class=approval_class,
         approving_environment=ApprovalEnvironment.for_approval_class(approval_class),
         history=history_for(manifest, history=configuration.run_history),
+    )
+
+
+@dataclass(frozen=True)
+class Priced:
+    """What a shape costs and what runs of it have taken, without a manifest to hand.
+
+    Every field is ``None`` where that part could not be answered, and the caller prints
+    what it got and names the rest. Nothing here is a refusal: this runs on a request that
+    has already been refused for something else, and inventing a second refusal for the
+    same gap would report one problem twice.
+    """
+
+    workload: WorkloadProfile | None = None
+    compute: ComputeProfile | None = None
+    cost: CostInputs | None = None
+    history: HistoryAnswer | None = None
+
+
+def price_what_is_known(
+    request: SubmissionRequest, configuration: ReviewedConfiguration
+) -> Priced:
+    """The price and the history of a submission nobody has finished describing.
+
+    **THE VERB IS ADVERTISED AS "PRICE A SUBMISSION HERE" AND IT PRINTED NO PRICE ON THE
+    FIRST INVOCATION A RESEARCHER EVER MAKES.** ``check`` in a registered checkout with no
+    ``--team``, no ``--experiment`` and no ``--dataset`` reached three refusals and stopped
+    before it had resolved anything, so the one number it exists to produce was absent with
+    no sentence saying why. None of those three fields is a factor in the price: the worst
+    case is the compute profile's rate times its nodes times the runtime bound times the
+    attempt bound times the cells, and all five are known from ``.edullm/run.yaml`` and the
+    catalog alone.
+
+    **IT ANSWERS AND IT DECIDES NOTHING, WHICH IS THE WHOLE BOUNDARY.** No approval class is
+    classified here and none can be: ``classify_request`` reads facts about the dataset and
+    the repository that a half-described run has not supplied, and a routing decision made
+    from a guess is the failure this package spends most of its comments preventing. What
+    comes out is the ceiling and what runs of this shape have taken, which are readings
+    rather than rulings.
+
+    Silent about every profile it fails to resolve. :func:`run_preflight` is what refuses an
+    unregistered workload or an unprovisioned machine, and this is only ever reached where
+    something else already refused, so a second copy of those refusals would be one problem
+    under two spellings.
+    """
+    workload = next(
+        (
+            candidate
+            for candidate in configuration.catalog.workloads
+            if candidate.name == request.workload_profile
+            and candidate.repository == request.repository
+        ),
+        None,
+    )
+    try:
+        compute = resolve_compute_profile_for_execution(
+            configuration.catalog, request.compute_profile
+        )
+    except ComputeProfileResolutionError:
+        compute = None
+    if workload is None or compute is None:
+        return Priced(workload=workload, compute=compute)
+    hours = request.maximum_runtime_hours
+    if hours is not None and hours > workload.maximum_runtime_hours:
+        # NOT PRICED AT ALL, RATHER THAN PRICED AT THE FIGURE BEING REFUSED. ``--hours
+        # 10000`` against a twenty-four hour profile is refused by
+        # ``runtime_above_the_workload_bound``, and a reader handed $10,520 two lines above
+        # that refusal has been given the answer to a question the tool just declined to
+        # accept. Lowering the flag is the remedy and prices it on the next run.
+        return Priced(workload=workload, compute=compute)
+    try:
+        # ``CostInputs`` DIRECTLY, AND THAT IS NOT A SECOND SPELLING OF THE ARITHMETIC. The
+        # product of the five factors is computed inside the contract model, so it has one
+        # definition wherever it is built. What ``compute_manifest_cost_inputs`` adds on top
+        # is a registration check and a catalog lookup by name, and this path needs neither:
+        # ``_find_compute`` resolved this profile out of the catalog already. Reaching for
+        # that function would have meant a manifest, which is what a half-described run does
+        # not have -- and editing it to take a profile moves bytes the released admission
+        # validator carries, for a change no part of admission reads.
+        cost = CostInputs(
+            hourly_rate_usd=compute.hourly_rate_usd,
+            nodes=compute.nodes,
+            maximum_runtime_hours=(
+                workload.maximum_runtime_hours if hours is None else hours
+            ),
+            maximum_attempts=(
+                workload.maximum_attempts
+                if request.maximum_attempts is None
+                else request.maximum_attempts
+            ),
+            # The pair or nothing, which is what ``_build_manifest`` does with the same two
+            # fields. A half-declared fan-out is refused by ``fanout_incomplete`` and is one
+            # cell here, so the two never quote two different prices for one request.
+            cells=(
+                request.fanout_size
+                if request.fanout_size is not None
+                and request.fanout_index_parameter is not None
+                else 1
+            ),
+        )
+    except ValidationError:
+        # A total the contract will not represent, which ``--hours`` reaches with a large
+        # enough figure. ``_price_and_derive_facts`` refuses that where it is reachable; here
+        # there is already a refusal on the page and no price to print.
+        return Priced(workload=workload, compute=compute)
+    return Priced(
+        workload=workload,
+        compute=compute,
+        cost=cost,
+        # ``shape_of`` reads four fields by name and a request spells all four the way a
+        # manifest does. A run with no ``--dataset`` misses the finest rung and matches a
+        # coarser one, which is the answer narrowing rather than disappearing.
+        history=history_for(request, history=configuration.run_history),
     )
 
 
@@ -424,39 +625,58 @@ def _price_and_derive_facts(
     return cost, facts
 
 
-def working_tree_refusals(facts: GitFacts, *, spec_path: Path | None = None) -> list[Refusal]:
+def working_tree_refusals(
+    facts: GitFacts,
+    *,
+    spec_path: Path | None = None,
+    dockerfile_path: str | None = None,
+    command: Iterable[str] = (),
+) -> list[Refusal]:
     """What the recorded path needs of a checkout, asked of this one.
 
     ``docs-frank/reference/decisions.md`` states the three in one clause -- the recorded
     path needs a clean tree, a pushed commit and a published image -- and this answers the
     first two. Both are refusals rather than warnings, and the reason is that neither
-    produces an error later: a dirty tree submits the last commit and silently runs code
-    that is not what is on the laptop, and an unpushed commit published no image, so the
-    refusal arrives from the registry naming a digest instead of naming a push.
+    produces an error later: a changed tracked file submits the last commit and silently
+    runs code that is not what is on the laptop, and an unpushed commit published no image,
+    so the refusal arrives from the registry naming a digest instead of naming a push.
 
-    **A SPEC NOBODY HAS EVER COMMITTED IS EXCLUDED, AND THAT IS THE ONE CARVE-OUT.**
+    **A CHANGED TRACKED FILE AND AN UNTRACKED ONE ARE TWO DIFFERENT FACTS, AND ONE REFUSAL
+    ANSWERED BOTH.** ``git status --porcelain`` reports them in one list, this read that
+    list, and every entry got the sentence written for the first: what would run is the last
+    commit rather than what is on your laptop. That is exactly right for an edit to a
+    tracked file, and there is no version of it that is true of an untracked one. A file in
+    no commit was never going to be in the image, so there is no gap between what a
+    submitter thinks will run and what will.
+
+    The evidence is in ``.github/workflows/build-research-image.yml``: the publish job
+    checks the tree out at ``needs.verify.outputs.commit_sha`` and hands that to ``docker
+    build`` as the context. Nothing on a laptop reaches the image by any route, which is why
+    an untracked file cannot make the container run something other than the commit.
+    Refusing for one taught a first-week researcher that the gate is noise, on a Word
+    document, in a repository where everybody has scratch lying around.
+
+    **WHAT AN UNTRACKED FILE CAN STILL DO IS BE MISSING, AND THAT IS WHAT IS REFUSED NOW.**
+    Two of them the tool can name from files it already has open. The registered
+    ``dockerfile_path`` is the build recipe, so in no commit there is no build at all. A path
+    the spec's own command names is the entrypoint or something beside it, so the container
+    starts and the command dies looking for a file -- minutes later, inside AWS, with a
+    worse message than this one. Everything else untracked is reported as a count and
+    refuses nothing: see :func:`untracked_the_image_will_not_see`.
+
+    A module that committed code imports and nobody committed is the case this cannot reach.
+    It would need the codebase parsed, the answer would be a guess, and the sharp instance of
+    it -- the entrypoint itself -- is the one the command already names.
+
+    **A SPEC NOBODY HAS EVER COMMITTED IS EXCLUDED, AND THAT CARVE-OUT IS UNCHANGED.**
     ``check`` writes ``.edullm/run.yaml`` into a registered repository that has none, and
     then refused on the file it had just written. Neither remedy the refusal offers lands:
     ``git stash -u`` deletes the file, the next ``check`` writes it back, and the identical
     refusal prints again. Measured in a fresh ``git clone --depth 1`` of ``OLMo-core`` on
     2026-08-06, running the command ``guides/the-platform.md`` gives -- four minutes into a
     researcher's first day, in the flagship repository, on a file the tool created itself.
-
-    The sentence above it is what makes the carve-out narrow rather than a hole. A dirty
-    tree matters because the container is built from the commit and would run something
-    other than what is on the laptop, and *nothing in the image reads this file*: it is the
-    form, the command it carries travels on the submission and is recorded on the manifest,
-    and the build reads ``.edullm/Dockerfile`` and the source. So the paragraph's own
-    argument does not reach it.
-
-    **THE BOUNDARY IS WHAT GIT ALREADY KNOWS, WHICH IS WHY IT HOLDS ACROSS INVOCATIONS.**
-    Untracked is a file nobody has ever committed; modified is a change to the recipe this
-    repository carries, and the next person to check this commit out gets the recipe without
-    it. Only the first is excluded. Keying on "the file this invocation wrote" would have
-    been the narrower-sounding rule and the wrong one: ``check`` would clear a tree that
-    ``check`` again refuses, and ``submit`` -- which never scaffolds -- would refuse what
-    ``check`` had just passed, which is the divergence this module's header calls the
-    expensive direction.
+    It is excluded before either question below is asked, so no widening of the untracked
+    rule can put it back.
     """
     if not facts.is_a_repository:
         return [
@@ -490,20 +710,35 @@ def working_tree_refusals(facts: GitFacts, *, spec_path: Path | None = None) -> 
             )
         )
     dirty = _dirty_paths_that_are_the_researcher_s(facts, spec_path)
-    if dirty:
-        shown = ", ".join(dirty[:DIRTY_PATH_SAMPLE])
-        more = (
-            f" and {len(dirty) - DIRTY_PATH_SAMPLE} more"
-            if len(dirty) > DIRTY_PATH_SAMPLE
-            else ""
-        )
+    untracked = set(facts.untracked_paths)
+    changed = tuple(entry for entry in dirty if entry not in untracked)
+    if changed:
         refusals.append(
             Refusal(
                 code="uncommitted_changes",
                 detail=(
-                    f"commit or stash {shown}{more}. A submission names a commit and the "
-                    "image is built from it, so what would run is the last commit rather "
-                    "than what is on your laptop."
+                    f"commit or stash {_sampled(changed)}. A submission names a commit and "
+                    "the image is built from it, so what would run is the last commit "
+                    "rather than what is on your laptop. Every path here is a tracked file "
+                    "you have changed, which is the case where those two differ."
+                ),
+            )
+        )
+    needed = tuple(
+        entry
+        for entry in dirty
+        if entry in untracked
+        and _the_run_would_read(entry, dockerfile_path=dockerfile_path, command=command)
+    )
+    if needed:
+        refusals.append(
+            Refusal(
+                code="untracked_file_the_run_needs",
+                detail=(
+                    f"commit {_sampled(needed)}. The image is built from the commit, so a "
+                    "file in no commit is not in the container. These are the untracked "
+                    "paths this run would go looking for: the build recipe, or something "
+                    "the command names. The rest of your untracked files are left alone."
                 ),
             )
         )
@@ -536,6 +771,67 @@ def working_tree_refusals(facts: GitFacts, *, spec_path: Path | None = None) -> 
             )
         )
     return refusals
+
+
+def _sampled(paths: tuple[str, ...]) -> str:
+    """The first few paths and how many more, so a refusal names files and not a git status."""
+    more = (
+        f" and {len(paths) - DIRTY_PATH_SAMPLE} more"
+        if len(paths) > DIRTY_PATH_SAMPLE
+        else ""
+    )
+    return f"{', '.join(paths[:DIRTY_PATH_SAMPLE])}{more}"
+
+
+def _the_run_would_read(
+    path: str, *, dockerfile_path: str | None, command: Iterable[str]
+) -> bool:
+    """Whether an untracked path is one this submission would go looking for.
+
+    Two questions and no third. The registered Dockerfile path is what ``docker build`` is
+    pointed at, and a directory entry standing for it counts: ``git status --porcelain``
+    collapses a wholly untracked ``.edullm/`` to one line, and the recipe inside it is as
+    absent from the commit either way.
+
+    The command is asked as text rather than parsed. What it carries is a shell line, so a
+    path in it may be an argument, inside quotes, or behind ``bash -lc``, and the question
+    worth answering is only whether this run mentions the file at all. It errs toward
+    refusing, which is the safe direction here, and the refusal names the path so a reader
+    can see what matched.
+    """
+    if dockerfile_path is not None and (
+        path == dockerfile_path
+        or (path.endswith("/") and dockerfile_path.startswith(path))
+    ):
+        return True
+    return path in " ".join(command)
+
+
+def untracked_the_image_will_not_see(
+    facts: GitFacts,
+    *,
+    spec_path: Path | None = None,
+    dockerfile_path: str | None = None,
+    command: Iterable[str] = (),
+) -> tuple[str, ...]:
+    """The untracked paths nothing refuses, which is most of them.
+
+    Reported as a count rather than left silent. A researcher who has just been told nothing
+    is wrong with their tree, and who can see four untracked files in it, is owed the
+    sentence that says the image is built from the commit and none of them are in it. That
+    is also the sentence that stops the next question, which is why a run that failed on a
+    missing module was cleared here.
+
+    The split is made by the same two predicates :func:`working_tree_refusals` refuses on,
+    so a path cannot be both counted here and named there.
+    """
+    untracked = set(facts.untracked_paths)
+    return tuple(
+        entry
+        for entry in _dirty_paths_that_are_the_researcher_s(facts, spec_path)
+        if entry in untracked
+        and not _the_run_would_read(entry, dockerfile_path=dockerfile_path, command=command)
+    )
 
 
 def _dirty_paths_that_are_the_researcher_s(
@@ -675,6 +971,11 @@ def resolve_team(
                 f"{submitter} on more than one group, so it cannot say which this run is "
                 f"charged to.{write_it_down}"
             ),
+            asks_for="--team",
+            # The first of the groups the roster does declare, so the copyable line names a
+            # group this submitter is really on. The detail above lists the rest and offers
+            # scratch, which is the choice and stays theirs.
+            example=min(declared),
         ),
     )
 
@@ -794,13 +1095,27 @@ def _check_dataset(
         # `dataset_is_not_a_corpus` on the next run. That is the defect #232 took out of the
         # workload refusal, sitting inside this one, and the fix is the same: the registry
         # answers which names survive every check, so this cannot suggest one that does not.
+        #
+        # AND IT NAMES A VERB NOW, WHICH IT DID NOT AND THE REPOSITORY REFUSAL ALWAYS DID.
+        # The list this prints is names and nothing else: no size, no tokenizer, no licence,
+        # and no sign that five of them reach a container which exits 69 after the machine
+        # has been paid for. A submitter who has just been refused is the reader most likely
+        # to pick the next name off it, and `edullm data` is the only place that says which
+        # of them will start. The second sentence is what the reader needs when the corpus
+        # they want is not on the list at all, and it says what actually happens rather than
+        # inventing a route: `edullm add dataset` opens no pull request, and pretending it
+        # does would send somebody to a refusal.
         offered = ", ".join(registry.names_a_run_may_still_use())
         return [
             Refusal(
                 code="unregistered_dataset",
                 detail=(
                     f"{request.dataset_release!r} is not a release config/datasets.yaml "
-                    f"carries. Registered and still usable: {offered}."
+                    f"carries. Registered and still usable: {offered}. Run edullm data for "
+                    "what is in each of those and which of them will actually start. "
+                    "Registering a new corpus is a person's job rather than a command: it "
+                    "needs facts out of the sealed bucket, so file it with edullm ask "
+                    "--kind dataset-request."
                 ),
             )
         ]
@@ -1043,23 +1358,35 @@ def _build_manifest(
 
 
 def _check_command(manifest: RunManifest, catalog: WorkloadCatalog) -> list[Refusal]:
-    """The three rules about the text of a command, asked against the resolved profile.
+    """Every rule about the text of a command, asked against the resolved profile.
 
     Against the resolved profile rather than the workload's, because ``--compute`` is what
     the run lands on and a device count read off anything else would clear a command that
-    trains on one card and bills for four. The third rule reads the same field for the same
-    reason, one step further along: the instance type behind the resolved profile is what
-    decides whether the devices have bfloat16.
+    trains on one card and bills for four. The bfloat16 rule reads the same field for the
+    same reason, one step further along: the instance type behind the resolved profile is
+    what decides whether the devices have bfloat16.
 
     The catalog is passed rather than closed over because that is where the shapes are, and
     the bfloat16 rule is derived from the instance type each profile declares there so that a
     shape added to that file is covered without an edit anywhere else.
+
+    **THE SPELLING RULE WAS THE FOURTH AND WAS ASKED ONLY BY THE COMPILE STEP, WHICH IS THE
+    FAILURE THIS WHOLE MODULE IS WRITTEN AGAINST.** A sweep asking for one device on a
+    one-device shape has nothing wrong with its process count, so
+    ``require_a_process_for_every_device`` cleared it and the short spelling travelled --
+    through this verb, through the dispatch, into the compile job, and back as a refusal
+    with a queue wait already spent. ``tests/test_check_refuses_what_compile_refuses.py``
+    is what stops a fifth rule arriving the same way.
     """
     refusals: list[Refusal] = []
     try:
         require_a_process_for_every_device(
             command=manifest.command, compute_profile=manifest.compute_profile
         )
+    except SubmissionRefusedError as exc:
+        refusals.append(Refusal(code=type(exc).reason_code, detail=str(exc)))
+    try:
+        require_a_tensor_parallel_flag_vllm_reads(manifest.command)
     except SubmissionRefusedError as exc:
         refusals.append(Refusal(code=type(exc).reason_code, detail=str(exc)))
     try:

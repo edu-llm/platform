@@ -35,6 +35,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any, NamedTuple
+from urllib.parse import quote
 
 import pytest
 import yaml
@@ -47,6 +48,7 @@ from workflow_support import (
     write_stub,
 )
 
+from edullm_platform.cli.actions import registration_compare_url
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
 
@@ -136,12 +138,22 @@ class Result(NamedTuple):
 
 
 def run(tree: Path, capsys: pytest.CaptureFixture[str], /, **overrides: str) -> Result:
+    """One invocation, offline unless a test says otherwise.
+
+    ``--offline`` IS THE DEFAULT HERE AND NOT IN THE TOOL, and the asymmetry is deliberate.
+    Every test in this module is about what gets written into eight files, and none of them
+    is about GitHub; a suite that reached the network to answer those questions would be slow,
+    flaky and dependent on the state of six repositories nobody here controls. The claim reads
+    are exercised against a stubbed ``gh`` in the section at the bottom, where the subject is
+    the reads themselves.
+    """
     arguments = {
         "--repository": "olmo-mixer",
         "--github-repository-id": "1399999999",
         "--dockerfile-path": ".edullm/Dockerfile",
         "--reason": REASON,
         "--project-root": str(tree),
+        "--offline": "",
     }
     arguments.update(overrides)
     code = register_repository.main(
@@ -843,7 +855,10 @@ def test_the_workflow_reaches_no_aws_account_at_all(
     text = WORKFLOW_PATH.read_text(encoding="utf-8")
 
     assert workflow["permissions"] == {"contents": "read"}
-    assert job["permissions"] == {"contents": "write", "pull-requests": "write"}
+    # `pull-requests: write` came off with the `gh pr create` it was for. The organization
+    # refuses that call whatever this workflow asks for, so the grant bought nothing and read
+    # as a dependency the file had. Pushing the branch is the whole of what it writes.
+    assert job["permissions"] == {"contents": "write"}
     assert "id-token" not in job["permissions"]
     assert "aws-actions/configure-aws-credentials" not in text
     assert "AWS_INFRA_DEPLOYER_ROLE_ARN" not in text
@@ -917,7 +932,37 @@ def test_the_dispatch_form_defaults_and_the_tool_defaults_are_the_same_values() 
     assert parser["base_image_digest"] is None
 
 
-def test_the_two_shell_steps_run_end_to_end_and_open_the_pull_request_they_describe(
+def _handover(
+    tree: Path, tmp_path: Path, record: dict[str, Any], stub_bin: Path
+) -> tuple[str, str]:
+    """Run the two shell steps and give back what the second one printed and summarised."""
+    summary = tmp_path / "summary.md"
+    summary.write_text("", encoding="utf-8")
+    environment = {
+        "HOME": str(tmp_path),
+        "RUNNER_TEMP": str(tmp_path),
+        "RECORD": str(tree / "registration.json"),
+        "GH_TOKEN": "stub",
+        "GITHUB_STEP_SUMMARY": str(summary),
+        "PLATFORM_REPOSITORY": "edu-llm/platform",
+        "SERVER_URL": "https://github.com",
+    }
+    job = next(iter(load_workflow(WORKFLOW_PATH)["jobs"].values()))
+    printed = ""
+    for name in (
+        "Commit the registration to a branch of its own",
+        "Push the branch and hand the pull request to a person",
+    ):
+        outcome = run_step_script(
+            step(job, name)["run"], cwd=tree, env=environment, stub_bin=stub_bin
+        )
+        assert outcome.returncode == 0, f"{name}: {outcome.stdout}{outcome.stderr}"
+        printed = outcome.stdout
+    assert record["branch"] in printed
+    return printed, summary.read_text(encoding="utf-8")
+
+
+def test_the_two_shell_steps_run_end_to_end_and_hand_over_the_pull_request_they_describe(
     tree: Path, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     """BOTH STEPS EXECUTED RATHER THAN READ, WHICH IS THE ONLY WAY THREE OF THESE SHOW UP.
@@ -934,8 +979,15 @@ def test_the_two_shell_steps_run_end_to_end_and_open_the_pull_request_they_descr
     an empty index. And the two steps share state only through files under ``RUNNER_TEMP``,
     so the second one works or does not entirely on whether the first wrote what it reads.
 
-    ``gh`` is stubbed and ``origin`` is a bare repository on disk. What is being checked is
-    the shell, not GitHub.
+    ``origin`` is a bare repository on disk. What is being checked is the shell, not GitHub.
+
+    **And since the pull request is handed over rather than opened, what the second step
+    produces is a link and a body rather than a call.** The only dispatch this workflow has
+    ever had pushed its branch and then died on ``GitHub Actions is not permitted to create
+    or approve pull requests``, which is an organization setting that is staying on. So the
+    assertions below are that the branch reached the remote, that the compare URL names it,
+    and that the body reached the job summary whole -- the last of those because it does not
+    fit in the URL and the failure worth catching is a body quietly cut to make it fit.
     """
     # The three files are committed before the registration is written, so what the step
     # meets is the state a dispatch meets, a clean checkout of main with three modified
@@ -958,23 +1010,8 @@ def test_the_two_shell_steps_run_end_to_end_and_open_the_pull_request_they_descr
 
     stub_bin = tmp_path / "bin"
     write_stub(stub_bin, "python", f'exec {shlex.quote(sys.executable)} "$@"')
-    write_stub(stub_bin, "gh", f'printf "%s\\n" "$@" > {shlex.quote(str(tmp_path))}/gh.txt')
 
-    environment = {
-        "HOME": str(tmp_path),
-        "RUNNER_TEMP": str(tmp_path),
-        "RECORD": str(tree / "registration.json"),
-        "GH_TOKEN": "stub",
-    }
-    job = next(iter(load_workflow(WORKFLOW_PATH)["jobs"].values()))
-    for name in ("Commit the registration to a branch of its own", "Open the pull request"):
-        outcome = run_step_script(
-            step(job, name)["run"],
-            cwd=tree,
-            env=environment,
-            stub_bin=stub_bin,
-        )
-        assert outcome.returncode == 0, f"{name}: {outcome.stdout}{outcome.stderr}"
+    printed, summary = _handover(tree, tmp_path, record, stub_bin)
 
     committed = subprocess.run(
         ["git", "-C", str(tree), "show", "--name-only", "--format=%s", "HEAD"],
@@ -988,13 +1025,6 @@ def test_the_two_shell_steps_run_end_to_end_and_open_the_pull_request_they_descr
     assert "stray.txt" not in committed
     assert "registration.json" not in committed
 
-    arguments = (tmp_path / "gh.txt").read_text(encoding="utf-8").splitlines()
-    assert arguments[:2] == ["pr", "create"]
-    assert arguments[arguments.index("--base") + 1] == "main"
-    assert arguments[arguments.index("--head") + 1] == record["branch"]
-    assert arguments[arguments.index("--title") + 1] == record["pull_request_title"]
-    body = Path(arguments[arguments.index("--body-file") + 1])
-    assert body.read_text(encoding="utf-8") == record["pull_request_body"]
     assert (
         subprocess.run(
             ["git", "-C", str(remote), "rev-parse", "--verify", record["branch"]],
@@ -1002,7 +1032,77 @@ def test_the_two_shell_steps_run_end_to_end_and_open_the_pull_request_they_descr
             check=False,
         ).returncode
         == 0
-    ), "the branch was never pushed, so gh pr create would have had no head to open against"
+    ), "the branch was never pushed, so the compare URL would open against nothing"
+
+    compare = f"https://github.com/edu-llm/platform/compare/{record['branch']}?expand=1"
+    assert compare in printed
+    assert compare in summary
+    assert quote(record["pull_request_title"], safe="") in printed
+
+    # The body is around eleven thousand characters, so it cannot be in the link and the
+    # whole of it has to be somewhere. Compared entire rather than by a first line, because
+    # the mutation worth catching is a truncation that still looks like a body.
+    assert record["pull_request_body"].rstrip("\n") in summary
+    assert quote(record["pull_request_body"], safe="") not in printed
+
+
+def test_the_url_the_cli_prints_names_the_branch_this_tool_pushes(
+    tree: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: rename the branch here and leave ``edullm add repository`` saying the old one.
+
+    The two are a copy of one string with nothing connecting them, which is deliberate --
+    ``tools/`` is not importable from an installed CLI, and the alternative is a second API
+    call to read a branch name that is a pure function of the repository being registered.
+    This is the test that makes the copy safe, the same way ``PLATFORM_REPOSITORY`` is.
+    """
+    record = run(tree, capsys).record
+
+    url = registration_compare_url(record["repository"], platform_repository="edu-llm/platform")
+
+    assert url == f"https://github.com/edu-llm/platform/compare/{record['branch']}?expand=1"
+
+
+def test_a_body_too_long_for_a_url_is_neither_carried_nor_cut(
+    tree: Path, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """The measurement, made rather than assumed, and the two directions around it.
+
+    A compare URL can prefill the body, and for a registration it cannot: eleven thousand
+    characters percent-encode into roughly fifteen kilobytes of URL against the eight
+    thousand a server will take before answering ``414 URI Too Long``. The step therefore
+    measures rather than guesses, and this pins both sides of that -- a short body rides in
+    the link, and the real one does not and is not shortened to.
+    """
+    subprocess.run(["git", "init", "--quiet", "--initial-branch=main", str(tree)], check=True)
+    for name, value in (("user.email", "t@example.invalid"), ("user.name", "t")):
+        subprocess.run(["git", "-C", str(tree), "config", name, value], check=True)
+    subprocess.run(["git", "-C", str(tree), "add", "--all"], check=True)
+    subprocess.run(["git", "-C", str(tree), "commit", "--quiet", "--message", "before"], check=True)
+
+    record = run(tree, capsys).record
+    assert len(record["pull_request_body"]) > 8192, (
+        "this test is only interesting while a registration body is too long for a URL"
+    )
+    (tree / "registration.json").write_text(json.dumps(record), encoding="utf-8")
+
+    remote = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "--quiet", "--bare", str(remote)], check=True)
+    subprocess.run(["git", "-C", str(tree), "remote", "add", "origin", str(remote)], check=True)
+
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "python", f'exec {shlex.quote(sys.executable)} "$@"')
+
+    short = "Registers one repository. Nothing else."
+    record_with_a_short_body = {**record, "pull_request_body": short}
+    (tree / "registration.json").write_text(json.dumps(record_with_a_short_body), encoding="utf-8")
+    printed, summary = _handover(tree, tmp_path, record, stub_bin)
+
+    assert f"body={quote(short, safe='')}" in printed
+    assert "Read them and press Create" in summary
+    # Not repeated underneath the link it is already in. The long case is the one that has to
+    # put it somewhere, and this is the assertion that says the two cases really do differ.
+    assert "````markdown" not in summary
 
 
 def test_the_commit_message_is_one_imperative_sentence_with_no_trailing_period(
@@ -1037,3 +1137,372 @@ def test_the_pull_request_body_says_what_the_diff_cannot(
     for item in register_repository.FOLLOW_UPS:
         assert item.summary in body
     assert "Approve workflows to run" in body
+
+
+# --- What the registration reads off the repository it names -------------------------------
+#
+# THE DEFECT THESE COVER IS THAT THERE WAS NOTHING HERE. Four of the eight fields describe a
+# tree this repository does not own and every one of them went into a reviewed file
+# unexamined, which is how `open-instruct-scored-rewards` was registered declaring a
+# Dockerfile against a repository with no `.edullm` directory and reached the submission form
+# with nothing anywhere going red.
+#
+# The reads themselves are tested in `tests/test_registered_dockerfiles.py`, which owns them.
+# What is tested here is the wiring: that the tool asks, that it asks about the entry it is
+# about to write rather than about anything else, that a false claim stops the write, and that
+# a question nobody could put is not mistaken for a question that came back clean.
+
+
+def refuse(reason: str, message: str = "not there") -> object:
+    return register_repository.Finding(
+        reason, message, register_repository.EXIT_MISSING
+    )
+
+
+def could_not_look(reason: str = "registered_dockerfile_not_read") -> object:
+    return register_repository.Finding(
+        reason, "gh auth login", register_repository.EXIT_UNUSABLE
+    )
+
+
+def test_the_claims_are_read_about_the_entry_the_tool_is_about_to_write(
+    tree: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: check the registry as it already stands rather than the new entry.
+
+    A check that read the committed entries would pass on every registration ever made and
+    say nothing about the one being added, which is the only one nobody has looked at. So the
+    subject of the read is asserted, field by field, against the arguments handed in.
+    """
+    seen: list[tuple[object, str]] = []
+
+    def spy(entry: object, organization: str) -> tuple[object, ...]:
+        seen.append((entry, organization))
+        return ()
+
+    monkeypatch.setattr(register_repository, "check_registration", spy)
+
+    arguments = {
+        "--repository": "olmo-mixer",
+        "--github-repository-id": "1399999999",
+        "--dockerfile-path": "images/Dockerfile",
+        "--default-branch": "release",
+        "--build-context": "src",
+        "--reason": REASON,
+        "--project-root": str(tree),
+    }
+    assert (
+        register_repository.main(
+            [part for pair in arguments.items() for part in pair if part]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert len(seen) == 1
+    entry, organization = seen[0]
+    assert entry.repository == "olmo-mixer"
+    assert entry.github_repository_id == 1399999999
+    assert entry.default_branch == "release"
+    assert entry.dockerfile_path == "images/Dockerfile"
+    assert entry.build_context == "src"
+    assert organization == "edu-llm"
+
+
+def test_a_claim_the_repository_falsifies_refuses_the_registration_and_writes_nothing(
+    tree: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE WHOLE POINT, and the assertion that matters is that the tree is untouched.
+
+    A tool that reported the finding and wrote the files anyway would leave the pull request
+    that started this, with the refusal one scroll up a workflow log nobody reads twice.
+    """
+    before = {relative: (tree / relative).read_text(encoding="utf-8") for relative in TOUCHED}
+    monkeypatch.setattr(
+        register_repository,
+        "check_registration",
+        lambda *_: (
+            refuse(
+                "registered_dockerfile_is_absent",
+                "images/Dockerfile is not on release.",
+            ),
+        ),
+    )
+
+    arguments = {
+        "--repository": "olmo-mixer",
+        "--github-repository-id": "1399999999",
+        "--dockerfile-path": "images/Dockerfile",
+        "--reason": REASON,
+        "--project-root": str(tree),
+    }
+    code = register_repository.main(
+        [part for pair in arguments.items() for part in pair if part]
+    )
+    captured = capsys.readouterr()
+
+    assert code == register_repository.EXIT_REFUSED
+    assert "registered_dockerfile_is_absent" in captured.err
+    assert "images/Dockerfile is not on release." in captured.err
+    for relative, text in before.items():
+        assert (tree / relative).read_text(encoding="utf-8") == text, relative
+
+
+def test_every_falsified_claim_is_reported_rather_than_the_first(
+    tree: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One refusal per dispatch is three dispatches to learn three things.
+
+    The caller is a person waiting on a workflow run, and the argument `AGENTS.md` makes
+    about `edullm check` -- list every refusal at once rather than one per attempt -- applies
+    to the tool that opens the pull request too.
+    """
+    monkeypatch.setattr(
+        register_repository,
+        "check_registration",
+        lambda *_: (
+            refuse("registered_dockerfile_is_absent", "no Dockerfile"),
+            refuse("no_workflow_calls_the_platform_build", "no caller"),
+        ),
+    )
+
+    arguments = {
+        "--repository": "olmo-mixer",
+        "--github-repository-id": "1399999999",
+        "--dockerfile-path": ".edullm/Dockerfile",
+        "--reason": REASON,
+        "--project-root": str(tree),
+    }
+    code = register_repository.main(
+        [part for pair in arguments.items() for part in pair if part]
+    )
+    captured = capsys.readouterr()
+
+    assert code == register_repository.EXIT_REFUSED
+    assert "registered_dockerfile_is_absent" in captured.err
+    assert "no_workflow_calls_the_platform_build" in captured.err
+
+
+def test_a_question_nobody_could_put_is_exit_two_rather_than_a_refusal(
+    tree: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: treat an unreadable answer as a falsified claim.
+
+    Reporting an absent Dockerfile on the morning `gh` is logged out sends somebody to open a
+    pull request against a repository whose file is sitting right there. Exit 2 is the
+    tool-could-not-be-driven door, it names `--offline` as the way past, and it still writes
+    nothing -- a claim nobody could check is not a claim that holds.
+    """
+    before = (tree / "config/repositories.yaml").read_text(encoding="utf-8")
+    monkeypatch.setattr(
+        register_repository,
+        "check_registration",
+        lambda *_: (could_not_look(),),
+    )
+
+    arguments = {
+        "--repository": "olmo-mixer",
+        "--github-repository-id": "1399999999",
+        "--dockerfile-path": ".edullm/Dockerfile",
+        "--reason": REASON,
+        "--project-root": str(tree),
+    }
+    code = register_repository.main(
+        [part for pair in arguments.items() for part in pair if part]
+    )
+    captured = capsys.readouterr()
+
+    assert code == register_repository.EXIT_UNUSABLE
+    assert code != register_repository.EXIT_REFUSED
+    assert "registered_dockerfile_not_read" in captured.err
+    assert "--offline" in captured.err
+    assert (tree / "config/repositories.yaml").read_text(encoding="utf-8") == before
+
+
+def test_the_local_checks_run_before_the_network_ones(
+    tree: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A name already registered is a refusal that costs no round trip and no waiting.
+
+    Everything the tool can decide from this tree is free, deterministic and offline, so it
+    is decided first. It also makes a repository-side refusal mean what it says: the entry
+    has already been shown to be writable, so the refusal is about the repository.
+    """
+    asked = False
+
+    def spy(*_: object) -> tuple[object, ...]:
+        nonlocal asked
+        asked = True
+        return ()
+
+    monkeypatch.setattr(register_repository, "check_registration", spy)
+
+    arguments = {
+        "--repository": "OLMo-core",  # already in the committed registry
+        "--github-repository-id": "1306868157",
+        "--dockerfile-path": ".edullm/Dockerfile",
+        "--reason": REASON,
+        "--project-root": str(tree),
+    }
+    code = register_repository.main(
+        [part for pair in arguments.items() for part in pair if part]
+    )
+    capsys.readouterr()
+
+    assert code == register_repository.EXIT_REFUSED
+    assert not asked, "a repeat registration must not cost a read"
+
+
+def test_the_body_names_every_claim_that_was_checked_and_every_one_that_cannot_be(
+    tree: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A CHECK NOBODY IS TOLD ABOUT IS WORTH LESS THAN ONE THEY ARE, and a short list of
+    checks reads as a complete one unless the gaps are printed beside it.
+
+    So the body carries both, and it carries the sentence that stops the registration-time
+    check being mistaken for the audit -- which is how the audit gets deleted as redundant.
+    """
+    monkeypatch.setattr(register_repository, "check_registration", lambda *_: ())
+
+    arguments = {
+        "--repository": "olmo-mixer",
+        "--github-repository-id": "1399999999",
+        "--dockerfile-path": ".edullm/Dockerfile",
+        "--reason": REASON,
+        "--project-root": str(tree),
+    }
+    assert (
+        register_repository.main(
+            [part for pair in arguments.items() for part in pair if part]
+        )
+        == 0
+    )
+    record = json.loads(capsys.readouterr().out)
+    body = record["pull_request_body"]
+    flat = " ".join(body.split())
+
+    for claim, _ in register_repository.CLAIMS:
+        assert claim in flat, claim
+    for claim, _ in register_repository.UNCHECKABLE_CLAIMS:
+        assert claim in flat, claim
+    assert "None of that is a statement about tomorrow" in flat
+    assert "audit.yml" in body
+    assert record["claims_checked"] is True
+    assert record["claims"] == [claim for claim, _ in register_repository.CLAIMS]
+
+
+def test_offline_says_so_in_the_record_and_in_the_body_rather_than_reading_as_checked(
+    tree: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: make `--offline` quiet.
+
+    A flag that skips the checks and leaves the body reading exactly as a checked one turns
+    every claim back into a string nobody put to GitHub while looking like the opposite. The
+    record carries a boolean so a later tool can tell without parsing English.
+    """
+    record = run(tree, capsys).record
+    flat = " ".join(record["pull_request_body"].split())
+
+    assert record["claims_checked"] is False
+    assert record["claims"] == []
+    assert "**Nothing was.**" in flat
+    assert "--offline" in flat
+    assert "open-instruct-scored-rewards" in flat
+    # Still lists what a reviewer now has to read by hand, and still says the audit will ask.
+    for claim, _ in register_repository.CLAIMS:
+        assert claim in flat, claim
+    assert "audit.yml" in flat
+
+
+def test_every_claim_nothing_here_can_check_says_why_and_names_no_credential_as_the_fix() -> None:
+    """WHAT SEPARATES A CHECKABLE CLAIM FROM AN UNCHECKABLE ONE IS THE ENDPOINT, NOT EFFORT.
+
+    `repositories/{id}`, `contents` and `branches` answer a token that is a collaborator on
+    nothing, which is what makes the five checked claims free. `actions/variables`,
+    `actions/secrets`, `hooks`, `keys` and `branches/{branch}/protection` answer 401, and the
+    credential that would open them is a stored collaborator token --
+    `test_the_repository_holds_no_secret_a_branch_could_read` forbids one by name. The rule
+    that would have to be broken to build the live check is the rule the check would be
+    watching.
+
+    So every entry has to say why it cannot be checked rather than merely that it is not, and
+    none of them may propose a stored credential as the answer.
+    """
+    assert register_repository.UNCHECKABLE_CLAIMS
+
+    for claim, detail in register_repository.UNCHECKABLE_CLAIMS:
+        assert claim.strip()
+        assert len(detail.split()) > 20, claim
+        assert detail.rstrip().endswith("."), claim
+
+    joined = " ".join(detail for _, detail in register_repository.UNCHECKABLE_CLAIMS)
+    assert "401" in joined
+    assert "actions/variables" in joined
+    # The two doors an unreadable fact may leave by: a check somewhere it can be made, or an
+    # honest silence. Never a token in this repository.
+    assert "build-research-image.yml" in joined
+    assert "audit" in joined
+
+
+def test_no_claim_is_both_checked_and_declared_uncheckable() -> None:
+    """The two lists go into the same pull request body, so an overlap is a contradiction."""
+    checked = {claim for claim, _ in register_repository.CLAIMS}
+    uncheckable = {claim for claim, _ in register_repository.UNCHECKABLE_CLAIMS}
+
+    assert checked
+    assert uncheckable
+    assert checked & uncheckable == set()
+
+
+def test_the_runbook_and_the_skill_both_name_the_variable_nothing_can_read() -> None:
+    """THE PUREST CASE OF THE CLASS, AND IT WAS DOCUMENTED NOWHERE.
+
+    All six research repositories carry `AWS_ECR_PUBLISHER_ROLE_ARN` as a repository
+    variable, set by hand, with no organization variable behind it -- and before 2026-08-06
+    its only mention in this repository was one example comment in the reusable build. Not the
+    runbook this tool prints, not the skill that writes the caller workflow. A person could
+    follow either to the letter and produce a repository that reads as fully registered and
+    publishes nothing, which is what `edullm-p1` did for days.
+
+    Read from both documents in both directions: the step exists, and it says the thing that
+    makes it a step rather than a default, which is that nothing inherits it.
+    """
+    runbook = " ".join(
+        f"{item.summary} {item.detail}" for item in register_repository.FOLLOW_UPS
+    )
+    skill = " ".join(
+        (
+            PROJECT_ROOT / ".cursor/skills/registering-a-repository/SKILL.md"
+        ).read_text(encoding="utf-8").split()
+    )
+
+    for text, where in ((runbook, "runbook"), (skill, "skill")):
+        assert "AWS_ECR_PUBLISHER_ROLE_ARN" in text, where
+        assert "no organization variable" in text, where
+        assert "per repository" in text, where
+        assert "publisher_role_arn_is_empty" in text, where
+
+
+def test_the_workflow_gives_the_tool_a_token_and_never_asks_it_to_skip_the_reads() -> None:
+    """Mutation: dispatch with `--offline`, or forget the token and let the reads fail.
+
+    The reads are the point of the tool now, and there are two ways to have written them and
+    still ship a registration nobody checked. `--offline` is the loud one; an absent token is
+    the quiet one, because `gh` needs something to present even for a read an anonymous caller
+    could make, and without it every claim leaves by the exit-2 door -- which somebody in a
+    hurry then passes `--offline` to get around.
+
+    The token is on the job rather than on the step, because
+    `test_the_workflow_hands_the_tool_every_input_it_offers` holds that step's `env` equal to
+    the dispatch inputs in both directions and a credential is not an input.
+    """
+    workflow = load_workflow(WORKFLOW_PATH)
+    job = workflow["jobs"]["register"]
+    registration = step(job, "Write the registration")
+
+    assert job["env"]["GH_TOKEN"] == "${{ github.token }}"
+    assert "--offline" not in registration["run"]
+    assert "--offline" not in str(workflow)
+    # No stored credential appears anywhere: the reads are ones a token that is a collaborator
+    # on nothing can make, which is what keeps the whole check free.
+    assert "secrets." not in str(registration)

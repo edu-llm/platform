@@ -267,8 +267,14 @@ REJECTED_SUBMISSIONS: tuple[tuple[AdmissionReason, dict[str, object]], ...] = (
         {"manifest_overrides": {"dataset_release": UNREGISTERED_DATASET}},
     ),
     (
+        # THE DIRECTION THAT MUST STAY REFUSED, WHICH IS NOT THE ONE THIS ROW USED TO NAME.
+        # It was `gpu-exception.yaml` through the lead gate, and under v5 that manifest
+        # classifies as automatic, so the row was really asserting that a lead releasing a
+        # run needing nobody is a mismatch. v6 permits exactly that pair, because the daily
+        # ceiling produces it. The refusal worth keeping a fixture for is the opposite one:
+        # the fan-out below needs a lead and arrived through the gate with no reviewer.
         AdmissionReason.APPROVAL_ENVIRONMENT_MISMATCH,
-        {"manifest_name": OTHER_MANIFEST, "submitter": LEAD, "approver": ADMIN},
+        {"approver": None, "approving_environment": ApprovalEnvironment.AUTOMATIC},
     ),
     (
         AdmissionReason.AUTHORIZATION_DENIED,
@@ -486,6 +492,69 @@ def test_the_class_is_re_derived_rather_than_read_from_the_gate_that_released_it
 
     assert outcome.decision.approval_class is ApprovalClass.ROUTINE
     assert outcome.decision.accepted is (approving_environment is ApprovalEnvironment.LEAD)
+
+
+@pytest.mark.parametrize("released_by", list(ApprovalEnvironment))
+@pytest.mark.parametrize("required", list(ApprovalEnvironment))
+def test_only_one_gate_pair_that_is_not_equal_is_accepted(
+    required: ApprovalEnvironment,
+    released_by: ApprovalEnvironment,
+) -> None:
+    """EVERY PAIR OF GATES, BECAUSE THE ONE THAT MATTERS IS THE ONE NOBODY WRITES A CASE FOR.
+
+    ``satisfies`` is what stands between a submission that needed a person and a run that
+    reached AWS through a gate with no reviewer, so the interesting rows here are the seven
+    that must be refused rather than the two that are accepted. Asserted as a full grid over
+    the enum rather than as the cases somebody thought of, so a fourth environment cannot be
+    added without a decision about every one of its pairs.
+
+    Mutation: replace the body with a strength ordering, which is how this was first
+    written. The row where ``ADMIN`` released a run needing ``LEAD`` flips to accepted, and
+    that refusal is deliberate and predates this change: a run reaching a gate policy did not
+    name means the routing went wrong somewhere, and admission is the only thing that would
+    notice.
+
+    Mutation: return ``self is required``, which is what this was before v6. The one accepted
+    raise flips to refused, and every submission the daily ceiling routes to a lead is
+    refused inside AWS after that lead has already released it.
+    """
+    permitted = released_by is required or (
+        required is ApprovalEnvironment.AUTOMATIC and released_by is ApprovalEnvironment.LEAD
+    )
+
+    assert released_by.satisfies(required) is permitted
+
+
+def test_the_gate_the_ceiling_raises_a_run_to_is_accepted_and_recorded_as_what_it_was() -> (
+    None
+):
+    """The pair the daily ceiling produces, through ``admit`` rather than through the method.
+
+    Mutation: keep the equality check in ``admit``. This is refused with
+    ``approval_environment_mismatch`` after a lead has released it, which is the one outcome
+    worse than having no ceiling at all: it spends an approver on every run the mechanism
+    fires on and then throws that approval away.
+
+    The record is asserted as well as the acceptance, and both halves are the point. This
+    validator re-derives ``automatic`` because it cannot see the ledger that raised the
+    class, and the record says exactly that: automatic, beside ``run-approval-lead``, beside
+    an approver's name. Three true facts that together say a person looked at a run which
+    needed nobody. A record claiming ``routine`` would be admission asserting a
+    classification it did not make and could not check.
+    """
+    outcome = admit_submission(
+        manifest_overrides={"fanout": None},
+        submitter=MEMBER,
+        approver=LEAD,
+        approving_environment=ApprovalEnvironment.LEAD,
+    )
+    decision = outcome.decision
+
+    assert decision.accepted is True
+    assert decision.approval_class is ApprovalClass.AUTOMATIC
+    assert decision.approving_environment is ApprovalEnvironment.LEAD
+    assert decision.authorization is not None
+    assert decision.authorization.approver == LEAD
 
 
 @pytest.mark.parametrize(

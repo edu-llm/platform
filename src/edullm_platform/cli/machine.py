@@ -45,20 +45,24 @@ from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any, Final, TextIO
 
+from edullm_platform.checkpoint_commands import unverified_resume_note
 from edullm_platform.cli.actions import RunFacts, SubmissionRun
 from edullm_platform.cli.configuration import ReviewedConfiguration
 from edullm_platform.cli.lane import placement_said
 from edullm_platform.cli.preflight import DEFERRED_TO_SUBMIT, Preflight, Refusal
 from edullm_platform.cli.presentation import plain_decimal
 from edullm_platform.cli.release import installed_version
+from edullm_platform.corpora import CorporaSnapshot, Corpus
 from edullm_platform.placement import PlacementRecord
 from edullm_platform.run_history import RUNGS
 
 __all__ = [
     "FORMAT_VERSION",
     "check_document",
+    "corpora_document",
     "emit",
     "envelope",
+    "one_corpus_document",
     "refusal_document",
     "status_document",
     "status_listing_document",
@@ -72,7 +76,14 @@ __all__ = [
 #: request had crossed and there are no routine ceilings, so it could only ever be an empty
 #: list, and a key that is always empty is one every caller keeps checking for nothing.
 #: ``history`` arrived in the same document and would not have moved this on its own.
-FORMAT_VERSION: Final = 2
+#:
+#: 3 because ``submission.state`` stopped emitting ``SUBMITTED`` and started emitting
+#: ``ADMITTED`` for the same fact. **A VALUE RENAMED INSIDE A CLOSED SET IS A FIELD CHANGING
+#: MEANING, AND IT IS THE ONE SHAPE OF CHANGE A CALLER CANNOT SEE.** A key that goes away
+#: raises; a value that goes away just stops matching, so a script branching on
+#: ``state == "SUBMITTED"`` keeps parsing, keeps exiting zero, and silently stops finding
+#: any admitted run. This number is the only warning such a caller gets.
+FORMAT_VERSION: Final = 3
 
 
 def envelope(verb: str) -> dict[str, Any]:
@@ -152,9 +163,21 @@ def check_document(
             {"code": refusal.code, "detail": refusal.detail} for refusal in preflight.refusals
         ],
         "deferred": [{"code": code, "detail": detail} for code, detail in DEFERRED_TO_SUBMIT],
+        # The paths this refused nothing for, as paths rather than as the count the paragraph
+        # prints. A caller that wants to know whether the tree held scratch files reads the
+        # list; one that wants to know whether anything was refused reads ``refusals``, and
+        # nothing here appears in both.
+        "untracked": list(preflight.untracked),
         "run_id": None,
         "manifest_sha256": None,
         "manifest": _manifest_of(preflight),
+        # THE THREE THAT SAY WHICH TREE ANSWERED, BESIDE THE MANIFEST RATHER THAN INSIDE IT.
+        # ``manifest`` is ``None`` for every request nobody has finished describing, which is
+        # exactly when a caller most needs to know whether this read the checkout it thinks it
+        # did. ``experiment`` and ``team`` are here for the same reason and were already.
+        "repository": preflight.request.repository or None,
+        "commit_sha": preflight.request.commit_sha or None,
+        "branch": preflight.branch,
         "experiment": preflight.request.experiment or None,
         "team": preflight.request.team or None,
         "team_source": preflight.team_source or None,
@@ -167,8 +190,44 @@ def check_document(
             else preflight.approving_environment.value
         ),
         "cost": _cost_of(preflight),
+        "retries": _retries_of(preflight),
         "history": _history_of(preflight),
         "placement": _placement_of(placement),
+    }
+
+
+def _retries_of(preflight: Preflight) -> dict[str, Any] | None:
+    """What the attempt factor in ``cost`` buys, for a request asking for more than one.
+
+    ``None`` for a single-attempt run, the way ``placement`` is ``None`` for a shape that
+    places promptly: there is no second attempt to describe, and a key that appeared on
+    every check carrying nothing is a key every caller reads past.
+
+    Branch on ``maximum_attempts`` and ``resume_required`` and print ``said``, which is the
+    split ``_history_of`` and ``_placement_of`` already make. The two numbers are reviewed
+    configuration and the sentence is prose this repository rewords.
+
+    ``resume_required`` is the workload profile's declaration and not a finding. Nothing on
+    this platform verifies it against the codebase that would have to honour it, which is
+    what ``said`` exists to state in words -- a caller that reads ``true`` here and concludes
+    a retry resumes has made exactly the inference this field cannot support.
+    """
+    manifest = preflight.manifest
+    if manifest is None:
+        return None
+    said = unverified_resume_note(
+        maximum_attempts=manifest.maximum_attempts,
+        workload_profile=manifest.workload_profile,
+        checkpoint=manifest.checkpoint,
+    )
+    if said is None:
+        return None
+    return {
+        "maximum_attempts": manifest.maximum_attempts,
+        "resume_required": (
+            None if manifest.checkpoint is None else manifest.checkpoint.resume_required
+        ),
+        "said": said,
     }
 
 
@@ -319,6 +378,77 @@ def status_listing_document(runs: Sequence[SubmissionRun]) -> dict[str, Any]:
         "runs": [_submission_of(run) for run in runs],
         "refused": False,
         "refusals": [],
+    }
+
+
+def corpora_document(
+    rows: Sequence[Corpus], *, snapshot: CorporaSnapshot | None
+) -> dict[str, Any]:
+    """Every registered corpus, whatever the human view is showing.
+
+    **``--all`` DOES NOT CHANGE THIS DOCUMENT AND THAT IS DELIBERATE.** The flag decides what
+    a person is shown, and grouping is a reading aid; a caller filtering on ``runs`` should
+    not have to know that a flag exists before its filter is over the whole registry. The
+    verdict is a field, so every split the prose makes is one a caller can make itself.
+
+    ``measured`` is ``None`` for a corpus the reading did not cover, rather than a block of
+    nulls, so "nothing was measured" and "measured and found absent" stay distinguishable.
+    """
+    return {
+        **envelope("data"),
+        "measured_at": None if snapshot is None else snapshot.measured_at.isoformat(),
+        "measured_from": None if snapshot is None else snapshot.measured_from,
+        "corpora": [_corpus_of(row) for row in rows],
+        "refused": False,
+        "refusals": [],
+    }
+
+
+def one_corpus_document(row: Corpus, *, snapshot: CorporaSnapshot | None) -> dict[str, Any]:
+    """One corpus under ``corpora``, so the two documents are one shape read two ways.
+
+    A caller written against the listing works against the detail with no branch, which is
+    the same promise ``check_document`` makes by carrying ``run_id`` as ``None``.
+    """
+    return {**corpora_document([row], snapshot=snapshot)}
+
+
+def _corpus_of(row: Corpus) -> dict[str, Any]:
+    """The registry's facts, the computed verdict, and the reading, kept apart.
+
+    THREE BLOCKS BECAUSE THEY HAVE THREE LIFETIMES. ``registry`` moves when somebody merges a
+    pull request. ``runnability`` is computed on every printing out of the registry and the
+    tokenizer map, so it is never older than the install. ``measured`` is as old as the
+    packaged reading, which is what ``measured_at`` beside it is for. A caller that could not
+    tell them apart would trust a token count as far as it trusts a verdict.
+    """
+    reference = row.reference
+    measurement = row.measurement
+    return {
+        "reference_id": row.reference_id,
+        "dataset_id": reference.dataset_id,
+        "version": reference.version,
+        "uri": reference.uri,
+        "tokenizer": reference.tokenizer,
+        "payload_profile": reference.payload_profile,
+        "manifest_sha256": reference.manifest_sha256,
+        "retired": reference.retired,
+        "current_versions": list(row.current_versions),
+        "runs": row.runnability.will_run,
+        "verdict": row.runnability.verdict,
+        "said": row.runnability.said,
+        "measured": None
+        if measurement is None
+        else {
+            "train_tokens": measurement.train_tokens,
+            "train_tokens_exact": measurement.train_tokens_exact,
+            "shard_dtype": measurement.shard_dtype,
+            "size_bytes": measurement.size_bytes,
+            "licence": measurement.licence,
+            "share_alike": measurement.share_alike,
+            "purpose": measurement.purpose,
+            "note": measurement.note,
+        },
     }
 
 

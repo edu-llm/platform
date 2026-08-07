@@ -79,6 +79,50 @@ def test_a_kind_that_is_not_self_service_is_refused_under_a_code(
     assert runner.calls == []
 
 
+def test_the_dataset_refusal_says_what_a_person_actually_does_and_invents_no_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**THE KIND SOMEBODY MEETS MOST, ANSWERED WITH THE ROUTE RATHER THAN WITH A SHRUG.**
+
+    Mutation: leave it at "file this with edullm ask", which is what it said.
+
+    That sentence is true and it is not followable. ``ask`` requires ``--kind`` from a closed
+    set the refusal did not name, so a reader who did as they were told met argparse's list
+    and had to guess which of four applied to a corpus. This names the one that does.
+
+    **AND IT SAYS PLAINLY THAT REGISTRATION IS A PERSON.** There is no
+    ``register-dataset.yml`` to mirror ``register-repository.yml``, and there cannot easily
+    be one: the entry pins a ``manifest_sha256`` and a ``payload_profile`` read off the
+    corpus's own sealed ``dataset.json``, which means opening a bucket, which means an AWS
+    role this binary holds none of and that fifteen of the thirty-five people on the roster
+    do not have. A refusal that gestured at self-service would send somebody to build a pull
+    request they cannot fill in.
+
+    The third sentence is the one that most often ends the matter. Somebody reaching this
+    frequently is not registering anything; they are looking for a corpus that already exists
+    and did not know there was a verb for it.
+    """
+    code, out, err = invoke(
+        ["add", "dataset"], runner=FakeRunner({}), cwd=tmp_path, monkeypatch=monkeypatch
+    )
+    said = " ".join(err.split())
+
+    assert code == EXIT_REFUSED, out + err
+    assert "edullm ask --kind dataset-request" in said, (
+        "the refusal routes to a verb that requires a --kind it does not name, so its reader "
+        "meets argparse's list and guesses"
+    )
+    assert "edullm data" in said, (
+        "the refusal never mentions the verb that lists what is already registered, which is "
+        "what most readers of it actually want"
+    )
+    assert "config/datasets.yaml" in said, "say where the entry lands"
+    assert "pull request" in said and "no pull request can be opened" in said, (
+        "the refusal has to say that no pull request can be opened from here rather than "
+        "implying a self-service route that does not exist"
+    )
+
+
 def test_the_refusal_names_ask_and_names_no_template(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -244,6 +288,40 @@ def test_add_repository_dispatches_and_names_the_run_it_started(
     assert code == EXIT_OK, out + err
     assert runner.ran("gh", "workflow", "run", REGISTER_WORKFLOW)
     assert "https://github.com/edu-llm/platform/actions/runs/77" in out
+
+
+def test_add_repository_says_where_the_pull_request_gets_opened(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The last step is a person's click, and this is where that person is standing.
+
+    The workflow writes the registration and pushes a branch, and stops there: the
+    organization forbids Actions from opening a pull request, and the single setting that
+    would allow it also allows approving one, which is what protects the reviewed
+    configuration files a registration edits. Saying so only in the workflow log would send
+    somebody out of a terminal and into the Actions UI to hunt for a link.
+
+    It costs no extra call to GitHub, which is the reason it can be said here at all: the
+    branch is derived from the repository name rather than read back off the run. What it
+    cannot carry is the body, which the run composes and prints in its own summary, so the
+    sentence around the link has to say that rather than imply a filled-in form.
+    """
+    runner = register_runner(tmp_path)
+
+    code, out, err = invoke(
+        ["add", "repository", "--reason", "it is a codebase of its own"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "/compare/register/" in out
+    assert "?expand=1" in out
+    # The prose is wrapped to the terminal, so the sentences are read off one line.
+    said = " ".join(out.split())
+    assert "It does not open the pull request" in said
+    assert "paste the body the run's summary prints" in said
 
 
 def test_a_dispatch_nobody_may_make_is_exit_three_and_not_a_refusal(

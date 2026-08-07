@@ -392,14 +392,34 @@ def admit(
             cost=cost,
         )
 
+    # AT LEAST AS STRONG, RATHER THAN EQUAL, AND THE ASYMMETRY IS THE WHOLE OF THE CHECK.
+    # A run that needed a lead and arrived through the gate that asks nobody is refused
+    # here, which is the property this line has always been for and is unchanged. A run
+    # that needed nobody and arrived through a lead is accepted, because a person looking
+    # at a run that required no person cannot be an escalation of anything.
+    #
+    # IT WAS EQUALITY UNTIL v6 AND THE THING THAT MADE EQUALITY WRONG IS THE DAILY CEILING.
+    # `daily_ceiling.class_under_the_ceiling` raises a submission from automatic to routine
+    # when the day's unattended commitments have crossed the bound in config/policy.yaml, so
+    # the compile job sends it to a lead. This validator cannot re-derive that: the ledger it
+    # would have to read is a branch in GitHub rather than anything in AWS, and if it could
+    # reach it, it would read a later day-total than the compile job did minutes earlier and
+    # refuse runs on the difference. Under equality every run the ceiling routed would have
+    # been refused after a lead had already released it, which is the one outcome worse than
+    # not having the ceiling.
+    #
+    # So the ledger-reading half stays on the side that has the ledger, and this side checks
+    # the thing it can check without reading anything: that nobody got a weaker gate than the
+    # facts demand. `classify_request` is still re-derived here from the manifest and the
+    # deployed thresholds, and it still decides the floor.
     required_environment = ApprovalEnvironment.for_approval_class(approval_class)
-    if approving_environment is not required_environment:
+    if not approving_environment.satisfies(required_environment):
         return decide(
             reason=AdmissionReason.APPROVAL_ENVIRONMENT_MISMATCH,
             detail=(
                 f"The submission classifies as {approval_class.value} and so requires the "
-                f"{required_environment.value} gate, but it was released by "
-                f"{approving_environment.value}."
+                f"{required_environment.value} gate or a stronger one, but it was released "
+                f"by {approving_environment.value}."
             ),
             approval_class=approval_class,
             authorization=authorization,

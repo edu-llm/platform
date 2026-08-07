@@ -101,13 +101,21 @@ name: The audit (what the platform recorded, against what is actually there)
 #
 #   registered-dockerfiles — the seventh, and the only one whose subject is other people's
 #     repositories. It reads the research repositories over the GitHub API to ask whether
-#     each registration's dockerfile_path is actually on the branch it names, which is a
-#     question no diff to this repository can answer: a registration goes stale when
-#     somebody else's default branch moves, not when this one does. It is here rather than
-#     on the pull-request path for the same reason as the account checks -- a research
-#     repository renamed at four in the afternoon would turn every unrelated pull request
-#     red -- and because a fork's pull request should not be able to spend this
-#     repository's API budget enumerating an organisation.
+#     each registration is still true of the repository it names: the id resolves to that
+#     name, the branch is there, dockerfile_path is a file on it, build_context is a
+#     directory, and some workflow on that branch calls the platform's reusable build. That
+#     is a question no diff to this repository can answer -- a registration goes stale when
+#     somebody else's branch moves, not when this one does. It is here rather than on the
+#     pull-request path for the same reason as the account checks -- a research repository
+#     renamed at four in the afternoon would turn every unrelated pull request red -- and
+#     because a fork's pull request should not be able to spend this repository's API budget
+#     enumerating an organisation.
+#
+#     tools/register_repository.py asks the identical questions, through this same tool,
+#     before it writes a registration. That is not a duplicate of this job and this job is not
+#     a duplicate of it: one catches the claim that was never true, this one catches the claim
+#     that stopped being true, and only the second can happen without anybody opening a pull
+#     request here. What would be a duplicate is a second reader, which is why there is one.
 #
 #   open-asks — the cheapest, and the only one whose subject is neither the account nor a
 #     repository but the people using this one. It counts the open issues
@@ -255,6 +263,20 @@ name: The audit (what the platform recorded, against what is actually there)
 # contexts are `checks (python 3.12)` and `checks (python 3.13)`,
 # pinned in branch protection.
 
+# THE ONE FAILURE THIS FILE CANNOT REPORT IS ITS OWN SILENCE, AND NOTHING IN THIS REPOSITORY
+# CAN CLOSE IT. GitHub disables a scheduled workflow after sixty days with no repository
+# activity. This is the only cron here, so every live-against-declared check in this file --
+# the approval environments, the registered repositories, the account measurements, the spend
+# -- stops being asked in the same instant, and the job that would notice the schedule being
+# off is one of the jobs that is no longer running. It fails quiet rather than red.
+#
+# It is stated rather than solved. A watchdog somewhere else could see it; a watchdog here
+# cannot, and a second cron in this file would be disabled by the same rule on the same day.
+# What follows from it is that nothing may be described as "checked daily" without that
+# meaning "checked daily while somebody is committing to this repository", and any claim of
+# freshness that rests on this cron inherits the gap. Sixty days of no commits to a platform
+# under active development is itself the anomaly, which is the reason to live with it and not
+# a reason to call it covered.
 on:
   schedule:
     # 05:00 UTC, so a failure is waiting rather than arriving mid-morning.
@@ -331,7 +353,7 @@ jobs:
         run: uv run --frozen python tools/verify_the_gate.py --repository "${{ github.repository }}"
 
   registered-dockerfiles:
-    name: every registration names a Dockerfile that is there
+    name: every registration still describes the repository it names
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -345,18 +367,38 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked
 
-      # WHAT THIS CATCHES IS A REGISTRATION NOTHING EVER LOOKED AT. Seven of a
-      # registration's eight fields are held against something in this repository. The
-      # eighth, dockerfile_path, is a free string that tools/register_repository.py writes
-      # and never checks, and its own help text calls .edullm/Dockerfile a convention -- so
-      # open-instruct-scored-rewards was registered against a directory it does not have,
-      # validated, merged, created its ECR repository, widened the publisher role and
-      # reached the submission form's dropdown with nothing going red anywhere. The file is
-      # only read by docker build inside the caller repository's own workflow, and that
-      # repository has no caller workflow either, so no build ever ran to discover it.
+      # WHAT THIS CATCHES IS A REGISTRATION GOING STALE AFTER NOBODY WAS LOOKING, WHICH IS
+      # WHY IT IS NOT MADE REDUNDANT BY THE CHECK AT REGISTRATION TIME. Five of a
+      # registration's fields describe a tree this repository does not own -- the name, the
+      # GitHub id, the branch, dockerfile_path and build_context -- plus one fact about it
+      # that no field records, which is whether any workflow on that branch calls the
+      # platform's reusable build. tools/register_repository.py now reads all of them through
+      # this same tool before it writes anything, so the registration that produced this job
+      # would be refused today.
       #
-      # The GITHUB_TOKEN is enough because every registered repository is public. It is
-      # read-only here and this job writes nothing.
+      # THAT CATCHES THE TYPO AND CANNOT CATCH THE DRIFT. A branch renamed, a Dockerfile
+      # moved in a refactor, a caller workflow deleted with the CI cleanup it looked like part
+      # of: every one of those happens after the pull request merged, in a repository whose
+      # commits nothing here sees, and turns a registration that was true into one that is
+      # not. No diff to this repository can go red for it. One reader, two callers, and the
+      # questions cannot drift apart because there is only one list of them.
+      #
+      # The case it was written from was open-instruct-scored-rewards, registered on
+      # 2026-08-04 declaring .edullm/Dockerfile against a repository that had no .edullm
+      # directory and no caller workflow -- the second being why the first went unnoticed,
+      # since the Dockerfile is only read by docker build inside a caller that did not exist.
+      # It has had both since 2026-08-05. No repository is named in the tool, deliberately:
+      # a name in a comment is the stale fact this job exists to prevent, one level up.
+      #
+      # It inherits the blind spot at the top of this file. Sixty days without a commit here
+      # and these questions stop being asked, quietly.
+      #
+      # The GITHUB_TOKEN is enough because every registered repository is public, and every
+      # endpoint used answers an anonymous request. It is read-only here and this job writes
+      # nothing. What it cannot reach is anything behind a repository's settings -- the
+      # variables endpoint refuses a token that is not a collaborator, which is why
+      # AWS_ECR_PUBLISHER_ROLE_ARN is checked by the reusable build on the caller's own runner
+      # instead of by anything in this file.
       #
       # No translation of the exit code, for the reason the AWS jobs below give. The tool
       # prints its own reason and its own sentence, and tells a registration that points at
@@ -425,21 +467,36 @@ jobs:
 
       # The whole intent tree, because the report is handed no list of run ids and an
       # intent record is what says a run was submitted under a profile promising
-      # checkpoints. The result tree beside it says how each run ended, which is what
-      # decides whether its prefix is held against anything.
+      # checkpoints. The attempt tree beside it says how each of a run's cells ended, which
+      # is what decides whether its prefix is held against anything, and the result tree
+      # answers for the runs Batch never placed and that therefore have no attempt.
+      #
+      # attempt/ AND NOT result/ ALONE, BECAUSE result/ IS ONE KEY PER RUN AND ONE TERMINAL
+      # EVENT ARRIVES PER CELL. Every child of an array overwrites the same object, so for
+      # a fan-out that record is whichever cell landed last -- which had this job scoping
+      # its question by arrival order on nineteen runs.
       - name: Fetch the intent records
         env:
           LINEAGE_BUCKET: sbsandbox-intern-edullm-lineage
         run: |
           set -euo pipefail
           aws s3 sync "s3://${LINEAGE_BUCKET}/intent/" lineage/intent/ --only-show-errors
-          # All of them or none. A half-synced result tree reads as runs that never
+          # All of them or none, per prefix. A half-synced tree reads as runs that never
           # finished, which would quietly stop asking about the runs that did, so a refusal
           # here removes the directory and the report judges every run as it did before.
-          # The audit reader role does not hold result/ until the stack in infra/README.md
-          # is applied from a laptop, so a denial is the expected answer for now.
+          #
+          # Written out twice rather than looped, and that is load-bearing.
+          # tests/test_audit_workflow.py reads the prefixes this job syncs straight out of
+          # this body and holds them against the grants in infra/iam/audit-reader-role.yaml,
+          # so a shell variable in the URL costs the comparison that stops a sync being
+          # merged ahead of the permission it needs.
+          if ! aws s3 sync "s3://${LINEAGE_BUCKET}/attempt/" lineage/attempt/ --only-show-errors
+          then
+            echo "note: could not read attempt/, so every contracted run will be judged"
+            rm -rf lineage/attempt
+          fi
           if ! aws s3 sync "s3://${LINEAGE_BUCKET}/result/" lineage/result/ --only-show-errors; then
-            echo "note: could not read result/, so every contracted run will be judged"
+            echo "note: could not read result/, so the runs Batch never placed are judged"
             rm -rf lineage/result
           fi
 

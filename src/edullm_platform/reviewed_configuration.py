@@ -131,8 +131,10 @@ class ConfigFile(StrEnum):
     RUN_HISTORY = "run-history.json"
     ASKS = "reports/asks.yaml"
     CHECKPOINT_ACKNOWLEDGEMENTS = "reports/checkpoint-acknowledgements.yaml"
+    CORPORA = "reports/corpora.json"
     LEAD_GATE = "reports/lead-gate.yaml"
     RESEARCHER_LANE = "reports/researcher-lane.yaml"
+    STUDIO = "reports/studio.yaml"
     SURFACES = "reports/surfaces.yaml"
     WORKING_TIER = "reports/working-tier.yaml"
 

@@ -526,12 +526,12 @@ def test_the_built_column_rests_on_the_working_tree_and_on_no_lookup_that_can_fa
     two cases, running on a schedule: the collector is `tools/read_substrate.py`, the day's
     activity is `activity.py` with `tools/report_activity.py`, and the first outside codebase
     is registered in `config/repositories.yaml` on `main`. One `n/a` replaced a fourth, on the
-    onboarding waves, where `built` and `proven` carried the same sentence and three of the
+    onboarding waves, where `built` and `under test` carried the same sentence and three of the
     four stages already said the row was a rollout. Against those, one hand-written `no`
     arrived: the morning message, which had been reading `yes` off `notifications/messages.py`
     and `tests/test_notification_messages.py`. Those are the run-ended post, which is a
     different surface with its own row, so a built thing was counted twice and an unbuilt one
-    reported as built and proven. A person's `no` is the honest cell there, because
+    reported as built and under test. A person's `no` is the honest cell there, because
     `test_every_path_the_manifest_names_is_a_path_that_exists` will not let the manifest name
     the two files that are owed until somebody writes them.
 

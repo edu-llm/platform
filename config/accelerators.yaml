@@ -67,6 +67,15 @@
 # file goes away -- as does `GPUS_BY_INSTANCE_FAMILY` in `precision.py`, which is the same
 # question asked for a different reason and is keyed by family where this is keyed by profile.
 #
+# EDITING THIS FILE IS A NOTIFIER RELEASE, WHICH IT WAS NOT WHEN THE ROWS BELOW WERE FIRST
+# WRITTEN. The approval request names the memory on the machine it is asking somebody to pay
+# for, so this file is packaged verbatim into `notifier/notifier.zip` and a row changed here
+# moves that digest. `tests/test_released_zips.py` refuses the merge until the release is cut
+# or the difference is recorded in `edullm_platform.pending_amendments`. That is a small cost
+# and it was weighed: the five files already in that zip are ones people edit -- a policy bump,
+# a roster change, a nightly reading -- and this one records what silicon carries, which the
+# note above `observed_at` says is not expected to move.
+#
 # UNKNOWN IS NOT A VALUE, AND `cpu-32vcpu` IS WHY THE RULE IS WORTH RESTATING. Every profile in
 # `config/workload-catalog.yaml` appears here exactly once, including the one with no
 # accelerator, and `tests/test_accelerators.py` fails when that stops being true. A file listing
@@ -212,13 +221,15 @@ profiles:
   # directing anybody reaching for the unobtainable gpu-8xh100 to this shape as "eight 80 GB
   # cards", which offers half the memory it names.
   #
-  # IT IS NOT CORRECTED HERE, AND THE REASON IS WORTH KNOWING BEFORE SOMEBODY TRIES. That file
-  # is packaged verbatim into the notifier and validator Lambda zips, so editing one of its
-  # comments moves two released digests and `tests/test_released_zips.py` goes red until both
-  # are re-released with an AWS credential. A pending notifier release from other work was
-  # already recorded when this was written, so the correction also has somebody else's release
-  # to sequence behind. It belongs in a change that is releasing those functions anyway. This
-  # row is the measurement that settles which of the two figures is right.
+  # IT WAS NOT CORRECTED WHEN THIS ROW WAS WRITTEN, AND IT IS CORRECTED NOW. The reason for the
+  # wait is worth keeping, because it is the reason anybody reaching for a one-line comment fix
+  # in that file should expect a red suite: `config/workload-catalog.yaml` is packaged verbatim
+  # into the notifier and validator Lambda zips, so editing one of its comments moves two
+  # released digests and `tests/test_released_zips.py` goes red until both are re-released with
+  # an AWS credential nobody has from a laptop by default. The change that carried the
+  # correction released both, and the janitor besides -- one release per function rather than
+  # one per change, because a zip carries every commit since its last release and not only the
+  # one that prompted it. This row remains the measurement that settles which figure is right.
   - profile: gpu-8xa100
     device: A100
     devices: 8

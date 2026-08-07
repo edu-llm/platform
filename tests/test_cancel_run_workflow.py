@@ -37,6 +37,7 @@ import pytest
 import yaml
 from workflow_support import run_step_script, write_stub
 
+from edullm_platform.cli.actions import read_report_sections
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.execution import ExecutionTargetCatalog
 
@@ -872,6 +873,61 @@ def search_for_the_named_run(
     ), written
 
 
+def as_a_job_log(printed: str, *, step: str) -> str:
+    """One step's output, wrapped the way ``gh run view --log`` hands it to the CLI.
+
+    The job name, the step name, an instant, and then the line. ``read_report_sections``
+    strips those three columns, and the step name is what bounds a section, so a fixture
+    that dropped them would be testing a reader nothing uses.
+    """
+    return "\n".join(
+        f"cancel\t{step}\t2026-08-06T10:58:1{index % 10}.0000000Z {line}"
+        for index, line in enumerate(printed.splitlines())
+    )
+
+
+@pytest.mark.parametrize("refused_queue", ["", "queue-two"])
+def test_a_run_batch_cannot_find_reaches_the_terminal_and_not_only_the_page(
+    refused_queue: str, workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: print these two sentences with no heading over them, as they were.
+
+    **THE ANSWER WAS WRITTEN AND NOBODY AT A TERMINAL COULD SEE IT.** ``edullm status``
+    reads sections out of this job's log by heading, and these were the only two things this
+    workflow prints that carried none -- so an admitted run whose job Batch cannot find
+    dispatched a runner, waited, and handed back "the workflow finished success and its
+    report named no section this verb reads" with a link. Measured on 2026-08-06 against
+    ``run_019fd6b2-6aad``: 73 seconds for no answer at all, on one of the states a
+    researcher most needs a sentence for, because a run that was admitted and has no job is
+    the one that looks like the platform losing their work.
+
+    Both branches are driven, because a complete search that found nothing and one that was
+    partly refused are different facts and the whole point of counting the refusals is that
+    the second must not be spoken as the first.
+
+    Read back through ``read_report_sections`` rather than by looking for the heading in the
+    summary, because the summary is the half that already worked. The seam this closes is
+    between what the workflow writes into its job log and what the CLI can pull back out of
+    it, and only driving both halves shows that.
+    """
+    result, _, summary, outputs = search_for_the_named_run(
+        workflow, tmp_path, refused_queue=refused_queue
+    )
+    read_back = read_report_sections(
+        as_a_job_log(result.stdout, step="Find the job, and read whose it is"),
+        (RUN_ID, "Runs submitted by", "No runs found"),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert outputs["not_running"] == "true"
+    assert f"## {RUN_ID}" in summary
+    assert read_back, (
+        "edullm status can read no section out of this, so a researcher who spent a runner "
+        "on it gets a link and no sentence"
+    )
+    assert "Batch stops listing a job" in read_back or "nobody managed to look" in read_back
+
+
 def test_a_queue_the_account_does_not_have_costs_one_call_and_ends_nothing(
     workflow: dict[str, Any], tmp_path: Path
 ) -> None:
@@ -1009,6 +1065,214 @@ def test_the_list_of_your_own_runs_says_when_it_could_not_be_completed(
     )
     assert "The search was incomplete." in written
     assert "7 of the queue searches were refused" in written
+
+
+#: ``describe-jobs``, answered out of a catalogue the test writes. Bash cannot assemble the
+#: response this step parses, and a stub that returned a fixed document could not vary the
+#: one thing under test here, which is how many jobs come back and whose they are.
+DESCRIBE_JOBS_HELPER = """
+import json
+import os
+import sys
+
+catalog = json.load(open(os.environ["JOBS_JSON"]))
+arguments = sys.argv[1:]
+wanted = []
+if "--jobs" in arguments:
+    for value in arguments[arguments.index("--jobs") + 1 :]:
+        if value.startswith("--"):
+            break
+        wanted.append(value)
+print(json.dumps({"jobs": [catalog[job] for job in wanted]}))
+"""
+
+#: The listing stub, which unlike ``LIST_JOBS_STUB`` has to answer both calls the blank
+#: path makes. One queue and one state hold every job, so the enumeration is exercised
+#: without multiplying the fixture by the seven states it walks.
+LIST_AND_DESCRIBE_STUB = """
+if [[ "${2:-}" == "describe-jobs" ]]; then
+  shift 2
+  exec "${PYTHON_EXECUTABLE}" "${DESCRIBE_HELPER}" "$@"
+fi
+queue=""
+state=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "--job-queue" ]]; then
+    shift
+    queue="$1"
+  fi
+  if [[ "$1" == "--job-status" ]]; then
+    shift
+    state="$1"
+  fi
+  shift
+done
+if [[ "${queue}" == "${HOLDING_QUEUE}" && "${state}" == "${HOLDING_STATE}" ]]; then
+  cat "${JOB_IDS_FILE}"
+fi
+"""
+
+
+def a_listed_job(index: int, *, submitter: str | None, status: str = "SUCCEEDED") -> dict[str, Any]:
+    """One row of the fixture. ``createdAt`` ascends with the index, so a low index is old."""
+    job: dict[str, Any] = {
+        "jobId": f"job-{index:04d}",
+        "jobName": f"run_019fd602-{index:04x}",
+        "status": status,
+        "jobQueue": "arn:aws:batch:us-east-1:123456789012:job-queue/queue-one",
+        "createdAt": 1_754_400_000_000 + index * 60_000,
+    }
+    if submitter is not None:
+        job["tags"] = {"edullm:submitter": submitter}
+    return job
+
+
+def list_my_own_runs(
+    workflow: dict[str, Any], tmp_path: Path, jobs: list[dict[str, Any]]
+) -> tuple[Any, str]:
+    """Run the blank-dispatch listing over a fixed set of jobs, and report what it printed."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    checkout(tmp_path)
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "uv", UV_PASSTHROUGH)
+    write_stub(stub_bin, "aws", LIST_AND_DESCRIBE_STUB)
+    helper = tmp_path / "describe_jobs.py"
+    helper.write_text(DESCRIBE_JOBS_HELPER, encoding="utf-8")
+    catalog = {job["jobId"]: job for job in jobs}
+    (tmp_path / "jobs.json").write_text(json.dumps(catalog), encoding="utf-8")
+    (tmp_path / "job-ids.txt").write_text(
+        "".join(f"{job}\n" for job in catalog), encoding="utf-8"
+    )
+    (tmp_path / "queues.txt").write_text(
+        "".join(f"{queue}\n" for queue in THREE_QUEUES), encoding="utf-8"
+    )
+    summary = tmp_path / "summary.md"
+    summary.touch()
+    (tmp_path / "step-output.txt").touch()
+
+    result = run_step_script(
+        workflow_step(workflow, "Work out which run")["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "PYTHON_EXECUTABLE": sys.executable,
+            "PYTHONPATH": str(PROJECT_ROOT / "src"),
+            "GITHUB_OUTPUT": str(tmp_path / "step-output.txt"),
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "RUN_ID": "",
+            "ACTOR": "philote-dev",
+            "ASKED_QUEUES": str(tmp_path / "asked.txt"),
+            "HOLDING_QUEUE": "queue-one",
+            "HOLDING_STATE": "RUNNING",
+            "JOB_IDS_FILE": str(tmp_path / "job-ids.txt"),
+            "JOBS_JSON": str(tmp_path / "jobs.json"),
+            "DESCRIBE_HELPER": str(helper),
+        },
+        stub_bin=stub_bin,
+    )
+    return result, summary.read_text(encoding="utf-8")
+
+
+def test_a_listing_longer_than_the_table_says_what_the_table_left_out(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Executed. Mutation: drop the sentence and keep the slice, which is how this shipped.
+
+    A blank dispatch on 2026-08-06 omitted ``run_019fd602-4e05`` and said nothing, and the
+    named search found it ``RUNNING`` three hours and twenty minutes in. The cap is why:
+    the table is the twenty newest by ``createdAt``, the enumeration searches SUCCEEDED and
+    FAILED as well as the live states, and a run several hours old therefore sorts below
+    every short job finished since. So the row the cap drops first is a long-running job,
+    which is the row somebody dispatching a blank listing is most often looking for.
+
+    The oldest job here is the only ``RUNNING`` one, which is that shape exactly. What is
+    asserted is not that it appears -- the cap is kept deliberately -- but that the reader
+    is told the table is a slice and how many rows are under it.
+    """
+    jobs = [a_listed_job(0, submitter="philote-dev", status="RUNNING")]
+    jobs += [a_listed_job(index, submitter="philote-dev") for index in range(1, 26)]
+
+    result, summary = list_my_own_runs(workflow, tmp_path, jobs)
+
+    assert result.returncode == 0, result.stderr
+    assert "This is the 20 newest of 26 and not all of them." in summary
+    assert "6 more are yours and are not above" in summary
+    assert jobs[0]["jobName"] not in summary, (
+        "the fixture no longer exercises the cap, so this asserts nothing about it"
+    )
+
+
+def test_a_listing_that_fits_the_table_claims_nothing_was_left_out(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: print the slice sentence unconditionally.
+
+    A warning that is always there is one nobody reads, and this one has to mean something
+    the two hundred ordinary dispatches do not carry. Twenty is the boundary and is the
+    value worth driving, because ``>`` and ``>=`` are the same edit away.
+    """
+    jobs = [a_listed_job(index, submitter="philote-dev") for index in range(20)]
+
+    result, summary = list_my_own_runs(workflow, tmp_path, jobs)
+
+    assert result.returncode == 0, result.stderr
+    assert "not all of them" not in summary
+    assert "Runs submitted by" in summary
+
+
+def test_a_job_with_no_submitter_tag_is_counted_out_loud_rather_than_dropped(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Executed. Mutation: keep the filter and drop the counter, which is how this shipped.
+
+    Leaving an untagged job out is right, and the step comment argues it: a list offered as
+    "your runs" that quietly included somebody else's would be worse. What was missing is
+    that the reader could not tell the difference between a job nobody looked for and a job
+    that was found and could not be attributed. Both read as absence.
+
+    The second half is the branch that matters most, because "No runs found" is the answer
+    a person gets when they already suspect something is wrong -- and every job here is one
+    the enumeration listed.
+    """
+    mixed = [a_listed_job(0, submitter="philote-dev")]
+    mixed += [a_listed_job(index, submitter=None) for index in range(1, 4)]
+
+    result, summary = list_my_own_runs(workflow, tmp_path, mixed)
+
+    assert result.returncode == 0, result.stderr
+    assert "3 listed job(s) carry no submitter tag" in summary
+    assert "Runs submitted by" in summary
+
+    result, summary = list_my_own_runs(
+        workflow, tmp_path / "none-of-them-mine", [a_listed_job(0, submitter=None)]
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "1 listed job(s) carry no submitter tag" in summary
+    assert "No runs found" in summary, "the empty branch must still be reached"
+
+
+def test_a_job_belonging_to_somebody_else_is_not_counted_as_unattributed(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: count every job that is not the actor's, rather than only the untagged.
+
+    Every queue is enumerated whole, so the listing sees the whole platform's jobs and most
+    of them are somebody else's by construction. Counting those would put a four-figure
+    number in front of a researcher on every dispatch and say nothing, which is the way a
+    real warning gets trained out of a reader.
+    """
+    jobs = [
+        a_listed_job(0, submitter="philote-dev"),
+        a_listed_job(1, submitter="ericrcwu001"),
+        a_listed_job(2, submitter="ericrcwu001"),
+    ]
+
+    result, summary = list_my_own_runs(workflow, tmp_path, jobs)
+
+    assert result.returncode == 0, result.stderr
+    assert "carry no submitter tag" not in summary
+    assert "Runs submitted by" in summary
 
 
 # --------------------------------------------------------------------------------------

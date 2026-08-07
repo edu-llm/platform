@@ -77,6 +77,35 @@ this needs a home of its own rather than a workload in an existing one, and the 
 asking is the only person who knows. It is wrapped into a comment above the entry, so the
 answer arrives in the file it is about rather than in a pull request description that stops
 being readable once the branch is deleted.
+
+**IT USED TO WRITE CLAIMS ABOUT SOMEBODY ELSE'S REPOSITORY AND CHECK NONE OF THEM.** Four of
+the eight fields describe a tree this repository does not own -- the name, the GitHub id, the
+branch and ``dockerfile_path`` -- and every one of them was a string that went into the file
+unexamined. ``open-instruct-scored-rewards`` was registered on 2026-08-04 declaring
+``.edullm/Dockerfile`` against a repository with no ``.edullm`` directory, and the
+registration validated, merged, created its ECR repository, widened the publisher role and
+reached the submission form with nothing anywhere going red. The claim then became an
+authority: a tool's docstring asserted it, a status board carried the team as blocked, two
+people were listed as blocked who were not, and an agent was briefed to write a Dockerfile
+over one that had by then existed for a day and published five images. Every step of that
+was reasonable given the step before it, and the whole chain hangs off a string nobody put
+to GitHub. Those four claims and one more -- that some workflow on the branch calls the
+platform's reusable build, without which no image can ever be published -- are now read off
+the repository before anything is written, through the same
+``tools/verify_registered_dockerfiles.py`` the daily audit runs. One list of questions, asked
+in two places.
+
+**A CHECK HERE IS WORTH HAVING AND IS NOT SUFFICIENT, AND CONFUSING THE TWO IS HOW THE AUDIT
+GETS DELETED.** Everything below sees the repository once, at the moment somebody dispatches
+this. A branch renamed next week, a Dockerfile deleted next month, a repository made private
+or a caller workflow dropped are all invisible to it by construction, and they are the
+majority of the ways a registration goes wrong -- ``edullm-p1`` was registered on 2026-08-04
+and no registration-time check of any kind would have said anything about it. The
+``registered-dockerfiles`` job on ``.github/workflows/audit.yml`` is what re-asks these
+questions every morning, and nothing here replaces it.
+
+**AND SOME CLAIMS CANNOT BE CHECKED FROM HERE AT ALL**, which is stated in
+:data:`UNCHECKABLE_CLAIMS` rather than left as a silence a reader would take for coverage.
 """
 
 from __future__ import annotations
@@ -94,6 +123,21 @@ from typing import Any
 
 import yaml
 from pydantic import ValidationError
+
+# THE AUDIT'S READER RATHER THAN A SECOND ONE, AND THE IMPORT DIRECTION IS DELIBERATE. The
+# questions a registration has to answer about somebody else's repository and the questions
+# the 05:00 audit re-asks are the same questions, and two spellings of them would drift the
+# first time either grew a claim. This is the caller; that module owns the reads, the
+# machine-readable reasons and the sentence each finding prints. `tools/` is on `sys.path`
+# for a script run out of it and for the test modules that add it, which is how
+# `tools/visibility_board.py` and four others already import their siblings.
+from verify_registered_dockerfiles import (
+    CLAIMS,
+    DEFAULT_ORGANIZATION,
+    EXIT_MISSING,
+    Finding,
+    check_registration,
+)
 
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.repository_registry import (
@@ -173,6 +217,74 @@ ECR_REPOSITORY_ARN = (
 #: refused by IAM when CloudFormation tries to create it. Checked here so the refusal
 #: arrives while somebody is still holding the decision rather than during a deploy.
 DEPLOYABLE_ECR_PREFIX = "sbsandbox-intern-edullm-"
+
+#: EVERY CLAIM A REGISTRATION MAKES THAT NOTHING HERE CAN PUT TO ANYBODY, AND WHY EACH.
+#:
+#: Written down because the alternative is a silence a reader takes for coverage. Five claims
+#: are read off the repository before anything is written -- ``verify_registered_dockerfiles
+#: .CLAIMS`` names them -- and a reviewer who sees a check on those and no mention of these
+#: will reasonably conclude the whole entry was verified.
+#:
+#: WHAT SEPARATES THESE FROM THE FIVE IS THE ENDPOINT AND NOT THE EFFORT. A public repository
+#: answers `repositories/{id}`, `contents` and `branches` to a token that is a collaborator on
+#: nothing, which is what makes the five free. `actions/variables`, `actions/secrets`, `hooks`,
+#: `keys` and `branches/{branch}/protection` answer 401 to that same token, and the credential
+#: that would open them is a stored collaborator token --
+#: ``test_the_repository_holds_no_secret_a_branch_could_read`` and
+#: ``test_phase_two_introduced_no_credential_at_all`` forbid one by name, and forbid it
+#: precisely because a repository secret is readable from any branch. The rule that would have
+#: to be broken to build the live check is the rule the check would be watching. So for
+#: anything behind those endpoints the honest ceiling is a dated capture with a clock on its
+#: age, which is the arrangement ``config/reports/lead-gate.yaml`` already describes for the
+#: lead team, and the cheaper answer is to move the check to where the value already is.
+UNCHECKABLE_CLAIMS: tuple[tuple[str, str], ...] = (
+    (
+        "the ECR repository exists",
+        (
+            "It does not, and that is the design rather than a gap. Every ECR repository in "
+            "this account is a CloudFormation resource in sbsandbox-intern-edullm-phase1-ecr, "
+            "created by deploy-phase1-ecr.yml when this pull request merges, so at "
+            "registration time the honest answer is that it is declared and not yet applied. "
+            "What is checked instead is everything that decides whether the deploy will "
+            "succeed: the name is inside the deployer's grant, no other registration already "
+            "claims it, the template declares it with an output, and all six roles that push "
+            "or pull can reach it."
+        ),
+    ),
+    (
+        "AWS_ECR_PUBLISHER_ROLE_ARN is set in the repository being registered",
+        (
+            "Unreadable from here and moved rather than dropped. The variable is a repository "
+            "variable in each research repository, set by hand, and there is no organization "
+            "variable behind it, so registering a repository does not give it one and a value "
+            "in one repository says nothing about another. A token scoped to edu-llm/platform "
+            "gets 401 from repos/{owner}/{repo}/actions/variables and the endpoint refuses an "
+            "anonymous read outright. The check is in the first step of every job in "
+            "build-research-image.yml instead, which runs on the caller's own runner where "
+            "the value already is, and refuses an empty publisher_role_arn by name rather "
+            "than letting it become a credential error. That is where edullm-p1's days of "
+            "publishing nothing would have been one red build with the variable's name in it."
+        ),
+    ),
+    (
+        "the repository's branch protection, webhooks and deploy keys are what this expects",
+        (
+            "Behind the same 401 as the variables, and deliberately not made into a stored "
+            "credential for it. Nothing in a registration currently asserts anything about "
+            "these, so this entry is here to say that the silence is a silence and not a "
+            "pass."
+        ),
+    ),
+    (
+        "a build of this registration has ever succeeded",
+        (
+            "Not a claim registration can make at all: the first build happens after the "
+            "merge, on a push to the research repository. The five claims that are checked "
+            "are the preconditions of that build rather than a substitute for it, and the "
+            "registered-dockerfiles job on the daily audit is what keeps asking."
+        ),
+    ),
+)
 
 #: A repository name reaches three places that are not YAML strings in a vacuum. It is
 #: written unquoted into the registry, interpolated into an OIDC subject pattern in a trust
@@ -275,6 +387,29 @@ FOLLOW_UPS: tuple[FollowUp, ...] = (
             "edullm-data shipped in for a day."
         ),
         paths=("infra/iam/ecr-publisher-role.yaml", "infra/README.md"),
+    ),
+    FollowUp(
+        summary=(
+            "Set AWS_ECR_PUBLISHER_ROLE_ARN as a repository variable on the repository "
+            "being registered"
+        ),
+        detail=(
+            "`gh variable set AWS_ECR_PUBLISHER_ROLE_ARN --repo edu-llm/<name> --body "
+            "<the ARN infra/README.md records for sbsandbox-intern-edullm-ecr-publisher>`, "
+            "or Settings then Secrets and variables then Actions then Variables. **It is per "
+            "repository and set by hand, and there is no organization variable behind it**, "
+            "so this is not inherited and the five repositories that already have one say "
+            "nothing about the sixth. Until 2026-08-06 this step appeared nowhere: not in "
+            "this runbook, not in `.cursor/skills/registering-a-repository/`, and the "
+            "variable's only mention in this repository was one example comment. That is why "
+            "`edullm-p1` sat registered and publishing nothing for days. Nothing here can "
+            "check it for you -- a token scoped to this repository is refused by the "
+            "variables endpoint of every other repository -- so the check is the first step "
+            "of every job in `build-research-image.yml`, which sees the value the caller "
+            "passed and refuses an empty one by name. Getting this wrong is now one red "
+            "build saying `publisher_role_arn_is_empty` rather than a silence."
+        ),
+        paths=(".github/workflows/build-research-image.yml", "infra/README.md"),
     ),
     FollowUp(
         summary="Re-capture the amended roles, or record the gap while it is open",
@@ -923,6 +1058,50 @@ def refuse_a_repeat(registry: RepositoryRegistry, entry: RegisteredRepository) -
             )
 
 
+def refuse_a_repository_that_is_not_as_described(
+    entry: RegisteredRepository, organization: str
+) -> None:
+    """Put every answerable claim to GitHub, and refuse the registration if any is false.
+
+    THE HOLE THIS CLOSES IS ``dockerfile_path`` AND THE CLASS IT BELONGS TO IS BIGGER THAN
+    ONE FIELD. A registration is a set of assertions about a tree this repository does not
+    own, and until now every one of them was a string that went into a reviewed file
+    unexamined. The reads are made through ``tools/verify_registered_dockerfiles.py`` rather
+    than through a second reader here, so the questions asked at registration time and the
+    questions the 05:00 audit re-asks cannot drift apart.
+
+    EVERY FINDING IS REPORTED AT ONCE. The caller is a person waiting on a workflow dispatch,
+    and one refusal per dispatch is three dispatches to learn three things -- the argument
+    ``AGENTS.md`` makes about ``edullm check`` applies to the tool that opens the pull
+    request as well.
+
+    A READ THAT COULD NOT BE MADE IS NOT A PASS, and it is not a refusal either. It leaves by
+    the ``SourceUnusable`` door, which is exit 2 and means the tool could not be driven,
+    because reporting an absent Dockerfile on the morning ``gh`` is logged out sends somebody
+    to open a pull request against a repository whose file is sitting right there. ``--offline``
+    is the way past it, and it is loud: the record says nothing was read and the pull request
+    body says which claims nobody checked.
+    """
+    findings: tuple[Finding, ...] = check_registration(entry, organization)
+    if not findings:
+        return
+
+    refusals = [item for item in findings if item.code == EXIT_MISSING]
+    if refusals:
+        raise RegistrationRefused(
+            f"{entry.repository} is not the repository this registration describes. "
+            + " ".join(f"[{item.reason}] {item.message}" for item in refusals)
+        )
+    raise SourceUnusable(
+        "repository_claims_not_read:"
+        + ",".join(item.reason for item in findings)
+        + ". Nothing was written, because a claim nobody could check is not a claim that "
+        "holds. Pass --offline to register anyway, which says in the record and in the pull "
+        "request body that these were not read. Details: "
+        + " ".join(item.message for item in findings)
+    )
+
+
 def plan(
     root: Path, entry: RegisteredRepository, workload: WorkloadProfile, reason: str
 ) -> list[Edit]:
@@ -1191,12 +1370,78 @@ def commit_message(entry: RegisteredRepository, reason: str) -> str:
     )
 
 
+def claims_section(entry: RegisteredRepository, *, checked: bool) -> list[str]:
+    """What was read off the repository, what was not, and what nothing here can read.
+
+    THE SECTION EXISTS BECAUSE A CHECK NOBODY KNOWS ABOUT IS WORTH LESS THAN ONE THEY DO.
+    A reviewer's question about a registration is "is any of this true", and before tonight
+    the honest answer was that nobody had asked. Printing the claims that were verified is
+    half of it; printing the ones that structurally cannot be is the half that stops a
+    reviewer reading a short list as a complete one.
+
+    It also says plainly that none of it is a promise about tomorrow, because that is the
+    sentence whose absence is how a registration-time check gets mistaken for the audit and
+    the audit gets deleted as redundant.
+    """
+    lines = ["## What was checked against the repository itself", ""]
+    if checked:
+        lines += [
+            (
+                f"Read off `{DEFAULT_ORGANIZATION}/{entry.repository}` before any file here "
+                "was written, over the public API and with no credential of any kind:"
+            ),
+            "",
+        ]
+        lines += [f"- {claim}" for claim, _ in CLAIMS]
+        lines += [
+            "",
+            (
+                "**None of that is a statement about tomorrow.** Each was true at the moment "
+                "this pull request was opened, and a branch renamed next week, a Dockerfile "
+                "deleted next month or a caller workflow dropped are all invisible to a check "
+                "that runs once. The `registered-dockerfiles` job on `.github/workflows/"
+                "audit.yml` re-asks these same questions every morning and is what catches "
+                "those; it is not made redundant by anything above."
+            ),
+        ]
+    else:
+        lines += [
+            (
+                "**Nothing was.** `--offline` was passed, so every claim this registration "
+                "makes about the repository it names is a string nobody put to GitHub -- "
+                f"including `dockerfile_path: {entry.dockerfile_path}` and the branch "
+                f"`{entry.default_branch}` it is expected on. That is the exact state "
+                "`open-instruct-scored-rewards` was registered in on 2026-08-04, so read "
+                "each of these against the repository before approving:"
+            ),
+            "",
+        ]
+        lines += [f"- {claim}" for claim, _ in CLAIMS]
+        lines += [
+            "",
+            (
+                "The `registered-dockerfiles` job on `.github/workflows/audit.yml` will read "
+                "them at 05:00 whether anybody does, so a false one here is a red audit "
+                "tomorrow rather than a silence."
+            ),
+        ]
+    lines += [
+        "",
+        "And these are claims nothing on this side can check at all:",
+        "",
+    ]
+    lines += [f"- **{claim}** {detail}" for claim, detail in UNCHECKABLE_CLAIMS]
+    lines += [""]
+    return lines
+
+
 def pull_request_body(
     entry: RegisteredRepository,
     workload: WorkloadProfile,
     reason: str,
     *,
     base_known: bool,
+    checked: bool,
 ) -> str:
     """What a reviewer needs that the diff does not say, and nothing the diff already says.
 
@@ -1237,6 +1482,7 @@ def pull_request_body(
             "when this merges. Nothing reached the account to open this pull request."
         ),
         "",
+        *claims_section(entry, checked=checked),
         "## Before this repository can publish",
         "",
     ]
@@ -1326,6 +1572,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--build-context", default=".")
     parser.add_argument("--project-root", type=Path, default=PROJECT_ROOT)
     parser.add_argument(
+        "--organization",
+        default=DEFAULT_ORGANIZATION,
+        help="the GitHub organization the repository being registered lives in, which is "
+        "what the claims above are read against",
+    )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="do not ask GitHub whether this registration's claims about the repository are "
+        "true. Every one of them then goes into a reviewed file unexamined, which is how a "
+        "registration naming a Dockerfile nobody had written reached the submission form. "
+        "The record and the pull request body both say the claims were not read.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="print the same record and write nothing",
@@ -1337,6 +1597,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     options = build_parser().parse_args(argv)
     root = Path(options.project_root)
 
+    checked = not bool(options.offline)
     try:
         registry = load_yaml(root / REGISTRY_PATH, RepositoryRegistry)
         entry = build_entry(options, registry)
@@ -1344,6 +1605,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         workload = build_workload(options, entry)
         edits = plan(root, entry, workload, str(options.reason))
         verify(edits, entry, workload)
+        # LAST, AND AFTER EVERY LOCAL CHECK. Everything above is free, deterministic and
+        # offline, so a tree this tool cannot edit or a name already registered is reported
+        # without spending a network round trip on it -- and a registration refused here has
+        # already been shown to be writable, which is what makes the refusal about the
+        # repository rather than about anything else.
+        if checked:
+            refuse_a_repository_that_is_not_as_described(entry, str(options.organization))
     except RegistrationRefused as refusal:
         print(f"registration_refused: {refusal}", file=sys.stderr)
         return EXIT_REFUSED
@@ -1375,6 +1643,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "base_image_already_registered": base_known,
                 "branch": f"register/{entry.repository.lower()}",
                 "commit_message": commit_message(entry, reason),
+                # WHICH CLAIMS WERE PUT TO GITHUB, IN THE RECORD RATHER THAN ONLY IN THE
+                # PROSE. The workflow writes the pull request body out of this document, and
+                # anything reading the record afterwards -- a person, a later tool -- needs
+                # to be able to tell a registration whose claims were verified from one
+                # registered with `--offline` without parsing English.
+                "claims_checked": bool(checked),
+                "claims": [claim for claim, _ in CLAIMS] if checked else [],
+                "claims_nothing_here_can_check": [
+                    claim for claim, _ in UNCHECKABLE_CLAIMS
+                ],
                 "dry_run": bool(options.dry_run),
                 "follow_ups": [
                     {"summary": item.summary, "detail": item.detail}
@@ -1382,7 +1660,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ],
                 "paths": [edit.path.as_posix() for edit in edits],
                 "pull_request_body": pull_request_body(
-                    entry, workload, reason, base_known=base_known
+                    entry, workload, reason, base_known=base_known, checked=checked
                 ),
                 "pull_request_title": f"Register {entry.repository}",
                 "workload_profile": workload.name,

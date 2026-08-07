@@ -185,6 +185,13 @@ STACK_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
     ("sbsandbox-intern-edullm-notifications", "infra/notifications.yaml"),
     ("sbsandbox-intern-edullm-scratch", "infra/scratch-bucket.yaml"),
     ("sbsandbox-intern-edullm-lane-instance-iam", "infra/iam/lane-instance-role.yaml"),
+    # The one identity allowed to put an approval request on the notifier queue. Its trust
+    # pins .github/workflows/notify-approval-requested.yml rather than submit-run.yml, for
+    # the reason that template sets out at length.
+    (
+        "sbsandbox-intern-edullm-notifier-publisher-iam",
+        "infra/iam/notifier-publisher-role.yaml",
+    ),
 )
 
 

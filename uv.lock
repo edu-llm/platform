@@ -8,8 +8,8 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "edullm",
     "edullm-client",
-    "edullm-platform",
 ]
 
 [[package]]
@@ -191,37 +191,8 @@ wheels = [
 ]
 
 [[package]]
-name = "edullm-client"
-version = "0.1.0"
-source = { editable = "client" }
-
-[package.optional-dependencies]
-s3 = [
-    { name = "boto3" },
-]
-wandb = [
-    { name = "wandb" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "boto3", marker = "extra == 's3'" },
-    { name = "wandb", marker = "extra == 'wandb'" },
-]
-provides-extras = ["wandb", "s3"]
-
-[[package]]
-name = "edullm-data"
-version = "0.5.0"
-source = { git = "https://github.com/edu-llm/edullm-data?rev=38bf831a6c3f445e394784018441fd59288b876c#38bf831a6c3f445e394784018441fd59288b876c" }
-dependencies = [
-    { name = "boto3" },
-    { name = "numpy" },
-]
-
-[[package]]
-name = "edullm-platform"
-version = "3.8.0"
+name = "edullm"
+version = "4.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },
@@ -259,6 +230,35 @@ dev = [
     { name = "types-pyyaml" },
 ]
 reader = [{ name = "edullm-data", git = "https://github.com/edu-llm/edullm-data?rev=38bf831a6c3f445e394784018441fd59288b876c" }]
+
+[[package]]
+name = "edullm-client"
+version = "0.1.0"
+source = { editable = "client" }
+
+[package.optional-dependencies]
+s3 = [
+    { name = "boto3" },
+]
+wandb = [
+    { name = "wandb" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "boto3", marker = "extra == 's3'" },
+    { name = "wandb", marker = "extra == 'wandb'" },
+]
+provides-extras = ["wandb", "s3"]
+
+[[package]]
+name = "edullm-data"
+version = "0.5.0"
+source = { git = "https://github.com/edu-llm/edullm-data?rev=38bf831a6c3f445e394784018441fd59288b876c#38bf831a6c3f445e394784018441fd59288b876c" }
+dependencies = [
+    { name = "boto3" },
+    { name = "numpy" },
+]
 
 [[package]]
 name = "execnet"

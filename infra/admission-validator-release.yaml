@@ -237,14 +237,49 @@
 #
 # Cut from b54eb40. The pair was re-derived immediately before pasting rather than only
 # before dispatching, which is the correction the entry above earned.
+#
+# THIS RELEASE IS THE ONE THIS FILE HAS BEEN DESCRIBING ALL ALONG, AND IT IS THE FIRST TIME
+# THE WINDOW REFUSES A RUN A LEAD HAS ALREADY RELEASED. #360 gave the account a daily
+# ceiling on what it will commit with nobody asked, and the compile job raises a submission
+# from automatic to routine when the day has crossed it. The deployed validator cannot
+# re-derive that decision -- the ledger of what the day has committed is a branch in GitHub
+# and there is nothing in AWS it could read -- so what it is taught instead is narrower: a
+# gate stronger than the one it derives satisfies the one it derives, which is
+# `ApprovalEnvironment.satisfies` in contracts/admission.py. config/policy.yaml is packaged
+# and goes to v6 with automatic_daily_ceiling_usd beside it.
+#
+# So the skew ran the dangerous way this time, which is the direction the entry above named
+# as the one to avoid. The laptop and the compile job route the submission to a lead, the
+# lead spends attention on it and releases it, and the previous zip -- holding an equality
+# check and a v5 policy -- refuses it at admission with approval_environment_mismatch and
+# writes a decision record saying so. Nothing spends money in that window and nothing runs
+# that should not; what it costs is the approval, and a refusal whose text does not mention
+# the ceiling at all.
+#
+# Only the validator is released. The lifecycle recorder's digest moved too, because it
+# packages contracts/admission.py and contracts/policy.py, and the workflow uploaded its zip
+# as well. That object is left unreferenced in the bucket and its difference stays in
+# edullm_platform.pending_amendments, because the recorder classifies nothing, reads neither
+# the ceiling nor the gate comparison, and repointing infra/batch-events.yaml at it would
+# put a Lambda nobody changed through a phase-3 CloudFormation update to close a window that
+# costs nothing. That is the same reasoning as the `--function validator` paragraph above,
+# reached again for a different pair.
+#
+# Cut from 92c8516, and pasted onto a main four commits further on, which is the interval
+# the entry above says is the one that matters. It was re-derived across that interval
+# rather than assumed: the workflow printed 237cc467 from 92c8516, four changes landed while
+# this was being written, and a local rebuild of the later tree produces the same digest,
+# because none of them touched one of the twenty-eight modules or seven config files this
+# zip carries. Had one of them, the answer would have been to re-cut rather than to merge
+# and fix afterwards. Neither field below was copied from the register that predicted them.
 schema_version: 1
 
 #: The object the template's Code block names. Kept here as well so the two can be
 #: compared: a version id edited in one place and not the other is a template pointing at
 #: a zip nobody recorded, or a record describing a zip nobody deployed.
 s3_key: admission-validator/admission-validator.zip
-s3_object_version: LNv7E3nuhEowl_a7C7BQZys.g7190V13
+s3_object_version: Ss.xSF15xYJdzaXxrXaG0gNfT0lNOGUv
 
 #: sha256 of the uploaded zip, as tools/build_admission_lambda.py reports it. This is the
 #: field that ties the release to a tree rather than to a moment.
-sha256: df9952459e54ff0ebbce89660b5faf3b7a87bae47d2a0856c2553c9735d2740f
+sha256: 2cda942e9518cf23b6042a5b5ab35d550557a0784acfc9c3ee2d593844e9064c

@@ -2,25 +2,52 @@
 
 From nothing to a run that printed a number. Read this one and nothing else. Every command below was run on 2026-08-06 and what it printed is what is written here.
 
-## Install the tool
+## Install the tool, then read the version back
+
+Two commands, and the second one is a step rather than a note. Four seconds for the pair.
 
 ```
 uv tool install --force git+https://github.com/edu-llm/platform
+edullm --version
 ```
 
-Four seconds. Then `edullm --version`, which prints the version and the commit it was built from.
+**Installed this before v4.2.2? One command first, and the order matters.** The package used to be called `edullm-platform` while the command was `edullm`, so `uv tool list` printed a name nobody types and `uv tool uninstall edullm` answered `not installed` to somebody looking straight at the binary. Both are called `edullm` now.
 
-**Re-run that same line to upgrade.** `--force` makes it idempotent, so the one line installs, upgrades and repairs. Reach for it rather than `uv tool upgrade`, whose answer depends on how the tool was installed: from the bare URL above it re-resolves the default branch and does upgrade, but from a release note's line, which pins that release's tag, it answers `Nothing to upgrade` and exits 0 however far behind you are. Both installs are in the field and you are unlikely to remember which is yours. Naming the command rather than the package is no better: `uv tool upgrade edullm` errors and then suggests installing `edullm`, which fails too, because `edullm` is the command and `edullm-platform` is the package.
+```
+uv tool uninstall edullm-platform
+uv tool install --force git+https://github.com/edu-llm/platform
+```
+
+Run those in that order. Installing first and clearing the old name afterwards is the trap: the two installs own the same `edullm` executable, uv deletes the file when it removes the old entry and does not notice the new install still points at it, so you are left with `uv tool list` reporting a healthy `edullm` and `command not found` in the shell. Re-running the install line repairs that if you have already hit it. On a machine that never carried the old name the uninstall prints ``error: `edullm-platform` is not installed`` and exits 2, which is the expected answer and nothing to act on.
+
+**That has to read 3.4.8 or higher.** Look at it. An install at 3.4.7 or below sends a command the platform cannot run, and you find out two minutes later.
+
+Up to and including 3.4.7, `submit` rejoined your command with a plain space and lost the quoting on the way out. The day-one command below leaves as `bash -lc python .edullm/time_attention.py "$EDULLM_RUN_ID"`, the compile job splits it on the spaces, counts three words where `-lc` takes one, and refuses:
+
+```
+bash -lc reads exactly one word as the command, and this submission gives it 3. It would
+run `python` alone and hand the rest to it as $0, $1, $2 -- which starts, costs an
+instance, and exits without running your program. Quote the whole program: bash -lc
+'python .edullm/time_attention.py $EDULLM_RUN_ID'
+```
+
+The count moves with your command. The advice on the last line is the trap: you did quote the whole program, the tool took the quotes off between your terminal and the form, and the line it hands back is the line you already had. Re-typing it more carefully is what everybody tries and it changes nothing. The platform was not down while this was happening, either. Six submissions went through in the same hours as seven of these.
+
+**The fix ships in the tool rather than on the platform**, so 3.4.8 landing on `main` repaired no install but the ones made after it.
+
+**Re-run that same line to upgrade.** `--force` makes it idempotent, so the one line installs, upgrades and repairs. Reach for it rather than `uv tool upgrade`, whose answer depends on how the tool was installed: from the bare URL above it re-resolves the default branch and does upgrade, but from a release note's line, which pins that release's tag, it answers `Nothing to upgrade` and exits 0 however far behind you are. Both installs are in the field and you are unlikely to remember which is yours. `uv tool upgrade edullm` is now at least a command uv understands, since the package and the command are the same word, but it gives you the same two answers for the same two installs, so it is no more use than before.
+
+`--version` prints the commit next to the number. If that commit is not one on `main`, you are carrying a working copy somebody built rather than the released tool, and the `--force` line replaces it. Worth reading rather than assuming: the machine that proved the quoting fix was carrying a 3.5.0 built out of a local worktree, and it had to be replaced before it could test what a researcher would actually get.
 
 If the shell cannot find `edullm` afterwards, compare `uv tool dir --bin` against `which -a edullm`, or `where.exe edullm` on Windows. They should be the same directory. Two lines means something else called `edullm` is on your path first.
 
 ## You do not need AWS credentials
 
-Sixteen of the thirty-five of us hold no AWS role, and none of us needs one to submit a run. `check`, `submit`, `status`, `logs` and `cancel` drive `git` and `gh` and hold no cloud credential. All five were run with a deliberately broken AWS environment on 2026-08-06 and all five answered normally.
+Fifteen of the thirty-five of us hold no AWS role, and none of us needs one to submit a run. `check`, `submit`, `status`, `logs` and `cancel` drive `git` and `gh` and hold no cloud credential. All five were run on 2026-08-06 with `AWS_PROFILE`, both key variables and both configuration paths pointed at nothing, and all five answered normally. That was checked twice on the day, hours apart, because it is the claim most worth being wrong about.
 
 What you do need is `gh auth login`. That is the whole of it. If `check` refuses with `submitter_unknown`, it could not read who you are and that is the command that fixes it.
 
-Two verbs are the exception and they are not the submission path. `edullm run` and `edullm shell` start a machine of your own, and those assume an AWS identity. If you want one, file `edullm ask --kind access-request`. Nothing else here waits on that.
+Three verbs are the exception and they are not the submission path. `edullm run` and `edullm shell` start a machine of your own and `edullm stop` ends it, and all three need an AWS session. **Nothing off them is a run anybody can cite**, because nothing they do is checked against the registry, priced, released or written to a record, so what comes back is a thing you saw rather than a result. `run` and `shell` want a second thing as well, the AWS Session Manager plugin, and they check for it before they check for the session, so it is the first wall rather than the second; the refusal prints the install command for your own operating system and processor, and [using the platform](the-platform.md) has the order and the Windows caveats. How the fifteen of us get a session is not settled. The refusal names `sb-aws-creds login`, which works on a laptop that already carries that broker, and the rollout note's `npm install -g sb-aws-creds` answers 404 because the package is private rather than missing, so re-running it will not help. File `edullm ask --kind access-request` and read on. Nothing else on this page waits on the answer.
 
 ## Your first job
 
@@ -33,13 +60,24 @@ git checkout edullm/onboarding-smoke
 edullm check --team scratch --experiment day-one --dataset none
 ```
 
-`check` reaches no network, answers in about a fifth of a second, and lists every refusal at once. Read the ceiling and the approval line out of what it prints rather than out of any document, because both live in reviewed configuration and move. On this branch it prints no refusals, a ceiling of well under a dollar on one T4, and an approval line saying nobody has to release it.
+Clone it in full. `git clone --depth 1` fetches only `main` and then the checkout has no branch of that name to switch to.
+
+`check` reaches no network, answers in about a fifth of a second, and lists every refusal at once. Read the ceiling and the approval line out of what it prints rather than out of any document, because both live in reviewed configuration and move. On this branch it prints no refusals, a ceiling of well under a dollar on one T4, and an approval line saying the per-run rule asks nobody to release it -- followed by the one thing that line cannot settle, which is that a day-level ceiling can still send it to a team lead. Reaching no network is also why it cannot know: what the day has already committed is read later, by the compile job.
 
 ```
 edullm submit --team scratch --experiment day-one --dataset none
 ```
 
-The run id is minted a couple of minutes later by the compile job, and `submit` is meant to wait for it. On three real submissions tonight it returned in under nine seconds instead, with a workflow link and a line saying the id is still compiling. Either way `edullm status` carries the id once that job has finished.
+**This one blocks, and that is the point of it.** It says so first, then dispatches, then waits for the compile job to mint your run id, printing a line a minute while it does and giving up after five. Measured on a real submission at 04:57 on 2026-08-06: **49 seconds**, ending with the id and the approval line.
+
+```
+run_019fd676-62f0-70bb-ae06-c35fcb715af7
+released automatically. Nothing is waiting on a person.
+```
+
+Those two lines are the whole reason to wait. The id is how you ask about the run at all, and the second line is whether anybody has to release your work before it starts. Both used to be lost: `submit` returned in about eight seconds, before the compile job had finished, so every real submission left the submitter knowing neither. `--no-wait` skips the wait and prints the workflow link on its own, which is what you want in a script and not what you want the first time.
+
+`submit` also reaches the network once to ask whether your install is the current release, and says so if it is not, with the exact line to run. It cannot stop a submission and a network failure skips it, so it is a courtesy rather than the version check at the top of this page.
 
 ## Reading it back
 
@@ -49,7 +87,9 @@ edullm status run_019fd5d7-915f     # one run, in full
 edullm logs run_019fd5d7-915f       # the last lines it printed
 ```
 
-`status` with no argument answers from GitHub in about ten seconds. `status` on one run and `logs` reach AWS, which they do by dispatching a workflow and waiting for a runner, so give them one to three minutes. A job sitting at `RUNNABLE` is waiting for a machine and is billing nothing. Do not cancel and resubmit it, because that puts it at the back of the queue.
+`status` with no argument answers from GitHub in ten to twenty seconds. `status` on one run and `logs` reach AWS, which they do by dispatching a workflow and waiting for a runner. Both say so before they start waiting and both give up after eleven minutes; measured on 2026-08-06 they took 45 seconds and 58 seconds. A job sitting at `RUNNABLE` is waiting for a machine and is billing nothing. Do not cancel and resubmit it, because that puts it at the back of the queue.
+
+Read `status` for what the job is doing and `logs` for what it printed. They answer different questions off the same run, and the report from `status` says at the bottom which verb holds your output.
 
 This is what came back on 2026-08-06. Two minutes from `submit` to admitted, five waiting for a card, six seconds running.
 
@@ -64,26 +104,33 @@ median of     20 timed iterations after 3 warm-up
   4096       20.074        69.255     89.329     366,824
 ```
 
-## The notification, and why you will not get one
+**Your milliseconds will not be these**, and nothing is wrong when they are not. It is a real measurement of a card somebody else was using an hour ago. Three runs of it across 2026-08-06 spread about six percent at the longest sequence, in both directions. What tells you it worked is the card, the shape, and four rows arriving.
 
-When a run ends the platform composes one line for the `runs` channel. It looks like this.
+## The notification, and how to find out without one
+
+When a run ends the platform composes one line for `#edullm-runs`. It looks like this.
 
 ```
-[runs] Aryan Verma · plan-b-phase0-100m-superbpe-eval · $0.02 spent, $2.01 authorised · ran 1m on gpu-1xa10g.
-[runs] Aryan Verma · plan-b-phase0-100m-superbpe-eval · $0.70 spent, nothing produced · died at 42m on gpu-1xa10g, exit 1, whether a checkpoint survived is unknown.
+Aryan Verma · plan-b-phase0-100m-superbpe-eval · $0.02 spent, $2.01 authorised · ran 1m on gpu-1xa10g.
+Aryan Verma · plan-b-phase0-100m-superbpe-eval · $0.70 spent, nothing produced · died at 42m on gpu-1xa10g, exit 1, whether a checkpoint survived is unknown.
 ```
 
-**Nothing sends them yet.** The slice is deployed and the webhook it posts to has never been supplied, so no message has been read end to end. Until one is, `edullm status` is how you find out your run ended. Poll it, or look at the run page the submit line printed.
+**These are sent.** This section said nothing sent them and that the webhook had never been supplied, which was true for about four hours after it was written. The webhook was created by hand on 2026-08-05, points at `#edullm-runs`, and `infra/README.md` records it under "It already exists". Messages have been posted through the deployed function since. Join the channel.
+
+**`edullm status` with no argument cannot tell you a run finished, and it says so rather than leaving you to work it out.** It reads GitHub, and GitHub's knowledge of a run stops at admission: a run that succeeded an hour ago and one still queued for a machine both read `ADMITTED`, and the listing prints a line under itself saying exactly that. What tells you the outcome is the channel, or `edullm status <run-id>`, which names the run to AWS and takes one to three minutes because it spends a runner to do it.
 
 ## Running your own code
 
 Your commit has to have been built into an image before a run can name it, and a push to a branch under `edullm/` is what builds one. So the loop on a repository that has never been submitted from is five steps rather than two.
 
-1. `edullm check`. On a registered repository with no spec it writes a first `.edullm/run.yaml` and then refuses, because the file it just wrote is not committed. That is expected and it says so.
-2. Commit that file. `check` now refuses with `commit_not_pushed` instead.
+1. `edullm check`. On a registered repository with no spec it writes a first `.edullm/run.yaml` and tells you to commit it on a branch. It does not hold the file it just wrote against you. It used to, which was a loop with no way out, and that is fixed.
+   Where it could not work out a value it writes something the next `check` refuses by name rather than something that looks right. In a clone with no `.edullm/` entry point to read, the command it writes earns `checkpoint_path_not_in_command`, and that refusal is a paragraph telling you what to pass and how to waive it. **That is the tool declining to guess, not a wall.** A guessed checkpoint path would cost a queue wait, somebody's approval and a run that exits zero having saved nothing.
+2. Commit that file on a branch. `check` refuses with `commit_not_pushed` now, because no remote-tracking branch in your clone contains the commit, so nothing has built an image from it.
 3. Push the branch under `edullm/`. The image build takes three to eight minutes.
 4. `edullm check` again. It should print no refusals.
 5. `edullm submit`.
+
+**A refusal for a commit with no image is the platform working rather than the platform broken.** It caught somebody on 2026-08-06 who pushed and submitted in the same minute, while the build was still running. Wait out the three to eight minutes and submit again. If you pushed a while ago and still meet it, `git fetch` first, because the question is asked of the remote-tracking branches your clone holds rather than of GitHub.
 
 Two checks are deferred to submit time and `check` names both, because they need the container registry and this tool holds no credential for it. A clean `check` is not a promise.
 
@@ -92,9 +139,6 @@ Two checks are deferred to submit time and `check` names both, because they need
 | Wall | The way round |
 | --- | --- |
 | No Windows machine has ever finished this. The install used to fail with `Filename too long` for any username over eight characters, and [#291](https://github.com/edu-llm/platform/pull/291) fixed that on 2026-08-06 along with the `gh` lookup, the spec's line endings and redirected output. All of it is untested on real Windows | Follow it anyway and say where it stopped. If the install still fails on a path, point `UV_CACHE_DIR` at something short such as `C:\uv` and try again |
-| No notification is delivered | Poll `edullm status`, as above |
-| `edullm status <run-id>` prints `Container said` `nothing` for a run that printed plenty. Measured on the run above, which had nine lines waiting | `edullm logs <run-id>` reads the same stream and does show them. Believe that one |
-| `edullm submit` returns before the run id exists, though `--help` says it waits for one and `--no-wait` is the flag that turns that off | Run `edullm status` a couple of minutes later. The id is there |
 | The eval image carries no torch and no vLLM, so only the `mock` provider runs | Nothing yet. GPU evaluation through the platform is not available. eval-inference owns the choice |
 | `gh` in a clone that has an `upstream` remote answers about the wrong repository, with no warning. In OLMo-core it reported no image build for a branch whose build had succeeded | Use `edullm`, which reads `origin`. Where you must use `gh`, pass `--repo edu-llm/<name>` |
 | Roughly half of all runs fail, and about half of those failures print no cause | Nothing yet. Your first failure is probably not your fault. Bring the run id to an issue |

@@ -46,6 +46,7 @@ from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.stack_templates import (
     CAPACITY_BLOCK_STACK_PREFIX,
     CAPACITY_BLOCK_TEMPLATE,
+    STACK_TEMPLATES,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -480,8 +481,12 @@ def test_a_deployed_stack_the_table_does_not_claim_is_a_finding(
     assert "deployed_stack_is_unaccounted_for" in err
     assert UNMAPPED_STACK in err
     # Naming the table is the actionable half: the reader has to decide whether the stack
-    # belongs, and either way the next edit is in one file.
-    assert "tools/verify_deployed_stacks.py" in err
+    # belongs, and either way the next edit is in one file. This asserted the tool's own
+    # path until 2026-08-06, and went on asserting it after the table moved to the library,
+    # so the one instruction the audit gives about an unclaimed stack pointed at a derived
+    # comprehension and a test held it there.
+    assert module.STACK_TABLE in err
+    assert "verify_deployed_stacks" not in err
 
 
 def test_a_table_entry_that_is_not_deployed_is_also_a_finding(
@@ -737,7 +742,7 @@ def test_a_stack_nothing_accounts_for_is_a_finding_in_every_status_it_can_exist_
     assert "deployed_stack_is_unaccounted_for" in err
     # Naming the table is the actionable half whatever the status: the reader has to decide
     # whether the stack belongs before deciding anything about the state it is in.
-    assert "tools/verify_deployed_stacks.py" in err
+    assert module.STACK_TABLE in err
     assert f"{UNMAPPED_STACK} is deployed from" not in out
 
 
@@ -1188,12 +1193,19 @@ def workflow_deploys() -> set[tuple[str, str]]:
     ``aws`` is not a top-level command, which is right for the step it is reading and wrong
     as a filter over the whole directory -- one workflow calls the CLI inside a loop to dump
     stack events after a failure, and that step is not a deploy.
+
+    ``steps`` is read with a default because a job that calls a reusable workflow declares
+    ``uses:`` and may not declare steps at all, so the key is absent rather than empty. That
+    is safe here rather than a hole for the same reason it is safe in
+    ``tests/test_phase2_submit_run_workflow.py``: such a job runs no script, so there is no
+    ``cloudformation deploy`` for this to miss, and the called file is itself one of the
+    workflows this glob walks -- so a deploy moved into a reusable workflow is still read.
     """
     return {
         (command[command.index("--stack-name") + 1], command[command.index("--template-file") + 1])
         for path in sorted(WORKFLOWS_ROOT.glob("*.yml"))
         for job in load_workflow(path)["jobs"].values()
-        for item in job["steps"]
+        for item in job.get("steps") or ()
         if "cloudformation deploy" in str(item.get("run", ""))
         for command in aws_commands(str(item["run"]))
         if command[:3] == ["aws", "cloudformation", "deploy"]
@@ -1226,6 +1238,19 @@ def test_every_stack_a_workflow_deploys_carries_the_prefix(module: Any) -> None:
     """
     for name, _ in sorted(workflow_deploys()):
         assert name.startswith(module.STACK_NAME_PREFIX), name
+
+
+def test_the_table_the_finding_names_is_the_one_a_reader_has_to_edit(module: Any) -> None:
+    """Mutation: write the path out, which is what went stale.
+
+    `STACKS` in the tool is a resolution of the table and not the table, and it kept that
+    name when the table moved to the library, so an instruction naming the tool's own file
+    sends a reader to a dict comprehension -- which accepts the edit and drops it on the next
+    run. Derived from the imported module here, so it cannot name a table that is not there.
+    """
+    where, _, attribute = module.STACK_TABLE.rpartition(".")
+
+    assert getattr(importlib.import_module(where), attribute) == STACK_TEMPLATES
 
 
 def test_every_committed_template_is_claimed_by_a_stack(module: Any) -> None:

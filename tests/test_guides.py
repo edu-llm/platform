@@ -26,28 +26,107 @@ of somebody still exists.
 from __future__ import annotations
 
 import re
+import shlex
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
 
+from edullm_platform.cli.actions import ADMITTED, DECLINED, submission_state
 from edullm_platform.config import load_yaml
+from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.corpora import corpora
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 GUIDES_DIR = PROJECT_ROOT / "guides"
 PLATFORM_GUIDE_PATH = GUIDES_DIR / "the-platform.md"
 OLMO_CORE_GUIDE_PATH = GUIDES_DIR / "olmo-core.md"
+DAY_ONE_GUIDE_PATH = GUIDES_DIR / "day-one.md"
 README_PATH = PROJECT_ROOT / "README.md"
 WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "submit-run.yml"
 CANCEL_WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "cancel-run.yml"
 GPU_ROLES_PATH = PROJECT_ROOT / "infra" / "iam" / "batch-gpu-roles.yaml"
+POLICY_PATH = PROJECT_ROOT / "config" / "policy.yaml"
+CAPACITY_PATH = PROJECT_ROOT / "config" / "capacity.yaml"
+CONFIG_DIR = PROJECT_ROOT / "config"
+CATALOGUE_PATH = CONFIG_DIR / "workload-catalog.yaml"
+ACCELERATORS_PATH = CONFIG_DIR / "accelerators.yaml"
+INFRA_README_PATH = PROJECT_ROOT / "infra" / "README.md"
+PYPROJECT_PATH = PROJECT_ROOT / "pyproject.toml"
+
+
+def catalogue() -> WorkloadCatalog:
+    return load_yaml(CATALOGUE_PATH, WorkloadCatalog)
+
+
+def released_version() -> str:
+    """The version somebody who runs the install line in day one will end up holding.
+
+    Read out of ``pyproject.toml`` rather than out of the installed distribution, because a
+    contributor's environment is an editable install of this tree and the number a guide has
+    to be true about is the one this tree publishes.
+    """
+    found = re.search(r"^version = \"([^\"]+)\"", PYPROJECT_PATH.read_text(encoding="utf-8"), re.MULTILINE)
+    assert found is not None, "pyproject.toml declares no version"
+    return found.group(1)
+
+
+def researcher_facing() -> dict[str, str]:
+    """Every committed page a researcher is sent to, keyed by name.
+
+    Globbed rather than listed, so a sixth guide is covered by the tests below on the day
+    it is added rather than on the day somebody remembers to name it here. ``day-one.md``
+    was the fifth and arrived carrying two claims that were already false.
+    """
+    pages = {path.name: path.read_text(encoding="utf-8") for path in sorted(GUIDES_DIR.glob("*.md"))}
+    pages[README_PATH.name] = README_PATH.read_text(encoding="utf-8")
+    return pages
+
+
+def fenced_blocks(text: str) -> list[str]:
+    return re.findall(r"^```\n(.*?)^```$", text, re.MULTILINE | re.DOTALL)
+
+
+def _in_words(count: int) -> str:
+    """A small count as the guides write it, because they write numbers as words.
+
+    Only as far as the catalogue can reach. A twenty-first profile should fail here rather
+    than pass with a digit the pages do not use.
+    """
+    words = {
+        11: "eleven",
+        12: "twelve",
+        13: "thirteen",
+        14: "fourteen",
+        15: "fifteen",
+        16: "sixteen",
+        17: "seventeen",
+        18: "eighteen",
+        19: "nineteen",
+        20: "twenty",
+    }
+    assert count in words, f"nothing here spells {count}; extend this or use a digit"
+    return words[count]
+
+
+def to_cents(rate: Decimal) -> str:
+    """A catalogue rate as the guides write it, rounded the way money is rather than the
+    way :func:`round` is. ``0.5260`` is ``0.53`` here and ``0.52`` under banker's rounding.
+    """
+    return str(rate.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 @pytest.fixture(scope="module")
 def platform_guide() -> str:
     return PLATFORM_GUIDE_PATH.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def day_one_guide() -> str:
+    return DAY_ONE_GUIDE_PATH.read_text(encoding="utf-8")
 
 
 @pytest.fixture(scope="module")
@@ -454,21 +533,56 @@ def test_the_tmp_trap_is_named_wherever_the_guide_puts_it(olmo_core_guide: str) 
     )
 
 
-def test_every_corpus_the_guide_tabulates_is_one_the_form_offers(
+def test_the_guide_sends_a_reader_to_the_verb_rather_than_tabulating_the_corpora(
     platform_guide: str, workflow: dict[str, Any]
 ) -> None:
-    """The table is a promise in the same way the dropdown is.
+    """**THE TABLE THIS REPLACES WAS CORRECT AND THAT WAS ITS WHOLE PROBLEM.**
 
-    Read against the form rather than the registry, because the registry may hold a corpus no
-    workload can construct a tokenizer for — the guide should name what a person can pick.
+    Mutation: put the table back, or leave a shorter one behind as a convenience.
+
+    Sixteen rows of name and token count, every number right on the day it was typed. What
+    held them was this test, and this test only compared the *names* against the submission
+    form's dropdown -- so adding a corpus went red and somebody typed a row, and re-sealing
+    one at a new size went green for ever. The numbers were held by nothing, in the one place
+    a researcher would read them.
+
+    A table also cannot carry the column that matters. Five registered corpora are current
+    and refused by nothing and reach a container that exits 69, and which five is a join over
+    ``config/datasets.yaml`` and ``edullm_platform.tokenizers.TOKENIZERS`` that changes on its
+    own the day OLMo-core grows a tokenizer. A page cannot recompute itself.
+
+    So the assertion moves with the answer: the section names the verb, and no row of the
+    shape the table used to have survives anywhere on the page. Both halves are needed --
+    naming the verb while leaving the rows would be two answers, which is how they disagree.
     """
-    tabulated = set(
-        re.findall(r"^\| `([a-z0-9][a-z0-9.-]*)` \| [\d.]+B \|", platform_guide, re.MULTILINE)
+    tabulated = re.findall(
+        r"^\| `([a-z0-9][a-z0-9.-]*)` \| [\d.]+B \|", platform_guide, re.MULTILINE
     )
-    offered = set(form_inputs(workflow)["dataset_release"]["options"]) - {"none"}
+    heading = "## The corpora"
 
-    assert tabulated, "the guide names no corpus, so either the table or this pattern moved"
-    assert tabulated == offered
+    assert heading in platform_guide, "the guide no longer tells anybody what corpora exist"
+    section = platform_guide.split(heading, 1)[1].split("\n## ", 1)[0]
+    assert "edullm data" in section, (
+        "the corpora section names no verb, so a reader has nowhere to go; edullm data is "
+        "the only route to the list that carries a size, a tokenizer and a licence"
+    )
+    assert not tabulated, (
+        f"the guide tabulates {tabulated} again. Those numbers are held by nothing here, "
+        "which is what the table was deleted for, and a second answer beside edullm data is "
+        "how the two come to disagree"
+    )
+    # And the verb it names is one a reader can actually pick a corpus off, which is the
+    # promise the dropdown comparison used to make. Asked of the registry through the same
+    # join the verb uses, rather than of the form, because the verb's whole point is that it
+    # answers for the registered corpora the form cannot show.
+    offered = set(form_inputs(workflow)["dataset_release"]["options"]) - {"none"}
+    registry = load_yaml(PROJECT_ROOT / "config" / "datasets.yaml", DatasetRegistry)
+    runnable = {row.reference_id for row in corpora(registry) if row.runnability.will_run}
+
+    assert runnable == offered, (
+        "edullm data and the submission form disagree about which corpora will run, so the "
+        "page the guide now points at is not the page the form is offering"
+    )
 
 
 def test_the_guide_sends_a_reader_who_wants_to_stop_a_run_to_the_button(
@@ -638,6 +752,63 @@ def test_the_guide_and_the_refusal_name_the_same_way_to_get_a_session(
     )
 
 
+def test_both_guides_name_both_prerequisites_and_which_is_checked_first(
+    platform_guide: str, day_one_guide: str
+) -> None:
+    """**A REFUSAL IS SOMETHING YOU HIT AND A GUIDE IS SOMETHING THAT STOPS YOU HITTING IT.**
+    Mutation: drop the plugin from either guide, or drop the word "first".
+
+    Two people walked the CLI on 2026-08-06, one on macOS and one on Windows, and the first
+    `edullm run` either of them ever attempted refused twice on two different prerequisites.
+    Neither guide named both, and `guides/day-one.md` named neither. That is the larger half
+    of the defect, because the refusals are where somebody already blocked finds out and the
+    guides are where somebody preparing could have avoided it.
+
+    **THE ORDER IS THE FACT AND NOT MERELY THE PAIR.** `cli/main.py`'s `_lane_session`
+    checks the plugin before it calls `sts:GetCallerIdentity`, so a person who settles the
+    session and not the plugin meets the plugin's refusal on the next attempt, having
+    believed they were finished. Both guides have to say which comes first.
+
+    **WHAT IS DELIBERATELY NOT ASSERTED IS AN INSTALL COMMAND IN EITHER GUIDE.** AWS
+    publishes five and which one a reader wants depends on their operating system and their
+    processor. A guide cannot know that and the refusal can, so the commands live in
+    `lane.plugin_install_commands` alone. Two copies of an install line is two things to keep
+    true against a URL AWS owns.
+    """
+    from edullm_platform.cli.lane import AWS_LOGIN_COMMAND, SESSION_PLUGIN
+
+    for name, guide in (("the-platform.md", platform_guide), ("day-one.md", day_one_guide)):
+        readable = guide.replace(SESSION_PLUGIN, "Session Manager plugin")
+        assert "Session Manager plugin" in readable, (
+            f"{name} does not mention the Session Manager plugin, which is the first of the "
+            "two things edullm run refuses without"
+        )
+        assert AWS_LOGIN_COMMAND in guide, f"{name} does not name the way to get a session"
+        assert "first" in guide, (
+            f"{name} does not say which of the two prerequisites is checked first, so a "
+            "reader who fixes them in the other order meets a second refusal"
+        )
+
+
+def test_no_guide_carries_a_plugin_install_command_the_refusal_already_prints(
+    platform_guide: str, day_one_guide: str
+) -> None:
+    """Mutation: paste the macOS or Windows installer into either guide.
+
+    The refusal knows the operating system and the processor and prints the one line that
+    reader needs. A guide knows neither, so a copy there is either all five of AWS's
+    installers or the wrong one, and in both cases it is a second thing to keep true when
+    AWS moves a URL. This is the assertion behind that choice rather than a note about it.
+    """
+    from edullm_platform.cli.lane import PLUGIN_DOWNLOADS
+
+    for name, guide in (("the-platform.md", platform_guide), ("day-one.md", day_one_guide)):
+        assert PLUGIN_DOWNLOADS not in guide, (
+            f"{name} carries an installer URL. The refusal prints the one for the machine "
+            "the reader is actually on, and this copy will rot separately"
+        )
+
+
 def test_the_guide_does_not_promise_a_size_that_costs_a_download(platform_guide: str) -> None:
     """The largest corpus is 630 GB on a machine with far less disk.
 
@@ -646,3 +817,846 @@ def test_the_guide_does_not_promise_a_size_that_costs_a_download(platform_guide:
     157B corpus means waiting for 157B tokens to arrive.
     """
     assert "memory-mapped" in platform_guide
+
+
+# THE SEVEN BELOW HOLD NUMBERS RATHER THAN NAMES, AND THAT IS THE GAP THEY CLOSE.
+#
+# Every assertion above this line reads an identifier out of a guide and asks whether the
+# platform still has one by that name. None of them can see a figure. On 2026-08-06 a red
+# team found six numbers in these pages that disagreed with what the tool answers, one of
+# them by a factor of a hundred, and the whole suite was green throughout: the approval
+# bound had gone from $5 to $500, a rate ceiling that routed runs to an admin had been
+# deleted, and two compute profiles the guides priced had stopped being startable. A name
+# check cannot catch any of that, because every name involved was still correct.
+#
+# So these read the figure and the tool together. Where a guide quotes what a command
+# printed, the command is driven here and the quote has to be in what came back.
+
+#: The submission ``guides/the-platform.md`` quotes ``edullm check`` against. Spelled out
+#: rather than parsed back out of the block, because a test that derived the inputs from
+#: the thing it is checking would agree with any block at all.
+QUOTED_CHECK_COMMIT = "9ea6d144f89c0000000000000000000000000000"
+QUOTED_CHECK_WORKLOAD = "olmo-core-check"
+QUOTED_CHECK_COMPUTE = "gpu-1xt4"
+QUOTED_CHECK_COMMAND = "bash -lc 'python .edullm/time_attention.py \"$EDULLM_RUN_ID\"'"
+
+
+def test_the_check_block_the_guide_quotes_is_the_block_check_prints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """THE ONE THE OTHER SIX EXIST BECAUSE OF. Mutation: reword any line of the sample.
+
+    ``guides/the-platform.md`` prints what ``edullm check`` said about one submission, and
+    that block was wrong for long enough that nobody knows when it stopped being right. It
+    quoted a $25.25 ceiling on a run the guide had described as one hour, an approval line
+    reading ``routine -> run-approval-lead``, and a sentence about moving a *short* run
+    under the bound. By 2026-08-06 the tool put the total on the heading line, wrote the
+    approval as one sentence naming the bound, and had stopped saying "short". Every test
+    in this file stayed green, because every identifier in the block was still real.
+
+    The CLI is driven here over the same submission, through ``tests/cli_support``, which
+    reaches no network and no AWS. The guide's block has to be a contiguous substring of
+    what came back. Contiguous rather than line by line, so a reordering fails too, and a
+    substring rather than an equality because the guide cuts the first line, which names
+    a configuration directory that is different on every machine.
+
+    ``what it has taken`` is held with everything else. It is measured over
+    ``config/run-history.json``, which is committed, so regenerating that file turns this
+    red and the fix is to paste the new block into the guide. That is the intended cost. A
+    guide quoting a median nobody has recomputed is the same defect in a smaller size.
+    """
+    from tests.cli_support import FakeRunner, git_answers, invoke, write_spec
+
+    write_spec(
+        tmp_path,
+        workload=QUOTED_CHECK_WORKLOAD,
+        compute=QUOTED_CHECK_COMPUTE,
+        command=QUOTED_CHECK_COMMAND,
+    )
+    runner = FakeRunner(
+        git_answers(tmp_path, repository="OLMo-core", commit=QUOTED_CHECK_COMMIT)
+    )
+    code, printed, _ = invoke(
+        ["check", "--experiment", "onboarding", "--dataset", "none", "--team", "scratch"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+    assert code == 0, f"the submission the guide quotes is now refused:\n{printed}"
+
+    quoted = [block for block in fenced_blocks(platform_guide_text()) if block.startswith("manifest\n")]
+    assert len(quoted) == 1, (
+        "the platform guide no longer carries exactly one fenced block starting with the "
+        "manifest that edullm check prints, so there is nothing here to hold against the "
+        "tool. Either restore the sample output or delete this test deliberately"
+    )
+
+    assert quoted[0].rstrip("\n") in printed, (
+        "the sample edullm check output in guides/the-platform.md is not what edullm check "
+        "prints for that submission any more. What it prints today is below. Paste it in, "
+        "dropping the first line, which names a directory that differs per machine.\n\n"
+        f"{printed}"
+    )
+
+
+def platform_guide_text() -> str:
+    return PLATFORM_GUIDE_PATH.read_text(encoding="utf-8")
+
+
+def test_the_bound_the_guides_quote_is_the_bound_the_tool_prints() -> None:
+    """Mutation: leave $5 in the approval paragraph after policy raises it.
+
+    That is not hypothetical, it is what happened. ``automatic_below_cost_usd`` went from
+    ``"5"`` to ``"500"`` and ``guides/the-platform.md`` went on saying that a run under
+    five dollars starts on its own, so a researcher pricing an ordinary training run
+    believed they needed a lead for it and either padded the request or asked for an
+    approval nobody had to give.
+
+    Held against the string the CLI itself renders rather than against a number formatted
+    here, so a bound that gains a decimal place moves the guide and the terminal together.
+
+    Aimed at the sentence that makes the claim rather than at the section, and that is the
+    whole strength of it. The section also carries the boundary either side of the bound,
+    a worked example, and the figure it used to be, so a test asking only whether $500
+    appears somewhere passes a page that has one right mention and one wrong one. The
+    sentence saying nobody releases a run is the one a reader acts on, and every figure in
+    it has to be the bound.
+    """
+    from edullm_platform.cli.presentation import plain_decimal
+    from edullm_platform.contracts.policy import ApprovalPolicy
+
+    policy = load_yaml(POLICY_PATH, ApprovalPolicy)
+    written = f"${plain_decimal(policy.thresholds.automatic_below_cost_usd)}"
+
+    approval = platform_guide_text().split("\n## Approval", 1)
+    assert len(approval) == 2, "the platform guide no longer has a section about approval"
+    section = approval[1].split("\n## ", 1)[0]
+
+    assert written in section, (
+        f"the approval section does not name {written}, which is the figure "
+        "config/policy.yaml draws the line at and the figure edullm check prints beside "
+        "the word automatic. A guide naming a different one tells people to wait for an "
+        "approval nobody has to give"
+    )
+
+    claims = [block for block in section.split("\n\n") if "nobody releases it" in block]
+    assert len(claims) == 1, (
+        "the approval section no longer has exactly one paragraph saying which runs "
+        "nobody releases, so there is nothing here to pin the figure to"
+    )
+    assert set(re.findall(r"\$[\d,]+(?:\.\d+)?", claims[0])) == {written}, (
+        f"the sentence that tells a reader when nobody releases a run quotes "
+        f"{sorted(set(re.findall(r'[$][\\d,]+(?:[.]\\d+)?', claims[0])))} and the bound is "
+        f"{written}. That sentence went on saying $5 for as long as the bound was $500"
+    )
+
+
+def test_no_guide_offers_a_compute_profile_that_cannot_be_started() -> None:
+    """Mutation: withdraw a profile in the catalogue and leave the guides pricing it.
+
+    Both H100 shapes went ``provisioned: false`` on 2026-08-04 because EC2 has never sold
+    this account a p5 of either size. Five researcher-facing pages went on offering eight
+    H100s at $55.04 an hour and one of them said in as many words that nothing refuses it.
+    Something does: ``unprovisioned_compute_profile``, after the reader has picked the
+    machine and before anything is dispatched.
+
+    A page may still name one, and should, because the number is the one everybody has
+    heard. What it may not do is name one in a table row without saying in that row that
+    it is refused, or name one anywhere without the page explaining what unprovisioned
+    means. Both halves are asserted, because the guides failed the first and passed the
+    second by accident.
+    """
+    withdrawn = {
+        profile.name for profile in catalogue().compute_profiles if not profile.provisioned
+    }
+    assert withdrawn, (
+        "every profile in the catalogue is provisioned, so this test asserts nothing. "
+        "Delete it or give it a shape it can fail on"
+    )
+
+    for name, page in researcher_facing().items():
+        named = {profile for profile in withdrawn if f"`{profile}`" in page}
+        if not named:
+            continue
+        assert "unprovisioned" in page, (
+            f"{name} names {sorted(named)}, which cannot be started, and the word "
+            "unprovisioned appears nowhere on the page. A reader has no way to learn "
+            "that the shape is priced and refused"
+        )
+        for line in page.splitlines():
+            if not line.startswith("|"):
+                continue
+            offered = {profile for profile in withdrawn if f"`{profile}`" in line}
+            if not offered:
+                continue
+            assert "refused" in line, (
+                f"{name} has a table row offering {sorted(offered)} beside shapes that "
+                f"can be started, and nothing in the row says it is refused:\n  {line}"
+            )
+
+
+def test_the_hourly_range_the_guides_quote_is_the_range_that_can_be_booked() -> None:
+    """Mutation: promote or withdraw a profile and leave the range where it was.
+
+    Four pages quoted "$0.53 to $55.04" for months after the top of that range stopped
+    being bookable. The floor was right and the ceiling was a shape admission refuses, so
+    every reader who sized a budget against it sized it against a machine nobody can have.
+
+    **A range may quote either top, and the priced one costs a sentence.** $30.13 is what
+    can be started; $55.04 is what the dropdown offers. A page that gives the priced top
+    without saying that the shape cannot be started is the original defect, and a page that
+    gives only the placeable top hides a shape somebody will pick anyway -- so the priced
+    top is allowed exactly where the page also names the refusal it earns.
+
+    Both ends are read out of the catalogue. Promoting the L40S node or withdrawing the H100
+    one moves a number here rather than leaving four pages quoting history.
+    """
+    profiles = catalogue().compute_profiles
+    startable = sorted(p.hourly_rate_usd for p in profiles if p.provisioned)
+    assert startable, "no profile is provisioned, so this test asserts nothing"
+    floor, ceiling = to_cents(startable[0]), to_cents(startable[-1])
+    priced = to_cents(max(p.hourly_rate_usd for p in profiles))
+
+    patterns = (
+        r"\$(\d+\.\d\d) an hour to \$(\d+\.\d\d)",
+        r"between \$(\d+\.\d\d) and \$(\d+\.\d\d) an hour",
+    )
+    found = 0
+    for name, page in researcher_facing().items():
+        for pattern in patterns:
+            for low, high in re.findall(pattern, page):
+                found += 1
+                assert low == floor, (
+                    f"{name} starts a range at ${low} an hour, and the cheapest shape in "
+                    f"config/workload-catalog.yaml is ${floor}"
+                )
+                if high == priced and priced != ceiling:
+                    assert "unprovisioned_compute_profile" in page, (
+                        f"{name} tops a range at ${high} an hour, which is a shape that "
+                        "cannot be started, and the page never names the refusal that "
+                        f"answers it. Say so, or quote ${ceiling}"
+                    )
+                    continue
+                assert high == ceiling, (
+                    f"{name} quotes a range of ${low} to ${high} an hour. What can "
+                    f"actually be started today is ${floor} to ${ceiling}, and what is "
+                    f"priced runs to ${priced}. Neither is ${high}"
+                )
+
+    assert found, (
+        "no guide quotes an hourly range in either shape this reads, so the assertion "
+        "above ran against nothing. Either a range was reworded, in which case teach this "
+        "the new shape, or they were all removed and this test should go"
+    )
+
+
+def test_the_placement_column_says_what_the_measurements_say() -> None:
+    """Mutation: a probe re-measures a shape and the guide's column stays where it was.
+
+    ``config/capacity.yaml`` is the only place that records whether a machine arrives, and
+    it is measured by asking EC2 for one instance rather than inferred from the family.
+    Three provisioned shapes read ``unreliably``, meaning a probe asked and got nothing,
+    and one of them logged 4,060 refusals in a day without producing a single instance.
+    A researcher picking off the guide's table needs that column to be the file's column.
+
+    ``**refused**`` in the guide is the other answer, and it means the catalogue says the
+    shape is not provisioned at all rather than that a probe was slow.
+    """
+    from edullm_platform.placement import read_capacity
+
+    measured = {record.profile: record.places for record in read_capacity(CAPACITY_PATH)}
+    provisioned = {profile.name: profile.provisioned for profile in catalogue().compute_profiles}
+    spelled = {"reliably": "reliably", "after a wait": "after_a_wait", "unreliably": "unreliably"}
+
+    rows = re.findall(
+        r"^\| `([a-z0-9-]+)` \|.*\| \$[\d.]+/hr \| ([^|]+) \|$",
+        OLMO_CORE_GUIDE_PATH.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    assert rows, (
+        "the training guide's profile tables no longer carry a placement column in the "
+        "shape this reads, so nothing here is checked"
+    )
+
+    seen = set()
+    for profile, column in rows:
+        answer = column.strip()
+        assert profile in provisioned, f"the guide tabulates {profile}, which is in no catalogue"
+        if answer == "**refused**":
+            assert not provisioned[profile], (
+                f"the guide's table says {profile} is refused and the catalogue has it "
+                "provisioned, so the page is telling people to avoid a machine they can have"
+            )
+            seen.add("refused")
+            continue
+        assert provisioned[profile], (
+            f"the guide's table offers {profile} with a placement of {answer!r} and the "
+            "catalogue reads provisioned: false, so a submission naming it is refused "
+            "whatever a probe found"
+        )
+        assert answer in spelled, (
+            f"the guide gives {profile} a placement of {answer!r}, which is not one of "
+            f"{sorted(spelled)}"
+        )
+        assert measured[profile] == spelled[answer], (
+            f"the guide says {profile} places {answer!r} and config/capacity.yaml records "
+            f"{measured[profile]!r}. The file is the measurement and the guide is the copy"
+        )
+        seen.add(answer)
+
+    assert {"reliably", "unreliably", "refused"} <= seen, (
+        f"the table only exercises {sorted(seen)}, so this test could pass with the "
+        "interesting answers missing from the guide entirely"
+    )
+
+
+def profile_row(name: str) -> str:
+    """One profile as the training guide's tables write it, composed from the three files.
+
+    The guide used to type these. Every figure in them lived somewhere a program could read
+    -- the rate in the catalogue, the placement in ``config/capacity.yaml``, and since
+    ``config/accelerators.yaml`` landed the card and its memory too -- so a typed row was a
+    fourth copy that nothing compared against the other three. This is the row those files
+    say, and :func:`test_the_profile_tables_are_the_three_config_files_rendered` holds the
+    page to it.
+    """
+    from edullm_platform.accelerators import read_accelerators, record_for
+    from edullm_platform.placement import read_capacity
+
+    profile = next(p for p in catalogue().compute_profiles if p.name == name)
+    card = record_for(name, accelerators=read_accelerators(ACCELERATORS_PATH))
+    assert card is not None, f"config/accelerators.yaml has no entry for {name}"
+    places = {record.profile: record.places for record in read_capacity(CAPACITY_PATH)}
+    said = {"reliably": "reliably", "unreliably": "unreliably", "after_a_wait": "after a wait"}
+    placing = "**refused**" if not profile.provisioned else said[places[name]]
+    return (
+        f"| `{name}` | {card.devices} x {card.device} | {card.memory_mib_total:,} MiB "
+        f"| ${profile.hourly_rate_usd.normalize():f}/hr | {placing} |"
+    )
+
+
+def test_the_profile_tables_are_the_three_config_files_rendered() -> None:
+    """Mutation: change any cell of any row, or any figure in any of the three files.
+
+    Held cell by cell rather than column by column, because the columns went wrong
+    separately and for different reasons. The memory column said "24 GB" for a card that
+    reports 22,888 MiB, which is the same quantity and the wrong number to size a batch
+    against. The rate column was rounded to the cent, so ``gpu-8xl4`` read $13.35 for
+    $13.3504 and the four-figure rates all looked like round numbers somebody chose. The
+    device count and the card were prose nothing could check at all until
+    ``config/accelerators.yaml`` existed.
+
+    ``normalize()`` on the rate is what the catalogue's own renderer does, so $0.526 stays
+    three places and $55.04 stays two rather than every rate being padded to four.
+    """
+    guide = OLMO_CORE_GUIDE_PATH.read_text(encoding="utf-8")
+    # Every compute profile is named `<device>-<shape>`, so the prefix is what separates a
+    # profile row from the workload and flag tables that also lead with a backticked cell.
+    tabulated = re.findall(r"^\| `((?:gpu|cpu)-[a-z0-9-]+)` \|.*\|$", guide, re.MULTILINE)
+    priced = {profile.name for profile in catalogue().compute_profiles}
+
+    assert len(tabulated) >= 16, (
+        f"the training guide tabulates {len(tabulated)} profiles, and the catalogue prices "
+        "seventeen with one of them a CPU shape. Either a table was cut or this stopped "
+        "matching the rows"
+    )
+    for name in tabulated:
+        assert name in priced, (
+            f"the training guide tabulates {name!r}, which the catalogue does not price. A "
+            "submission naming it is refused as unregistered, which is what a typo earns"
+        )
+        expected = profile_row(name)
+        assert expected in guide, (
+            f"the row for {name} disagrees with configuration. It should read:\n\n"
+            f"{expected}\n\nRun `uv run python tools/render_profile_table.py` and take the "
+            "figures from it rather than editing this row by hand"
+        )
+
+
+def test_the_training_guide_names_every_profile_the_catalogue_prices() -> None:
+    """Mutation: register an eighteenth profile and leave the guide at seventeen.
+
+    A shape nobody documents is a shape somebody meets in the dropdown with nothing to read
+    about it, and a profile added to the catalogue is exactly the change that never reaches
+    prose. The tool this calls is the one the repository already ships for the purpose, so
+    the check here and the check a person runs by hand cannot answer differently.
+    """
+    import sys
+
+    sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+    try:
+        from render_profile_table import profiles_missing_from
+    finally:
+        sys.path.pop(0)
+
+    missing = profiles_missing_from(
+        OLMO_CORE_GUIDE_PATH.read_text(encoding="utf-8"), catalogue().compute_profiles
+    )
+    assert missing == (), (
+        f"guides/olmo-core.md never names {sorted(missing)}. Every priced profile is in the "
+        "dropdown, so every priced profile needs a row or a sentence"
+    )
+
+
+def test_the_platform_guide_quotes_the_priced_range_and_the_placeable_one() -> None:
+    """Mutation: quote one range and drop the other, whichever one.
+
+    Four pages quoted "$0.53 to $55.04" for months after the top of that range stopped
+    being purchasable, which sent people planning eight-H100 runs. Quoting only the
+    placeable top is the opposite error and just as wrong: $30.13 as the whole range hides
+    that the dropdown offers a $55.04 shape, so the first person to pick it reads the
+    refusal as a bug rather than as the thing this page told them about.
+
+    Both numbers are computed here. The catalogue moves and a rate change should fail this
+    rather than silently make the page a historical document.
+    """
+    profiles = catalogue().compute_profiles
+    priced = max(profile.hourly_rate_usd for profile in profiles)
+    placeable = max(profile.hourly_rate_usd for profile in profiles if profile.provisioned)
+    cheapest = min(profile.hourly_rate_usd for profile in profiles)
+    assert priced != placeable, (
+        "every priced profile can now be started, so there is one range rather than two "
+        "and this test is asserting a distinction that no longer exists. Rewrite the page "
+        "and then rewrite this"
+    )
+
+    section = PLATFORM_GUIDE_PATH.read_text(encoding="utf-8").split("## Choosing a machine", 1)
+    assert len(section) == 2, "the platform guide has no 'Choosing a machine' section"
+    body = section[1].split("\n## ", 1)[0]
+
+    # The priced range, as a range, rather than $55.04 appearing anywhere in the section.
+    # The H100 paragraph below quotes that figure too, so presence proves nothing about
+    # whether the range a reader budgets against carries it.
+    quoted = re.findall(r"from \$(\d+\.\d\d) an hour to \$(\d+\.\d\d)", body)
+    assert quoted == [(to_cents(cheapest), to_cents(priced))], (
+        f"'Choosing a machine' quotes {quoted} as the priced range, and the catalogue "
+        f"prices ${to_cents(cheapest)} to ${to_cents(priced)}. That is the range the "
+        "dropdown offers, and it is the one somebody reads before picking a shape they "
+        "cannot have"
+    )
+    stops = re.search(r"that range stops at \$(\d+\.\d\d)", body)
+    assert stops is not None and stops.group(1) == to_cents(placeable), (
+        f"'Choosing a machine' does not say the range that can be started stops at "
+        f"${to_cents(placeable)}. Without it the page quotes one range and a reader takes "
+        "the priced top for a machine they can book"
+    )
+
+    startable = sum(1 for profile in profiles if profile.provisioned)
+    for count, what in ((len(profiles), "priced"), (startable, "startable")):
+        assert f"{_in_words(count)} " in body.lower(), (
+            f"'Choosing a machine' never says how many shapes are {what}, and the "
+            f"catalogue says {count}. The two counts are what make two ranges read as two "
+            "ranges rather than as a contradiction"
+        )
+
+
+def test_the_lane_refusal_the_reference_quotes_is_the_one_the_lane_composes() -> None:
+    """Mutation: reword the refusal, or leave the guide's copy where it was.
+
+    The page carried "log in the way you normally do", which the tool stopped saying because
+    it is an instruction for somebody who has already done it once. It now names the one
+    command that produces a session in this account. A reader comparing a refusal on their
+    screen against a different one on the page has to work out which is out of date, and the
+    ordinary conclusion is that the tool is broken.
+
+    The AWS line is quoted too. It is the reason the paragraph is four lines rather than two
+    and it is what somebody searches for.
+
+    ``opens_a_session=True`` is the ``run`` and ``shell`` form, which is the one the page
+    quotes and the one the two people walking the CLI met. ``edullm stop`` composes the same
+    paragraph with a different sentence about the plugin, because it checks for none, and
+    the page says so in prose beneath rather than quoting a second block nobody would
+    diff against the first.
+    """
+    from edullm_platform.cli.main import _no_aws_session
+
+    said = (
+        "aws: [ERROR]: An error occurred (NoCredentials): Unable to locate credentials.\n"
+        'You can configure credentials by running "aws login".'
+    )
+    composed = [
+        line
+        for line in _no_aws_session(said, opens_a_session=True).splitlines()
+        if line.strip()
+    ]
+    page = PLATFORM_GUIDE_PATH.read_text(encoding="utf-8")
+    quoted = {line for block in fenced_blocks(page) for line in block.splitlines()}
+
+    for line in composed:
+        assert line in quoted, (
+            f"the platform reference does not quote {line!r}, which is a line the lane "
+            "prints when it has no credential. Run `edullm run` with no AWS session and "
+            "paste what it says"
+        )
+
+
+def test_the_reference_does_not_make_a_researcher_pass_a_flag_the_lane_defaults() -> None:
+    """Mutation: make ``--compute`` required again, or write it back into the two rows.
+
+    Four flags before anybody saw a GPU was the friction the default removed, and a table
+    that keeps printing the flag teaches the friction back. ``--project`` is the opposite
+    case and has to stay in both rows, because nothing but the person knows it.
+    """
+    from edullm_platform.cli.configuration import load_reviewed_configuration
+    from edullm_platform.cli.lane import default_compute_profile
+
+    page = PLATFORM_GUIDE_PATH.read_text(encoding="utf-8")
+    rows = [
+        line
+        for line in page.splitlines()
+        if line.startswith(("| `edullm run", "| `edullm shell"))
+    ]
+    assert len(rows) == 2, f"the verbs table has {len(rows)} lane rows rather than two"
+
+    defaulted = default_compute_profile(load_reviewed_configuration(CONFIG_DIR)) is not None
+    for row in rows:
+        assert "--project" in row, f"{row!r} drops --project, which the lane requires"
+        if defaulted:
+            assert "--compute c" not in row, (
+                f"{row!r} spells --compute into the command a reader copies, and the lane "
+                "picks a shape when the flag is absent. The row teaches a flag nobody needs"
+            )
+
+
+def test_the_guides_name_the_approval_classes_a_submission_can_actually_reach() -> None:
+    """Mutation: leave the admin tier in a guide after policy stops routing anything to it.
+
+    ``guides/olmo-core.md`` told people that every profile over $20 an hour needed an
+    admin rather than a team lead. Policy v5 deleted that ceiling along with four others,
+    and ``classify_request`` has returned two answers ever since. A researcher who wanted
+    eight A100s went looking for an approver who does not need to be found, and the run
+    they were avoiding starts on its own.
+
+    The reachable set is computed by driving ``classify_request`` rather than read off the
+    enum, because the enum still carries the third member on purpose and a test reading it
+    would report a tier no submission has taken since v5.
+    """
+    from edullm_platform.contracts.policy import (
+        ApprovalClass,
+        ApprovalPolicy,
+        RequestFacts,
+        classify_request,
+    )
+
+    thresholds = load_yaml(POLICY_PATH, ApprovalPolicy).thresholds
+    reachable = set()
+    for cost in ("0.53", "1000"):
+        for fanout in (1, 4):
+            for scanned in (True, False):
+                reachable.add(
+                    classify_request(
+                        RequestFacts(
+                            claimed_team="scratch",
+                            repository_registered=True,
+                            dataset_registered=True,
+                            dataset_is_a_corpus=True,
+                            compute_profile_registered=True,
+                            immutable_revision=True,
+                            immutable_image=True,
+                            image_scan_reviewed=scanned,
+                            estimated_cost_usd=Decimal(cost),
+                            maximum_runtime_hours=Decimal(1),
+                            maximum_attempts=1,
+                            fanout_size=fanout,
+                        ),
+                        thresholds,
+                    )
+                )
+
+    unreachable = set(ApprovalClass) - reachable
+    assert unreachable, (
+        "every approval class is reachable now, so the paragraph the guides carry about "
+        "there being no admin tier is wrong and this test should be rewritten rather than "
+        "deleted"
+    )
+
+    approval = platform_guide_text().split("\n## Approval", 1)[1].split("\n## ", 1)[0]
+    for reached in sorted(reachable):
+        assert f"`{reached.value}`" in approval, (
+            f"a submission can be classified {reached.value!r} and the approval section "
+            "does not name it, so a researcher meets the word for the first time in the "
+            "output of edullm check"
+        )
+    for missing in sorted(unreachable):
+        assert f"`{missing.value}`" in approval and "no submission reaches it" in approval, (
+            f"{missing.value!r} is a class nothing routes to and the approval section does "
+            "not say so. Two guides sent people looking for an admin for a run that starts "
+            "on its own, which is the shape of mistake this sentence prevents"
+        )
+
+
+def test_each_repository_guide_tabulates_every_workload_registered_for_it() -> None:
+    """Mutation: register a second entry and leave the guide saying there is one.
+
+    ``guides/olmo-eval-full.md`` said ``olmo-eval-check`` was "the only entry this
+    repository has" while the catalogue also carried ``olmo-eval-sweep`` at two hours. A
+    person whose eval needs two hours read that they had to ask for something, and the
+    thing they needed was already on the form.
+
+    The guide is matched to its repository by filename, which is how the three of them are
+    already named, and the section is the one headed with the profiles.
+    """
+    registered: dict[str, set[str]] = {}
+    for workload in catalogue().workloads:
+        registered.setdefault(workload.repository.lower(), set()).add(workload.name)
+
+    checked = 0
+    for path in sorted(GUIDES_DIR.glob("*.md")):
+        owned = registered.get(path.stem.lower())
+        if owned is None:
+            continue
+        page = path.read_text(encoding="utf-8")
+        halves = page.split("\n## Workload profiles", 1)
+        if len(halves) != 2:
+            continue
+        section = halves[1].split("\n## ", 1)[0]
+        checked += 1
+        named = {entry for entry in owned if f"`{entry}`" in section}
+        assert named == owned, (
+            f"{path.name} tabulates {sorted(named)} and config/workload-catalog.yaml "
+            f"registers {sorted(owned)} against {path.stem}. A researcher who needs the "
+            "missing one is told to ask for something they can already pick"
+        )
+
+    assert checked >= 2, (
+        f"only {checked} guide(s) were matched to a repository, so this compared almost "
+        "nothing. Either a guide was renamed away from its repository or the section "
+        "heading moved"
+    )
+
+
+def test_no_guide_denies_a_notification_channel_the_infrastructure_record_says_exists() -> None:
+    """Mutation: put "Nothing sends them yet" back into day one.
+
+    ``guides/day-one.md`` was written on 2026-08-06 saying the webhook the notifier posts
+    to had never been supplied and that no message had been read end to end. It had been
+    supplied the previous day, ``infra/README.md`` said so under "It already exists" the
+    whole time, and messages were posted through the deployed function within hours of the
+    guide landing. So the one page a newcomer reads first told thirty-five people that a
+    working notification does not work, and pointed them at polling a command whose state
+    never changes.
+
+    Held as a contradiction between two committed documents rather than as a fact about
+    Slack, because Slack is not observable from a test and a disagreement between these
+    two files is. It fails in both directions.
+    """
+    infra = INFRA_README_PATH.read_text(encoding="utf-8")
+
+    assert "sbsandbox-intern-edullm-runs-webhook" in infra, (
+        "infra/README.md no longer records the webhook secret, so the two documents cannot "
+        "be held against each other. Restore the record, or rewrite this test against "
+        "whatever replaced it"
+    )
+    supplied = "**It already exists.**" in infra
+
+    denials = (
+        "Nothing sends them yet",
+        "has never been supplied",
+        "No notification is delivered",
+        "why you will not get one",
+    )
+    for name, page in researcher_facing().items():
+        said = [phrase for phrase in denials if phrase in page]
+        assert not (supplied and said), (
+            f"{name} says {said}, and infra/README.md records the webhook as already "
+            "created and pointing at #edullm-runs. One of the two is stale and it is not "
+            "the one under infra/"
+        )
+
+
+def test_the_two_notification_lines_day_one_shows_are_lines_the_notifier_composes() -> None:
+    """Mutation: reword any clause in ``notifications/messages``, or the guide's copy of it.
+
+    Day one shows a researcher what to look for in ``#edullm-runs``, one succeeded line and
+    one failed line, and those lines are the only description anybody gets of a message they
+    are told to wait for rather than poll. The page carried them with a ``[runs]`` prefix
+    the notifier does not write: the channel is a field on the message and never a prefix on
+    its text, so a reader scanning the channel was looking for the wrong first character.
+
+    Held by rendering both from the composer rather than by reading the words back. The
+    facts are hand-built so the figures stay the ones the page shows, which makes this an
+    equality on the wording and on nothing else. Money, duration and the checkpoint clause
+    all come out of that module, so any of them being reworded fails here.
+    """
+    from edullm_platform.notifications.facts import RunEndedFacts
+    from edullm_platform.notifications.messages import render_run_ended
+
+    def facts(**overridden: Any) -> RunEndedFacts:
+        settled: dict[str, Any] = {
+            "run_id": "run_019fa73d-be37-7066-984b-a4bacf194f49",
+            "outcome": "succeeded",
+            "person": "Aryan Verma",
+            "team": "pre-training",
+            "experiment": "plan-b-phase0-100m-superbpe-eval",
+            "queue_name": None,
+            "compute_profile": "gpu-1xa10g",
+            "hourly_rate_usd": Decimal("1.006"),
+            "seconds_spent": 60,
+            "spent_usd": Decimal("0.02"),
+            "authorised_usd": Decimal("2.01"),
+            "exit_code": None,
+            "output_prefix": None,
+            "cells_total": None,
+            "cells_failed": None,
+            "cells_succeeded": None,
+            "cells_measured": None,
+            "failed_cell_indexes": None,
+            "checkpoint_state": "unknown",
+        }
+        settled.update(overridden)
+        return RunEndedFacts(**settled)
+
+    succeeded = render_run_ended(facts()).text
+    failed = render_run_ended(
+        facts(
+            outcome="failed",
+            seconds_spent=42 * 60,
+            spent_usd=Decimal("0.70"),
+            authorised_usd=None,
+            exit_code=1,
+        )
+    ).text
+
+    day_one = DAY_ONE_GUIDE_PATH.read_text(encoding="utf-8")
+    # Whole lines of a fenced block rather than a substring of the page, so a prefix in
+    # front of the message fails. That was the defect: `[runs] ` reads as part of what
+    # arrives, and a substring check cannot see it.
+    quoted = {row for block in fenced_blocks(day_one) for row in block.splitlines()}
+    for line in (succeeded, failed):
+        assert line in quoted, (
+            "day-one.md does not show the line the notifier composes. It now reads:"
+            f"\n\n{line}\n\nPut that in the notification block on a line of its own, with "
+            "nothing in front of it, or the one page a newcomer reads describes a message "
+            "that is not the one arriving"
+        )
+
+
+def test_the_version_day_one_makes_a_reader_check_for_is_one_they_can_install() -> None:
+    """Mutation: raise the floor in day one above the version this repository releases.
+
+    The quoting bug shipped in the tool rather than on the platform, so merging the fix
+    repaired nobody: an install at 3.4.7 keeps sending unquoted commands until the person
+    holding it runs ``uv tool install --force`` again. Day one therefore makes a reader read
+    ``edullm --version`` back and names a floor, and a floor is a number that goes stale in
+    two ways. Above the released version it sends everybody chasing a tool that does not
+    exist. Below the release that fixed the thing it is not a floor at all, which is why the
+    lower bound here is the release the fix went out in rather than anything softer.
+    """
+    pages = researcher_facing()
+    floors = {
+        name: set(re.findall(r"read \*{0,2}(\d+\.\d+\.\d+) or higher", page))
+        for name, page in pages.items()
+    }
+
+    assert floors[DAY_ONE_GUIDE_PATH.name], (
+        "day-one.md names no version floor, so a reader with a 3.4.7 install is told to "
+        "run --version and given nothing to compare it against"
+    )
+    named = set().union(*floors.values())
+    assert len(named) == 1, (
+        f"the pages name more than one floor between them, {sorted(named)}: "
+        f"{ {name: sorted(found) for name, found in floors.items() if found} }. A reader "
+        "who follows two of these cannot tell which install is good enough"
+    )
+
+    floor = tuple(int(part) for part in next(iter(named)).split("."))
+    released = released_version()
+    assert floor >= (3, 4, 8), (
+        f"the guides ask for {next(iter(named))} or higher, which is below 3.4.8. 3.4.8 is "
+        "the release that stopped submit unquoting the command, so a lower floor clears an "
+        "install that still has the bug"
+    )
+    assert floor <= tuple(int(part) for part in released.split(".")), (
+        f"the guides ask for {next(iter(named))} or higher and this repository releases "
+        f"{released}, so nobody following the install line can satisfy it"
+    )
+
+
+def test_the_refusal_day_one_quotes_is_the_refusal_a_stale_install_earns() -> None:
+    """Mutation: reword the refusal day one quotes, or the guard that raises it.
+
+    A researcher on 3.4.7 meets this text and nothing else, two minutes after submitting,
+    and the recognisable part is what it says rather than that it was a refusal. So the
+    block is quoted verbatim and held against the guard that produces it, with the day-one
+    command as the input, because that is the command the thirty-five of them will run.
+
+    The advice on the last line is why quoting it matters. It tells them to quote the whole
+    program, they already did, and the tool took the quotes off between their terminal and
+    the form. The guide has to say that, and it can only say it while the words it is
+    talking about are the words that arrive.
+    """
+    from edullm_platform.contracts.validation import require_a_shell_command_that_kept_its_quotes
+
+    day_one = DAY_ONE_GUIDE_PATH.read_text(encoding="utf-8")
+    quoted = ["bash", "-lc", 'python .edullm/time_attention.py "$EDULLM_RUN_ID"']
+
+    # What 3.4.7 put on the form, and what the compile job then splits it back into.
+    unquoted = shlex.split(" ".join(quoted))
+    with pytest.raises(ValueError) as refusal:
+        require_a_shell_command_that_kept_its_quotes(unquoted)
+    printed = " ".join(str(refusal.value).split())
+
+    blocks = [" ".join(block.split()) for block in fenced_blocks(day_one)]
+    assert printed in blocks, (
+        "day-one.md does not quote the refusal a 3.4.7 install earns. The guard now says:"
+        f"\n\n{printed}\n\nQuote that, wrapped however the page wraps, or the one page a "
+        "newcomer reads describes a refusal they will not recognise when it arrives"
+    )
+
+    assert require_a_shell_command_that_kept_its_quotes(quoted) == quoted, (
+        "the guard now refuses the day-one command as it is actually quoted, which makes "
+        "the whole submission path unreachable rather than making this guide wrong"
+    )
+
+
+def states_status_can_print() -> set[str]:
+    """Every state ``edullm status`` prints for a submission, driven out of the function.
+
+    Every GitHub status crossed with every conclusion, rather than the handful anybody would
+    think to list, so a branch added to :func:`submission_state` is covered here the day it
+    lands. ``DECLINED`` is not returned by that function -- a decline and a compile refusal
+    reach the runs endpoint identically and only the approvals endpoint separates them -- so
+    it is unioned in from the constant the two readers of it share.
+    """
+    return {
+        submission_state({"status": status, "conclusion": conclusion})
+        for status in ("queued", "in_progress", "completed", "requested", "waiting", "pending")
+        for conclusion in (None, "success", "failure", "cancelled", "skipped", "timed_out")
+    } | {ADMITTED, DECLINED}
+
+
+def test_the_reference_names_every_state_edullm_status_can_print() -> None:
+    """Mutation: rename a state in ``actions.py`` and leave the guides where they are.
+
+    **THIS IS THE STALENESS THE PAGES ACTUALLY SUFFERED.** ``guides/day-one.md`` and
+    ``guides/the-platform.md`` both taught ``SUBMITTED`` as the word every finished run
+    reads, in three places between them, one of which was a row in day one's standing-walls
+    table. Both were true when they were written. The moment the word became ``ADMITTED``
+    they described a tool nobody had, and a guide that warns a reader about something that
+    no longer happens is how a document teaches people to stop believing the rest of it.
+
+    Coverage rather than a forbidden-word list, and that is what makes it catch a rename in
+    the direction a rename actually breaks. A state the tool gains and the page does not
+    mention fails here; a state the page keeps and the tool has dropped fails here too, by
+    the state that replaced it being absent. A list of words not to say would need editing
+    every time and would be edited by whoever renamed the state, which is the one person who
+    has already forgotten the pages exist.
+
+    ``the-platform.md`` and not every page, because it is the reference and day one is a
+    walkthrough. A walkthrough naming three of eight states is doing its job.
+
+    ``UNKNOWN`` is in the set and therefore has to be in the table. It is a real answer --
+    GitHub reports a completed run and no conclusion -- and a reader who meets it with no
+    entry to look up has met an undocumented word, which is the whole complaint here.
+    """
+    page = PLATFORM_GUIDE_PATH.read_text(encoding="utf-8")
+    missing = sorted(
+        state for state in states_status_can_print() if f"`{state}`" not in page
+    )
+
+    assert not missing, (
+        f"edullm status prints {missing} and guides/the-platform.md names none of them. "
+        "The page is the reference for this verb, so a state it does not carry is a word a "
+        "researcher meets in their terminal with nowhere to look it up"
+    )

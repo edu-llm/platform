@@ -52,9 +52,30 @@ The `detail` names the field and usually the file. The common ones and what they
 | `unregistered_repository` | This codebase is not registered. Switch to the `registering-a-repository` skill. |
 | `process_per_device` | The command starts fewer processes than the machine has cards. Fix the launcher or pick a smaller `--compute`. |
 | `bfloat16_not_in_the_hardware` | The chosen card cannot do the dtype the command asks for. Pick another shape or another dtype. |
-| `unregistered_dataset` | The `detail` lists what is registered. Do not invent a release id. |
+| `unregistered_dataset` | Run `edullm data` and pick one off it. Do not invent a release id. |
 
 Anything else, read the `detail`. It was written to be acted on.
+
+### Picking a corpus, which is `edullm data` and never a refusal
+
+```bash
+edullm data                    # the list, smallest first
+edullm data <reference-id>     # one of them in full
+edullm data --json             # the same under `corpora`, with `verdict` per entry
+```
+
+It reaches no network and exits 0. **Registered is not runnable, and this is the only thing
+that says which is which.** Some registered corpora are refused by nothing here and reach a
+container that cannot build a tokenizer for the tokens it just resolved, which exits 69 after
+the machine has been paid for. `verdict` is `runs`, `refused` or `exits_69`, and the short
+output names the `exits_69` ones and says what each is waiting on.
+
+Never discover the corpora by naming a bad one and reading the refusal. That list is names
+only: no size, no tokenizer, no licence, and no sign of which of them will start.
+
+A corpus nothing registers is a person's job rather than a command. `edullm add dataset`
+refuses, because the entry pins facts out of the sealed bucket that need an AWS role this
+binary does not hold. File it with `edullm ask --kind dataset-request`.
 
 ### 3. Check again until it is clean
 

@@ -35,6 +35,7 @@ from edullm_platform.cli.preflight import Refusal
 __all__ = [
     "ADD_KINDS",
     "ASK_KINDS",
+    "ASK_KIND_FOR",
     "ASK_QUEUE_LABEL",
     "CAPACITY_BLOCK_FIELDS",
     "CAPACITY_BLOCK_KIND",
@@ -60,9 +61,20 @@ ADD_KINDS: Final[dict[str, str]] = {
 
 #: The kinds a pull request can be opened for without asking anybody first. One today, and
 #: the registration workflow is what makes it one: ``register-repository.yml`` edits five
-#: platform files, runs a local verification and opens the pull request. Nothing equivalent
+#: platform files, runs a local verification and prepares the pull request. Nothing equivalent
 #: exists for the other four.
 SELF_SERVICE_KINDS: Final = frozenset({"repository"})
+
+
+#: The ask a kind is filed under, where the intake forms offer one that fits. Absent for a
+#: kind whose ask has no form of its own, which is the ordinary case and is why this is a
+#: partial map rather than a required column beside :data:`ADD_KINDS`.
+#:
+#: **NAMING THE FORM IS THE WHOLE DIFFERENCE BETWEEN THIS REFUSAL AND A DEAD END.** It said
+#: "file this with edullm ask" and stopped, and ``ask`` requires ``--kind`` from a closed set
+#: the refusal did not name, so a reader who followed the instruction met argparse's own list
+#: and had to guess which of four applied to a corpus. The one that applies is here.
+ASK_KIND_FOR: Final[dict[str, str]] = {"dataset": "dataset-request"}
 
 
 def routed_to_ask(kind: str) -> Refusal:
@@ -72,16 +84,37 @@ def routed_to_ask(kind: str) -> Refusal:
     argument in ``edullm_platform.errors``: the kind is already on the command line, so a
     code per kind would name in the vocabulary a thing the caller already said. What the
     detail adds is what the kind means and where the act goes instead.
+
+    **AND FOR A DATASET IT NOW SAYS WHAT A PERSON ACTUALLY DOES, WHICH IS NOT A COMMAND.**
+    Registering a corpus is a hand-written entry in ``config/datasets.yaml`` carrying a
+    ``manifest_sha256`` and a ``payload_profile`` read off the corpus's own sealed
+    ``dataset.json``, which means opening ``s3://edullm-data/``, which means an AWS role that
+    fifteen of the thirty-five people on the roster do not have and that this binary holds
+    none of. There is no ``register-dataset.yml`` to mirror ``register-repository.yml``.
+    Saying so plainly is the point: a refusal that gestured at self-service would send
+    somebody to build a pull request they cannot fill in.
+
+    It also names ``edullm data``, because the reader who reaches this most often is not
+    registering anything. They are looking for a corpus that is already there.
     """
-    return Refusal(
-        code="add_kind_is_not_self_service",
-        detail=(
-            f"file this with edullm ask, and say what you want rather than how it should be "
+    lines = [
+        (
+            "file this with edullm ask, and say what you want rather than how it should be "
             f"built. Teaching the platform {kind!r} means {ADD_KINDS[kind]}, which lands "
             "across several reviewed files and a stack no workflow may deploy, so no pull "
             "request can be opened for it from here."
-        ),
-    )
+        )
+    ]
+    if (ask_kind := ASK_KIND_FOR.get(kind)) is not None:
+        lines.append(f"edullm ask --kind {ask_kind} --title '<what you need>' is the route.")
+    if kind == "dataset":
+        lines.append(
+            "Registering a corpus is a hand-written entry in config/datasets.yaml pinning "
+            "the manifest digest and payload profile off its sealed dataset.json, which "
+            "needs an AWS role this binary does not hold, so a person does it. Run edullm "
+            "data first: the corpus you want may already be registered."
+        )
+    return Refusal(code="add_kind_is_not_self_service", detail=" ".join(lines))
 
 
 def register_repository_form(

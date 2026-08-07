@@ -296,6 +296,12 @@ jobs:
               if line
           ]
 
+          # THE ROWS THIS DROPS ARE COUNTED, BECAUSE A LIST OFFERED AS "YOUR RUNS" HAS TO BE
+          # ABLE TO SAY IT IS NOT ALL OF THEM. Leaving an untagged job out is the right
+          # call -- see the step comment -- but it is a job Batch listed and this did not
+          # show, which is indistinguishable from a job nobody looked for unless the
+          # difference is written down.
+          unattributed = 0
           mine = []
           for start in range(0, len(ids), 100):
               batch = ids[start : start + 100]
@@ -306,10 +312,17 @@ jobs:
                   text=True,
               )
               for job in json.loads(described.stdout)["jobs"]:
-                  if (job.get("tags") or {}).get("edullm:submitter") == actor:
+                  submitter = (job.get("tags") or {}).get("edullm:submitter")
+                  if submitter == actor:
                       mine.append(job)
+                  elif submitter is None:
+                      unattributed += 1
 
           mine.sort(key=lambda job: job.get("createdAt", 0), reverse=True)
+
+          #: How many rows the table carries. A summary nobody scrolls is its own kind of
+          #: wrong answer, so the cap stays and what it hides is declared under the table.
+          SHOWN = 20
 
           # BEFORE THE ANSWER, BECAUSE IT CHANGES WHAT THE ANSWER MEANS. A list of runs that
           # is missing the queues Batch refused to search is not a list of your runs, and the
@@ -319,6 +332,19 @@ jobs:
                   f"> **The search was incomplete.** {len(unsearched)} of the queue searches "
                   "were refused, most likely throttled, so any run of yours on those queues "
                   "is missing from what follows. Dispatching again re-runs the search."
+              )
+              print()
+
+          # THE SAME SENTENCE THE SEARCH-REFUSED CASE GETS, FOR THE OTHER WAY A ROW GOES
+          # MISSING. "No runs found" spoken over jobs that were listed and could not be
+          # attributed is the confident wrong answer twice over, because this is the branch
+          # a person reaches when they already suspect something is wrong.
+          if unattributed:
+              print(
+                  f"> **{unattributed} listed job(s) carry no submitter tag** and are left "
+                  "out of what follows rather than shown as yours. A run admitted before "
+                  "that tag existed is one of them. Naming its run id searches for that one "
+                  "job regardless of whose it is."
               )
               print()
 
@@ -336,10 +362,25 @@ jobs:
           print()
           print("| Run | Status | Queue |")
           print("| --- | --- | --- |")
-          for job in mine[:20]:
+          for job in mine[:SHOWN]:
               queue = job.get("jobQueue", "").rsplit("/", 1)[-1]
               print(f"| `{job['jobName']}` | {job.get('status')} | {queue} |")
           print()
+          # UNDER THE TABLE RATHER THAN OVER IT, AND ONLY WHEN IT IS TRUE. The rows above
+          # are the newest by creation, and a run still going after several hours sorts
+          # below everything submitted since -- including the ones that have already
+          # finished, which this searches for too. So the row a person dispatching a blank
+          # listing is most often looking for is the row the cap drops first, and it was
+          # dropped in silence: `run_019fd602-4e05` was RUNNING, three hours and twenty
+          # minutes in, and absent from a table the named search answered immediately.
+          if len(mine) > SHOWN:
+              print(
+                  f"> **This is the {SHOWN} newest of {len(mine)} and not all of them.** "
+                  f"{len(mine) - SHOWN} more are yours and are not above, newest first, so "
+                  "a run that has been going for hours sits below anything submitted since. "
+                  "Naming its run id searches every queue and every state for that one job."
+              )
+              print()
           print("Reporting on the newest below. To act on another, dispatch again naming it.")
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as handle:
@@ -392,6 +433,16 @@ jobs:
             # Not an error worth a red run. A run that already finished cannot be stopped,
             # and telling somebody their cancellation failed when what happened is that
             # their job ended is the kind of message that sends people looking for a fault.
+            #
+            # BOTH ANSWERS GO UNDER THE RUN ID AS A HEADING, AND THEY DID NOT, WHICH MEANT
+            # NEITHER REACHED A TERMINAL. `edullm status` reads sections of this job's log
+            # back by heading, and these two sentences were the only thing this workflow
+            # prints that carried none -- so an admitted run whose job Batch cannot find
+            # spent a runner, waited 73 seconds on 2026-08-06, and handed back "the workflow
+            # finished success and its report named no section this verb reads". The heading
+            # is the run id because that is the one `status` already looks for, and it is
+            # written here rather than left to the describe step because that step is
+            # skipped on exactly this path.
             echo "not_running=true" >> "${GITHUB_OUTPUT}"
             refused="$(wc -l < "${unsearched}" | tr -d ' ')"
             if [[ "${refused}" != "0" ]]; then
@@ -400,10 +451,20 @@ jobs:
               # first spoken in place of the second is the defect this enumeration was built
               # to fix, reappearing as a throttle rather than as a missing queue.
               echo "queue_search_incomplete" >&2
-              echo "No job was found under this run id, and ${refused} of the queue searches were refused -- so this does not say the run does not exist, it says nobody managed to look everywhere. Batch throttles a long enumeration, and a refused call is a queue that went unread. Dispatch again before concluding the run is gone." | tee -a "${GITHUB_STEP_SUMMARY}"
+              {
+                echo "## ${RUN_ID}"
+                echo
+                echo "No job was found under this run id, and ${refused} of the queue searches were refused -- so this does not say the run does not exist, it says nobody managed to look everywhere. Batch throttles a long enumeration, and a refused call is a queue that went unread. Dispatch again before concluding the run is gone."
+              } | tee -a "${GITHUB_STEP_SUMMARY}"
               exit 0
             fi
-            echo "No job is queued, running or recently finished under this run id. Batch stops listing a job some days after it ends, so an older run is not missing -- it is out of the window this can search." | tee -a "${GITHUB_STEP_SUMMARY}"
+            {
+              echo "## ${RUN_ID}"
+              echo
+              echo "No job is queued, running or recently finished under this run id. Batch stops listing a job some days after it ends, so an older run is not missing -- it is out of the window this can search."
+              echo
+              echo "The submission that minted this id was admitted, so a job was placed. What this cannot tell you is whether it ran and aged out of the listing or never started, and neither of those is a run you can still read from here."
+            } | tee -a "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
 

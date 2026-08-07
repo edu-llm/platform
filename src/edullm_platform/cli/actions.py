@@ -45,8 +45,9 @@ dispatch, which is what happened before any of this existed.
 from __future__ import annotations
 
 import json
+import re
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -58,21 +59,29 @@ from edullm_platform.cli.workspace import CommandResult, CommandRunner
 
 __all__ = [
     "ADMISSION_JOB",
+    "ADMITTED",
     "CANCEL_WORKFLOW",
+    "DECLINED",
+    "EDULLM_VERSION_FIELD",
+    "MIGHT_BE_DECLINED",
     "PLATFORM_REPOSITORY",
     "PRINTED_RUN_ID",
     "REGISTER_WORKFLOW",
+    "REGISTRATION_BRANCH_PREFIX",
     "SUBMIT_WORKFLOW",
     "Admitted",
     "AmbiguousRunIdError",
     "CompileOutcome",
+    "Decline",
     "GithubUnreachableError",
     "PlatformActions",
     "RunFacts",
     "SubmissionRun",
     "Waiting",
+    "declined_at_the_gate",
     "elapsed_said",
     "read_run_facts",
+    "registration_compare_url",
     "report_ceiling_seconds",
     "submit_ceiling_seconds",
 ]
@@ -91,11 +100,41 @@ PLATFORM_REPOSITORY: Final = "edu-llm/platform"
 SUBMIT_WORKFLOW: Final = "submit-run.yml"
 CANCEL_WORKFLOW: Final = "cancel-run.yml"
 
-#: The workflow that edits five platform files, runs a local verification and opens the
-#: registration pull request. Named here with the other two rather than in ``intake.py``,
+#: The one input on the submission form that is not a ``SubmissionInputs`` field. It names
+#: the install that dispatched, so that a refusal caused by a defect in this binary can say
+#: which release ended it rather than repeating advice the submitter already followed.
+#: Spelled here because three places need the same word -- what ``submit`` sends, what it
+#: tells :meth:`PlatformActions.dispatch` it may drop, and what the workflow declares --
+#: and ``tests/test_phase2_submit_run_workflow.py`` compares it against the form.
+EDULLM_VERSION_FIELD: Final = "edullm_version"
+
+#: The workflow that edits five platform files, runs a local verification and pushes the
+#: registration to a branch. Named here with the other two rather than in ``intake.py``,
 #: because this module is the one place that knows what this binary drives, and
 #: ``tests/test_cli_add.py`` reads the directory to hold the spelling to a file that exists.
 REGISTER_WORKFLOW: Final = "register-repository.yml"
+
+#: The branch that workflow pushes, derived rather than discovered, which is the only reason
+#: this binary can name the pull request at all. The organization forbids Actions from
+#: opening one, so the run pushes a branch and prints a compare URL -- and a person following
+#: a link out of this binary is at a terminal rather than in a workflow log. The branch name
+#: is a function of the repository being registered, so saying the same URL here costs no
+#: second call to GitHub. ``tests/test_register_repository.py`` holds it equal to the branch
+#: that tool actually records, which is where the workflow gets it -- the same seam-test
+#: arrangement ``PLATFORM_REPOSITORY`` and ``ADMISSION_JOB`` sit on.
+REGISTRATION_BRANCH_PREFIX: Final = "register/"
+
+
+def registration_compare_url(repository: str, *, platform_repository: str) -> str:
+    """Where somebody opens the registration pull request, once the run has pushed.
+
+    The title and body are not carried. Both are composed inside the run out of the diff it
+    wrote, so this binary does not have them and reading them back would mean asking GitHub
+    for the job summary -- a second call, for a body that does not fit in a URL anyway. The
+    run prints them where it prints this.
+    """
+    branch = f"{REGISTRATION_BRANCH_PREFIX}{repository.lower()}"
+    return f"https://github.com/{platform_repository}/compare/{branch}?expand=1"
 
 #: The artifact ``submit-run.yml``'s compile job uploads. It is written before the approval
 #: gate, so it is readable while a run is still waiting for somebody to tap -- which is the
@@ -167,11 +206,21 @@ class CompileOutcome:
     ``compiled is None`` covers two of them and they need different sentences: a run that
     finished without publishing, where waiting longer is pointless, and a ceiling reached on
     a job still running, where ``edullm status`` will carry the answer shortly.
+
+    ``status`` is the third fact and it was being read and thrown away. The poll below asks
+    the run endpoint on every attempt to learn whether the run has finished, and that same
+    answer already says whether the run is ``queued`` or ``in_progress``. Queued and
+    compiling are different facts -- one is a runner this account has not been given yet and
+    the other is work in progress -- and a submitter waiting on a backed-up queue who is told
+    "compiling" concludes their run has started.
     """
 
     compiled: dict[str, Any] | None
     #: The workflow run reached a conclusion and no submission was published under it.
     published_nothing: bool
+    #: The run's own status the last time it was read: ``queued``, ``in_progress``,
+    #: ``completed``, or ``None`` where the answer carried no status at all.
+    status: str | None = None
 
 
 class GithubUnreachableError(RuntimeError):
@@ -290,14 +339,59 @@ class PlatformActions:
         """Every workflow this has set going, in order, and empty until one has been."""
         return tuple(self._dispatched)
 
-    def dispatch(self, workflow: str, fields: Mapping[str, str]) -> None:
+    def dispatch(
+        self,
+        workflow: str,
+        fields: Mapping[str, str],
+        *,
+        courtesy: Collection[str] = (),
+    ) -> None:
         """``gh workflow run``, with every value passed as its own ``-f`` argument.
 
         One argument per field rather than a formatted string, so that a command containing
         a quote, a newline or a shell metacharacter reaches GitHub as the submitter typed
         it. The compile job POSIX-splits the command on the far side; anything this layer
         did to it first would be a second parse.
+
+        **``courtesy`` NAMES THE FIELDS A DISPATCH MAY LOSE RATHER THAN FAIL OVER, AND
+        WITHOUT IT A FIELD THIS BINARY GAINS IS A FIELD THAT BREAKS EVERY SUBMISSION.**
+        GitHub validates dispatch inputs against the workflow file at the ref it is aimed
+        at and answers 422 ``Unexpected inputs provided`` for one it does not declare -- it
+        does not ignore it, which this module's own test file used to say it did. So an
+        install newer than ``main`` cannot submit at all, for the whole window between the
+        two, and the window is not hypothetical: a merge train that takes this half of a
+        change and drops the workflow half opens it, and so does anybody installing from a
+        branch.
+
+        Retried without those fields rather than warned about, because there is nothing for
+        a submitter to do with the warning. What the fields carry is a courtesy to whoever
+        reads the run afterwards; the dispatch is the thing that was asked for, and the two
+        are not worth trading. A 422 naming anything outside ``courtesy`` is a real defect
+        in this typist and still fails loudly.
         """
+        result = self._runner(self._dispatch_argv(workflow, fields))
+        if not result.ok and courtesy:
+            unexpected = _unexpected_inputs(_said(result))
+            if unexpected and unexpected <= set(courtesy):
+                result = self._runner(
+                    self._dispatch_argv(
+                        workflow,
+                        {
+                            name: value
+                            for name, value in fields.items()
+                            if name not in unexpected
+                        },
+                    )
+                )
+        if not result.ok:
+            raise GithubUnreachableError(
+                f"gh could not dispatch {workflow}: {_said(result)}. This is not a refusal "
+                "of the submission. Check gh auth status and that you can see "
+                f"{self._repository}."
+            )
+        self._dispatched.append(workflow)
+
+    def _dispatch_argv(self, workflow: str, fields: Mapping[str, str]) -> tuple[str, ...]:
         argv: list[str] = [
             "gh",
             "workflow",
@@ -308,14 +402,7 @@ class PlatformActions:
         ]
         for name, value in fields.items():
             argv.extend(("-f", f"{name}={value}"))
-        result = self._runner(tuple(argv))
-        if not result.ok:
-            raise GithubUnreachableError(
-                f"gh could not dispatch {workflow}: {_said(result)}. This is not a refusal "
-                "of the submission. Check gh auth status and that you can see "
-                f"{self._repository}."
-            )
-        self._dispatched.append(workflow)
+        return tuple(argv)
 
     def create_issue(self, *, title: str, body: str, labels: Sequence[str]) -> tuple[str, bool]:
         """File one issue and answer with its URL and whether the labels went on.
@@ -455,18 +542,27 @@ class PlatformActions:
         compiling. The artifact is published by a job inside this run, so a run that has
         reached ``completed`` without one is never going to have one -- and that is reported
         as what is known rather than as a refusal, because a cancelled run arrives here too.
+
+        **AND THE STATUS IT READS IS CARRIED OUT RATHER THAN COMPARED AND DROPPED.** The
+        endpoint answers ``queued`` before a runner picks the run up and ``in_progress``
+        after, so the difference between a queue and a compile costs nothing extra to know.
+        It was being narrowed to one boolean here, and the sentence the caller printed on
+        the ceiling said "compiling" for both.
         """
+        status: str | None = None
         for attempt in range(attempts):
             if attempt:
                 self._said_waiting(waiting, elapsed_already + attempt * interval)
                 self._sleep(interval)
             compiled = self.compiled_submission(workflow_run_id)
             if compiled is not None:
-                return CompileOutcome(compiled=compiled, published_nothing=False)
+                return CompileOutcome(compiled=compiled, published_nothing=False, status=status)
             run = self._api(f"repos/{self._repository}/actions/runs/{workflow_run_id}")
-            if run.get("status") == "completed":
-                return CompileOutcome(compiled=None, published_nothing=True)
-        return CompileOutcome(compiled=None, published_nothing=False)
+            answered = run.get("status")
+            status = answered if isinstance(answered, str) else None
+            if status == "completed":
+                return CompileOutcome(compiled=None, published_nothing=True, status=status)
+        return CompileOutcome(compiled=None, published_nothing=False, status=status)
 
     def compiled_submission(self, workflow_run_id: int) -> dict[str, Any] | None:
         """What the compile job recorded, read out of the artifact it uploaded.
@@ -648,10 +744,34 @@ class Decline:
 #: which is what everything else that ends a submission badly reads as.
 DECLINED: Final = "DECLINED"
 
+#: The word for a submission workflow that finished, which is a fact about the submission
+#: and never about the run.
+#:
+#: **IT SAID ``SUBMITTED`` AND THAT WAS THE LAST FALSE WORD IN THIS TOOL.** A workflow run
+#: concluding ``success`` means the admission job placed a Batch job and then
+#: ``submit-run.yml`` ended, with hours of the run still ahead of it and nothing on GitHub
+#: watching. So the state stopped moving there. A run that succeeded an hour ago read
+#: ``SUBMITTED``, one that failed read ``SUBMITTED``, one Batch never placed read
+#: ``SUBMITTED``, and every reader of that word concluded their run was queued and waited --
+#: which is the one conclusion the word invites and the one it can never support.
+#:
+#: **AND ``SUBMITTED`` WAS ALREADY TAKEN, BY BATCH, FOR A DIFFERENT THING.** It is one of
+#: the seven job statuses ``cancel-run.yml`` enumerates, and it means Batch is holding a job
+#: whose dependencies it has not evaluated. So a reader could meet the word twice in one
+#: session -- in this listing, meaning the workflow finished, and in the run report a few
+#: lines further down, meaning the job has not started -- with nothing to tell them the two
+#: were unrelated.
+#:
+#: ``ADMITTED`` is this platform's own word for the fact that is actually known, and
+#: :class:`Admitted` above is where it comes from. Nobody reads "admitted" as an outcome, so
+#: it names the boundary rather than pretending past it: GitHub's knowledge of a run ends at
+#: admission, and what the job did afterwards is inside AWS and costs a runner to ask.
+ADMITTED: Final = "ADMITTED"
+
 #: The two conclusions a declined deployment review can leave behind. GitHub's own
-#: documentation does not fix which, and no run in this repository has been declined yet, so
-#: both are looked at rather than one being guessed. The approvals endpoint is what actually
-#: decides; these only bound which runs are worth asking it about.
+#: documentation does not fix which, so both are looked at rather than one being guessed.
+#: The approvals endpoint is what actually decides; these only bound which runs are worth
+#: asking it about.
 MIGHT_BE_DECLINED: Final = frozenset({"REFUSED", "CANCELLED"})
 
 
@@ -679,6 +799,36 @@ def decline_of(actions: PlatformActions, workflow_run_id: int) -> Decline | None
     return None
 
 
+def declined_at_the_gate(
+    actions: PlatformActions, *, workflow_run_id: int, state: str
+) -> Decline | None:
+    """Whether a submission that ended badly ended because a person said no.
+
+    **THE ONE PLACE BOTH VIEWS OF A RUN ASK THIS, BECAUSE THEY USED TO ASK IT DIFFERENTLY
+    AND ANSWER DIFFERENTLY.** The listing gated on the submission's own state and the
+    single-run view gated on the admission job's conclusion being absent or ``skipped``.
+    On 2026-08-06 a real declined run -- ``run_019fd6a8-96e1``, declined by ``philote-dev``
+    with a reason typed into the box -- had an admission job that GitHub concluded
+    ``failure``, with an empty ``steps`` list because the gate stopped it before it ran a
+    line. So the listing said ``DECLINED`` and ``edullm status`` on the same id said
+    ``REFUSED``, then spent two minutes and six seconds dispatching a runner to describe a
+    Batch job that never existed. The suite could not see it: ``tests/cli_support.py`` and
+    ``tests/test_cli_machine_output.py`` both answer a declined run's jobs endpoint with
+    ``skipped``, which is the shape this account does not produce.
+
+    Gated on the submission's state rather than on the admission job for the reason that
+    case demonstrates. A decline is refused *at the gate*, which is upstream of admission,
+    so what the admission job then reports is GitHub's business and varies; what does not
+    vary is that the workflow run ends badly. :data:`MIGHT_BE_DECLINED` is that bound, and
+    it is what keeps the listing affordable -- a successful run cannot have been declined,
+    and one approvals call per row would put an API call behind every line of a verb people
+    run in a loop.
+    """
+    if state not in MIGHT_BE_DECLINED:
+        return None
+    return decline_of(actions, workflow_run_id)
+
+
 def read_submission_runs(
     actions: PlatformActions,
     *,
@@ -697,7 +847,7 @@ def read_submission_runs(
         manifest = compiled.get("manifest") if isinstance(compiled, dict) else None
         fanout = manifest.get("fanout") if isinstance(manifest, dict) else None
         state = submission_state(run)
-        if state in MIGHT_BE_DECLINED and decline_of(actions, identifier) is not None:
+        if declined_at_the_gate(actions, workflow_run_id=identifier, state=state) is not None:
             state = DECLINED
         found.append(
             SubmissionRun(
@@ -820,14 +970,19 @@ def read_run_facts(
 
     if submission.state == "PENDING_APPROVAL":
         return _parked(actions, facts)
+    # ASKED BEFORE THE ADMISSION JOB IS READ AT ALL, AND THAT ORDER IS THE FIX.
+    # Rejecting a deployment review stops the admission job before it runs a line, but what
+    # GitHub then records against that job is not fixed: this account concludes it
+    # ``failure``, which used to fall past every decline branch into the honest-uncertainty
+    # tail and dispatch a runner to describe a Batch job the gate had already prevented.
+    # The gate is upstream of admission, so the submission's own state is the sound thing to
+    # branch on, and it is what the listing has always branched on.
+    declined = declined_at_the_gate(
+        actions, workflow_run_id=submission.workflow_run_id, state=submission.state
+    )
+    if declined is not None:
+        return _declined(facts, declined)
     if admission is None or conclusion == "skipped":
-        # A DECLINE LOOKS EXACTLY LIKE THIS AND IS NOT THIS. Rejecting a deployment review
-        # stops the admission job from ever running, so the branch a declined run falls into
-        # is the same one a compile refusal falls into, and the sentence below sends somebody
-        # to a run page to look for a defect in a submission a person simply said no to.
-        declined = decline_of(actions, submission.workflow_run_id)
-        if declined is not None:
-            return _declined(facts, declined)
         return replace(
             facts,
             admitted=Admitted.NO,
@@ -995,12 +1150,24 @@ def find_submission(
 
 
 def submission_state(run: Mapping[str, Any]) -> str:
-    """GitHub's status and conclusion, read as the four things they mean to a submitter.
+    """GitHub's status and conclusion, read as the things they mean to a submitter.
 
     ``waiting`` is the one that matters and the one GitHub names least helpfully: it is a
     run parked at an environment with reviewers, which is exactly "a lead has not tapped
     yet". Everything past the gate is the workflow's own business, and a submitter reads
     the conclusion.
+
+    **EVERY WORD HERE IS ABOUT THE SUBMISSION AND NOT ONE OF THEM IS ABOUT THE RUN**, which
+    is why the success case is :data:`ADMITTED` and no longer ``SUBMITTED``. The four
+    unfinished states describe something that is genuinely still happening on GitHub, and
+    the three ended ones describe something that genuinely ended there. Admission is the
+    boundary: past it the answer is in AWS, this function cannot reach it, and the word it
+    returns must not read as though it had.
+
+    ``DECLINED`` is not returned from here, because it cannot be: a decline and a compile
+    refusal reach GitHub's runs endpoint as the same conclusion, and only the approvals
+    endpoint tells them apart. :func:`declined_at_the_gate` is that call and both readers
+    of this function make it.
     """
     status = run.get("status")
     if status == "waiting":
@@ -1011,7 +1178,7 @@ def submission_state(run: Mapping[str, Any]) -> str:
         return "COMPILING"
     conclusion = run.get("conclusion")
     if conclusion == "success":
-        return "SUBMITTED"
+        return ADMITTED
     if conclusion == "cancelled":
         return "CANCELLED"
     if conclusion is None:
@@ -1037,6 +1204,27 @@ def _instant(value: object) -> datetime | None:
     # branch is for a document that carried a naive instant. Assumed UTC rather than local:
     # every timestamp on this path is the API's and the API's are UTC.
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+#: The inputs GitHub names when it refuses a dispatch for carrying one the workflow does
+#: not declare. Quoted and comma-separated inside brackets, which is the API's own
+#: rendering: ``Unexpected inputs provided: ["edullm_version"]``.
+_UNEXPECTED_INPUTS: Final = re.compile(r"Unexpected inputs provided:\s*\[(?P<names>[^\]]*)\]")
+
+
+def _unexpected_inputs(said: str) -> set[str]:
+    """Which inputs a 422 named, or nothing at all for every other failure.
+
+    An empty set for a message this does not recognise, which is what keeps
+    :meth:`PlatformActions.dispatch` from retrying a network failure or an authentication
+    one as though a field were to blame.
+    """
+    match = _UNEXPECTED_INPUTS.search(said)
+    if match is None:
+        return set()
+    return {
+        name.strip().strip("\"'") for name in match.group("names").split(",") if name.strip()
+    }
 
 
 def _said(result: CommandResult) -> str:

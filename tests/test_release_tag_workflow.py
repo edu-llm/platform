@@ -68,6 +68,7 @@ from edullm_platform.cli.actions import PLATFORM_REPOSITORY
 from edullm_platform.cli.release import install_command
 from edullm_platform.reviewed_configuration import ConfigFile
 from edullm_platform.run_history import HISTORY_FILENAME
+from tools.next_version import MAJOR_CEILING
 
 sys.path.insert(0, str(PROJECT_ROOT / "tools"))
 from release_paths import (
@@ -701,7 +702,7 @@ def declaring(version: str, *, why: str | None = None, size: str = "minor") -> s
     it, rather than agreeing with itself.
     """
     reason = f"# WHY THIS IS A {size.upper()} RATHER THAN A PATCH. {why}\n" if why else ""
-    return f'[project]\nname = "edullm-platform"\n{reason}version = "{version}"\n'
+    return f'[project]\nname = "edullm"\n{reason}version = "{version}"\n'
 
 
 def install_real_tooling(
@@ -880,7 +881,16 @@ def test_the_failure_offers_all_three_sizes_and_not_only_a_patch(
     message offering one option answers that for them. The version was a patch and only a
     patch for the life of the project because the only command anybody was ever shown
     produced one.
+
+    Three here because this fixture sits at ``0.2.2``, where a major is ``1.0.0`` and
+    ``MAJOR_CEILING`` is not in the way. What the same page says when the ceiling *is* in the
+    way is the test below, and the two together are the assertion that this page describes
+    the ceiling rather than restating a guess about it.
+
+    The real tool is installed rather than left to the stub, because the page now asks it
+    whether a major exists and a fixture without it answers no for the wrong reason.
     """
+    install_real_tooling(repository, version="0.2.2")
     commit(repository, "a merge", {"config/policy.yaml": "rules\n"})
     git(repository, "tag", "--annotate", "v0.2.2", "--message", "v0.2.2")
 
@@ -888,6 +898,34 @@ def test_the_failure_offers_all_three_sizes_and_not_only_a_patch(
 
     for size in ("patch", "minor", "major"):
         assert f"{BUMP_COMMAND} {size}" in summary
+
+
+def test_the_failure_names_the_ceiling_instead_of_a_major_it_cannot_cut(
+    repository: Path, tmp_path: Path
+) -> None:
+    """Mutation: go on offering ``--bump major`` once the ceiling refuses to compute one.
+
+    Somebody reading this page has decided how big their change was and is about to run the
+    command it names. Offering one the tool refuses sends them to a refusal with no
+    explanation on this page at all, which reads as the automation being broken rather than
+    as a decision somebody made. So the page asks the tool the same question the reader is
+    about to, and when the answer is no it says so and says where the number lives.
+
+    Declared at the ceiling this repository is actually held to, so this test moves with
+    ``MAJOR_CEILING`` rather than pinning a number of its own.
+    """
+    declared = f"{MAJOR_CEILING}.2.2"
+    install_real_tooling(repository, version=declared)
+    commit(repository, "a merge", {"config/policy.yaml": "rules\n"})
+    git(repository, "tag", "--annotate", f"v{declared}", "--message", f"v{declared}")
+
+    _, _, summary, _ = run_decide(repository, tmp_path, declared=declared)
+
+    for size in ("patch", "minor"):
+        assert f"{BUMP_COMMAND} {size}" in summary
+    assert f"{BUMP_COMMAND} major" not in summary
+    assert "MAJOR_CEILING" in summary
+    assert "tools/next_version.py" in summary
 
 
 def a_merge_declaring(repository: Path, version: str, *, released: str) -> None:

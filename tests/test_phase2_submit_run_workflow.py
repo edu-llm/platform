@@ -46,6 +46,7 @@ from edullm_platform.admission_denials import (
 )
 from edullm_platform.batch_denials import ADMISSION_BATCH_DENIED_ACTIONS
 from edullm_platform.build_tooling import load_registry
+from edullm_platform.cli.actions import EDULLM_VERSION_FIELD
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.contracts.execution import ExecutionTarget, ExecutionTargetCatalog
@@ -152,7 +153,13 @@ WANDB_CREDENTIAL_TOOL = "tools/verify_wandb_credential.py"
 # action.
 DECLARED_OUTPUTS = {
     "commit": ("commit_sha",),
-    "compile": ("run_id", "approval_class", "environment", "manifest_sha256"),
+    "compile": (
+        "run_id",
+        "approval_class",
+        "environment",
+        "manifest_sha256",
+        "maximum_compute_cost_usd",
+    ),
     "credentials": ("aws-account-id",),
 }
 
@@ -169,9 +176,27 @@ def _job(name: str) -> dict[str, Any]:
     return job
 
 
+def _steps(job: dict[str, Any]) -> list[dict[str, Any]]:
+    """The steps of a job, and none for a job that calls a reusable workflow.
+
+    A ``uses:`` job may not declare ``steps:`` at all, so the key is absent rather than
+    empty. Answering with nothing is safe here rather than a hole, because the absence is
+    asserted: ``test_the_job_that_asks_for_a_lead_holds_no_shell_in_this_file`` refuses that
+    job any ``steps`` or ``run``, so there is no script for the walkers below to miss. What
+    the called file contains is held by ``tests/test_notify_approval_workflow.py``, which
+    makes the same checks over it.
+    """
+    steps = job.get("steps")
+    assert steps is not None or "uses" in job, (
+        "a job with neither steps nor uses does nothing, and every walker in this module "
+        "would report it as clean"
+    )
+    return list(steps or ())
+
+
 def _run_bodies() -> Iterator[tuple[str, str]]:
     for job_name, job in _load()["jobs"].items():
-        for candidate in job["steps"]:
+        for candidate in _steps(job):
             script = candidate.get("run")
             if script is not None:
                 yield f"{job_name}:{candidate.get('name')}", script
@@ -241,9 +266,24 @@ def test_the_workflow_is_dispatch_only() -> None:
 
 
 def test_the_form_is_the_submission_inputs_contract_field_for_field() -> None:
+    """Mutation: add a second input the contract does not carry, or rename one it does.
+
+    The exception is one name and it is subtracted by that name rather than by a rule, so a
+    second field that describes the run but skipped the contract fails here. What made an
+    exception necessary at all is that a dispatch has nowhere else to carry anything:
+    GitHub refuses an input a workflow does not declare, so the only way to learn which
+    install typed a submission is a form field, and the thing learned is not a field of the
+    submission.
+    """
     declared = _load()["on"]["workflow_dispatch"]["inputs"]
 
-    assert set(declared) == set(SubmissionInputs.model_fields)
+    assert set(declared) - {EDULLM_VERSION_FIELD} == set(SubmissionInputs.model_fields)
+    assert EDULLM_VERSION_FIELD not in SubmissionInputs.model_fields
+    client = declared[EDULLM_VERSION_FIELD]
+    assert client["required"] is False
+    assert client["default"] == ""
+    assert client["type"] == "string"
+    assert client["description"].strip()
     assert len(declared) <= WORKFLOW_DISPATCH_INPUT_CEILING
     # Required on the form exactly where the contract has no default, so a submitter is
     # never asked for something the workload profile already fixes.
@@ -254,6 +294,26 @@ def test_the_form_is_the_submission_inputs_contract_field_for_field() -> None:
         # would be refused at parse. A choice is a string with a menu in front of it.
         assert declared[name]["type"] in ("string", "choice"), name
         assert declared[name]["description"].strip(), name
+
+
+def test_the_install_that_dispatched_never_reaches_the_document_the_contract_validates() -> None:
+    """Mutation: hand the form-assembly step the version, the way every other input is.
+
+    ``SubmissionInputs`` forbids a key it does not declare, so a field smuggled into
+    ``submission-form.json`` would not be dropped -- it would refuse every submission at
+    parse, as an unusable form rather than as anything a reader could act on. The two steps
+    are asserted in both directions here because each half is invisible from the other:
+    the assemble step reads its inputs from the environment, so a variable added to it is
+    a field in the document, and the compile step is the only place a fact about the
+    typist may enter.
+    """
+    assemble = step(_job("compile"), FORM_STEP)
+    compile_step = step(_job("compile"), COMPILE_STEP)
+
+    assert "EDULLM_VERSION" not in assemble["env"]
+    assert EDULLM_VERSION_FIELD not in assemble["run"]
+    assert compile_step["env"]["EDULLM_VERSION"] == f"${{{{ inputs.{EDULLM_VERSION_FIELD} }}}}"
+    assert "--client-version" in compile_step["run"]
 
 
 def test_no_optional_field_defaults_to_a_value_somebody_could_have_meant() -> None:
@@ -319,7 +379,7 @@ def test_the_three_jobs_carry_exactly_these_permission_maps() -> None:
     assert "needs" not in workflow["jobs"]["deny-unapproved"]
 
 
-def test_the_workflow_declares_these_six_jobs_and_orders_them_this_way() -> None:
+def test_the_workflow_declares_these_seven_jobs_and_orders_them_this_way() -> None:
     # The inventory, re-armed at five when the identify job arrived. A job added to this
     # file inherits the two trust policies that pin job_workflow_ref to it, so a new one is
     # a new principal for both the admission role and the image resolver -- which is why
@@ -339,6 +399,17 @@ def test_the_workflow_declares_these_six_jobs_and_orders_them_this_way() -> None
     # so a token it could also mint would give one job both a credential into the account
     # and the ability to rewrite the record of what that credential did. Asserted just
     # below rather than argued here.
+    #
+    # ANNOUNCE-THE-GATE IS THE THIRD AND IT IS THE FIRST ONE THAT DOES HOLD `id-token:
+    # write`, so the sentence at the top of this comment needs a different answer for it
+    # rather than the same one. It is not a new principal under either trust policy, because
+    # it declares `uses:` and a job that calls a reusable workflow presents the *called*
+    # file as its job_workflow_ref -- both policies pin this file with StringEquals, so the
+    # token minted under that permission is refused by both. It is also the only job here
+    # whose credential-free guarantee does not depend on a permission being absent: a
+    # `uses:` job may not carry `steps:`, so there is no shell in this file that can request
+    # a token at all. test_the_job_that_asks_for_a_lead_holds_no_shell_in_this_file asserts
+    # both halves, and tests/test_notify_approval_workflow.py holds the called file.
     workflow = _load()
 
     assert list(workflow["jobs"]) == [
@@ -346,6 +417,7 @@ def test_the_workflow_declares_these_six_jobs_and_orders_them_this_way() -> None
         "resolve",
         "compile",
         "index-the-run",
+        "announce-the-gate",
         "deny-unapproved",
         "submit",
     ]
@@ -359,6 +431,78 @@ def test_the_workflow_declares_these_six_jobs_and_orders_them_this_way() -> None
     assert workflow["jobs"]["resolve"]["needs"] == ["identify"]
     assert "needs" not in workflow["jobs"]["identify"]
     assert "environment" not in workflow["jobs"]["resolve"]
+
+
+NOTIFY_WORKFLOW = "./.github/workflows/notify-approval-requested.yml"
+
+
+def test_the_job_that_asks_for_a_lead_holds_no_shell_in_this_file() -> None:
+    """Mutation: inline the send steps into this job instead of calling a workflow.
+
+    That spelling works, and it is the one this change was first written as. What it costs is
+    two widenings at once. The job would hold ``id-token: write`` with a
+    ``job_workflow_ref`` of ``submit-run.yml``, which both the admission role and the image
+    resolver pin -- so it becomes a principal under each of them. And the role it needs would
+    be assumable by ``resolve`` and ``deny-unapproved``, because a trust policy cannot
+    distinguish jobs within a workflow and those two present the same claims.
+
+    Calling a reusable workflow closes both, because GitHub sets ``job_workflow_ref`` to the
+    called file. The absence of ``steps`` is the part worth asserting rather than assuming:
+    it is what makes "no shell in this file can request a token" true by construction rather
+    than by the permission being withheld, which is how every other credential-free job here
+    is argued.
+    """
+    job = _job("announce-the-gate")
+
+    assert job["uses"] == NOTIFY_WORKFLOW
+    assert "steps" not in job, (
+        "a job with steps is a job whose shell can request a token under the permission "
+        "below, and this job carries id-token: write"
+    )
+    assert "run" not in job
+    assert job["permissions"] == {"contents": "read", "id-token": "write"}
+    # No environment, so the subject is ref-scoped and the admission role refuses it even
+    # before job_workflow_ref is compared. Deliberate on both sides: this message is sent
+    # while a lead is being asked, so a job waiting on that gate could not announce it.
+    assert "environment" not in job
+    assert job["needs"] == ["compile"]
+
+
+def test_the_called_workflow_is_this_repository_at_this_commit() -> None:
+    """Mutation: name the workflow by ``owner/repo/.github/...@ref`` instead of a local path.
+
+    A local path is resolved at the caller's own commit, which for a dispatch of this file is
+    the commit the compile job ran from. An owner-qualified reference is resolved at whatever
+    the named ref says, so the envelope could be built by a tree other than the one that
+    compiled the document -- and pinning it to a tag or a branch would put the send step
+    outside the review that guards this file.
+    """
+    job = _job("announce-the-gate")
+
+    assert job["uses"].startswith("./"), job["uses"]
+    assert "@" not in job["uses"], "a ref here is a version of the send step nobody reviewed"
+    assert (PROJECT_ROOT / job["uses"].removeprefix("./")).is_file()
+
+
+def test_nobody_is_asked_to_release_a_run_that_releases_itself() -> None:
+    """Mutation: drop either half of the condition.
+
+    Without the class test, the automatic gate -- which carries a branch policy and no
+    reviewers -- produces a message naming a lead who was never going to be consulted, which
+    is the same defect as the approver-login step running for that gate. Without the ref
+    test, a dispatch from a branch is routed to run-approval-preview, which also has no
+    reviewers, and the role trust pins refs/heads/main so the job would go red at the
+    credential step rather than skip. A red job on the one path that exists for trying a
+    change before merging is worse than a message nobody was owed.
+
+    The class is read off the compile job's output rather than recomputed, which is the same
+    value and the same expression the submit job reads it by.
+    """
+    condition = _job("announce-the-gate")["if"]
+
+    assert "needs.compile.outputs.approval_class != 'automatic'" in condition
+    assert "github.ref == 'refs/heads/main'" in condition
+    assert "approval_class" in _load()["jobs"]["compile"]["outputs"]
 
 
 def test_the_job_that_turns_a_branch_into_a_commit_cannot_reach_aws_at_all() -> None:
@@ -492,6 +636,13 @@ def test_every_needs_reference_names_an_output_the_job_actually_declares() -> No
         "needs.compile.outputs.approval_class",
         "needs.compile.outputs.environment",
         "needs.compile.outputs.manifest_sha256",
+        # Read once, by the job that writes the run index, and it is the half of the daily
+        # ceiling that closes the loop: what this submission is authorised to commit is what
+        # the next submission's ceiling check reads back. It is in this list rather than
+        # derived downstream because the arithmetic must have one author, and it is a
+        # `needs.` reference rather than an `inputs.` one for the same reason the class is --
+        # a submitter who could type it would be choosing how much of the day they had spent.
+        "needs.compile.outputs.maximum_compute_cost_usd",
         "needs.compile.outputs.run_id",
         # Read by two jobs and written by neither of them. The identify job turns whatever
         # the submitter typed into a commit, and both the registry lookup and the compile
@@ -507,13 +658,25 @@ def test_every_expression_names_something_that_actually_exists() -> None:
 
 
 def test_the_compile_job_publishes_exactly_the_outputs_its_tool_writes() -> None:
-    # The four names are decided in tools/compile_submission.py and read here from the
+    # The five names are decided in tools/compile_submission.py and read here from the
     # call that writes them, so renaming one on either side fails rather than resolving
     # to the empty string on the other.
+    #
+    # maximum_compute_cost_usd is the newest and it is the one this test earns its keep on.
+    # It is read by the index job below and by nothing else in this file, so a rename that
+    # silently resolved to the empty string would write an unpriced entry, and an unpriced
+    # entry from today makes the daily ceiling fail closed on every subsequent submission.
+    # The symptom would be every run going to a lead, days later, with nothing naming this.
     written = _tool_step_output_names(PROJECT_ROOT / "tools" / "compile_submission.py")
     outputs = _job("compile")["outputs"]
 
-    assert set(written) == {"run_id", "approval_class", "environment", "manifest_sha256"}
+    assert set(written) == {
+        "run_id",
+        "approval_class",
+        "environment",
+        "manifest_sha256",
+        "maximum_compute_cost_usd",
+    }
     assert set(outputs) == set(written)
     for name in written:
         assert outputs[name] == f"${{{{ steps.compile.outputs.{name} }}}}"
@@ -537,7 +700,7 @@ def test_every_action_is_pinned_to_a_commit() -> None:
     used = [
         candidate["uses"]
         for job in _load()["jobs"].values()
-        for candidate in job["steps"]
+        for candidate in _steps(job)
         if "uses" in candidate
     ]
 
@@ -630,14 +793,44 @@ def test_the_compiled_submission_crosses_the_gate_as_an_artifact() -> None:
     assert "${RUNNER_TEMP}/compiled-submission/compiled-submission.json" in verify["run"]
 
 
+#: The five expressions that make a job run after something it depends on did not succeed.
+#: A condition on a job is skipped when a `needs` dependency fails *unless* it names one of
+#: these, so this is the list that matters rather than the presence of a condition at all.
+#: See tests/test_notify_approval_workflow.py, which makes the same check over the file the
+#: announce job calls.
+STATUS_FUNCTIONS = ("always(", "failure(", "cancelled(", "success(", "!cancelled(")
+
+
 def test_nothing_lets_the_submit_job_run_after_a_gate_has_failed() -> None:
-    # `needs` alone only orders the jobs. A single `if: always()` would keep both
-    # dependencies and still submit after a refused compile or a probe that found the
-    # admission role assumable without an approval.
+    """Mutation: add ``if: always()`` anywhere, which keeps every ``needs`` and defeats it.
+
+    ``needs`` alone only orders the jobs. A single ``always()`` would keep both dependencies
+    and still submit after a refused compile or a probe that found the admission role
+    assumable without an approval.
+
+    THIS USED TO READ ``assert "if" not in job`` FOR EVERY JOB, AND THAT IS NOT THE PROPERTY.
+    It was accurate for as long as no job here had a reason to carry a condition, and the
+    announce job has one: a message asking a lead to release a run is owed only where a lead
+    is being asked, so it is skipped for the automatic gate and off ``main``. Relaxing the
+    rule to "no condition except on that job" would have exempted exactly one job from the
+    guard by name. What the guard is actually about is the status functions, because a
+    condition that names none of them is still skipped when a dependency fails -- so every
+    job is now checked for those, which is a stronger statement over more jobs than the
+    version this replaces made over any.
+    """
     workflow = _load()
 
     for name, job in workflow["jobs"].items():
-        assert "if" not in job, name
+        condition = str(job.get("if", ""))
+        found = [function for function in STATUS_FUNCTIONS if function in condition]
+        assert not found, (
+            f"{name} runs after a dependency has failed, because its condition names "
+            f"{found}. `needs` no longer orders this job behind anything."
+        )
+    # The jobs that must not be conditional at all, because each one is a refusal or a
+    # record and a submission that skipped it would be a submission nothing checked.
+    for name in ("identify", "resolve", "compile", "index-the-run", "deny-unapproved", "submit"):
+        assert "if" not in workflow["jobs"][name], name
     assert "continue-on-error" not in str(workflow)
 
 
@@ -689,10 +882,11 @@ def test_no_run_body_interpolates_a_github_expression() -> None:
 def test_every_run_body_enables_strict_bash() -> None:
     bodies = list(_run_bodies())
 
-    # Twenty-five since the compile job started reading whether the gate still asks anybody.
-    # Counted rather than sampled, so a body added without the strict line fails here instead
-    # of running past its first error.
-    assert len(bodies) == 25
+    # Twenty-six: twenty-five once the compile job read whether the gate still asks anybody,
+    # and one more since it also reads what the day has already committed. Counted rather than
+    # sampled, so a body added without the strict line fails here instead of running past its
+    # first error.
+    assert len(bodies) == 26
     for name, script in bodies:
         assert script.startswith("set -euo pipefail\n"), name
 
@@ -1826,7 +2020,15 @@ def _run_compile_step(
     tmp_path: Path,
     *,
     uv_body: str,
+    edullm_version: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    """The compile step under a stubbed uv, defaulting to a dispatch that named no install.
+
+    Empty by default because that is what the Actions form sends and what every dispatch
+    before the input existed sent, and because the step runs under ``set -u``: a variable
+    the workflow reads and this harness forgets is an unbound-variable failure rather than
+    a missing argument, which is the failure a reader would misdiagnose.
+    """
     stub_bin = tmp_path / "bin"
     recorded = tmp_path / "argv.txt"
     write_stub(stub_bin, "uv", f'printf "%s\\n" "$@" > "{recorded}"\n{uv_body}')
@@ -1837,6 +2039,7 @@ def _run_compile_step(
             "RUNNER_TEMP": str(tmp_path),
             "GITHUB_OUTPUT": str(tmp_path / "step-output.txt"),
             "SUBMITTER": "caiiris",
+            "EDULLM_VERSION": edullm_version,
             "SERVER_URL": "https://github.com",
             "REPOSITORY_OWNER": "edu-llm",
             "RESEARCH_REPOSITORY": "dolma",
@@ -1850,12 +2053,13 @@ def _run_compile_step(
 def test_the_compile_step_hands_the_tool_the_reviewed_configuration_and_the_submitter(
     tmp_path: Path,
 ) -> None:
-    result, arguments = _run_compile_step(tmp_path, uv_body="exit 0\n")
+    result, arguments = _run_compile_step(tmp_path, uv_body="exit 0\n", edullm_version="3.7.1")
 
     assert result.returncode == 0, result.stderr
     passed = dict(itertools.pairwise(arguments))
     assert passed["--config-dir"] == "config"
     assert passed["--submitter"] == "caiiris"
+    assert passed["--client-version"] == "3.7.1"
     assert passed["--repository-url"] == "https://github.com/edu-llm/dolma"
     assert passed["--inputs"] == str(tmp_path / "submission-form.json")
     assert passed["--output"] == str(tmp_path / "compiled-submission.json")

@@ -28,13 +28,20 @@ from __future__ import annotations
 import shlex
 
 import pytest
-from test_phase2_submission import compile_payload, olmo_payload, render, workload_profile
+from test_phase2_submission import (
+    compile_payload,
+    cpu_payload,
+    olmo_payload,
+    render,
+    workload_profile,
+)
 
 from edullm_platform.checkpoint_commands import (
     CHECKPOINT_CHECK_WAIVER,
     CHECKPOINT_DIRECTORY_VARIABLE,
     expands_the_checkpoint_directory,
     require_a_save_folder_a_retry_can_find,
+    unverified_resume_note,
     waived_checkpoint_check_note,
 )
 from edullm_platform.contracts.workload import CheckpointContract
@@ -399,3 +406,157 @@ def test_the_approver_context_carries_the_checkpoint_waiver_when_a_run_uses_one(
 
 def test_the_approver_context_says_nothing_about_a_run_that_needed_no_waiver() -> None:
     assert CHECKPOINT_CHECK_WAIVER not in render(compile_payload(olmo_payload()))
+
+
+# ---------------------------------------------------------------------------------------
+# What the two checks above establish, and the sentence that says what they do not
+# ---------------------------------------------------------------------------------------
+
+
+def test_a_multi_attempt_run_is_told_that_nothing_here_checked_whether_it_resumes() -> None:
+    """Mutation: let the attempt factor stand on its own.
+
+    Both checks in this module ask about things outside the codebase -- whether the profile
+    carries a contract, and whether the command expands the variable -- and neither can see
+    a trainer's load path. ``edullm-p1`` passes both and starts from step 0 for three
+    independent reasons in its own source, and ``open-instruct-scored-rewards`` passes both
+    and gates its load on ``os.path.exists`` against an ``s3://`` URI. So the sentence has to
+    name what was checked rather than implying a clean bill.
+    """
+    said = unverified_resume_note(
+        maximum_attempts=2,
+        workload_profile=CONTRACTED,
+        checkpoint=contract(),
+    )
+
+    assert said is not None
+    assert CONTRACTED in said
+    assert CHECKPOINT_DIRECTORY_VARIABLE in said
+    # Attributed to the profile rather than asserted, which is the whole correction.
+    assert "resumes" in said
+    assert "nothing on this platform establishes" in said
+
+
+def test_the_note_carries_the_finding_about_the_timeout_and_not_its_derivation() -> None:
+    """Mutation: explain Batch's retry semantics to the person choosing ``--attempts``.
+
+    The paragraph used to end with the derivation -- Batch retries a failure matching none
+    of its rules, and an attempt stopped at its runtime bound reports no container exit code
+    for the rules to match. That is true, it is written out in this module's docstring and
+    again in ``config/policy.yaml``, and it answers an objection only a reader who already
+    knows ``EvaluateOnExit`` can raise. It is a fifth of what a first-time submitter reads
+    here and it changes nothing they can do.
+
+    The finding is what they act on and it stays: the retry they are paying for lands on the
+    run that ran out of time, and it gets the same bound again.
+    """
+    said = unverified_resume_note(
+        maximum_attempts=2, workload_profile=CONTRACTED, checkpoint=contract()
+    )
+
+    assert said is not None
+    assert "ran out of time" in said
+    assert "same bound again" in said
+    assert "exit code" not in said
+    assert "Batch" not in said
+
+
+def test_a_single_attempt_run_is_told_nothing_because_it_has_no_second_attempt() -> None:
+    """A line printed on every run is a line readers learn to skip.
+
+    The same argument ``waived_checkpoint_check_note`` and ``placement_warning`` both make.
+    One attempt has nothing to qualify: the ceiling is one run of the command and the
+    question of what a retry would resume from does not arise.
+    """
+    assert (
+        unverified_resume_note(
+            maximum_attempts=1,
+            workload_profile=CONTRACTED,
+            checkpoint=contract(),
+        )
+        is None
+    )
+    assert (
+        unverified_resume_note(
+            maximum_attempts=1,
+            workload_profile=UNCONTRACTED,
+            checkpoint=contract(UNCONTRACTED),
+        )
+        is None
+    )
+
+
+def test_the_note_reads_the_same_in_a_terminal_a_document_and_a_markdown_page() -> None:
+    """Mutation: bold the important half.
+
+    One string is rendered three ways -- ``edullm check --json`` hands it to a caller
+    verbatim, the approver page renders it as markdown, and a terminal shows it as typed --
+    so emphasis that reads as bold in one place is punctuation in the other two.
+    ``placement_said`` carries the same constraint for the same reason.
+
+    The underscores in ``$EDULLM_CHECKPOINT_DIR`` are not emphasis and are not excluded.
+    GitHub-flavoured markdown does not open an emphasis run inside a word, which is the
+    whole reason the variable is named without backticks here rather than in spite of them.
+    """
+    said = unverified_resume_note(
+        maximum_attempts=2, workload_profile=CONTRACTED, checkpoint=contract()
+    )
+
+    assert said is not None
+    assert "*" not in said
+    assert "`" not in said
+    assert CHECKPOINT_DIRECTORY_VARIABLE in said
+
+
+def test_a_retry_bound_with_no_contract_is_still_described_rather_than_passed_over() -> None:
+    """Mutation: return ``None`` for the pairing this module cannot reach.
+
+    ``compile_submission`` refuses more than one attempt on a workload carrying no checkpoint
+    contract, so no submission arrives here in this state. Answering ``None`` anyway would be
+    silence in the one case that is worst, which is the exact shape of defect the sentence
+    exists to report -- a check that cannot fire looking like a check that passed.
+    """
+    said = unverified_resume_note(
+        maximum_attempts=2, workload_profile=UNCONTRACTED, checkpoint=None
+    )
+
+    assert said is not None
+    assert UNCONTRACTED in said
+    assert "no checkpoint contract" in said
+
+
+def test_the_refusal_attributes_resuming_to_the_profile_rather_than_to_the_platform() -> None:
+    """Mutation: state as a fact something no code here checks.
+
+    This read "declares a checkpoint contract ..., which a retry resumes from", so the
+    interval was the profile's word and resuming was the platform's -- and the platform has
+    never looked at the codebase that would have to do it. Both halves hang off ``declares``
+    now.
+    """
+    said = refuse(wrapped("python train.py"))
+
+    assert "declares a checkpoint contract" in said
+    assert "and that a retry resumes from it" in said
+    assert ", which a retry resumes from" not in said
+
+
+def test_the_approver_page_prices_two_attempts_and_says_what_the_second_one_buys() -> None:
+    """Mutation: leave the sentence in ``--json`` and off the page the lead reads.
+
+    The lead is the one authorising the money. The worst-case block multiplies by attempts
+    and is correct to; this is the paragraph under it saying that the later attempts are
+    priced as though they reach further than the first and that nothing here established
+    they do.
+    """
+    page = render(compile_payload(olmo_payload()))
+
+    assert "x 2 attempt(s)" in page
+    assert "## What the second attempt buys" in page
+    assert CHECKPOINT_DIRECTORY_VARIABLE in page
+
+
+def test_the_approver_page_of_a_single_attempt_run_carries_no_such_section() -> None:
+    page = render(compile_payload(cpu_payload()))
+
+    assert "x 1 attempt(s)" in page
+    assert "What the second attempt buys" not in page

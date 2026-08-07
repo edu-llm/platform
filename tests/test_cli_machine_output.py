@@ -23,7 +23,7 @@ import pytest
 
 from edullm_platform.cli.machine import FORMAT_VERSION
 from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED
-from edullm_platform.cli.preflight import UNRESOLVED_IMAGE_DIGEST
+from edullm_platform.cli.preflight import DEFERRED_TO_SUBMIT, UNRESOLVED_IMAGE_DIGEST
 from edullm_platform.run_history import RUNS_FOR_A_FIGURE, load_run_history
 from tests.cli_support import FakeRunner, git_answers, invoke, ok, write_spec
 
@@ -120,6 +120,47 @@ def test_a_refused_check_still_emits_one_document_and_still_exits_one(
     assert all({"code", "detail"} == set(refusal) for refusal in document["refusals"])
 
 
+def test_a_half_described_run_still_carries_its_price_and_the_tree_it_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The paragraph defect, one layer down, where an agent rather than a person reads it.
+
+    ``cost`` was ``null`` and ``manifest`` was ``null`` for every check that had not been
+    told a team, an experiment or a dataset, so a caller pricing a submission before it named
+    one got nothing and no key saying why. None of those three fields is a factor in the
+    price, and a skill that has to fill in a form is exactly the caller who wants the figure
+    before the form is complete.
+
+    Mutation: leave the three tree fields inside ``manifest`` only. That key is ``null`` on
+    this path by design -- there is no manifest to serialize -- which makes it the one path
+    where a caller cannot tell which checkout answered. ``experiment`` and ``team`` are
+    already published beside it for the same reason.
+    """
+    write_spec(tmp_path, compute="gpu-1xa10g")
+    runner = FakeRunner(git_answers(tmp_path, untracked=("notes.docx",)))
+
+    code, out, err = invoke(
+        ["check", "--json"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_REFUSED, out + err
+    document = only_document(out)
+    assert document["manifest"] is None, "there is no manifest on this path, by design"
+    assert document["cost"]["maximum_compute_cost_usd"] == "48.29"
+    assert document["history"]["said"]
+    assert document["repository"] == "OLMo-core"
+    assert document["branch"] == "edullm/an-arm"
+    assert document["commit_sha"] is not None
+    # No gate is guessed at from a request this incomplete, and the key is present saying so.
+    assert document["approval_class"] is None
+    # And the untracked file nothing refused for is published as a path rather than as prose.
+    assert document["untracked"] == ["notes.docx"]
+    assert "notes.docx" not in json.dumps(document["refusals"])
+
+
 def test_the_placeholder_digest_is_nowhere_in_the_document(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -149,7 +190,7 @@ def test_the_placeholder_digest_is_nowhere_in_the_document(
     assert document["manifest_sha256"] is None
 
 
-def test_the_document_carries_the_two_checks_a_laptop_could_not_make(
+def test_the_document_carries_every_check_a_laptop_could_not_make(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Mutation: leave `deferred` out, so a clean check reads as a clean bill of health.
@@ -157,6 +198,12 @@ def test_the_document_carries_the_two_checks_a_laptop_could_not_make(
     docs-frank/working/adarsh-rajesh-first-run.md is a transcript of what it costs when a
     submitter believes a clean preflight means a submission will go through. An agent
     believes it harder and faster than a person does.
+
+    Held against ``DEFERRED_TO_SUBMIT`` rather than against a list written here, because
+    which questions are deferred moves and this document has to move with it. What decides
+    that list is ``tests/test_check_refuses_what_compile_refuses.py``, which fails when a
+    compile-time refusal is neither asked locally nor named there -- so a list spelled here
+    would be the copy that stayed behind.
     """
     root, runner = checkout(tmp_path, compute="gpu-1xa10g")
 
@@ -169,10 +216,13 @@ def test_the_document_carries_the_two_checks_a_laptop_could_not_make(
 
     assert code == EXIT_OK, out + err
     document = only_document(out)
-    assert [entry["code"] for entry in document["deferred"]] == [
-        "no_published_image",
-        "image_scan_findings_unreviewed",
-    ]
+    deferred = [(entry["code"], entry["detail"]) for entry in document["deferred"]]
+
+    assert deferred == [(code_said, detail) for code_said, detail in DEFERRED_TO_SUBMIT]
+    assert "no_published_image" in {code_said for code_said, _ in deferred}, (
+        "the check the transcript is about is not among the deferred ones, so this document "
+        "tells a submitter nothing about whether their commit was built"
+    )
 
 
 def test_the_history_block_says_when_it_was_measured_and_over_how_many_runs(
@@ -279,7 +329,8 @@ def test_check_without_the_flag_still_prints_the_paragraphs(
     )
 
     assert code == EXIT_OK, out + err
-    assert out.startswith("checked against ")
+    assert out.startswith("manifest\n")
+    assert "checked against " in out
     assert "no refusals. edullm submit will dispatch this." in out
 
 
@@ -449,9 +500,20 @@ DECLINED_RUNS = """{"workflow_runs": [
    "html_url": "https://github.com/edu-llm/platform/actions/runs/41"}
 ]}"""
 
-SKIPPED_JOBS = """{"jobs": [
-  {"name": "Submit the approved manifest to admission", "conclusion": "skipped"}
-]}"""
+#: What GitHub records against the gated admission job once a review is rejected. **BOTH ARE
+#: DRIVEN BECAUSE THE SUITE ASSUMED ONE AND THE ACCOUNT PRODUCES THE OTHER.** This file
+#: answered every declined run with ``skipped``, and workflow run 31094100261 -- a real
+#: decline by ``philote-dev`` on 2026-08-06 -- carried ``failure`` with an empty ``steps``
+#: list, because the gate stopped the job before it ran a line. So the one shape a researcher
+#: could actually meet was the one no test could produce, and ``edullm status`` on that run
+#: read ``REFUSED`` while the listing beside it read ``DECLINED``.
+GATED_JOB_CONCLUSIONS = ("skipped", "failure")
+
+
+def jobs_with(conclusion: str) -> str:
+    return json.dumps(
+        {"jobs": [{"name": "Submit the approved manifest to admission", "conclusion": conclusion}]}
+    )
 
 REJECTED = """[
   {"state": "rejected", "user": {"login": "alsy7009"},
@@ -460,13 +522,17 @@ REJECTED = """[
 ]"""
 
 
-def declined_runner(tmp_path: Path, approvals: str) -> FakeRunner:
+def declined_runner(tmp_path: Path, approvals: str, gated: str = "skipped") -> FakeRunner:
     """A submission whose admission job never ran, with the approvals endpoint deciding why.
 
     THE TWO CASES DIFFER IN ONE ENDPOINT AND IN NOTHING ELSE, WHICH IS THE FINDING. GitHub
-    gives a rejected deployment review the same run conclusion it gives a compile refusal and
-    the same skipped admission job, so the runs list and the jobs list are byte-identical
-    here between a decline and a crash. Only ``/approvals`` can tell them apart.
+    gives a rejected deployment review the same run conclusion it gives a compile refusal,
+    so the runs list is byte-identical here between a decline and a crash. Only
+    ``/approvals`` can tell them apart.
+
+    ``gated`` is what GitHub records against the admission job, and it is a parameter rather
+    than a constant because it varies and the variation is what hid the defect. See
+    :data:`GATED_JOB_CONCLUSIONS`.
     """
 
     def api(argv: tuple[str, ...]) -> Any:
@@ -474,7 +540,7 @@ def declined_runner(tmp_path: Path, approvals: str) -> FakeRunner:
         if "/workflows/submit-run.yml/runs" in path:
             return ok(DECLINED_RUNS)
         if path.endswith("/41/jobs"):
-            return ok(SKIPPED_JOBS)
+            return ok(jobs_with(gated))
         if path.endswith("/41/approvals"):
             return ok(approvals)
         return ok("{}")
@@ -490,8 +556,9 @@ def declined_runner(tmp_path: Path, approvals: str) -> FakeRunner:
     )  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("gated", GATED_JOB_CONCLUSIONS)
 def test_status_json_tells_a_declined_run_from_a_failed_one(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    gated: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Mutation: leave both reading REFUSED.
 
@@ -499,10 +566,15 @@ def test_status_json_tells_a_declined_run_from_a_failed_one(
     the same document, and a researcher reading it went looking for a bug in a submission a
     person had simply declined. Those send somebody to different places, and the second one
     has a name attached to it.
+
+    **AND BOTH MARKINGS OF THE GATED JOB ARE DRIVEN, WHICH IS THE SECOND MUTATION THIS CASE
+    NOW HOLDS.** Look for the decline only where that job is absent or ``skipped`` and the
+    ``failure`` parameter goes red -- which is the shape this account produces and the one
+    that shipped, so the document said ``REFUSED`` about a run a person had declined by name.
     """
     code, out, err = invoke(
         ["status", "--json", "run_019fcf3c-9878-7c1a-8f00-1c2d3e4f5a6b"],
-        runner=declined_runner(tmp_path, REJECTED),
+        runner=declined_runner(tmp_path, REJECTED, gated=gated),
         cwd=tmp_path,
         monkeypatch=monkeypatch,
     )

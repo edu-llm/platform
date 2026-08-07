@@ -401,10 +401,18 @@ def test_the_reconciliation_fetches_only_the_prefixes_the_role_can_list(
     What this job requires is that everything it syncs is listable, which is what is asserted
     here; that the grant covers every scheduled reader and nothing beyond them is
     `test_the_role_can_list_and_fetch_every_prefix_the_scheduled_tools_sync`.
+
+    `attempt/` JOINED THE THREE BECAUSE `result/` COULD NOT ANSWER WHAT IT WAS BEING ASKED.
+    One result record is written per run *key* and one terminal event arrives per *cell*, so
+    every child of an array overwrites the same object and a fan-out's record is whichever
+    cell landed last. Scoping the question on that meant scoping it by arrival order on
+    nineteen runs. The attempt records are one per cell and complete, `result/` still answers
+    for the runs Batch never placed, and `edullm_platform.cells.outcome_of_cells` is the one
+    function this report and the substrate now put both through.
     """
     synced = reconciliation_prefixes(workflow)
 
-    assert synced == {"intent", "result"}
+    assert synced == {"intent", "attempt", "result"}
 
     listable = [
         statement

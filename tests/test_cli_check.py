@@ -39,11 +39,12 @@ from edullm_platform.cli.main import (
     build_parser_and_verbs,
     main,
 )
-from edullm_platform.cli.preflight import Preflight
+from edullm_platform.cli.preflight import DEFERRED_TO_SUBMIT, Preflight
 from edullm_platform.cli.presentation import config_source_said
 from edullm_platform.cli.workspace import CommandResult
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
+from edullm_platform.launchers import TENSOR_PARALLEL_OPTION, TENSOR_PARALLEL_SHORT_FORM
 from edullm_platform.placement import CAPACITY_FILENAME, PLACES_UNRELIABLY
 from tests.cli_support import (
     COMMIT,
@@ -56,6 +57,17 @@ from tests.cli_support import (
     invoke,
     ok,
     write_spec,
+)
+
+#: The whole approval line an automatic submission earns, unwrapped. Written out rather
+#: than interpolated from the policy file, because two cases below assert it and a constant
+#: built the way ``presentation.py`` builds it would agree with whatever that file says.
+#: The figures are the reviewed ones and ``test_cli_no_hardcoded_bounds.py`` holds the
+#: source side to reading them rather than spelling them.
+AUTOMATIC_SAID = (
+    "automatic by the per-run rule: one cell, under $500. A team lead releases it instead "
+    "once runs since midnight UTC have committed the day's $1000 automatic ceiling, and "
+    "check reaches no network to know whether they have."
 )
 
 #: A command that starts one process per device on an eight-card shape, so a case about
@@ -231,6 +243,12 @@ def test_check_names_the_configuration_that_answered_whichever_way_it_went(
     Mutation: print it only when the check passes. A stale validator's damage is a refusal
     that is wrong, so the reader who most needs to know which files decided is the one
     reading a refusal -- and that reader is also the common case.
+
+    **THE LAST LINE RATHER THAN THE FIRST, AND THE POSITION IS ASSERTED BOTH WAYS.** It led
+    every check for a while, which made ninety characters of somebody else's ``site-packages``
+    path the opening of the first thing a researcher ever read from this tool, above the
+    price they came for. What it catches is real and rare and its reader knows to look for
+    it. The second assertion is what stops it drifting back to the top.
     """
     root, runner = checkout(tmp_path, compute="gpu-1xa10g")
     elsewhere = tmp_path / "another-config"
@@ -251,7 +269,8 @@ def test_check_names_the_configuration_that_answered_whichever_way_it_went(
     )
 
     assert code == (EXIT_REFUSED if refused else EXIT_OK), out + err
-    assert out.startswith(f"checked against {elsewhere}\n\n")
+    assert out.endswith(f"\n\nchecked against {elsewhere}\n")
+    assert not out.startswith("checked against ")
     # No colour and no escape, here as everywhere: a piped check and a terminal check are
     # the same bytes, which is what makes a pasted transcript what the next person sees.
     assert "\x1b" not in out
@@ -301,7 +320,10 @@ def test_a_clean_submission_is_cleared_and_priced_from_the_catalog(
     # AUTOMATIC, AND IT PRINTED "routine -> run-approval-lead" UNTIL POLICY v5. Forty-eight
     # dollars in one cell is a tenth of the one bound, so a full day of training on one card
     # is now released by nobody. That is the change a submitter notices first.
-    assert "automatic. One cell, under $500, so nobody releases this." in out
+    #
+    # Whitespace-normalised, the way the refusal assertions in this file are, because the
+    # clause wraps and a line break is not a thing this is asserting about.
+    assert AUTOMATIC_SAID in " ".join(out.split())
     assert f"team              {SUBMITTER_TEAM}" in out
 
 
@@ -442,6 +464,141 @@ def test_the_capacity_answer_is_in_the_document_an_agent_reads(
     assert "gpu-8xl40s" in err
 
 
+def test_what_a_second_attempt_does_not_establish_is_in_the_document_an_agent_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: price two attempts and say nothing about whether the second one resumes.
+
+    ``cost`` multiplies by ``maximum_attempts`` and is right to. What it cannot carry is that
+    the platform has checked only that a checkpoint contract exists and that the command
+    expands the variable -- and that two registered repositories pass both and restart from
+    step 0. An agent that reads ``cost`` alone quotes a ceiling for a second attempt that may
+    buy nothing.
+
+    ``maximum_attempts`` and ``resume_required`` are the structure and ``said`` is the
+    sentence, which is the split ``history`` and ``placement`` already make.
+    ``resume_required`` is the profile's declaration rather than a finding, which is the one
+    thing an agent must not read as a promise, so the sentence says so in words.
+    """
+    root, runner = checkout(tmp_path, workload="olmo-core-train")
+
+    code, out, err = invoke(
+        ["check", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment", "--json"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+    document = json.loads(out)
+
+    assert code == EXIT_OK, out + err
+    assert document["cost"]["maximum_attempts"] == 2
+    assert document["retries"]["maximum_attempts"] == 2
+    assert document["retries"]["resume_required"] is True
+
+    said = document["retries"]["said"]
+    assert "olmo-core-train" in said
+    assert "EDULLM_CHECKPOINT_DIR" in said
+    # The finding the sentence exists to carry rather than a paraphrase of the ceiling: the
+    # attempt Batch reliably spends matches none of the retry rules and gets the same bound
+    # again, so a run that resumes from nowhere cannot finish on it either.
+    assert "ran out of time" in said
+    assert "same bound again" in said
+
+
+def test_a_single_attempt_check_carries_the_retries_key_holding_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: emit the block on every check, or drop the key where there is nothing to say.
+
+    Both directions cost a caller something. A block on a one-attempt run is a paragraph
+    about a second attempt that does not exist, which is what readers learn to skip; a key
+    that disappears is a key every caller has to guard, which is the rule ``check_document``
+    already states about ``run_id``. ``placement`` settled this the same way.
+    """
+    root, runner = checkout(
+        tmp_path, workload="olmo-core-check", command="python -m olmo_core.internal.checks"
+    )
+
+    code, out, err = invoke(
+        ["check", "--dataset", "none", "--experiment", "an-experiment", "--json"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+    document = json.loads(out)
+
+    assert code == EXIT_OK, out + err
+    assert document["cost"]["maximum_attempts"] == 1
+    assert "retries" in document
+    assert document["retries"] is None
+
+
+def test_the_submitter_is_told_what_the_attempt_factor_does_not_establish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: say it on the approver page and in ``--json`` only, which is what shipped.
+
+    #371 put the finding where a lead reads and where an agent reads, and left the terminal
+    silent. The submitter is the one who chose the count and the only one who can lower it
+    for free -- a lead reading it has already been asked for an approval, and lowering the
+    count there means declining a run and waiting for the next one.
+
+    Under the arithmetic that multiplies by attempts, beside the ``--hours`` lever, because
+    the reader has just seen the factor. Short on purpose: the paragraph a lead gets surveys
+    what the platform checked and why it does not enforce, and a submitter looking at their
+    own spec needs the fact and the flag.
+    """
+    root, runner = checkout(tmp_path, workload="olmo-core-train")
+
+    code, out, err = invoke(
+        ["check", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+    said = " ".join(out.split())
+
+    assert code == EXIT_OK, out + err
+    assert "x 2 attempts x" in said
+    assert "Lower --attempts to 1 if this program does not resume." in said
+    assert "Nothing here checks that it does" in said
+    # Under the worst case rather than after the durations, so the qualification and the
+    # number it qualifies are read together.
+    assert out.index("--attempts") < out.index("what it has taken")
+    # Not the approver's paragraph reprinted. Its survey of what the two checks do and do
+    # not read is what a submitter would skip, and skipping it is skipping the flag.
+    assert "EDULLM_CHECKPOINT_DIR" not in said
+    assert "registered repositories" not in said
+
+
+def test_a_one_attempt_submission_is_told_nothing_about_a_second_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: print the line on every priced submission.
+
+    There is no second attempt to lower and no ``--attempts`` to pass, so the sentence would
+    be advice about a run nobody submitted. The placement warning settled the same question
+    the same way: a line that appears over the submissions it does not describe is one
+    submitters learn to read past, which costs it its value on the ones it does.
+    """
+    root, runner = checkout(
+        tmp_path, workload="olmo-core-check", command="python -m olmo_core.internal.checks"
+    )
+
+    code, out, err = invoke(
+        ["check", "--dataset", "none", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "x 1 attempt x" in " ".join(out.split())
+    assert "--attempts" not in out
+    # The lever that is on every priced submission stays on this one.
+    assert "Lowering --hours" in out
+
+
 def test_the_document_says_nothing_rather_than_nothing_known_for_a_shape_that_places(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -571,15 +728,22 @@ def test_the_refused_runtime_carries_a_code_a_caller_can_match_on(
     assert err == ""
 
 
-def test_a_cheap_single_cell_run_is_told_nobody_releases_it(
+def test_a_cheap_single_cell_run_is_told_the_rule_and_not_the_outcome(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The automatic class, with the bound printed as the policy file states it.
+    """The automatic class, with both bounds printed as the policy file states them.
 
     Mutation: write ``$500`` into ``presentation.py`` rather than interpolating
     ``automatic_below_cost_usd``. ``test_cli_no_hardcoded_bounds.py`` is what normally
     catches that; this catches the half of it that reads the wrong field, because the value
     printed here has to be the one ``classify_request`` compared against.
+
+    **THE NAME OF THIS TEST WAS THE DEFECT.** It was
+    ``..._is_told_nobody_releases_it``, and that is what the line said, and it is an
+    outcome ``check`` cannot establish: the day's ceiling is read off the run index by the
+    compile job, and this verb reaches no network. A submitter was told automatic on
+    2026-08-06 and their run parked at ``run-approval-lead``. What is asserted now is the
+    rule plus the clause saying the rule is not the whole answer.
     """
     root, runner = checkout(tmp_path, workload="olmo-core-check", compute="gpu-1xt4")
 
@@ -599,7 +763,7 @@ def test_a_cheap_single_cell_run_is_told_nobody_releases_it(
     )
 
     assert code == EXIT_OK, out + err
-    assert "automatic. One cell, under $500, so nobody releases this." in out
+    assert AUTOMATIC_SAID in " ".join(out.split())
 
 
 def test_a_mistyped_dataset_release_is_refused_with_the_list_it_should_have_named(
@@ -628,6 +792,52 @@ def test_a_mistyped_dataset_release_is_refused_with_the_list_it_should_have_name
     # question rather than a fault: this is the output somebody pipes into a file or reads
     # back to a colleague, and half of it going to the other stream splits it.
     assert err == ""
+
+
+def test_the_dataset_refusal_names_the_verb_that_says_which_of_the_names_will_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**A LIST OF NAMES IS NOT AN ANSWER, AND THIS ONE WAS THE DOCUMENTED WAY TO GET IT.**
+
+    Mutation: print the names and stop, which is what it did, and which the submission skill
+    told an agent to rely on: "the detail lists what is registered".
+
+    The list is honest about what a submission may name and silent about everything a chooser
+    needs. No size, no tokenizer, no licence, and -- the one that costs a machine -- no sign
+    that some of the names in it reach a container which exits 69 after the approval has been
+    spent. A submitter who has just been refused is the reader most likely to take the next
+    name off it.
+
+    So the refusal names ``edullm data``, which is the only thing that answers, and it says
+    what a person does when the corpus they want is not registered at all. That second half
+    has to describe what actually happens: ``edullm add dataset`` opens no pull request, and
+    a refusal implying otherwise sends its reader to a second refusal.
+
+    The repository refusal has named its own verb since 2026-08-06 and this is the same
+    correction for the field beside it.
+    """
+    root, runner = checkout(tmp_path)
+
+    code, out, _ = invoke(
+        ["check", "--dataset", "no-such-corpus-v9", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+    said = " ".join(out.split())
+
+    assert code == EXIT_REFUSED
+    assert "edullm data" in said, (
+        "the refusal lists names and points at no verb, so a submitter correcting a typo has "
+        "no way to learn which of the names it offered will actually start"
+    )
+    assert "edullm ask --kind dataset-request" in said, (
+        "the refusal says nothing about getting a new corpus registered, which is the other "
+        "half of why somebody meets it"
+    )
+    assert "edullm add dataset" not in said, (
+        "that verb refuses, so naming it here sends a refused reader to a second refusal"
+    )
 
 
 def test_a_corpus_that_is_registered_and_is_not_one_is_refused_as_itself(
@@ -731,6 +941,274 @@ def test_the_unregistered_refusal_suggests_no_name_the_next_check_refuses(
     )
 
 
+def test_the_first_invocation_anybody_makes_is_priced_rather_than_only_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**THE VERB SAYS IT PRICES A SUBMISSION AND PRINTED NO PRICE ON THE FIRST TRY.**
+
+    ``edullm check`` in a registered checkout, by somebody the roster puts on two groups,
+    with no ``--experiment`` and no ``--dataset``: three refusals, and nothing else at all.
+    ``edullm --help`` describes this verb as "price a submission here", and the number it
+    exists for was absent with no sentence saying why. Measured on 2026-08-06, on the first
+    command a researcher runs.
+
+    Mutation: print the manifest, the cost and the history only when nothing is refused,
+    which is the shipped behaviour and is what this case is written against. Two things were
+    wrong and both are asserted here. ``render_preflight`` returned the refusal list in place
+    of every block above it, and ``_preflight`` returned before it had resolved anything at
+    all -- so even with the renderer fixed there was no cost to print.
+
+    **NONE OF THE THREE REFUSED FIELDS IS A FACTOR IN THE PRICE, WHICH IS WHY THIS IS
+    ANSWERABLE RATHER THAN A GUESS.** The worst case is the compute profile's rate times its
+    nodes times the runtime bound times the attempt bound times the cells, and ``.edullm/
+    run.yaml`` and ``config/`` between them fix all five. The team, the experiment and the
+    dataset decide who is billed and what is read, not what an hour costs.
+
+    The figure is asserted rather than merely its presence: $1.006 for ``gpu-1xa10g`` over
+    ``olmo-core-train``'s twenty-four hours and two attempts, which is the same arithmetic
+    ``test_a_clean_check_prices_the_run_and_says_who_releases_it`` holds the cleared path to.
+    A price that appeared and disagreed with the cleared path's would be worse than none.
+    """
+    root, runner = checkout(tmp_path, compute="gpu-1xa10g")
+
+    code, out, err = invoke(
+        ["check"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+        login=SUBMITTER_ON_TWO_TEAMS,
+    )
+    said = " ".join(out.split())
+
+    assert code == EXIT_REFUSED, out + err
+    assert "worst case  $48.29" in out, out
+    assert "$1.006/hour x 1 node x 24h x 2 attempts x 1 cell" in out
+    # What was refused is still refused, and all three of them.
+    for code_said in ("team_is_ambiguous", "no_experiment", "no_dataset"):
+        assert f"refused  {code_said}" in out
+    # And the blocks that make a price worth reading came with it.
+    assert "what it has taken" in out
+    assert "olmo-core-train" in said and "gpu-1xa10g" in said
+    # The gate is not guessed at. It reads facts a half-described run has not supplied, and
+    # saying so is the difference between an unanswered question and a dropped one.
+    assert "not decided here" in said
+    assert "run-approval-" not in out, out
+
+
+def test_a_refused_check_says_which_tree_and_which_commit_it_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: print the repository and the commit only on the cleared path.
+
+    A refusal is the moment somebody most needs to know the tool read the checkout they are
+    standing in. It named neither, so a researcher meeting one had no way to tell a real
+    refusal from a check that had resolved the wrong tree -- and the walkthroughs that find
+    these defects happen on a branch rather than on ``main``, which is the case where the
+    doubt is reasonable.
+
+    The branch is asserted beside the two because it is the one of the three a person
+    recognises. A commit is twelve characters nobody reads back, and a repository is the same
+    for every run they will ever make.
+    """
+    root, runner = checkout(tmp_path, compute="gpu-1xa10g")
+
+    code, out, err = invoke(
+        ["check"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+        login=SUBMITTER_ON_TWO_TEAMS,
+    )
+
+    assert code == EXIT_REFUSED, out + err
+    assert "repository        OLMo-core" in out
+    assert "branch            edullm/an-arm" in out
+    assert f"commit            {COMMIT[:12]}" in out
+    # And the fields nobody filled in are reported as absent rather than as empty values, so
+    # a reader can tell "the tool got nothing" from "the tool found an empty string".
+    assert "dataset           not given" in out
+    assert "experiment        not given" in out
+
+
+def test_the_three_fields_nobody_named_are_one_question_with_one_line_to_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: one stanza per missing field, which is the shipped form.
+
+    Team, experiment and dataset are all "tell me about this run". Printed as three refusals
+    under three codes they read as three things being wrong with a checkout that is fine, and
+    a reader who concludes they have three problems goes looking for three fixes. What is
+    true is that the tool has not been told what the run is.
+
+    **THE EXPLANATIONS ARE NOT FLATTENED AWAY, AND THAT IS HALF THE ASSERTION.** "Absent and
+    none are different answers and only one of them is a statement" is not a thing anybody
+    works out from a usage string, and neither is which groups the roster puts them on. The
+    block gathers them under one heading with one line to copy and keeps every sentence.
+
+    The copyable line has to carry all three flags and be one a reader may run unchanged, so
+    the dataset example is ``none`` rather than a corpus picked for them: naming a corpus is
+    exactly the guess the refusal above it says the tool must not make.
+    """
+    root, runner = checkout(tmp_path, compute="gpu-1xa10g")
+
+    code, out, err = invoke(
+        ["check"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+        login=SUBMITTER_ON_TWO_TEAMS,
+    )
+    said = " ".join(out.split())
+
+    assert code == EXIT_REFUSED, out + err
+    # One heading, and it counts fields rather than refusals.
+    assert "3 fields nothing has answered" in said
+    assert "3 refusals" not in said, out
+    # One line, carrying every flag, and a team the roster really puts this person on.
+    copyable = next(
+        line.strip() for line in out.splitlines() if line.strip().startswith("edullm check ")
+    )
+    assert "--team input-core" in copyable
+    assert "--experiment " in copyable
+    assert "--dataset none" in copyable
+    # And every reason survives, word for word.
+    assert "Absent and none are different answers" in said
+    assert "The roster puts alphaxia2100 on more than one group" in said
+    assert "It registers nothing, so any lower-case hyphenated name will do" in said
+
+
+def test_untracked_files_that_cannot_reach_the_image_are_not_refused_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**A WORD DOCUMENT IN NO COMMIT REFUSED A SUBMISSION, UNDER A REASON ABOUT EDITS.**
+
+    ``git status --porcelain`` reports a changed tracked file and an untracked one in one
+    list, this read that list, and every entry got the sentence written for the first: what
+    would run is the last commit rather than what is on your laptop. That is exactly right
+    for an edit somebody believes is in the run. There is no version of it that is true of a
+    file in no commit, which was never going to be in the image, so there is no gap between
+    what the submitter thinks will run and what will.
+
+    The evidence is ``.github/workflows/build-research-image.yml``, where the publish job
+    checks the tree out at the verified commit and hands *that* to ``docker build``. Nothing
+    on a laptop reaches the image by any route.
+
+    Mutation: refuse for any dirty entry, which is the shipped behaviour. Untracked files are
+    close to universal -- everybody has scratch lying around -- so it refuses a large share
+    of researchers on their first invocation for something that cannot matter, and what they
+    learn is that the gate is noise. That is more expensive than the thing it prevented,
+    which is nothing.
+
+    The three paths are the ones a tester met on 2026-08-06: a Python script under ``docs``,
+    a plan document and a ``.docx``. None of them is named by the command and none is the
+    build recipe.
+    """
+    theirs = (
+        "docs/_generate_tokenizer_eval_plan_docx.py",
+        "docs/superpowers/plans/2026-07-23-post-training-tokenizer-adaptation.md",
+        "docs/tokenizer-evaluation-plan.docx",
+    )
+    write_spec(tmp_path, compute="gpu-1xa10g")
+    runner = FakeRunner(git_answers(tmp_path, untracked=theirs))
+
+    code, out, err = invoke(
+        ["check", "--dataset", "none", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "uncommitted_changes" not in out
+    # SEEN AND SAID, RATHER THAN PASSED OVER IN SILENCE. A tree with three untracked files in
+    # it that is called clean is a tool that either did not look or is not saying, and both
+    # send somebody to read the source. The line is the reason rather than a warning.
+    assert "untracked         3 files in no commit, so none of them reach the image" in out
+
+
+def test_an_untracked_file_the_command_names_is_refused_before_the_container_dies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The case on the other side, and the reason "ignore untracked entirely" is wrong too.
+
+    An untracked file cannot make the container run something *else*, which is why the tree
+    check no longer refuses for one on its own. It can make the container unable to run at
+    all: the image is built from the commit, so a file in no commit is not in it, and a
+    command naming one starts a machine, fails looking for a path, and reports that minutes
+    later from inside AWS with a worse message than this.
+
+    Mutation: drop the untracked question altogether, on the argument that the image is built
+    from the commit. It is the same argument and it stops one step short. What decides the
+    shape is what the run would actually do, and this run would go looking for a file nothing
+    published.
+
+    Asked of the command as text rather than by parsing it, because what a spec carries is a
+    shell line and a path in it may be quoted, an argument, or behind ``bash -lc``. A module
+    that committed code imports and nobody committed is the case this cannot reach; it would
+    need the codebase parsed and the answer would be a guess, and the sharp instance of it is
+    the entrypoint, which the command names.
+    """
+    write_spec(tmp_path, compute="gpu-1xa10g")
+    runner = FakeRunner(
+        git_answers(
+            tmp_path, untracked=(".edullm/train_on_corpus.py", "scratch/notes.docx")
+        )
+    )
+
+    code, out, err = invoke(
+        ["check", "--dataset", "none", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+    said = " ".join(out.split())
+
+    assert code == EXIT_REFUSED, out + err
+    assert "refused  untracked_file_the_run_needs" in out
+    assert ".edullm/train_on_corpus.py" in said
+    # And the file beside it, which the run would never open, is counted rather than named in
+    # the refusal. A refusal listing both would send somebody to commit a Word document.
+    assert "scratch/notes.docx" not in said.split("refused")[1]
+    assert "untracked         1 file in no commit" in out
+
+
+def test_a_tracked_file_you_changed_is_still_refused_and_says_it_is_tracked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: narrow the tree check to untracked paths, or drop the word "tracked".
+
+    This is the case the refusal was always right about and the narrowing must not touch. A
+    submission names a commit, the image is built from it, and an edit somebody has not
+    committed is a difference between what they believe will run and what will. Refusing is
+    doing them a favour.
+
+    The sentence now says the paths are tracked files. That is the half that was missing when
+    one refusal answered two facts: a reader whose ``.docx`` was named by this reasoning had
+    been told something false about their own tree, and naming the case is what stops the two
+    being conflated again by somebody reading the message rather than the code.
+    """
+    write_spec(tmp_path, compute="gpu-1xa10g")
+    runner = FakeRunner(
+        git_answers(tmp_path, dirty=("src/olmo_core/train.py",), untracked=("notes.docx",))
+    )
+
+    code, out, err = invoke(
+        ["check", "--dataset", "none", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+    said = " ".join(out.split())
+
+    assert code == EXIT_REFUSED, out + err
+    assert "refused  uncommitted_changes" in out
+    assert "src/olmo_core/train.py" in said
+    assert "a tracked file you have changed" in said
+    # The untracked file is not in the refusal, and is not silently forgotten either.
+    assert "notes.docx" not in said.split("refused")[1]
+    assert "untracked         1 file in no commit" in out
+
+
 def test_four_cards_and_a_command_that_starts_one_process_is_refused_by_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -793,6 +1271,43 @@ def test_bfloat16_on_the_only_eight_card_shape_that_places_is_refused_by_name(
     # The shape it may not place on is a separate sentence and a warning rather than a
     # refusal, and gpu-8xt4 places, so nothing here should be mentioning placement at all.
     assert "may not place" not in out
+
+
+def test_the_tensor_parallel_spelling_the_harness_ignores_is_refused_here_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second instance of "``check`` passes what ``compile`` refuses", closed.
+
+    ``require_a_tensor_parallel_flag_vllm_reads`` was called by ``compile_submission`` and by
+    nothing on this side, so a sweep spelling the option the way the harness accepts and
+    discards cleared ``edullm check`` and was refused after the dispatch. This case is the
+    submission that did it: one device asked for on a one-device shape, so
+    ``process_per_device`` has nothing to say and the spelling is the only thing wrong.
+
+    Mutation: drop the call from ``_check_command``. That is what shipped, and what it costs
+    is the queue wait plus a submitter who was told their submission was good.
+    """
+    write_spec(
+        tmp_path,
+        workload="olmo-eval-sweep",
+        compute="gpu-1xa10g",
+        command=(
+            f"olmo-eval run --harness default -o provider.kind=vllm_server "
+            f"-o {TENSOR_PARALLEL_SHORT_FORM}=1 -t arc_challenge -O /tmp/out"
+        ),
+    )
+    runner = FakeRunner(git_answers(tmp_path, repository="olmo-eval-full"))
+
+    code, out, _ = invoke(
+        ["check", "--dataset", "none", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_REFUSED
+    assert "refused  tensor_parallel_flag_ignored" in out
+    assert TENSOR_PARALLEL_OPTION in out
 
 
 def test_a_fanout_is_told_that_no_size_of_one_releases_itself(
@@ -932,11 +1447,11 @@ def test_somebody_the_roster_has_never_heard_of_is_told_that_and_nothing_else(
     profile sends somebody who is not on the roster to correct a field that was never what
     stood in the way.
 
-    The count is the second line rather than the first now, and the line above it is the one
-    thing allowed there: which reviewed configuration produced the refusal. Everything
-    ``render_refusals`` argues about the count coming before the reasons still holds -- a
-    reader learns nothing was dispatched before they learn why -- and a false refusal from a
-    stale packaged copy is the case where the reader has to know which files answered.
+    **AND IT IS THE ONLY REFUSAL, WHICH IS WHAT "AND NOTHING ELSE" MEANS HERE.** What the
+    blocks above it say is a different question: they are readings of the tree and of the
+    catalog, they were established, and the count line is what a reader learns before the
+    reasons. Everything ``render_refusals`` argues about that ordering still holds inside the
+    refusal section.
     """
     root, runner = checkout(tmp_path)
 
@@ -947,12 +1462,12 @@ def test_somebody_the_roster_has_never_heard_of_is_told_that_and_nothing_else(
         monkeypatch=monkeypatch,
         login="somebody-who-does-not-work-here",
     )
-    first, blank, rest = out.split("\n", 2)
+    refusals = out.split("1 refusal. Nothing was dispatched.\n")
 
     assert code == EXIT_REFUSED
-    assert first.startswith("checked against ") and blank == ""
-    assert rest.startswith("1 refusal. Nothing was dispatched.")
-    assert "refused  submitter_not_in_roster" in out
+    assert len(refusals) == 2, out
+    assert refusals[1].lstrip().startswith("refused  submitter_not_in_roster")
+    assert out.count("refused  ") == 1, out
 
 
 def test_a_workload_written_for_another_repository_names_the_ones_written_for_this_one(
@@ -1000,7 +1515,7 @@ def test_an_experiment_that_cannot_group_is_refused_with_the_shape_that_can(
     assert "refused  experiment_not_a_slug" in out
 
 
-def test_the_two_checks_a_laptop_cannot_make_are_named_rather_than_passed_over(
+def test_the_checks_a_laptop_cannot_make_are_named_rather_than_passed_over(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The honesty this verb rests on.
@@ -1009,6 +1524,11 @@ def test_the_two_checks_a_laptop_cannot_make_are_named_rather_than_passed_over(
     of a submitter who read a clean preflight as a guarantee and met
     ``image_scan_findings_unreviewed`` from inside the submission -- and read it as a
     security problem in his own image rather than as a scan that had not finished.
+
+    Read out of ``DEFERRED_TO_SUBMIT`` rather than listed here, because which questions are
+    deferred is decided there and held complete by
+    ``tests/test_check_refuses_what_compile_refuses.py``. What this asserts is that a reader
+    of the output meets all of them.
     """
     root, runner = checkout(tmp_path, workload="olmo-core-check", compute="gpu-1xt4")
 
@@ -1020,9 +1540,9 @@ def test_the_two_checks_a_laptop_cannot_make_are_named_rather_than_passed_over(
     )
 
     assert code == EXIT_OK, out + err
-    assert "not checked here, because both need the container registry" in out
-    assert "no_published_image" in out
-    assert "image_scan_findings_unreviewed" in out
+    assert "not checked here, because each of these needs the container registry" in out
+    for code_deferred, _ in DEFERRED_TO_SUBMIT:
+        assert code_deferred in out
 
 
 @pytest.mark.parametrize("retired", ["dry-run", "new"])

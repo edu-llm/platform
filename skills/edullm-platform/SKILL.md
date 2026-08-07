@@ -31,17 +31,34 @@ and run the line above again. Do not reach for `pip` or `pipx` instead.
 
 Two near misses that both look like they ought to work.
 
-- `uv tool install edullm` answers `not found in the package registry`. `edullm` is the
-  executable, `edullm-platform` is the distribution, and neither is published to an index,
-  so there is nothing at either name to resolve. The line above installs from git.
+- `uv tool install edullm` answers `not found in the package registry`. The distribution and
+  the executable are both called `edullm` now, but neither this project nor anything else at
+  that name is published to an index, so there is nothing to resolve. The line above
+  installs from git.
 - `uv tool upgrade` does something different depending on how the tool was installed, which
-  is why it is not the instruction here. `uv tool upgrade edullm` errors whatever you have,
-  because `edullm` is the executable rather than the installed tool. `uv tool upgrade
-  edullm-platform` follows the git ref the install named: from the bare URL above it
-  re-resolves the default branch and does upgrade, but from a release note's line, which
-  pins that release's tag, it prints `Nothing to upgrade` and exits 0 however far behind the
-  install is. **Re-running the install line above is the upgrade for either, so run that
-  rather than working out which install this is.**
+  is why it is not the instruction here. `uv tool upgrade edullm` follows the git ref the
+  install named: from the bare URL above it re-resolves the default branch and does upgrade,
+  but from a release note's line, which pins that release's tag, it prints `Nothing to
+  upgrade` and exits 0 however far behind the install is. **Re-running the install line
+  above is the upgrade for either, so run that rather than working out which install this
+  is.**
+
+**One-time, and only for an install made before v4.2.2.** Until then the distribution was
+called `edullm-platform` while the command was `edullm`, so `uv tool list` named something
+nobody types and `uv tool uninstall edullm` answered `not installed` to somebody holding the
+binary. An install of `edullm` does not replace an `edullm-platform` one, so clear the old
+name **before** installing:
+
+```bash
+uv tool uninstall edullm-platform
+uv tool install --force git+https://github.com/edu-llm/platform
+```
+
+That order and not the other one. Both entries own the same `edullm` executable and uv
+deletes the file with the entry, so uninstalling afterwards leaves `uv tool list` reporting a
+healthy `edullm` and nothing on the path. Re-run the install line if that has already
+happened. Where the old name was never installed the uninstall exits 2 with ``error:
+`edullm-platform` is not installed``, which is the expected answer.
 
 Re-install before you trust an answer that matters. The tool carries its own copy of the
 reviewed configuration, frozen at the release it was built from, and prices against that
@@ -132,10 +149,17 @@ these as well.
 | `refusals` | a list of `{code, detail}`. **Match on `code`.** The detail is prose and gets reworded |
 | `deferred` | checks a laptop cannot make, listed even when nothing is refused |
 | `cost` | the five factors and their product |
+| `retries` | null on a one-attempt run. Otherwise what the later attempts do and do not buy, with `said` as the sentence to quote |
 | `approval_class` | who has to release it |
 | `manifest` | exactly what would be submitted, including the command and the commit |
 | `history` | what runs of this shape have taken, with `said` as the sentence to quote |
 | `config_directory` | the reviewed configuration this install carries |
+
+**Do not read `retries.resume_required` as a promise that a retry resumes.** It is the
+workload profile's declaration, and nothing on the platform checks it against the codebase
+that would have to honour it. Measured on 2026-08-06, two of the six registered repositories
+declare it, pass every check here, and restart from step 0. Quote `said` rather than the
+flag.
 
 ## 2. Fix every refusal
 
@@ -153,7 +177,7 @@ The `detail` names the field and usually the file. These are the ones you will m
 | `unregistered_repository` | The platform does not carry this codebase. Go to **When the platform does not carry this codebase** below |
 | `unregistered_workload_profile` | The `detail` lists the registered ones. Pass `--workload` with one of those |
 | `workload_profile_repository_mismatch` | That workload belongs to another repository. The `detail` lists the ones this repository has |
-| `unregistered_dataset` | The `detail` lists what is registered. Never invent a release id |
+| `unregistered_dataset` | Run `edullm data` and pick one off it. Never invent a release id |
 | `retired_dataset_release` | The corpus is registered and withdrawn. The `detail` names the version its owner calls current |
 | `dataset_is_not_a_corpus` | This resolves to a tokenizer or another input rather than to something a run trains on |
 | `unprovisioned_compute_profile` | The shape is priced and has no compute environment behind it, so no job on it can start. Pick another `--compute` |
@@ -167,6 +191,32 @@ file to change.
 
 **Never pass `--force` to get past a refusal.** Every refusal it skips is one admission
 makes again from inside AWS, so it buys a queue wait rather than an outcome.
+
+### Picking the corpus, which has its own verb
+
+```bash
+edullm data                  # the list, smallest first
+edullm data <reference-id>   # one of them in full
+edullm data --json           # the same under `corpora`
+```
+
+Reaches no network, exits 0, and carries what a chooser needs per corpus: train tokens, the
+tokenizer, whether the shards are `uint16` or `uint32`, the licence, and whether a run naming
+it will start.
+
+**That last one is not the same as registered, and the gap costs a machine.** Some registered
+corpora are current, in a trainable family and refused by nothing this platform checks, and a
+run naming one compiles, classifies routine, spends an approval, allocates the machine, and
+then the container cannot build a tokenizer for the tokens it just resolved and exits 69.
+`--json` puts that under `verdict` per entry, as `runs`, `refused` or `exits_69`. Branch on
+it before you submit.
+
+Never find the corpora by naming a bad one and reading the refusal. That list is names only.
+
+A corpus nothing registers is a person's job rather than a command: the entry pins a manifest
+digest and a payload profile read off the sealed bucket, which needs an AWS role this binary
+does not hold. `edullm add dataset` says so and refuses. File it with
+`edullm ask --kind dataset-request`.
 
 ## 3. Three things a clean check does not promise
 

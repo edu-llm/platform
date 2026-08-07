@@ -19,6 +19,10 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
+import sys
+from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -107,7 +111,14 @@ def compile_form(
     document: object = None,
     published_images: Path | None = None,
     submitter: str = SUBMITTER,
+    client_version: str = "",
 ) -> tuple[int, dict[str, Any]]:
+    """Compile one form, defaulting to a dispatch that named no install.
+
+    Empty by default because that is what the Actions tab sends and what every dispatch
+    made before the input existed sends, so it is the state most of this module should be
+    written against.
+    """
     inputs = tmp_path / "submission-form.json"
     inputs.write_text(json.dumps(payload if payload is not None else form()), encoding="utf-8")
     if published_images is None:
@@ -116,6 +127,13 @@ def compile_form(
             json.dumps(document if document is not None else resolved()), encoding="utf-8"
         )
     output = tmp_path / "compiled-submission.json"
+    # A day with nothing committed, passed on every case here because the alternative is a
+    # day this job could not read -- which fails closed and routes to a lead, and would
+    # therefore answer "routine" for every case in this module regardless of what it was
+    # asking about. The ceiling has its own section below; everything above it is about
+    # something else and wants the quiet day.
+    quiet_day = tmp_path / "empty-run-index.json"
+    quiet_day.write_text(json.dumps({"format_version": 1, "runs": []}), encoding="utf-8")
     exit_code = main(
         [
             "--inputs",
@@ -126,12 +144,16 @@ def compile_form(
             str(published_images),
             "--submitter",
             submitter,
+            "--client-version",
+            client_version,
             "--repository-url",
             REPOSITORY_URL,
             "--output",
             str(output),
             "--summary",
             str(tmp_path / "approver-context.md"),
+            "--run-index",
+            str(quiet_day),
             "--run-id",
             RUN_ID,
         ]
@@ -754,6 +776,320 @@ def test_a_checkout_carrying_no_reading_compiles_and_says_nothing_was_measured(
 
 
 # ---------------------------------------------------------------------------------------
+# The day's ceiling, which is the only thing here that reads past this submission
+# ---------------------------------------------------------------------------------------
+
+
+def index_holding(
+    tmp_path: Path, entries: list[dict[str, Any]], *, name: str = "run-index.json"
+) -> Path:
+    path = tmp_path / name
+    path.write_text(json.dumps({"format_version": 1, "runs": entries}), encoding="utf-8")
+    return path
+
+
+def released_by_nobody(
+    number: int,
+    cost: str | None = "482.10",
+    *,
+    approval_class: str = "automatic",
+    at: datetime | None = None,
+) -> dict[str, Any]:
+    """One entry of the shape the exposure is made of, as the workflow writes it.
+
+    $482.10 is sixteen hours of ``gpu-8xl40s`` in one cell, priced from the catalog on
+    2026-08-06, and it is the widest single run this account releases by nobody.
+    """
+    entry: dict[str, Any] = {
+        "run_id": f"run_019fd5e1-38da-7019-b7d3-67d561db3{number:03d}",
+        # Spelled through ``int`` for the reason tests/test_run_index.py spells its
+        # own the same way: an eleven-digit literal is what the account-id guard in
+        # tests/test_evidence.py is looking for, and it cannot tell one from a
+        # padded account number.
+        "workflow_run_id": int("30281990942") + number,
+        "workflow_run_url": "https://github.com/edu-llm/platform/actions/runs/1",
+        "submitter": f"researcher-{number:02d}",
+        "repository": "OLMo-core",
+        "commit_sha": COMMIT_SHA,
+        "team": "data-prep",
+        "experiment": "context-length-sweep",
+        "compute_profile": "gpu-8xl40s",
+        "approval_class": approval_class,
+        "fanout_size": None,
+        "minted_at": (at or datetime.now(UTC)).isoformat(),
+    }
+    if cost is not None:
+        entry["maximum_compute_cost_usd"] = cost
+    return entry
+
+
+def compile_against_the_day(
+    tmp_path: Path, run_index: Path | None
+) -> tuple[int, dict[str, Any], str]:
+    """The whole compile step, against a real day's ledger and the reviewed configuration."""
+    inputs = tmp_path / "submission-form.json"
+    inputs.write_text(json.dumps(form()), encoding="utf-8")
+    published = tmp_path / "published-image.json"
+    published.write_text(json.dumps(resolved()), encoding="utf-8")
+    output = tmp_path / "compiled-submission.json"
+    summary = tmp_path / "approver-context.md"
+
+    argv = [
+        "--inputs",
+        str(inputs),
+        "--config-dir",
+        str(CONFIG_DIR),
+        "--published-images",
+        str(published),
+        "--submitter",
+        SUBMITTER,
+        "--repository-url",
+        REPOSITORY_URL,
+        "--output",
+        str(output),
+        "--summary",
+        str(summary),
+        "--run-id",
+        RUN_ID,
+    ]
+    if run_index is not None:
+        argv += ["--run-index", str(run_index)]
+
+    exit_code = main(argv)
+    compiled = json.loads(output.read_text(encoding="utf-8")) if output.exists() else {}
+    assert isinstance(compiled, dict)
+    page = summary.read_text(encoding="utf-8") if summary.exists() else ""
+    return exit_code, compiled, page
+
+
+def test_a_quiet_day_leaves_the_automatic_class_exactly_as_it_was(tmp_path: Path) -> None:
+    """THE ORDINARY DAY, WHICH IS THE HALF THAT MAKES THE OTHER ASSERTIONS MEAN ANYTHING.
+
+    Mutation: route every submission to a lead. Every other case in this section passes,
+    because every other case asserts that something reaches a lead. This is the one that
+    fails, and without it the whole section is satisfied by a control that is stuck on --
+    which is a worse outcome than no ceiling, because it is the state somebody fixes by
+    deleting the ceiling.
+
+    ``config/run-history.json`` measures the ordinary submission here as a check with a
+    median of five minutes, so a day of them is two orders of magnitude under the bound.
+    """
+    index = index_holding(tmp_path, [released_by_nobody(1, "1.01")])
+
+    exit_code, compiled, page = compile_against_the_day(tmp_path, index)
+
+    assert exit_code == EXIT_OK
+    assert compiled["approval_class"] == "automatic"
+    assert compiled["approving_environment"] == "run-approval-automatic"
+    assert "## Why this is in front of you" not in page
+
+
+def test_a_day_that_has_spent_its_unattended_budget_sends_the_next_run_to_a_lead(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """THE EXPOSURE, CLOSED, DRIVEN THROUGH THE JOB THE WORKFLOW ACTUALLY RUNS.
+
+    Mutation: apply the ceiling only to the run in front of it, which is what every
+    threshold before v6 did. Three runs of $482.10 are each under the per-run bound of
+    $500, so the submission below stays automatic and the thirty-fifth one does too.
+
+    The submission itself is a cheap check. That is the point and it is why this cannot be
+    asserted on the cost: what routes it is the day rather than the request, and a rule
+    reading the request cannot see the difference.
+    """
+    index = index_holding(
+        tmp_path, [released_by_nobody(n) for n in (1, 2, 3)]
+    )
+
+    exit_code, compiled, _page = compile_against_the_day(tmp_path, index)
+
+    assert exit_code == EXIT_OK
+    assert compiled["approval_class"] == "routine"
+    assert compiled["approving_environment"] == "run-approval-lead"
+    reported = capsys.readouterr().err
+    assert "$1,446.30" in reported
+    assert "goes to a team lead instead" in reported
+
+
+def test_the_lead_is_told_the_day_is_the_reason_and_not_the_request(
+    tmp_path: Path,
+) -> None:
+    """Mutation: raise the class and say nothing on the page.
+
+    A lead opening a request for a few dollars, released by a gate that exists for
+    expensive things, learns nothing from the cost table about why they were woken. The
+    section has to say that the question is about the account's day rather than about this
+    figure, or the honest reading of the page is that the routing is broken.
+    """
+    index = index_holding(tmp_path, [released_by_nobody(n) for n in (1, 2, 3)])
+
+    _exit_code, _compiled, page = compile_against_the_day(tmp_path, index)
+
+    assert "## Why this is in front of you" in page
+    assert "$1,446.30" in page
+    assert "under the per-run bound" in page
+    assert "config/policy.yaml" in page
+    assert "resets at midnight UTC" in page
+
+
+@pytest.mark.parametrize(
+    ("described", "entries"),
+    [
+        pytest.param(
+            "an entry from today with no figure on it",
+            [released_by_nobody(1, None)],
+            id="unpriced",
+        ),
+        pytest.param(
+            "an index that holds nothing this tree can read",
+            [{"run_id": "run_1"}],
+            id="malformed",
+        ),
+    ],
+)
+def test_a_day_this_job_could_not_price_asks_a_lead(
+    described: str,
+    entries: list[dict[str, Any]],
+    tmp_path: Path,
+) -> None:
+    """FAIL CLOSED, THROUGH THE TOOL. Mutation: catch the read failure and carry on.
+
+    Reading a day that could not be read as a day with nothing in it switches the ceiling
+    off precisely when the machinery behind it is broken. The ledger is a file on a branch
+    that a force-push rewrites, so this is the failure that will actually happen.
+
+    Both rows produce the same routing and different sentences, because only one of them is
+    a thing somebody has to go and fix.
+    """
+    index = index_holding(tmp_path, entries)
+
+    exit_code, compiled, page = compile_against_the_day(tmp_path, index)
+
+    assert exit_code == EXIT_OK, described
+    assert compiled["approving_environment"] == "run-approval-lead"
+    assert "could not be read" in page
+
+
+def test_no_index_at_all_asks_a_lead_rather_than_waving_the_run_through(
+    tmp_path: Path,
+) -> None:
+    """Mutation: make ``--run-index`` optional in effect as well as in argparse.
+
+    A workflow that stopped passing the file would otherwise turn the ceiling off with no
+    red run anywhere, which is the exact failure shape ``config/reports/surfaces.yaml``
+    recorded as a proven property for the whole of this platform's cost story. The argument
+    stays optional because a policy carrying no ceiling has nothing to compare against, and
+    that case is settled before this one is asked.
+    """
+    exit_code, compiled, page = compile_against_the_day(tmp_path, None)
+
+    assert exit_code == EXIT_OK
+    assert compiled["approving_environment"] == "run-approval-lead"
+    assert "no --run-index" in page
+
+
+def test_a_run_over_the_per_run_bound_is_not_told_the_day_is_why(tmp_path: Path) -> None:
+    """Mutation: decide the section by comparing the cost against the per-run bound.
+
+    A fan-out was always going to reach a lead, whatever the day has spent, so a section
+    saying the day put it here would be false. The eight cells below cost a fraction of the
+    per-run bound, so a cost comparison calls this one the day's doing; only re-asking
+    ``classify_request`` gets it right, and the same is true of a cheap run on an unreviewed
+    digest.
+
+    Getting it wrong costs more than a wrong sentence. Nine approvers who meet the paragraph
+    on every request stop reading it, and the one submission it exists for is the one where
+    not reading it loses the whole point.
+    """
+    index = index_holding(tmp_path, [released_by_nobody(n) for n in (1, 2, 3)])
+    inputs = tmp_path / "submission-form.json"
+    inputs.write_text(
+        json.dumps(form(fanout_size=8, fanout_index_parameter="seed")), encoding="utf-8"
+    )
+    published = tmp_path / "published-image.json"
+    published.write_text(json.dumps(resolved()), encoding="utf-8")
+    summary = tmp_path / "approver-context.md"
+
+    exit_code = main(
+        [
+            "--inputs",
+            str(inputs),
+            "--config-dir",
+            str(CONFIG_DIR),
+            "--published-images",
+            str(published),
+            "--submitter",
+            SUBMITTER,
+            "--repository-url",
+            REPOSITORY_URL,
+            "--output",
+            str(tmp_path / "compiled-submission.json"),
+            "--summary",
+            str(summary),
+            "--run-index",
+            str(index),
+            "--run-id",
+            RUN_ID,
+        ]
+    )
+
+    assert exit_code == EXIT_OK
+    assert "## Why this is in front of you" not in summary.read_text(encoding="utf-8")
+
+
+def test_the_worst_case_is_handed_to_the_job_that_writes_the_index(tmp_path: Path) -> None:
+    """The other end of the loop, without which the ceiling reads an empty day forever.
+
+    Mutation: stop emitting ``maximum_compute_cost_usd`` as a step output. Every entry the
+    index gains carries no figure, every subsequent reading is unpriced, and the mechanism
+    fails closed on every submission -- a control stuck on, for a reason nothing on the page
+    explains. It is the compile job's own figure rather than one derived downstream, because
+    a second implementation of the arithmetic is a second answer to what the ceiling compares.
+    """
+    inputs = tmp_path / "submission-form.json"
+    inputs.write_text(json.dumps(form()), encoding="utf-8")
+    published = tmp_path / "published-image.json"
+    published.write_text(json.dumps(resolved()), encoding="utf-8")
+    github_output = tmp_path / "github-output"
+
+    exit_code = main(
+        [
+            "--inputs",
+            str(inputs),
+            "--config-dir",
+            str(CONFIG_DIR),
+            "--published-images",
+            str(published),
+            "--submitter",
+            SUBMITTER,
+            "--repository-url",
+            REPOSITORY_URL,
+            "--output",
+            str(tmp_path / "compiled-submission.json"),
+            "--summary",
+            str(tmp_path / "approver-context.md"),
+            "--github-output",
+            str(github_output),
+            "--run-id",
+            RUN_ID,
+        ]
+    )
+
+    assert exit_code == EXIT_OK
+    written = github_output.read_text(encoding="utf-8")
+    recorded = next(
+        line.split("=", 1)[1]
+        for line in written.splitlines()
+        if line.startswith("maximum_compute_cost_usd=")
+    )
+    # And it is the figure the approver page prints, rather than a second derivation of it.
+    page = (tmp_path / "approver-context.md").read_text(encoding="utf-8")
+    assert f"= **${recorded}**" in page
+    assert Decimal(recorded) > 0
+
+
+# ---------------------------------------------------------------------------------------
 # An input this job could not read is not a judgement about the submission
 # ---------------------------------------------------------------------------------------
 
@@ -851,3 +1187,222 @@ def test_the_resolver_document_is_required_rather_than_defaulted_to_nothing(
         )
 
     assert exit_info.value.code == 2
+
+
+# ---------------------------------------------------------------------------------------
+# Which install typed the submission
+# ---------------------------------------------------------------------------------------
+
+#: A command that lost the quotes grouping ``bash -lc``'s program into one word. This is
+#: what every ``edullm submit`` before 3.4.8 sent for the ``bash -lc`` line the guides
+#: carry, because it rejoined the split command with a plain space.
+UNQUOTED_COMMAND = ["bash", "-lc", "python", "train.py", "--steps", "20"]
+
+
+@pytest.mark.parametrize(
+    ("client_version", "expected"),
+    [
+        pytest.param("3.7.1", "Submitted by edullm 3.7.1.", id="an install that named itself"),
+        pytest.param("", "names no edullm version", id="the Actions form"),
+    ],
+)
+def test_the_log_says_which_install_typed_every_submission_that_compiles(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    client_version: str,
+    expected: str,
+) -> None:
+    """Mutation: print it only when something is refused.
+
+    Nothing this platform stores has ever recorded a client version, which is the recorded
+    reason nobody can say whether anybody is on a current edullm. The submissions that
+    answer that question are the ones that worked, so the line is printed before anything
+    else happens rather than as part of a complaint.
+    """
+    exit_code, _compiled = compile_form(tmp_path, client_version=client_version)
+
+    assert exit_code == EXIT_OK
+    assert expected in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("client_version", "recorded"),
+    [
+        pytest.param("3.7.1", "3.7.1", id="an install that named itself"),
+        pytest.param("", None, id="the Actions form"),
+        pytest.param("latest", None, id="something that is not a version"),
+    ],
+)
+def test_the_compiled_submission_records_which_install_typed_it(
+    tmp_path: Path, client_version: str, recorded: str | None
+) -> None:
+    """The one place the answer survives the job, and the reason it is this place.
+
+    Mutation: fold it into the manifest instead. ``RunManifest`` is hashed whole and the
+    digest is what an approver releases, so a field added there moves the digest of every
+    record ever written -- ``CompiledSubmission.experiment`` measured exactly that. A
+    sibling costs nothing and is what ``edullm status`` already downloads.
+    """
+    exit_code, compiled = compile_form(tmp_path, client_version=client_version)
+
+    assert exit_code == EXIT_OK
+    assert compiled["edullm_version"] == recorded
+    assert "edullm_version" not in compiled["manifest"]
+
+
+@pytest.mark.parametrize("client_version", ["", "3.4.7", "3.7.1", "latest"])
+def test_nothing_is_refused_on_the_version_it_says_it_came_from(
+    tmp_path: Path, client_version: str
+) -> None:
+    """Mutation: refuse anything below the release that fixed the last defect.
+
+    A stale install that produces a valid submission still produces a valid submission, and
+    the reviewed configuration this job judges against is the job's own rather than the
+    submitter's. A floor here would refuse correct work on the strength of a probability,
+    at the hour when whoever is submitting can least afford it -- and every one of the four
+    values below has to compile for that to stay true, including the two this cannot order.
+    """
+    exit_code, compiled = compile_form(tmp_path, client_version=client_version)
+
+    assert exit_code == EXIT_OK
+    assert compiled["run_id"] == RUN_ID
+
+
+def test_the_install_is_named_above_the_refusal_and_not_below_it(tmp_path: Path) -> None:
+    """Mutation: drop the flush. It is invisible in-process and wrong on every runner.
+
+    stdout is block-buffered when it is not a terminal and stderr is not, so the line
+    introducing a submission was held until the process exited and arrived underneath the
+    refusal it was meant to introduce. Measured on run 31094757003 before the flush and
+    fixed after it. Only a subprocess with the two streams merged can see this: ``capsys``
+    keeps them apart, which is exactly how the whole suite stayed green through it.
+    """
+    inputs = tmp_path / "submission-form.json"
+    inputs.write_text(json.dumps(form(command=UNQUOTED_COMMAND)), encoding="utf-8")
+    published = tmp_path / "published-image.json"
+    published.write_text(json.dumps(resolved()), encoding="utf-8")
+
+    # One pipe for both streams, which is what a workflow log is and the only arrangement
+    # in which the ordering exists to be asserted.
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(PROJECT_ROOT / "tools" / "compile_submission.py"),
+            "--inputs",
+            str(inputs),
+            "--config-dir",
+            str(CONFIG_DIR),
+            "--published-images",
+            str(published),
+            "--submitter",
+            SUBMITTER,
+            "--client-version",
+            "3.4.7",
+            "--repository-url",
+            REPOSITORY_URL,
+            "--output",
+            str(tmp_path / "compiled-submission.json"),
+            "--run-id",
+            RUN_ID,
+        ],
+        cwd=PROJECT_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == EXIT_REFUSED
+    assert result.stdout.index("Submitted by edullm 3.4.7.") < result.stdout.index(
+        "does not compile into a valid manifest"
+    )
+
+
+def test_an_old_install_is_told_to_reinstall_rather_than_to_quote_what_it_unquoted(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The refusal this whole change is about, from the install that caused it.
+
+    Mutation: leave the refusal as it was. What the submitter then reads is "Quote the
+    whole program", which is what they did -- their install took the quotes off between
+    the spec and the form -- so the advice sends them to re-do the one thing that was
+    already right and the second attempt is refused identically.
+    """
+    exit_code, compiled = compile_form(
+        tmp_path, payload=form(command=UNQUOTED_COMMAND), client_version="3.4.7"
+    )
+    reported = capsys.readouterr().err
+
+    assert exit_code == EXIT_REFUSED
+    assert compiled == {}
+    assert "Reinstall edullm" in reported
+    assert "3.4.7" in reported
+    assert "3.4.8" in reported
+    assert "uv tool install --force" in reported
+
+
+def test_a_submission_that_named_no_install_is_offered_both_readings(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mutation: read a blank field as an old install and accuse the reader of being behind.
+
+    A dispatch from the Actions tab names no install and never will, and that is how
+    tonight's probe runs were launched. Somebody who typed this command into the form by
+    hand really did leave the quotes off, and the refusal above them is right; somebody on
+    an install older than the field did not. The sentence has to leave both open.
+    """
+    exit_code, _compiled = compile_form(tmp_path, payload=form(command=UNQUOTED_COMMAND))
+    reported = capsys.readouterr().err
+
+    assert exit_code == EXIT_REFUSED
+    assert "If you ran edullm submit" in reported
+    assert "Actions form" in reported
+
+
+def test_a_current_install_is_told_only_what_is_wrong_with_its_command(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mutation: print the reinstall note whenever the refusal matches.
+
+    A submission from an install that never unquoted anything arrived exactly as it was
+    written, so the refusal's own advice is the correct advice and a second paragraph
+    telling this reader to reinstall would send them round a loop that cannot help.
+    """
+    exit_code, _compiled = compile_form(
+        tmp_path, payload=form(command=UNQUOTED_COMMAND), client_version="3.7.1"
+    )
+    reported = capsys.readouterr().err
+
+    assert exit_code == EXIT_REFUSED
+    assert "reads exactly one word as the command" in reported
+    assert "Reinstall edullm" not in reported
+    assert "uv tool install" not in reported
+
+
+@pytest.mark.parametrize("client_version", ["", "3.4.7"])
+def test_a_refusal_no_install_caused_never_mentions_the_install(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    client_version: str,
+) -> None:
+    """Mutation: annotate every refusal with the version, or match on something looser.
+
+    An unregistered repository is a refusal about a field the submitter chose, and it reads
+    the same from every install there has ever been. A version sentence beside it is a
+    second thing to read that changes nothing, and a reader who meets one three times stops
+    reading them -- including on the refusal where it is the whole answer.
+    """
+    exit_code, _compiled = compile_form(
+        tmp_path,
+        payload=form(repository="tokenizer-flores-validation"),
+        client_version=client_version,
+    )
+    reported = capsys.readouterr().err
+
+    assert exit_code == EXIT_REFUSED
+    assert "config/repositories.yaml" in reported
+    assert "Reinstall edullm" not in reported
+    assert "uv tool install" not in reported

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -56,6 +57,21 @@ AWS_EXAMPLE_TEMP_ACCESS_KEY_ID = "ASIA" + "IOSFODNN7EXAMPLE"
 ALLOWED_ACCOUNT_ID_INTS = {int(AWS_EXAMPLE_ACCOUNT_ID)}
 TRACKED_TREE_PATHS: tuple[str, ...] = ()
 EXCLUDED_TRACKED_FILENAMES = frozenset({"uv.lock"})
+
+#: A count the corpus measurement holds, as ``tools/build_corpora_snapshot.py`` writes it.
+#:
+#: **ANCHORED TO THE KEY RATHER THAN TO THE SHAPE OF THE VALUE, WHICH IS WHAT MAKES IT NARROW
+#: ENOUGH TO BE SAFE.** A bare twelve-digit JSON integer is a thing an account id could be
+#: written as by accident -- unquoted, in a fixture nobody looked at -- and a mask that
+#: swallowed any of them would give away exactly what this scan is for. These two keys hold a
+#: number of tokens and a number of bytes and can hold nothing else, so masking their values
+#: gives up nothing: ``pretrain/reservoir-dolma2`` holds 250,242,924,544 train tokens, which
+#: is twelve digits because that is how many tokens it has.
+#:
+#: The value is dropped and the key is kept, so the mask cannot hide a second run further
+#: along the same line. ``test_an_account_id_beside_a_measured_count_is_still_found`` is the
+#: half of this that would go red if it did.
+A_MEASURED_COUNT = re.compile(r'("(?:train_tokens|size_bytes)":)\s*\d+')
 
 # Content digests routinely carry twelve consecutive decimal digits. These two hold one
 # on purpose, so a redaction that reached inside them would be visible.
@@ -117,15 +133,24 @@ def forbidden_account_id_substrings(source: str) -> list[str]:
     point: this reads source, where hexadecimal is everywhere, and that one guards captured
     values, where it is not. ``tests/infrastructure_support.py`` argues the split.
 
-    The two masks below are kept even though the pattern no longer needs either of them.
+    The two hex masks below are kept even though the pattern no longer needs either of them.
     ``BARE_SHA256_HEX`` and ``redact_content_digests`` were added on 2026-08-01, after a
     64-character digest -- which carries twelve consecutive decimal digits about one time in
     six -- turned a Lambda release into a red suite that read as an account id leak. A pattern
     that asks about the token subsumes both, and the tests prove a digest and a commit SHA are
     passed with them or without them, but removing a mask is a second change with its own way
     of being wrong and this one is already load-bearing enough.
+
+    :data:`A_MEASURED_COUNT` is the third and it is the same shape of collision arriving from
+    the other direction. ``config/reports/corpora.json`` records how many tokens a corpus
+    holds, and a corpus of two hundred and fifty billion tokens is written with twelve digits
+    because that is how many it has. Every other tracked file in this tree groups a figure
+    that size with commas and JSON cannot, so this is the one place a legitimate twelve-digit
+    decimal run is unavoidable.
     """
-    masked = BARE_SHA256_HEX.sub("<sha256-hex>", redact_content_digests(source))
+    masked = A_MEASURED_COUNT.sub(
+        r"\1 <count>", BARE_SHA256_HEX.sub("<sha256-hex>", redact_content_digests(source))
+    )
     return [
         match.group(0)
         for match in ACCOUNT_LITERAL.finditer(masked)
@@ -1192,6 +1217,33 @@ def test_a_release_digest_holding_twelve_digits_is_not_read_as_an_account_id() -
     recorded = "sha256: 84edb3e83eb53a775f1c607298380630a9bfaa967bf3ed70f304f769977aab3d"
 
     assert forbidden_account_id_substrings(recorded) == []
+
+
+def test_a_token_count_holding_twelve_digits_is_not_read_as_an_account_id() -> None:
+    """Mutation: scan the corpus measurement without masking its counts first.
+
+    This is ``pretrain/reservoir-dolma2``'s train partition, written the way
+    ``tools/build_corpora_snapshot.py`` writes it. Twelve consecutive decimal digits sit in
+    it because the corpus holds that many tokens, and there is nowhere else for them to go:
+    every other tracked file in this tree groups a figure that size with commas and JSON
+    numbers cannot carry one.
+    """
+    recorded = '"train_tokens": 250242924544,'
+
+    assert forbidden_account_id_substrings(recorded) == []
+
+
+def test_an_account_id_beside_a_measured_count_is_still_found() -> None:
+    """Mutation: mask the whole line rather than the one value.
+
+    The exemption has to be as narrow as the collision. An account id leaks where it is
+    bounded by a colon, a quote or whitespace, and a JSON object holding a count also holds
+    strings -- so a mask that swallowed the rest of the line would hide the leak in exactly
+    the file it was widened for.
+    """
+    leaked = f'"train_tokens": 250242924544, "uri": "arn:aws:s3:::{FABRICATED_ACCOUNT_ID}"'
+
+    assert forbidden_account_id_substrings(leaked) == [FABRICATED_ACCOUNT_ID]
 
 
 def test_an_account_id_beside_a_digest_is_still_found() -> None:

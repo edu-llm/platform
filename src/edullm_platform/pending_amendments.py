@@ -841,7 +841,7 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # was written to prevent. What is worth keeping from it is the rule rather than the
     # instance: a zip a branch is rewriting is one to leave alone and record, not one to cut
     # from main because the register looks untidy.
-    releases: tuple[PendingRelease, ...] = (
+    #
     # A THIRTEENTH WAS OPENED AND CLEARED WITHIN THE HOUR, AND WHAT IS WORTH KEEPING IS THAT
     # THE THING IT WAS WAITING FOR HAD ALREADY HAPPENED WHEN IT WAS WRITTEN. The janitor's
     # zip carries researcher_lane.py for two tag keys and a role name, and #318 moved that
@@ -877,25 +877,316 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # has opened for that exact path in a day, and the coupling is the finding: the file the
     # header of reviewed_configuration.py went out of its way to keep the vocabulary *out
     # of* is config.py, and it reached three zips through a different module anyway.
+    # A FIFTEENTH AND A SIXTEENTH, BOTH FROM ONE CORRECTED COMMENT, WHICH IS THE CHEAPEST
+    # EDIT THIS REGISTER HAS EVER OPENED FOR AND IS WORTH RECORDING AS SUCH. config/
+    # policy.yaml is packaged verbatim by two builders -- it is in ADMISSION_CONFIG and it
+    # joined NOTIFIER_CONFIG when the approval message started reading it -- so a comment in
+    # it moves two zips and no behaviour whatever. Isolated rather than assumed: with the
+    # three source files in this change restored and policy.yaml alone left edited, both
+    # tripwires fire and no other does, and with policy.yaml restored and the three source
+    # files edited, none does.
+    #
+    # WHAT THE COMMENT SAID AND WHY IT COULD NOT STAY. The v5 note justified retiring
+    # routine_maximum_attempts partly on retry_without_a_checkpoint_contract "refus[ing] a
+    # retry that would restart from nothing", and it does not: it refuses more than one
+    # attempt on a workload profile carrying no checkpoint contract, which is a fact about
+    # config/workload-catalog.yaml rather than about the codebase that would have to resume.
+    # Two of the six registered repositories pass it and restart from step 0.
+    #
+    # ALL THREE WERE CLEARED BY ONE COMMAND ON 2026-08-06, AND THE SHAPE OF THAT IS THE POINT
+    # RATHER THAN THE TIDYING. The register held three entries for three unrelated causes: the
+    # janitor for a ConfigFile member #351 had to add, and the validator and the notifier for
+    # the corrected policy.yaml comment above. The change that cleared them was doing neither
+    # of those things -- it was correcting a third file, config/workload-catalog.yaml, which
+    # told anybody reaching for the unobtainable gpu-8xh100 that gpu-8xa100 was "eight 80 GB
+    # cards" when config/accelerators.yaml measures p4d.24xlarge at 40,960 MiB per device.
+    #
+    # `tools/release_lambda.py --function all` cut one release per function and each carried
+    # everything its tree held, which is the only way a zip can be released: it is built from
+    # the working tree and not from a change, so the validator's new bytes carry the policy
+    # comment *and* the catalogue correction, and the janitor's carry the ConfigFile member
+    # even though nothing in this change touched it. Three causes, three releases, not five.
+    # The recorder was left alone because its builder names no file under config/ and no
+    # module that moved, and the tool skipped it rather than being told to.
+    #
+    # WHAT THAT COSTS SOMEBODY READING THIS LATER. A release note cannot be written per cause,
+    # because the digest has no per-cause decomposition -- the only true statement about the
+    # bytes is the tree they were built from. So the commit is the record, and the reason each
+    # entry above gave for its own difference is kept in this comment rather than deleted with
+    # the entry, because a digest that moved for three reasons is a digest nobody can explain
+    # from the register once the register is empty.
+    #
+    # A SEVENTEENTH, AN EIGHTEENTH AND A NINETEENTH, AND THE FIRST OF THEM IS THE ONLY ENTRY
+    # THIS REGISTER HAS HELD WHOSE WINDOW A SUBMITTER MEETS AS A REFUSAL RATHER THAN AS A
+    # WRONG LABEL. Policy v6 gives the day a ceiling on what it will commit with nobody asked,
+    # and the compile job raises a submission from automatic to routine when it is crossed.
+    # The deployed validator cannot re-derive that -- the ledger is a branch in GitHub, not
+    # anything in AWS -- so it is taught instead to accept the lead gate for a run it derives
+    # as automatic, which is `ApprovalEnvironment.satisfies`.
+    #
+    # UNTIL THIS IS RELEASED, EVERY RUN THE CEILING ROUTES IS REFUSED AFTER A LEAD RELEASES
+    # IT. The deployed zip carries the old equality check and config/policy.yaml at v5, so a
+    # raised submission reaches admission, fails `approval_environment_mismatch` and writes a
+    # decision record saying so. Nothing spends money in that window and nothing runs that
+    # should not; what it costs is one lead's click per submission that crosses the ceiling,
+    # and a refusal whose text does not mention the ceiling at all.
+    #
+    # So that record was not the usual "a digest moved and nobody will notice", and it is the
+    # only entry this register has held that was cleared inside the hour it was opened. The
+    # ordering it named is the ordering that was followed: merge, then
+    # `deploy-phase2-admission.yml -f release_lambdas=true` from main, then the version id
+    # and digest into infra/admission-validator-release.yaml and
+    # infra/admission-state-machine.yaml, which is where the reason for that release now
+    # lives. Its entry is gone from here and the window it described is closed.
+    #
+    # THE OTHER TWO ARE THE OPPOSITE KIND OF ENTRY AND THEY STAY, WHICH IS THE DECISION WORTH
+    # RECORDING RATHER THAN THE TIDYING. The recorder is here for the first time, because its
+    # builder names no file under config/ and the last sweep skipped it for that reason.
+    # Neither the recorder nor the notifier classifies anything, so neither reads
+    # the ceiling and neither behaves differently by a byte of it. What moved their zips
+    # is that both package `contracts/admission.py` and `contracts/policy.py`, which
+    # gained `satisfies` and `automatic_daily_ceiling_usd`.
+    #
+    # THE RECORDER'S ZIP IS ALREADY IN THE BUCKET AND NOTHING POINTS AT IT, WHICH IS THE
+    # RIGHT PLACE FOR IT. `--function all` uploads both admission zips, so the release that
+    # closed the validator's window built and uploaded the recorder's too. Repointing
+    # infra/batch-events.yaml at it would put a Lambda nobody changed through a phase-3
+    # CloudFormation update to close a window that costs nothing, so the object is left
+    # unreferenced and the difference is left here. An artifact addressed by version that
+    # nobody points at is a rollback target rather than a mess.
+    #
+    # They are recorded anyway, and separately, because the register compares bytes and
+    # is right to. A digest that moved for a reason nobody wrote down is exactly what the
+    # tripwire is for, and "it cannot matter for this function" is the sentence somebody
+    # says just before it does. The difference from the validator entry is only in what
+    # the window costs: nothing, in these two cases, which is why neither was worth a
+    # deploy of its own.
+    #
+    # THE NOTIFIER'S ENTRY WAS EXTENDED THE SAME DAY RATHER THAN JOINED BY A TWENTIETH, WHICH
+    # IS `one_record_per_function` WORKING AS THE VALIDATOR'S SEVEN-TIME EXTENSION ABOVE
+    # DESCRIBES. A zip carries whatever the tree holds when it is built, so there is one
+    # difference between the account and this tree however many changes went into it, and two
+    # records for one zip would each describe a state that never exists.
+    #
+    # WHAT THE SECOND CHANGE IS, AND IT IS THE FIRST IN THIS REGISTER TO ADD A FILE TO A
+    # BUILDER'S CONFIG LIST RATHER THAN EDIT ONE ALREADY IN IT. The approval request names the
+    # machine somebody is being asked to pay for and now names the memory on it, which puts
+    # config/accelerators.yaml in NOTIFIER_CONFIG and edullm_platform/accelerators.py in the
+    # import closure. Unlike policy v6 above, this one does change what the account sends: the
+    # deployed zip goes on posting the same five lines without the clause, which is the
+    # previous message rather than a broken one, so the window still costs nothing anybody
+    # meets as a failure.
+    #
+    # WHAT IT COMMITS THE NOTIFIER TO, WHICH IS LESS THAN THE OTHER FIVE FILES DO. Every file
+    # in NOTIFIER_CONFIG is one whose edit becomes a release, and the five already there are
+    # files people edit -- a policy bump, a roster change, a nightly reading of the account.
+    # The policy v6 entry above is that cost arriving twice in a week. This one transcribes
+    # `describe-instance-types`, and its own header records that the figures are not expected
+    # to move, because what memory an H100 carries is a fact about silicon. What would move it
+    # is a new instance family being priced, which is a new row and a release for the shape it
+    # prices anyway.
+    #
+    # A TWENTY-FIRST, AND IT OPENS A NEW VALIDATOR RECORD RATHER THAN EXTENDING ONE, WHICH IS
+    # THE ONE THING THIS ENTRY HAD TO BE REWRITTEN FOR. It was written against a tree where
+    # the policy v6 validator record was still open, and it read as a second cause folded
+    # into that record. That release was cut before this merged, so there is no record left
+    # to extend: infra/admission-validator-release.yaml now names 237cc46703bc, the tree
+    # built exactly that, and the window that entry described is closed. Re-applying the old
+    # side wholesale would have resurrected a window somebody has already shut and quoted a
+    # `released` digest the account no longer carries, so what follows is a new record
+    # measured against the newly deployed bytes.
+    #
+    # WHAT REOPENS IT. maximum_attempts on open-instruct-scored-rewards-train drops from 2
+    # to 1 -- grpo_fast.py:477 gates its checkpoint load on os.path.exists against the s3://
+    # URI this platform hands it, so a second attempt restarted from step 0 at full price.
+    # config/workload-catalog.yaml is in ADMISSION_CONFIG and in NOTIFIER_CONFIG and in
+    # neither of the other two builders, so it reaches exactly the validator and the
+    # notifier. The recorder's entry below is untouched by it and its digest is the same
+    # either way, and the notifier's is extended a second time rather than joined by another
+    # record, for the reason the paragraph above already gives.
+    #
+    # WHAT THE WINDOW COSTS, AND IT IS BEHAVIOUR RATHER THAN BYTES, WHICH ONLY THE CEILING'S
+    # ENTRY HAS BEEN BEFORE. That one was urgent because a lead's release was refused inside
+    # it. This one is not urgent and it is not nothing either: the deployed copy prices and
+    # provisions that profile for two attempts and the notifier quotes them, which is money
+    # a submission could spend rather than a submission that cannot run. It costs nothing
+    # today because config/run-history.json records no run of open-instruct-scored-rewards
+    # under either of its profiles.
+    #
+    # A TWENTY-SECOND, AND IT WIDENS BOTH OF THOSE RATHER THAN THE PAIR IT WAS DRAFTED OVER.
+    # This change was written against a tree whose validator and notifier records were the
+    # attempt_id pair, and it widened those. Every record it was written over has since been
+    # cleared by a release, so re-applying that side wholesale would have resurrected four
+    # windows other people have already shut, each quoting a `released` digest the account no
+    # longer carries. What is here instead is main's list with this change's own cause added
+    # to the two records that are open on it.
+    #
+    # WHAT THE CAUSE IS. config/workload-catalog.yaml gains the edullm-p1-train profile, and
+    # ADMISSION_CONFIG and NOTIFIER_CONFIG both package that file, so the validator's and the
+    # notifier's zips move and the recorder's and the janitor's do not. Both of those records
+    # were opened by the changes above and are extended here rather than joined by new ones,
+    # because `one_record_per_function` refuses two records for one zip and a digest has no
+    # per-cause decomposition.
+    #
+    # NEITHER FUNCTION READS A WORKLOAD PROFILE BY NAME, SO THIS CAUSE IS BYTES AND NO
+    # BEHAVIOUR, WHICH IS NOT TRUE OF THE ONE ABOVE IT. RunManifest.workload_profile is a
+    # plain string and nothing looks it up: a submission is compiled on a runner from main's
+    # catalog and carries its own runtime bound, attempt count and checkpoint contract, and
+    # admission re-derives the class from those fields and from the compute profile's rate.
+    # So a run naming edullm-p1-train is admitted correctly by the deployed validator today.
+    # The catalog entries that would not survive this window are compute profiles, which
+    # admission does look up, and none moved.
+    # ALL THREE WERE CLEARED ON 2026-08-06 BY ONE `--function all`, AND THE JANITOR WAS
+    # SKIPPED BY THE TOOL RATHER THAN BY ANYBODY DECIDING TO SKIP IT. The validator was
+    # uploaded as object version Ss.xSF15xYJdzaXxrXaG0gNfT0lNOGUv, the recorder as
+    # VW_zBa_zGntjWyICmJPsFdUwdf_HStdZ and the notifier as 3lqptMfT1E224SaFA3gKYYWES5Dr7.iI,
+    # all cut from 307c18b, and each function's template and release record name the digest
+    # its build produced.
+    #
+    # THE RECORDER'S ENTRY WAS THE ONE WORTH RE-DERIVING RATHER THAN INHERITING, AND THE
+    # RE-DERIVATION MOVED THE ARGUMENT WITHOUT MOVING THE CONCLUSION. It said the recorder
+    # packages contracts/admission.py and contracts/policy.py. It packages only the second:
+    # the zip carries sixteen modules and `ApprovalEnvironment.satisfies`, which is the half
+    # of policy v6 that could have mattered to anything reading a decision back, is not among
+    # them. What is left is one optional field defaulting to None on a model this function
+    # never loads from configuration, in the one zip of the four that carries no
+    # configuration at all. So the window was as harmless as the entry claimed, for a
+    # narrower reason than the entry gave.
+    #
+    # IT WAS RELEASED ANYWAY, AND THE COSTS ARE WHY RATHER THAN TIDINESS. Building the zip at
+    # each of the last twenty-four commits of main shows this digest moving exactly at
+    # 92c8516 and not once in the ten commits since, so the difference was fully described
+    # and small -- which is the moment to close one, not a reason to leave it. Against that,
+    # deferring is not free: a standing entry turns the one tripwire covering this function
+    # into a skip until it lapses, and `explains` compares both digests, so whoever next
+    # touches any of those sixteen modules inherits this same derivation under whatever time
+    # pressure they are under. And the marginal deploy was zero this morning. The notifier's
+    # release edits infra/notifications.yaml, which fires deploy-phase3-batch.yml, and that
+    # workflow applies infra/batch-events.yaml in the same run whether or not this digest
+    # moved. Deferring would have saved one put-object and spent the failure this function's
+    # release record names as its own: lineage written by code nobody can point at, which
+    # reads exactly like lineage written by the right code and has no later reader.
+    #
+    # AN EIGHTH ENTRY, AND IT IS THE FIRST ONE OPENED BY A CHANGE THAT EXISTS TO STOP THIS
+    # FUNCTION BEING PAGED ABOUT. `edullm stop` gives a researcher a way to end their own lane
+    # machine, which is a thing they can now do inside the five-minute window between the
+    # sweep's describe-instances and its stop-instances. Landing in that window, the stop
+    # answers IncorrectInstanceState or InvalidInstanceID.NotFound, and until this change that
+    # counted as a refusal and failed the invocation on purpose -- correctly, for a machine
+    # that is expired, warned and unstoppable, and exactly wrongly for one that is already
+    # terminated. So the handler now tolerates those two codes on the stop, records the
+    # outcome as `already_gone` rather than crediting itself with the reclaim, and goes on
+    # failing for everything else.
+    #
+    # THE ACCOUNT IS THE STRICT SIDE FOR AS LONG AS THIS STANDS, WHICH IS THE ROUND THE
+    # PRECEDING ENTRY ARGUES FOR. The deployed sweep will fail an invocation when a researcher
+    # ends a machine near its expiry, which is a page about a machine that is not billing --
+    # noisy and never wrong in the direction that costs money. The tree is the permissive side
+    # and it is the side under review, so nobody meets this until the release, and what they
+    # meet before it is a false alarm rather than a missed reclaim.
+    #
+    # A NINTH, AND IT IS THE FIRST ENTRY IN THIS REGISTER WHOSE WINDOW IS A LIVE HAZARD RATHER
+    # THAN A WRONG LABEL, A REFUSAL OR BYTES WITH NO BEHAVIOUR BEHIND THEM. The notifier
+    # interpolates the experiment into the run-ended message and escapes nothing, and Slack
+    # reads `<`, `>` and `&` as control characters, so a run whose experiment is named
+    # `<!channel>` notifies every member of the workspace each time it ends and a fan-out
+    # notifies them once per cell. `messages.escaped` closes it per field, on the way in, and
+    # `tests/test_notification_escaping.py` holds both halves of that.
+    #
+    # THE HAZARD STANDS UNTIL THE RELEASE AND THE DEPLOY, AND THAT IS WORTH SAYING PLAINLY
+    # RATHER THAN LEAVING TO BE INFERRED FROM THE SHAPE OF THE RECORD. Every entry above
+    # describes an account that is behind on something harmless or on something strict. This
+    # one describes an account that goes on being able to ring every phone in the workspace for
+    # as long as it stands, so it is the one entry here that is worth releasing on its own
+    # rather than folding into whatever `--function all` next sweeps up. The run-ended message
+    # is the one being delivered today; the approval message has no caller yet, so the half of
+    # this change that touches it is not reachable in the account either way.
+    #
+    # WHAT MOVED THE ZIP IS ONE MODULE AND NOTHING ELSE, CHECKED RATHER THAN ASSUMED. A build
+    # of origin/main produces d78c4a48 exactly, which is what infra/notifier-release.yaml
+    # records, so no earlier change is riding along and this difference is entirely
+    # notifications/messages.py. No file under config/ moved, so the other three zips are
+    # untouched and the janitor's entry below is unaffected.
+    #
+    # AND IT IS EXTENDED RATHER THAN JOINED, WHICH IS THE FOURTEENTH ENTRY'S FINDING ARRIVING
+    # FOR THE THIRD TIME IN TWO DAYS. `edullm studio` adds config/reports/studio.yaml, adding a
+    # reviewed configuration file means adding a ConfigFile member because
+    # tests/test_config_resolution.py holds the vocabulary and the contents of config/ level in
+    # both directions, researcher_lane.py imports that enum, and this zip carries
+    # researcher_lane.py for two tag keys and a role name. So a new line in a StrEnum moves a
+    # Lambda digest again, and the coupling the fourteenth entry named as the finding is still
+    # the finding: the vocabulary reaches three zips through a module none of them reads it in.
+    #
+    # NOTHING THE JANITOR DOES CHANGES BY A BYTE OF IT. janitor_handler.py imports
+    # WARNING_TAG_KEY and LaneSettings and builds its settings in `_settings_from_environment`,
+    # so it never opens a configuration file and never reaches the enum member that moved. The
+    # sweep is unaware Studio exists, which is also the honest statement of what this verb does
+    # not get: no janitor arm, no ExpiresAt, and `--stop` as the only thing that stops an app.
+    #
+    # AND THEN A THIRD CAUSE ON THE SAME RECORD, FROM THE SAME COUPLING, IN THE SAME DAY.
+    # `edullm data` adds config/reports/corpora.json, which is a reviewed configuration file,
+    # which is a ConfigFile member, which researcher_lane.py imports and this zip carries. So
+    # the digest moved a third time for a report the sweep has no reader for. Three arrivals of
+    # one finding is no longer an incident recurring: the vocabulary reaches three zips through
+    # a module none of them reads it in, and every new report under config/ will go on moving
+    # them until that import is broken. That is the thing to fix, and it is not this merge.
+    #
+    # ONE RECORD AND NOT THREE, WHICH IS THE ONLY SHAPE `one_record_per_function` PERMITS AND
+    # ALSO THE TRUE ONE. A zip is built from the working tree rather than from a change, so a
+    # digest has no per-cause decomposition and whoever runs the line below ships all three
+    # whether they meant to or not. The first cause is the one with behaviour in it and is
+    # still the reason to cut the release; the other two are bytes.
+    #
+    # THE DIGEST HERE IS THE MERGED TREE'S AND MATCHES NEITHER BRANCH'S. #408 recorded
+    # d9cb4a6f for studio alone and #409 recorded 318e4531 for data alone. Both were right
+    # about the tree they were built on and both are wrong about this one, which is the
+    # ordinary arithmetic of integrating two changes that move one artifact and the reason
+    # this was rebuilt rather than chosen between.
+    releases: tuple[PendingRelease, ...] = (
+        PendingRelease(
+            function="notifier",
+            reason=(
+                "the run-ended message interpolated the submitter's experiment into Slack "
+                "without escaping it, so a run named <!channel> notified the whole workspace "
+                "every time it ended. messages.escaped now converts the three characters "
+                "Slack parses, per field and before the line is assembled so the link the "
+                "approval message builds survives. The digest moved again on 2026-08-07 for "
+                "the four block-backed compute profiles, reached through NOTIFIER_CONFIG in "
+                "tools/build_notifier_lambda.py, which names workload-catalog.yaml, and "
+                "through the contract the notifier imports; and for capacity_block_backed on "
+                "ComputeProfile and RequestFacts. What it reads the catalog for is describing "
+                "a run in a message, no run can name any of the four while they are "
+                "unprovisioned, and _why_this_gate already carried the exception sentence and "
+                "was already tested, so nothing the deployed notifier prints for a reachable "
+                "run moves. The escape is still the reason to cut the release."
+            ),
+            cleared_by=f"uv run python {RELEASE_COMMAND} --function notifier",
+            builds_to="ff0e913ad2660ffee6b81bb7e774744144d773963b16e65499118c473156103a",
+            released="d78c4a48482558039e7affc51331ec558e5880f8e48876bafb567fe683ee67b9",
+            recorded_on=date(2026, 8, 7),
+        ),
         PendingRelease(
             function="janitor",
             reason=(
-                "A second member added to ConfigFile, for config/capacity-blocks.yaml, "
-                "reached through researcher_lane.py, which the janitor's zip carries for two "
-                "tag keys and a role name. Extended from the accelerators.yaml member "
-                "recorded on 2026-08-06 rather than added beside it, because one function "
-                "carries one record and a zip holds whatever the tree holds when it is "
-                "built. janitor_handler.py builds its settings in _settings_from_environment "
-                "and never calls load_lane_settings, and nothing it does reads the "
-                "vocabulary, so this is bytes and no behaviour. Rebuilt again on the same day "
-                "for capacity_block_backed on ComputeProfile, reached through the same "
-                "researcher_lane.py import. The janitor stops expired lane instances and "
-                "classifies nothing, so it reads that field no more than it reads the rest of "
-                "a compute profile."
+                "edullm stop lets a researcher end their own machine inside the window "
+                "between this sweep's describe and its stop, and the handler now reads the "
+                "two EC2 codes that mean the machine is already off the clock as an outcome "
+                "rather than as a refusal that fails the invocation. The digest then moved "
+                "twice more for causes with no behaviour behind them at all: edullm studio "
+                "and edullm data each add a reviewed configuration file and therefore a "
+                "ConfigFile member, which researcher_lane.py imports and this zip carries, so "
+                "a line in a StrEnum moved a Lambda for two reports the sweep never reads. "
+                "The fourteenth entry in this register recorded that coupling as the finding "
+                "rather than a one-off, and this is its third and fourth arrival. A fifth and "
+                "a sixth followed it through the same import on 2026-08-07: a ConfigFile "
+                "member for config/capacity-blocks.yaml, and capacity_block_backed on "
+                "ComputeProfile. The janitor stops expired lane instances and classifies "
+                "nothing, so it reads that field no more than it reads the rest of a compute "
+                "profile."
             ),
-            cleared_by="uv run python tools/release_lambda.py --function janitor",
-            builds_to="5779d3547b8361b224e866a0a166cf9c0046b340a22fbb632130aec2d184e63a",
-            released="50922d41d3750af154e3b2342cfe634c4105b398ed2895a2de585b48579b98d9",
+            cleared_by=f"uv run python {RELEASE_COMMAND} --function janitor",
+            builds_to="edc4cb2be56b10939f956ee2da623613db8bfac638f89a21611ba2ca33f7c628",
+            released="e07efe963ec9cadb79f7345a14d9074c125e359a588e0661f99db687a757e96a",
             recorded_on=date(2026, 8, 7),
         ),
         # A FIFTEENTH, SIXTEENTH AND SEVENTEENTH, ALL FOUR ZIPS MOVING FOR ONE CHANGE, AND THE
@@ -947,26 +1238,9 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "as unregistered, and the release that gives any of them a queue packages this "
                 "field along with it."
             ),
-            cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="63546cd78f45c9a23ad7aad9236ccce86fd5c95c4bc192a166e704c013224621",
-            released="df9952459e54ff0ebbce89660b5faf3b7a87bae47d2a0856c2553c9735d2740f",
-            recorded_on=date(2026, 8, 7),
-        ),
-        PendingRelease(
-            function="notifier",
-            reason=(
-                "The same four compute profiles, reached through NOTIFIER_CONFIG in "
-                "tools/build_notifier_lambda.py, which names workload-catalog.yaml, and "
-                "through the contract the notifier imports. What it reads the catalog for is "
-                "describing a run in a message, and no run can name any of the four while "
-                "they are unprovisioned, so the window is bytes and no behaviour. Rebuilt on "
-                "the same day for capacity_block_backed on ComputeProfile and RequestFacts. "
-                "_why_this_gate already carried the exception sentence and was already tested, "
-                "so nothing about what the deployed notifier prints for a reachable run moves."
-            ),
-            cleared_by="uv run python tools/release_lambda.py --function notifier",
-            builds_to="cd8bd50e7a78ad24225c0fa7ad45b9c8cb04ce045942ad8c51b809d8c1047cbc",
-            released="b291227b4905c7ac9b89b78e3f8b3491ab8912d5768059a9d00d945927e8c53f",
+            cleared_by=f"uv run python {RELEASE_COMMAND} --function validator",
+            builds_to="52ec6a3a689fcf237e20cd7172bad8a894066266c73379301b86b9ed78b5df64",
+            released="2cda942e9518cf23b6042a5b5ab35d550557a0784acfc9c3ee2d593844e9064c",
             recorded_on=date(2026, 8, 7),
         ),
         PendingRelease(
@@ -979,9 +1253,9 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "capacity_block_backed field added to ComputeProfile in that same module, "
                 "which the recorder reads no more than it read the pattern."
             ),
-            cleared_by="uv run python tools/release_lambda.py --function recorder",
-            builds_to="49bbc1bc6588dabe9f6614dc25637d46784c96a6c6a64b2257944af5af929a68",
-            released="11d4c78a8ddc2b22c8a43dd5224d00a3e038f86403a8ba2e50c8f88a6d92c8b1",
+            cleared_by=f"uv run python {RELEASE_COMMAND} --function recorder",
+            builds_to="6e0bc40e9671c9166366dc1637edace5fcbfa0cd2cb32fc703b3c38b9fa66f38",
+            released="1c2d5c6d7f7e52f6b4ef07d6c69f2777a08ce94c3e850d0e1f4ad70def1e5b7b",
             recorded_on=date(2026, 8, 7),
         ),
     )

@@ -15,7 +15,10 @@ from pathlib import Path
 import pytest
 
 from tools.next_version import (
+    MAJOR_CEILING,
     MINIMUM_REASON_CHARACTERS,
+    SIZES,
+    MajorCeilingError,
     VersionUnreadableError,
     checked_reason,
     main,
@@ -286,7 +289,7 @@ def test_a_bump_names_the_size_it_makes(
 # --------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("size", ["minor", "major"])
+@pytest.mark.parametrize("size", ["minor"])
 def test_a_bump_wider_than_a_patch_without_a_reason_writes_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], size: str
 ) -> None:
@@ -303,6 +306,11 @@ def test_a_bump_wider_than_a_patch_without_a_reason_writes_nothing(
     claiming a thing happened to somebody, so the two wider sizes cost a sentence and the
     patch costs nothing. The refusal has to leave the file alone, because a tool that half
     applies a bump it then refuses is the state ``uv sync --locked`` fails on.
+
+    A minor is the whole of the list now, and it used to also run for a major. That size is
+    refused before it is ever asked for a sentence, by :data:`MAJOR_CEILING`, and the refusal
+    it gets instead is the subject of its own tests further down. Parametrized over one thing
+    rather than unrolled, because the list grows back the day the ceiling is lifted.
     """
     pyproject, _ = a_project(tmp_path, "0.2.2")
 
@@ -563,3 +571,144 @@ def test_an_unusable_file_exits_two_and_writes_nothing(
     assert main(["--pyproject", str(pyproject), "--bump"]) == 2
     assert capsys.readouterr().out == ""
     assert read_version(pyproject.read_text(encoding="utf-8")) == "0.2.0rc1"
+
+
+# --------------------------------------------------------------------------------------
+# The major is held, and holding it is not a convention
+# --------------------------------------------------------------------------------------
+
+
+def test_this_repository_is_declared_on_the_major_it_is_held_to() -> None:
+    """The assertion the whole ceiling is for, made against the real file.
+
+    Mutation: hold the ceiling in the calculator and let ``pyproject.toml`` say whatever it
+    likes. A version is three integers in a text file and nothing makes anybody use the tool
+    to move them, so a guard that lives only in the arithmetic is a guard on the people who
+    were not going to get it wrong. This runs in the four gates and on every pull request,
+    which makes a hand-edited ``5.0.0`` a red check rather than a discovery.
+    """
+    declared = read_version(PYPROJECT.read_text(encoding="utf-8"))
+    assert declared.split(".")[0] == str(MAJOR_CEILING), (
+        f"pyproject.toml declares {declared} and this repository is held to major "
+        f"{MAJOR_CEILING}. If that is deliberate, MAJOR_CEILING in tools/next_version.py is "
+        "the line to change, and changing it is the reviewed commit the ceiling exists to "
+        "require."
+    )
+
+
+def test_the_major_bump_this_repository_would_actually_take_is_refused() -> None:
+    """THE STATE THAT WOULD HAVE PRODUCED A FIVE, RUN AS IT STANDS RATHER THAN INVENTED.
+
+    Mutation: test the ceiling against ``0.2.1``, where a major produces ``1.0.0`` and the
+    guard never fires. That passes whether or not the guard works. This steps from the
+    version the file declares right now, which is the one step somebody would really take.
+    """
+    declared = read_version(PYPROJECT.read_text(encoding="utf-8"))
+    with pytest.raises(MajorCeilingError) as refusal:
+        next_version(declared, "major")
+    assert f"major {MAJOR_CEILING + 1}" in str(refusal.value)
+
+
+def test_the_refusal_names_the_constant_and_the_file_that_lifts_it() -> None:
+    """A ceiling nobody can find is a bug report rather than a decision.
+
+    Mutation: refuse with "not allowed". The person meeting this is somebody who believes
+    they need a version 5, and the only useful thing to tell them is where the number lives
+    and that moving it is a reviewed commit rather than a flag.
+    """
+    with pytest.raises(MajorCeilingError) as refusal:
+        next_version(f"{MAJOR_CEILING}.9.9", "major")
+    said = str(refusal.value)
+    assert "MAJOR_CEILING" in said
+    assert "tools/next_version.py" in said
+
+
+def test_the_ceiling_is_on_the_version_produced_and_not_on_the_word_major() -> None:
+    """Mutation: refuse ``size == "major"`` and let the arithmetic alone.
+
+    A patch of ``5.0.0`` is ``5.0.1``, which is just as much a version this repository has
+    decided not to have. Reachable from a shell through ``--of``, and reachable from
+    ``release-tag.yml`` the moment a hand-edited file declares a five.
+    """
+    above = f"{MAJOR_CEILING + 1}.0.0"
+    for size in SIZES:
+        with pytest.raises(MajorCeilingError):
+            next_version(above, size)
+
+
+def test_no_argument_to_this_command_produces_a_version_above_the_ceiling(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: add a ``--force`` that skips the ceiling.
+
+    The ceiling is a constant in a reviewed file precisely so that it is not a flag. This
+    tries every way in through the command line that reaches the arithmetic, from the version
+    this repository actually declares, and wants two and an empty stdout from all of them.
+    """
+    declared = read_version(PYPROJECT.read_text(encoding="utf-8"))
+    pyproject, lock = a_project(tmp_path, declared)
+    attempts = [
+        ["--bump", "major", "--why", "edullm logs no longer takes -n"],
+        ["--bump", "major"],
+        ["--next", "major"],
+        ["--next", "major", "--of", declared],
+    ]
+    for attempt in attempts:
+        assert main(["--pyproject", str(pyproject), *attempt]) == 2, attempt
+        assert capsys.readouterr().out == "", attempt
+    assert read_version(pyproject.read_text(encoding="utf-8")) == declared
+    assert read_lock_version(lock.read_text(encoding="utf-8"), distribution="x") == declared
+
+
+def test_a_hand_edited_version_above_the_ceiling_is_refused_before_it_can_be_tagged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """THE BYPASS THE ARITHMETIC ALONE DOES NOT COVER.
+
+    Mutation: check the ceiling only on what this computes. ``release-tag.yml`` tags whatever
+    a bare run of this prints, so somebody who typed ``5.0.0`` into ``pyproject.toml`` and
+    merged it past ``Checks (CI)`` would have the tag cut for them. Refusing to *report* the
+    declared version stops that one step before ``git tag``, which is the one step that
+    cannot be taken back.
+    """
+    above = f"{MAJOR_CEILING + 1}.0.0"
+    pyproject, _ = a_project(tmp_path, above)
+
+    assert main(["--pyproject", str(pyproject)]) == 2
+    assert capsys.readouterr().out == ""
+    assert main(["--pyproject", str(pyproject), "--bump"]) == 2
+    assert capsys.readouterr().out == ""
+    assert read_version(pyproject.read_text(encoding="utf-8")) == above
+
+
+def test_the_tag_guard_can_read_the_ceiling_without_keeping_a_second_copy(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--ceiling`` exists for ``refuse-a-tag-above-the-ceiling.yml`` and for nothing else.
+
+    A workflow cannot import anything, and the number restated in YAML is the copy that goes
+    stale on the one day it must not: the day somebody lifts the ceiling. It answers from the
+    constant and opens no file, because the tag it is asked about may point anywhere.
+    """
+    assert main(["--pyproject", str(tmp_path / "absent.toml"), "--ceiling"]) == 0
+    assert capsys.readouterr().out == f"{MAJOR_CEILING}\n"
+
+
+def test_a_minor_still_works_under_the_ceiling(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: refuse everything on the ceiling's major rather than everything above it.
+
+    A repository held to major 4 still releases 4.3.0 and 4.2.2, and a ceiling that stopped
+    those would have stopped the work rather than the version. This is the case that says the
+    guard is narrow.
+    """
+    pyproject, lock = a_project(tmp_path, f"{MAJOR_CEILING}.2.1")
+
+    assert main(["--pyproject", str(pyproject), "--bump", "minor", "--why", "stop ends a lane"]) == 0
+    assert capsys.readouterr().out == f"{MAJOR_CEILING}.3.0\n"
+    assert main(["--pyproject", str(pyproject), "--bump"]) == 0
+    assert capsys.readouterr().out == f"{MAJOR_CEILING}.3.1\n"
+    assert read_lock_version(lock.read_text(encoding="utf-8"), distribution="x") == (
+        f"{MAJOR_CEILING}.3.1"
+    )

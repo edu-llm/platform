@@ -50,9 +50,10 @@ git rev-parse HEAD                   # the commit you put on the form
 
 | Profile | Limits | Use for |
 | --- | --- | --- |
-| `olmo-eval-check` | 1h, 1 attempt, no checkpoint | The only entry this repository has. Deliberately the check rather than the eval, on `olmo-core-check`'s precedent: prove the path before spending a GPU on it |
+| `olmo-eval-check` | 1h, 1 attempt, no checkpoint | Start here. Deliberately the check rather than the eval, on `olmo-core-check`'s precedent, which is to prove the path before spending a GPU on it |
+| `olmo-eval-sweep` | 2h, 1 attempt, no checkpoint | A full benchmark split, where the hour above runs out. The ceiling is what Batch enforces on each attempt rather than across a fan-out's array, so a twenty-cell sweep is twenty two-hour attempts |
 
-Pick `cpu-32vcpu` for `compute_profile`, which is c7i.8xlarge at $1.428/hr. The profile stopped being part of this entry's name because the entry never decided it and the form always did. It is still the right answer here for as long as the image carries no GPU backend. A `mock` provider on eight H100s costs $55 an hour to do the same thing.
+Pick `cpu-32vcpu` for `compute_profile`, which is c7i.8xlarge at $1.428/hr. The profile stopped being part of either entry's name because the entry never decided it and the form always did. It is still the right answer here for as long as the image carries no GPU backend. A `mock` provider on eight A100s costs $21.96 an hour to do the same thing, and the eight-H100 shape people reach for instead cannot be started at all.
 
 ## Running an evaluation
 

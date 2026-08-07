@@ -63,6 +63,19 @@ This cannot tell a good reason from a bad one and does not try. What it can do i
 sentence exist, make it reviewable, and make writing a bad one cost the same as writing a
 true one, which is what turns the size back into a claim somebody made.
 
+**AND NOW THERE IS A CEILING, BECAUSE THAT REPAIR WAS NOT THE WHOLE OF IT EITHER.** It
+worked on the thing it was aimed at: of the forty-five releases cut after it, thirty-seven
+are patches, and every one of the eight wider ones carries a sentence describing a real
+change to what an installed CLI does. Nobody misclassified anything. The version still went
+``1.3.6`` to ``4.2.1`` overnight, because forty-seven changes to the CLI merged in nineteen
+hours and eight of them genuinely earned more than a patch.
+
+So the ceiling is not a correction to the sizes. It is a separate rule about one of them:
+a major is the only step that cannot be walked back for somebody who already installed this,
+and the platform holds still on major :data:`MAJOR_CEILING` while people are learning to use
+it. Earning a major and being allowed to take one are now different questions, and the
+second is answered by a constant in this file rather than by an argument to this command.
+
 Deliberately stdlib only, and deliberately not a TOML *writer*. ``tomllib`` reads and
 cannot write; every writer reformats the file, and this file is nine tenths comment. So the
 read is a parse and the write is an anchored substitution of the one line the parse agrees
@@ -78,12 +91,15 @@ import tomllib
 from pathlib import Path
 
 __all__ = [
+    "MAJOR_CEILING",
     "MINIMUM_REASON_CHARACTERS",
     "REASON_PATTERN",
     "SIZES",
     "VERSION_PATTERN",
     "WIDER_THAN_A_PATCH",
+    "MajorCeilingError",
     "build_parser",
+    "checked_ceiling",
     "checked_reason",
     "lock_version_pattern",
     "next_patch_version",
@@ -101,6 +117,11 @@ __all__ = [
 #: The three statements a version bump can make, in the order they widen. Written here
 #: rather than in ``build_parser`` so that ``ci.yml``, which asks this tool what each of them
 #: would produce, iterates the same three names argparse accepts.
+#:
+#: ``major`` stays on this list while :data:`MAJOR_CEILING` holds, and that is the point
+#: rather than an oversight: dropping it would make ``--bump major`` an argparse "invalid
+#: choice", which tells a reader the word is unknown here. It is known, it is refused, and
+#: the refusal is the whole message.
 SIZES = ("patch", "minor", "major")
 
 #: The size nothing has to argue for, because it is what almost every change here is.
@@ -109,6 +130,27 @@ DEFAULT_SIZE = "patch"
 #: The two that do. Derived from :data:`SIZES` rather than written out, so a fourth size
 #: would need a decision about it here rather than defaulting into the unjustified half.
 WIDER_THAN_A_PATCH = tuple(size for size in SIZES if size != DEFAULT_SIZE)
+
+#: THE MAJOR THIS REPOSITORY STAYS ON, AND THE ONE PLACE THAT DECIDES IT.
+#:
+#: **This is the constant to change if the answer is genuinely a version 5.** Change it here,
+#: in a pull request, with a reviewer, and everything below follows: the arithmetic, the
+#: refusals, the two workflows that ask this tool what a bump would produce, and
+#: ``tests/test_next_version.py``, which asserts the declared version sits on this number.
+#: There is no flag for it and there is deliberately not going to be one -- a ceiling a
+#: caller can pass its way past is a suggestion, and this is the second time the version has
+#: been asked to stop climbing.
+#:
+#: WHY A CEILING AND NOT MORE ADVICE. The version went from ``1.3.6`` to ``4.2.1`` overnight.
+#: The first repair made a patch the default and made anything wider write a sentence, and it
+#: worked: of the forty-five releases cut after it, thirty-seven are patches and every one of
+#: the eight wider ones carries a true sentence about a real change. ``4.0.0`` was earned --
+#: ``edullm status`` began printing ``ADMITTED`` where it printed ``SUBMITTED``. So this
+#: number is not here because somebody was careless with the last one. It is here because a
+#: major is the one step that cannot be walked back for anybody who has this installed, and
+#: the owner has decided the platform holds still on 4 while people are learning to use it.
+#: Earning a major and taking one are now different things.
+MAJOR_CEILING = 4
 
 #: How much of a sentence counts as one. A floor rather than a judgement: this cannot tell
 #: "adds a --since flag to status" from "improvements", and pretending otherwise would make
@@ -150,6 +192,46 @@ REASON_PATTERN = re.compile(
 
 class VersionUnreadableError(RuntimeError):
     """``project.version`` is absent, malformed, or not where the substitution can reach."""
+
+
+class MajorCeilingError(VersionUnreadableError):
+    """A version above :data:`MAJOR_CEILING` was asked for, computed, or found on disk.
+
+    A subclass rather than a sibling so that every ``except VersionUnreadableError`` already
+    in this file keeps working: this arrives at the same place, prints its own message, and
+    exits 2 like every other refusal here. It is its own type because a test that asserts
+    the ceiling refuses should not pass when the version was merely malformed.
+    """
+
+
+def checked_ceiling(version: str) -> str:
+    """``version`` back, or a refusal naming the constant that would let it through.
+
+    Called on every version this tool would *produce* and on the one it reads off disk, so
+    that the ceiling is not a property of the ``--bump major`` arithmetic alone. A hand-edited
+    ``5.0.0`` in ``pyproject.toml`` reaches ``release-tag.yml`` as the string it is about to
+    tag, and that step asks this tool for it -- so refusing here stops the tag as well as the
+    bump.
+    """
+    matched = SEMANTIC_VERSION.fullmatch(version)
+    if matched is None or int(matched["major"]) <= MAJOR_CEILING:
+        return version
+    raise MajorCeilingError(
+        f"{version} is major {matched['major']} and this repository is held to major "
+        f"{MAJOR_CEILING}. Nothing here will produce it and nothing here will tag it.\n\n"
+        "THIS IS A DECISION AND NOT A BUG. A major says something that used to work has "
+        "stopped, and every install in the field has to be re-installed before it is right "
+        "again. The version went from 1.3.6 to 4.2.1 in one night and the owner has ruled "
+        f"that it holds on {MAJOR_CEILING} for the foreseeable future.\n\n"
+        "IF THE BREAK IS REAL, IT IS STILL A MINOR THIS WEEK. A new refusal, a new flag, a "
+        "renamed value that the old spelling still answers to -- all of those are a minor, "
+        "and the sentence you would have written for the major goes in the --why.\n\n"
+        f"IF IT GENUINELY HAS TO BE MAJOR {MAJOR_CEILING + 1}, lift the ceiling where it is "
+        "declared, in a pull request somebody reviews:\n\n"
+        f"    MAJOR_CEILING in tools/next_version.py   (currently {MAJOR_CEILING})\n\n"
+        "That is one line, it is reviewed, and it is on the record. A flag on this command "
+        "would have been none of those things, which is why there is not one."
+    )
 
 
 def read_version(text: str) -> str:
@@ -329,13 +411,13 @@ def _sizes_said() -> str:
         "      tools/next_version.py --bump patch\n"
         "\n"
         "  A minor is a new command, a new flag, a new optional spec field, or a new\n"
-        "  refusal that can stop a submission which used to go through.\n"
+        "  refusal that can stop a submission which used to go through. It is also where\n"
+        "  a break goes while the ceiling holds, with the same sentence in its --why.\n"
         '      tools/next_version.py --bump minor --why "status takes --since"\n'
         "\n"
-        "  A major is a flag or spec field removed or given a new meaning, or a changed\n"
-        "  exit code. It breaks somebody who already has this installed, so with nobody\n"
-        "  yet shown to have it installed a major should be close to never.\n"
-        '      tools/next_version.py --bump major --why "edullm logs no longer takes -n"\n'
+        f"  A major is capped: nothing here produces a version above major "
+        f"{MAJOR_CEILING},\n"
+        "  and MAJOR_CEILING in tools/next_version.py is the one line that lifts it.\n"
     )
 
 
@@ -356,10 +438,15 @@ def next_version(version: str, size: str = DEFAULT_SIZE) -> str:
         )
     major, minor, patch = (int(matched[part]) for part in ("major", "minor", "patch"))
     if size == "major":
-        return f"{major + 1}.0.0"
-    if size == "minor":
-        return f"{major}.{minor + 1}.0"
-    return f"{major}.{minor}.{patch + 1}"
+        stepped = f"{major + 1}.0.0"
+    elif size == "minor":
+        stepped = f"{major}.{minor + 1}.0"
+    else:
+        stepped = f"{major}.{minor}.{patch + 1}"
+    # THE CEILING IS ON WHAT COMES OUT, NOT ON THE WORD "MAJOR". A patch of 5.0.0 is 5.0.1,
+    # which is still a version this repository has decided not to have, and checking the size
+    # rather than the answer would let it through the one time it mattered.
+    return checked_ceiling(stepped)
 
 
 def next_patch_version(version: str) -> str:
@@ -412,7 +499,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=SIZES,
         default=None,
         help="write the next version of this size back to the file before printing it; "
-        f"a bare --bump is a {DEFAULT_SIZE}, and anything wider needs --why",
+        f"a bare --bump is a {DEFAULT_SIZE}, anything wider needs --why, and major is "
+        f"refused while MAJOR_CEILING in this file holds at {MAJOR_CEILING}",
     )
     parser.add_argument(
         "--why",
@@ -421,6 +509,12 @@ def build_parser() -> argparse.ArgumentParser:
         + " or a ".join(WIDER_THAN_A_PATCH)
         + " changes for somebody who has this installed. Required for those two, refused "
         "for a patch, committed above the version line and published in the release note",
+    )
+    parser.add_argument(
+        "--ceiling",
+        action="store_true",
+        help="print the major this repository is held to, and read and write nothing. For "
+        "the tag guard, which has to name the number without keeping a second copy of it",
     )
     parser.add_argument(
         "--show-why",
@@ -445,6 +539,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
+    # FIRST, BECAUSE IT ANSWERS FROM A CONSTANT AND TOUCHES NO FILE. `refuse-a-tag-above-the-
+    # ceiling.yml` asks this about a tag that may point anywhere, so it must not depend on a
+    # readable pyproject.toml, and it must not be a second copy of the number.
+    if arguments.ceiling:
+        print(MAJOR_CEILING)
+        return 0
     # A --why with nothing to attach it to, and a --show-why that would swallow a bump. Both
     # are refusals rather than shrugs, because both are somebody believing they have recorded
     # a reason or made a release, and the quiet version of either is found out at the tag.
@@ -487,16 +587,24 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{declared[0]} {declared[1]}")
         return 0
     try:
-        version = read_version(text)
+        # THE DECLARED VERSION MEETS THE CEILING TOO, WHICH IS THE HALF THAT COVERS THE HAND
+        # EDIT. Nothing makes anybody use this tool to move three integers in a text file,
+        # and `release-tag.yml` tags whatever a bare run of this prints. So a 5.0.0 that was
+        # typed rather than computed still stops here, one step before it becomes a tag.
+        version = checked_ceiling(read_version(text))
         if arguments.next_size is not None:
             print(next_version(version, arguments.next_size))
             return 0
         if arguments.bump is not None:
-            # BEFORE ANYTHING IS COMPUTED, BECAUSE THIS IS THE ONE THAT REFUSES ON PURPOSE.
-            # A missing --why on a minor is an argument error rather than a broken file, and
-            # the reader has to meet it before a version they cannot have.
-            reason = checked_reason(arguments.bump, arguments.why)
+            # THE CEILING BEFORE THE SENTENCE, because the sentence is work and the ceiling
+            # is a wall. Asking somebody to write a publishable line about what they broke
+            # and then telling them the version was never available is the order that makes
+            # a deliberate refusal feel like a bug.
             was, version = version, next_version(version, arguments.bump)
+            # AND THEN THE ONE THAT REFUSES ON PURPOSE. A missing --why on a minor is an
+            # argument error rather than a broken file, and the reader has to meet it before
+            # a version they cannot have. Nothing is written until both have passed.
+            reason = checked_reason(arguments.bump, arguments.why)
             # BOTH REWRITES ARE COMPUTED BEFORE EITHER IS WRITTEN. A half-applied bump is a
             # tree whose two files disagree, which is precisely the state that fails
             # `uv sync --locked` -- so the failure mode of guarding against it must not be

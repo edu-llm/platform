@@ -88,5 +88,5 @@
 # only claim the tripwire makes.
 schema_version: 1
 s3_key: lifecycle-recorder/lifecycle-recorder.zip
-s3_object_version: x3ZwR.bxnokkwdBGyk9RV9udNpANux8y
-sha256: 11d4c78a8ddc2b22c8a43dd5224d00a3e038f86403a8ba2e50c8f88a6d92c8b1
+s3_object_version: VW_zBa_zGntjWyICmJPsFdUwdf_HStdZ
+sha256: 1c2d5c6d7f7e52f6b4ef07d6c69f2777a08ce94c3e850d0e1f4ad70def1e5b7b

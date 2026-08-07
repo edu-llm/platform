@@ -1057,8 +1057,9 @@ unchanged. What moved is only which machine holds the credential.
 Functions are released together whenever a change reaches more than one, which since
 2026-08-04 means a change to `src/edullm_platform` rather than a change under `config/`.
 Each builder names the config files its own handler reads: the validator's seven, none at
-all for the recorder, and three for the notifier. A catalog edit reaches the validator and
-the notifier and not the recorder.
+all for the recorder, and the notifier's six — `organization.yaml`, `workload-catalog.yaml`,
+`execution-targets.yaml`, `policy.yaml`, `run-history.json` and `accelerators.yaml`. A catalog
+edit reaches the validator and the notifier and not the recorder.
 
 The step lives inside an existing deploy workflow rather than in a `release-lambda.yml` of
 its own, and that is the trust policy talking rather than a preference. The deployer role
@@ -1659,6 +1660,46 @@ self-assumption test against a trust policy that accidentally granted only its c
 `docs-frank/reference/aws-spend-controls.md`, "The live test plan", step 3 is the one that
 cannot be skipped.
 
+### What stops `edullm stop` ending somebody else's machine is the CLI, not this policy
+
+**A lane credential can terminate any instance in the account, and this template is where
+somebody concludes otherwise.** `AllowResearchWorkingSet` is `Action: "*"` on
+`Resource: "*"`, and every Deny below it names `ec2:RunInstances`, `ec2:CreateTags` or a
+bucket. None names `ec2:TerminateInstances`, so nothing in the policy scopes what the role
+may end — not the Batch compute the platform runs on, and not the machines other people in
+this sandbox have left up.
+
+**The fence is `src/edullm_platform/cli/lane.py`, and it is a filter rather than a
+permission.** `find_lane_machines_argv` describes instances filtered on `tag:edullm:lane`
+equal to the person `person_from_caller_arn` read off the caller's own ARN, and `edullm stop`
+terminates only ids that describe returned. Nothing above it accepts an instance id: `stop`
+has no `--instance` flag, and
+`tests/test_cli_stop.py::test_no_flag_names_an_instance_so_none_can_be_smuggled_in` is what
+keeps it that way, because an id typed on a command line is an id the filter never saw and
+would be the one route through.
+
+**So the guarantee holds exactly as far as the binary does.**
+`tools/enter_researcher_lane.py` hands out lane credentials for a shell, and in that shell a
+bare `aws ec2 terminate-instances` reaches anything in the account. That is a defensible
+place for the control — the verb is the supported interface, and the identity it filters on
+is one it already holds — but it is a convention rather than a permission, and the person
+auditing this file should not have to derive that from a docstring.
+
+**IAM could carry it, which is why leaving it in the CLI is a choice worth recording.** The
+trust policy already permits `sts:SetSourceIdentity` (`InternRolesMayNameThePerson`), so
+`${aws:SourceIdentity}` is in the request context and the deny would be roughly a
+`StringNotEquals` between `ec2:ResourceTag/edullm:lane` and that value, on
+`ec2:TerminateInstances`. It is not written, has not been simulated, and has a known edge:
+`lane_machines` deliberately keeps a machine whose tag somebody removed, and a condition
+keyed on a tag refuses whatever the tag is missing from — which would strand exactly the
+machine only this verb can currently reach. Do not add it from this paragraph. Simulate it
+first, the way the boundary above was simulated.
+
+**First real use, 2026-08-06.** `edullm stop --project drain-verify` ended
+`i-00ea79d5c4a2c206b`, a `g6.xlarge` the expiry janitor had stopped rather than terminated
+and which `find_machine_argv` and `expiry_janitor` therefore both stepped over. That orphan
+is the state the verb argues against, and clearing it was the verb's first job.
+
 ### Applying them
 
 Both from a clean `main` at its tip, per *Which tree you deploy from* above.
@@ -2100,6 +2141,60 @@ aws logs filter-log-events \
 ```
 
 Anything other than `0` means every message is coming from the fallback.
+
+### The stack that lets anything send an approval request, deployed 2026-08-06
+
+The notifier could render an approval request from the day #337 merged and nothing put one on
+its queue, so what a lead actually received when a submission reached the gate was GitHub's
+own deployment notification: a workflow run name, and no cost, machine, hours or cell count.
+`.github/workflows/notify-approval-requested.yml` is the producer and this is the identity it
+assumes.
+
+| # | Stack | Template | Roles or resources | Applied from |
+| --- | --- | --- | --- | --- |
+| 1 | `sbsandbox-intern-edullm-notifier-publisher-iam` | `infra/iam/notifier-publisher-role.yaml` | `…-notifier-publisher` | laptop |
+| 2 | `sbsandbox-intern-edullm-audit-reader-iam` | `infra/iam/audit-reader-role.yaml` (amended) | `…-audit-reader` gains one `cloudformation:GetTemplate` ARN | laptop |
+
+```bash
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-notifier-publisher-iam \
+  --template-file infra/iam/notifier-publisher-role.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --no-fail-on-empty-changeset \
+  --profile sbsandbox --region us-east-1
+
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-audit-reader-iam \
+  --template-file infra/iam/audit-reader-role.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --no-fail-on-empty-changeset \
+  --profile sbsandbox --region us-east-1
+
+gh variable set AWS_NOTIFIER_PUBLISHER_ROLE_ARN --body "$(
+  aws cloudformation describe-stacks \
+    --stack-name sbsandbox-intern-edullm-notifier-publisher-iam \
+    --query "Stacks[0].Outputs[?OutputKey=='RoleArn'].OutputValue" --output text \
+    --profile sbsandbox --region us-east-1
+)"
+```
+
+Stack 2 is not optional and is not cosmetic. Every stack in `STACK_TEMPLATES` is read back by
+`tools/verify_deployed_stacks.py` through `cloudformation:GetTemplate`, and that grant names
+each stack ARN one at a time — so a new stack without the amendment reports a denial in the
+nightly audit rather than a comparison. The variable is not optional either: without it the
+announce job fails at the credentials step with an empty role ARN, which reads as a broken
+workflow rather than as half a step, the same way `AWS_RUN_CANCELLER_ROLE_ARN` did.
+
+**The trust pins the called workflow and not the one somebody dispatches, which is the line to
+read twice.** A job that calls a reusable workflow presents the *called* file in
+`job_workflow_ref`, so the pin names `notify-approval-requested.yml` even though the run is a
+run of `submit-run.yml`. Pinning the caller instead would refuse the job outright, and the
+correction somebody would reach for — pinning both — undoes the whole arrangement: the two
+roles that matter in `submit-run.yml` pin that file, a trust policy cannot distinguish jobs
+within a workflow, so the announce job would become a principal under the admission role and
+this role would become assumable by `resolve` and `deny-unapproved`.
+`tests/test_notify_approval_workflow.py` refuses both spellings.
+
 ## The exploration route's stacks, in dependency order
 
 | # | Stack | Template | Roles or resources | Applied from |

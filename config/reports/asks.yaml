@@ -6,9 +6,15 @@
 # reviewed diff rather than a commit somebody makes while looking at a long list.
 #
 # Under config/reports/ rather than config/ for the reason config/reports/researcher-lane.yaml
-# gives at length: system-overview.md names eight configuration files as the control plane and
-# this is not one of them, and .github/workflows/release-tag.yml names six files under config/
-# and no directory, so a number here moves no installed CLI's answer and earns no version.
+# gives at length: system-overview.md names nine configuration files as the control plane and
+# this is not one of them, and .github/workflows/release-tag.yml names seven paths under config/
+# and no directory, so a number here earns no version.
+#
+# THAT IT MOVES NO INSTALLED CLI'S ANSWER IS A SEPARATE FACT AND DOES NOT FOLLOW FROM THE
+# TRIGGER. config/ rides in the wheel entire, so an edit here does change the bytes a fresh
+# install carries. It changes no answer because nothing the binary runs opens this file:
+# tools/report_asks.py reads it, on a runner, off the checkout. That is not true of the lane's
+# own settings beside it, and researcher-lane.yaml's header carries what it costs there.
 #
 # Not packaged into any Lambda -- nothing either handler reads names it, and
 # tests/test_lambda_package_closure.py is what keeps it that way.

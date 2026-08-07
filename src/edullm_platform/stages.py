@@ -8,11 +8,20 @@ possible failure. Nothing here is written down except what each surface *is* and
 for it, which lives in ``config/reports/surfaces.yaml``. The stage is looked up every time.
 
 THE THING THIS REFUSES TO DO. It never infers a stage. `built` does not imply `deployed`, a
-passing test suite does not imply `proven`, and a lookup that could not run prints `not read`
+passing test suite does not imply `under test`, and a lookup that could not run prints `not read`
 rather than the last thing anybody believed. A person's answer is allowed where no command can
 give one, and it is printed with a `*` and a date so a reader can tell the difference at a
 glance. The distinction is the whole point: a board that quietly mixes measurement with
 recollection is a board that reads well and is wrong.
+
+THE LAST COLUMN IS CALLED `under test` AND IT USED TO BE CALLED `proven`. It was renamed on
+2026-08-06 because the name claimed something no instrument of this kind can support. A board
+that reads files and cloud APIs cannot prove a surface works at any budget, and every other
+defect found that night was a check asserting more than it could see -- a row reading `yes` off
+another row's files, a `deployed` cell that stayed green after the feature was reverted. This was
+the same fault in the one place nobody had thought to audit, which is the column header. What the
+column measures is stated exactly in :func:`_tests`, and the work that would make it mean more is
+written down there too, along with the two things that are deliberately not being attempted.
 
 WHY THE LOOKUPS ARE HANDED IN RATHER THAN PERFORMED HERE. Every source is gathered once by the
 caller and passed as a :class:`Sources`, so ninety-six rows cost one `git ls-tree`, one pytest
@@ -47,7 +56,7 @@ __all__ = [
 
 #: In order. A surface moves left to right, and the columns print in this order everywhere so
 #: that a reader who has learned the shape does not have to re-read the header.
-STAGES: Final = ("designed", "planned", "built", "deployed", "proven")
+STAGES: Final = ("designed", "planned", "built", "deployed", "under_test")
 
 
 class Mark(StrEnum):
@@ -260,8 +269,43 @@ def _tests(declared: Sequence[str], sources: Sources) -> Cell:
 
     Mutation this is written against: check the files exist and stop. A test file that exists
     and collects nothing, because its imports were left behind by a refactor and it is being
-    skipped at collection, would read as proof. Requiring the collector to have seen it is what
-    makes this a statement about a check that can fail rather than about a file on disk.
+    skipped at collection, would read as absent proof. Requiring the collector to have seen it
+    is what makes this a statement about a check that can fail rather than about a file on disk.
+
+    EXACTLY WHAT THIS PROVES, WHICH IS WHY THE COLUMN IS NO LONGER CALLED `proven`. That the file
+    exists, that it imports, and that at least one test came out of it. Nothing else. Collection
+    is not execution, so this reading is compatible with every test in the file failing. It is
+    also compatible with every test in the file being skipped: a file holding one
+    ``@pytest.mark.skip`` test and one ``assert True`` collects both and reads green, which was
+    measured rather than assumed. `under test` is a fair description of that. `proven` was not.
+
+    THE WORK THAT WOULD MAKE THIS MEAN MORE, WHICH IS NOT DONE AND SHOULD BE. Read outcomes
+    instead of collection: fetch the last successful CI run for `main` with `gh`, which this tool
+    already calls, take its junit output, and map classnames back to file paths. "No run found"
+    reads `not read`, which is the same discipline every other source here follows. One to two
+    days. It upgrades the claim from "a test exists" to "a test exists and passed on `main`",
+    which is a materially different statement and the right next step.
+
+    `under test` STAYS ACCURATE IF THAT LANDS, and that property is why the rename was safe to do
+    first rather than waiting. A file that passed on `main` is still a file the surface is under
+    test by; the column would simply be reading a stronger fact under the same true name. Renaming
+    now therefore costs nothing later and stops the board overclaiming in the meantime.
+
+    TWO THINGS DELIBERATELY NOT BEING CLOSED, BECAUSE BOTH WILL BE PROPOSED WITHIN A MONTH.
+
+    A floor on substance -- a minimum test count per row, so a file cannot be gutted to one
+    trivial case. Refused because it is fifty-one numbers that people bump without reading, which
+    is precisely the disease the hand-written-cell ratchet in ``tests/test_scoreboard.py`` exists
+    to police. A guard whose maintenance is itself unaudited edits is not a guard; it converts a
+    silent false positive into a noisy one and buys nothing.
+
+    A check on relevance -- that the named file exercises the surface it is named after, rather
+    than merely being named after it. This is the `morning-message` defect one level down, and it
+    cannot be automated for the rows that matter most: thirty-seven of them are workflows, IAM
+    policies and CloudFormation stacks, which no coverage tool maps to a test. Automating it for
+    the module-shaped minority would leave the majority untouched while reading as though the
+    question had been settled, which is worse than leaving it open. That question belongs to
+    review, and the honest board position is that this column does not answer it.
     """
     missing_on_disk = [path for path in declared if not (sources.tree / path).is_file()]
     if missing_on_disk:
@@ -419,7 +463,7 @@ def _cell_text(cell: Cell) -> str:
 def render_stage_table(board: Sequence[Slice], *, checked: str) -> str:
     """The board as one markdown table, a row per surface and a group heading per slice."""
     lines = [
-        "| Surface | designed | planned | built | deployed | proven |",
+        "| Surface | designed | planned | built | deployed | under test |",
         "| --- | --- | --- | --- | --- | --- |",
     ]
     for group in board:

@@ -104,15 +104,19 @@ Resources:
       # inherited tag key is a hard AssumeRole failure, re-running the helper is exactly what
       # people do when something goes wrong, and nothing chains beyond this role.
       #
-      # WHO THIS ADMITS IS AN OPEN QUESTION AND IT IS THE OWNER'S. role/Intern-* is the only
-      # principal any of the thirty-five can present today: sts:AssumeRole needs a principal
-      # that already exists here, and the account holds no other human-assumable role outside
-      # Identity Center. system-overview.md's "The umbrella" draws the people holding no AWS
-      # role reaching this lane directly, and that arrow has no implementation. Admitting them
-      # needs a second trust statement naming the OIDC provider, and
+      # WHO THIS ADMITS IS SETTLED AND IT USED TO BE READ HERE AS AN OPEN QUESTION.
+      # role/Intern-* is the only principal any of the thirty-five can present: sts:AssumeRole
+      # needs a principal that already exists here, and the account holds no other
+      # human-assumable role outside Identity Center. system-overview.md's "The umbrella" now
+      # draws the fifteen who hold no Intern role reaching the recorded path and nothing beside
+      # it, with the lane shut to them and submit not, the credential there being the workflow's.
+      # So this statement matches that document rather than lagging an arrow it used to draw.
+      #
+      # WHAT ADMITTING THEM WOULD COST IS KEPT BECAUSE IT IS THE PART THAT IS EXPENSIVE TO
+      # REDISCOVER. It needs a second trust statement naming the OIDC provider, and
       # sts:AssumeRoleWithWebIdentity accepts neither a Tags nor a SourceIdentity request
       # parameter, so the three presence tests below would have to become claims an identity
-      # provider mints per lane entry. Nothing here is built on the answer either way.
+      # provider mints per lane entry. Nothing here is built on it being reopened.
       #
       # NOT SIMULATABLE. iam simulate-custom-policy cannot evaluate a trust policy at all, so
       # none of the four is proved by the simulation work behind the permission policy below.
@@ -193,6 +197,17 @@ Resources:
               # The ceiling everything below narrows. The boundary is what caps this in
               # absolute terms; this statement exists so that the role is usable for ordinary
               # research work and the interesting content of the policy is the denies.
+              #
+              # AND EVERY DENY BELOW NAMES ec2:RunInstances, ec2:CreateTags OR A BUCKET, SO
+              # THIS ROLE MAY TERMINATE ANY INSTANCE IN THE ACCOUNT. Nothing here scopes
+              # ec2:TerminateInstances. What stops `edullm stop` ending somebody else's
+              # machine is the CLI: lane.py's find_lane_machines_argv filters on
+              # tag:edullm:lane read off the caller's own ARN, the verb ends only what that
+              # describe returned, and it takes no --instance flag. That is a convention and
+              # not a permission -- a lane credential in a shell reaches everything. See
+              # infra/README.md, "What stops `edullm stop` ending somebody else's machine is
+              # the CLI, not this policy", before assuming this statement is narrower than it
+              # reads.
               - Sid: AllowResearchWorkingSet
                 Effect: Allow
                 Action: "*"
@@ -415,9 +430,17 @@ Resources:
               # A PERSONAL BUCKET IS NOT ON THE LIST AND IT IS THE ONE CHOICE IN THIS STATEMENT.
               # Four people built buckets of their own because the working tier did not exist,
               # and system-overview.md, "Where data lives", records the tier as the thing that
-              # makes building one the step nobody has to take. The nineteen who hold an Intern
-              # role keep their buckets by not assuming this role. For the sixteen this role is
-              # the whole of their access, and the working tier is where their files go.
+              # makes building one the step nobody has to take. The twenty who hold an Intern
+              # role keep their buckets by not assuming this role, and the working tier is where
+              # their files go once they do. The other fifteen cannot assume it at all -- the
+              # trust above admits role/Intern-* and nothing else -- so this role is no part of
+              # their access rather than the whole of it.
+              #
+              # IT READ nineteen AND sixteen UNTIL 2026-08-06, and said the role was the whole of
+              # the second group's access, which the trust policy in this same file refuses. The
+              # split is countable rather than remembered: config/organization.yaml carries
+              # thirty-five members and twenty-one aws_identities roles against twenty distinct
+              # github_login values, one person holding two under two spellings of their name.
               #
               # The sealed bucket is off the list as well, and that is a gain property six does
               # not deliver. Property six denies deletes and configuration on edullm-data and has
