@@ -55,6 +55,7 @@ from edullm_platform.contracts.base import (
 )
 from edullm_platform.contracts.bindings import SLUG_PATTERN
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
+from edullm_platform.contracts.image_contents import ImageContentsRecord
 from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
     ImageScanSummary,
@@ -102,6 +103,7 @@ from edullm_platform.manifest_helpers import (
     build_request_facts,
     compute_manifest_cost_inputs,
 )
+from edullm_platform.model_factory import require_a_model_factory_the_image_has
 from edullm_platform.precision import require_bfloat16_only_where_the_hardware_has_it
 from edullm_platform.run_history import RunHistory, history_for
 
@@ -456,6 +458,12 @@ def compile_submission(
     repositories: RepositoryRegistry,
     catalog: WorkloadCatalog,
     dataset_registry: DatasetRegistry,
+    # What the published training images were measured to contain. Required rather than
+    # defaulted, unlike `published_images` below, because the default that would read
+    # naturally here is the one that silently stops a rule running: this record's own
+    # absence semantics already say nothing about a repository nobody has read, so a
+    # caller passing nothing would get silence twice over and never find out.
+    image_contents: ImageContentsRecord,
     image_scan_registry: ImageScanExceptionRegistry,
     image_scan_summary: ImageScanSummary | None = None,
     image_scan_findings: Sequence[ScanFinding] | None = None,
@@ -642,6 +650,18 @@ def compile_submission(
         command=manifest.command,
         compute_profile=manifest.compute_profile,
         catalog=catalog,
+    )
+
+    # AND THE ONE THAT READS A MEASUREMENT OF THE IMAGE RATHER THAN OF THE HARDWARE, which is
+    # the only thing separating it from the rule above. Both refuse a command that would be
+    # priced, released and placed before the container discovered the problem in its first
+    # seconds; the bfloat16 one asks what the silicon can do and this asks what the image
+    # holds. It is silent on a repository nothing has read, so adding it stops no submission
+    # that was not already going to exit 70.
+    require_a_model_factory_the_image_has(
+        command=manifest.command,
+        repository=manifest.repository,
+        images=image_contents,
     )
 
     try:

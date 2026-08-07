@@ -39,6 +39,7 @@ from edullm_platform.client_version import (
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.identity import new_run_id
+from edullm_platform.contracts.image_contents import ImageContentsRecord
 from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
     ImageScanSummary,
@@ -280,6 +281,13 @@ def main(argv: list[str] | None = None) -> int:
         image_scan_registry = load_yaml(
             args.config_dir / "image-exceptions.yaml", ImageScanExceptionRegistry
         )
+        # What the published training images were measured to contain. The compile job is the
+        # last place a factory the image does not have can be caught for nothing: after this
+        # the run is classified, released and placed, and the container discovers it at exit
+        # 70 with the machine allocated.
+        image_contents = load_yaml(
+            args.config_dir / "image-contents.yaml", ImageContentsRecord
+        )
         # Read for two things, and admission resolves both independently from its own copy,
         # because what a run is labelled with must not depend on a file the compile job
         # could be pointed at. Whether this submitter is on the roster at all, which
@@ -377,6 +385,7 @@ def main(argv: list[str] | None = None) -> int:
             repositories=repositories,
             catalog=catalog,
             dataset_registry=registry,
+            image_contents=image_contents,
             image_scan_registry=image_scan_registry,
             image_scan_summary=image_scan_summary,
             image_scan_findings=blocking_findings,

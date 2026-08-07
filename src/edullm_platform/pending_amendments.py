@@ -1265,7 +1265,7 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "ConfigFile member for config/capacity-blocks.yaml, capacity_block_backed on "
                 "ComputeProfile, and a ConfigFile member for "
                 "config/reports/resume-demonstrations.yaml, which the resume guard adds. An "
-                "eighth arrived the same way: config/image-tokenizers.yaml, which is what "
+                "eighth arrived the same way: config/image-contents.yaml, which is what "
                 "edullm data now reads a corpus's runnability out of instead of guessing at it "
                 "from this platform's own tokenizer map. The janitor stops expired lane "
                 "instances and classifies nothing, so it reads that field no more than it "
@@ -1273,7 +1273,7 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "files at all."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function janitor",
-            builds_to="017c813d2bf2aa64655d0101454d192a9955141a98afec8c0d8ed0a4d11f6574",
+            builds_to="874c472234c6d1784922b0240b42a8cf30afbf6fa62b5b33012fe1f673e28587",
             released="e07efe963ec9cadb79f7345a14d9074c125e359a588e0661f99db687a757e96a",
             recorded_on=date(2026, 8, 7),
         ),

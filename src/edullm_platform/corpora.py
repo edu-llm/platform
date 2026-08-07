@@ -9,7 +9,7 @@ that cannot construct a model for the tokens it just resolved, exiting 69 with
 find that out was to submit one.
 
 That verdict is a join over three things the wheel already carries, ``config/datasets.yaml``,
-:data:`~edullm_platform.tokenizers.TOKENIZERS` and ``config/image-tokenizers.yaml``, so it
+:data:`~edullm_platform.tokenizers.TOKENIZERS` and ``config/image-contents.yaml``, so it
 cannot go stale: all three are on the release trigger, a change to any of them cuts a
 release, and an install that answers the old way is an install that says so when ``edullm
 submit`` probes for a newer one. Nothing about runnability is written into the committed
@@ -25,9 +25,9 @@ not held, twice. So ``fineweb-edu-750m-v2``, ``fineweb-edu-1b-v6`` and
 ``formal-proof-premises-500m-v3`` were verdicted ``runs``, offered on the submission form,
 and ``run_019fdd88-3ac4`` named the first, was admitted, allocated a GPU and exited 69. A
 rule written in a docstring is a rule the next author has to have read; what
-``config/image-tokenizers.yaml`` does is make the ordering the shape of the data, so a
+``config/image-contents.yaml`` does is make the ordering the shape of the data, so a
 tokenizer this platform can express is offered only once an image has been *seen* carrying
-it. ``contracts/image_tokenizers.py`` carries that argument in full.
+it. ``contracts/image_contents.py`` carries that argument in full.
 
 **WHAT IS MEASURED IS THE PART THAT LIVES IN SOMEBODY ELSE'S BUCKET.** Train tokens, shard
 dtype, licence, size and the one line saying what a corpus is are in the sealed
@@ -67,7 +67,7 @@ from edullm_platform.contracts.dataset_registry import (
     DatasetRegistry,
     PublishedDatasetReference,
 )
-from edullm_platform.contracts.image_tokenizers import ImageTokenizerRecord
+from edullm_platform.contracts.image_contents import ImageContentsRecord, VocabularyName
 from edullm_platform.reviewed_configuration import ConfigFile
 from edullm_platform.tokenizers import THE_CONTAINERS_REFUSAL, TOKENIZERS
 
@@ -301,7 +301,7 @@ def tokens_said(count: int) -> str:
 
 
 def _runnability(
-    reference: PublishedDatasetReference, images: ImageTokenizerRecord
+    reference: PublishedDatasetReference, images: ImageContentsRecord
 ) -> Runnability:
     """The join, in the order a submission meets the refusals.
 
@@ -362,7 +362,7 @@ def _runnability(
                 f"the machine, and the container exits 69 with {THE_CONTAINERS_REFUSAL}."
             ),
         )
-    if not images.images_carrying(reference.tokenizer):
+    if not images.images_carrying(VocabularyName.TOKENIZERS, reference.tokenizer):
         return Runnability(
             verdict="exits_69",
             said=(
@@ -378,7 +378,7 @@ def _runnability(
     return Runnability(verdict="runs", said="A run may name this and it will start.")
 
 
-def _images_said(images: ImageTokenizerRecord) -> str:
+def _images_said(images: ImageContentsRecord) -> str:
     """Which images were asked and what each holds, so a refusal names its evidence.
 
     A refusal reading "no image carries it" sends somebody to look at every image there is.
@@ -387,16 +387,28 @@ def _images_said(images: ImageTokenizerRecord) -> str:
     rather than counting them.
     """
     return "; ".join(
-        f"{reading.repository} carries "
-        + (", ".join(reading.tokenizers) if reading.tokenizers else "none")
+        f"{reading.repository} carries " + _names_said(reading.names(VocabularyName.TOKENIZERS))
         for reading in images.images
     )
+
+
+def _names_said(read: tuple[str, ...] | None) -> str:
+    """What one reading found, keeping "nobody looked" distinct from "the image has none".
+
+    The contract's header argues the distinction at length and this is where a reader meets
+    it. Both answers mean the corpus does not run today and they are different things to do
+    about it: an image seen holding no tokenizer needs one added to its map, and an image
+    nobody has read needs somebody to run the probe.
+    """
+    if read is None:
+        return "no reading of its tokenizers"
+    return ", ".join(read) if read else "none"
 
 
 def corpora(
     registry: DatasetRegistry,
     *,
-    images: ImageTokenizerRecord,
+    images: ImageContentsRecord,
     snapshot: CorporaSnapshot | None = None,
 ) -> tuple[Corpus, ...]:
     """Every registered published corpus, joined and sorted by what a chooser sorts by.
@@ -438,7 +450,7 @@ def one_corpus(
     reference_id: str,
     registry: DatasetRegistry,
     *,
-    images: ImageTokenizerRecord,
+    images: ImageContentsRecord,
     snapshot: CorporaSnapshot | None = None,
 ) -> Corpus:
     """One corpus by the name a submission would use, or a refusal naming what exists.

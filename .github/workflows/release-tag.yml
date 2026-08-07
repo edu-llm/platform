@@ -103,7 +103,7 @@ on:
       - "src/edullm_platform/contracts/identity.py"
       - "src/edullm_platform/contracts/image.py"
       - "src/edullm_platform/contracts/image_scan.py"
-      - "src/edullm_platform/contracts/image_tokenizers.py"
+      - "src/edullm_platform/contracts/image_contents.py"
       - "src/edullm_platform/contracts/inventory.py"
       - "src/edullm_platform/contracts/lifecycle.py"
       - "src/edullm_platform/contracts/manifest.py"
@@ -122,6 +122,7 @@ on:
       - "src/edullm_platform/image_resolution.py"
       - "src/edullm_platform/launchers.py"
       - "src/edullm_platform/manifest_helpers.py"
+      - "src/edullm_platform/model_factory.py"
       - "src/edullm_platform/placement.py"
       - "src/edullm_platform/precision.py"
       - "src/edullm_platform/researcher_lane.py"
@@ -131,7 +132,7 @@ on:
       - "src/edullm_platform/tokenizers.py"
       - "config/datasets.yaml"
       - "config/image-exceptions.yaml"
-      - "config/image-tokenizers.yaml"
+      - "config/image-contents.yaml"
       - "config/organization.yaml"
       - "config/policy.yaml"
       - "config/reports/resume-demonstrations.yaml"
@@ -505,7 +506,7 @@ jobs:
           CONFIGURATION_FILES: >-
             config/datasets.yaml
             config/image-exceptions.yaml
-            config/image-tokenizers.yaml
+            config/image-contents.yaml
             config/organization.yaml
             config/policy.yaml
             config/repositories.yaml

@@ -4009,7 +4009,7 @@ def _data(arguments: argparse.Namespace, *, out: TextIO, err: TextIO) -> int:
     configuration = _configuration(arguments)
     snapshot = load_corpora_snapshot(configuration.directory)
     rows = corpora(
-        configuration.datasets, images=configuration.image_tokenizers, snapshot=snapshot
+        configuration.datasets, images=configuration.image_contents, snapshot=snapshot
     )
 
     if arguments.reference_id is None:
@@ -4024,7 +4024,7 @@ def _data(arguments: argparse.Namespace, *, out: TextIO, err: TextIO) -> int:
         row = one_corpus(
             arguments.reference_id,
             configuration.datasets,
-            images=configuration.image_tokenizers,
+            images=configuration.image_contents,
             snapshot=snapshot,
         )
     except CorpusUnknownError:
