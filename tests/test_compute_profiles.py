@@ -67,6 +67,18 @@ EXPECTED_PROFILE_RATES = {
     "gpu-1xh100": ("p5.4xlarge", Decimal("6.8800")),
     "gpu-8xa100": ("p4d.24xlarge", Decimal("21.9576")),
     "gpu-8xh100": ("p5.48xlarge", Decimal("55.0400")),
+    # THE FOUR BLOCK-BACKED SHAPES, WHOSE RATES ARE A DIFFERENT PRODUCT TO THE SEVENTEEN ABOVE.
+    # Every rate above is on-demand, out of the Price List API. These four are AWS's published
+    # effective hourly reservation rate for a capacity block, because a capacity block is the
+    # only way this account can obtain any of them -- config/workload-catalog.yaml argues that
+    # at length above the rows themselves.
+    #
+    # All four are over EXCEPTION_RATE_CEILING_USD_PER_HOUR, so all four are admin-only whatever
+    # else a request says. That is the fact this table is really pinning.
+    "gpu-8xa100-80gb": ("p4de.24xlarge", Decimal("17.7120")),
+    "gpu-8xh200": ("p5en.48xlarge", Decimal("54.9200")),
+    "gpu-8xb200": ("p6-b200.48xlarge", Decimal("98.8400")),
+    "gpu-8xb300": ("p6-b300.48xlarge", Decimal("112.3200")),
 }
 
 
@@ -205,13 +217,21 @@ def test_a_short_run_on_the_dearest_shape_is_released_by_nobody() -> None:
     """What the rate ceiling used to catch, asked at the size that used to slip past it.
 
     One hour and one attempt on the most expensive instance this account is priced for is
-    $55.04. Under v4 the rate ceiling made that an admin's call while every request bound
-    was satisfied. Under v5 the only bound is the total, $55.04 is a ninth of it, and
+    $112.32. Under v4 the rate ceiling made that an admin's call while every request bound
+    was satisfied. Under v5 the only bound is the total, $112.32 is a nineteenth of it, and
     nobody releases this.
 
     Asked of the dearest shape by price rather than by name, so a profile promoted above
     p5.48xlarge is covered without an edit here, and so that the assertion is about the
     reasoning rather than about one row of the catalog.
+
+    THE DEAREST SHAPE MOVED ON 2026-08-07 AND THIS IS THE ASSERTION THAT NOTICED. It was
+    gpu-8xh100 at $55.04 from the day the rate ceiling came out until gpu-8xb300 was priced at
+    $112.32, which is a p6-b300.48xlarge capacity block rather than an on-demand hour -- see
+    ``config/workload-catalog.yaml`` on why those four rows are a different product to the
+    seventeen above them. Doubling the dearest rate in the catalog did not move this
+    classification, which is the point the docstring above was making: under v5 an hour of the
+    most expensive machine on the platform is still nobody's decision to release.
 
     Mutation: put any per-hour rule back into ``classify_request``. This returns exception
     or routine and the test says which shape it was about.
@@ -219,8 +239,8 @@ def test_a_short_run_on_the_dearest_shape_is_released_by_nobody() -> None:
     profile = max(SHIPPED_PROFILES, key=lambda candidate: candidate.hourly_rate_usd)
     facts = facts_for_profile(profile, maximum_runtime_hours=Decimal(1), maximum_attempts=1)
 
-    assert profile.name == "gpu-8xh100"
-    assert facts.estimated_cost_usd == Decimal("55.04")
+    assert profile.name == "gpu-8xb300"
+    assert facts.estimated_cost_usd == Decimal("112.32")
     assert facts.estimated_cost_usd < shipped_policy().thresholds.automatic_below_cost_usd
     assert classify_request(facts, shipped_policy().thresholds) == ApprovalClass.AUTOMATIC
 

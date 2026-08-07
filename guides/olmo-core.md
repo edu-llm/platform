@@ -176,6 +176,19 @@ Three single-GPU profiles exist and they differ only in how much fits on the car
 
 Memory is the total across the devices, and it is the column to read first because it decides whether the job runs at all. Anything at or above `gpu-8xa100` needs an admin rather than a team lead, since the platform sends every profile over $20/hr that way whatever the run costs in total.
 
+Four more eight-card shapes exist and none of them can be submitted to today. They are backed by [capacity blocks](capacity-blocks.md) — dated windows somebody buys in advance — rather than by a queue, so `edullm check` refuses all four with `unprovisioned_compute_profile` until a block has actually been bought and wired up. They are listed here so that a researcher who needs more than 640 GB knows the route exists and asks, rather than concluding the platform tops out at `gpu-8xh100`.
+
+| Compute profile | Devices | Memory | Block rate |
+| --- | --- | --- | --- |
+| `gpu-8xa100-80gb` | 8 × A100 80GB | 640 GB | $17.71/hr |
+| `gpu-8xh200` | 8 × H200 | 1128 GB | $54.92/hr |
+| `gpu-8xb200` | 8 × B200 | 1432 GB | $98.84/hr |
+| `gpu-8xb300` | 8 × B300 | 2144 GB | $112.32/hr |
+
+Those rates are what a reserved hour costs rather than an on-demand one, because on-demand is not available for any of them. The launcher rule below applies unchanged: all four are eight-device machines and need eight processes.
+
+If you want one, file `edullm ask --kind capacity-block`. Expect weeks rather than days — the earliest offering is usually two to four weeks out — and expect to be asked for your peak GPU memory, your hours, and whether you have tested that your job resumes from a checkpoint.
+
 **Your command must start one process per device.** Nothing wraps what you type, so the launcher goes in the command:
 
 ```

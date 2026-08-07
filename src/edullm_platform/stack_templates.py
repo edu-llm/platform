@@ -83,6 +83,18 @@ STACK_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
     ("sbsandbox-intern-edullm-phase4-gpu-iam", "infra/iam/batch-gpu-roles.yaml"),
     ("sbsandbox-intern-edullm-phase4-gpu", "infra/batch-compute-gpu.yaml"),
     ("sbsandbox-intern-edullm-phase4-gpu-shapes", "infra/batch-compute-gpu-shapes.yaml"),
+    # THE ONE STACK HERE THAT IS EXPECTED TO BE ABSENT MOST OF THE TIME, and it is in this table
+    # for that reason rather than in spite of it. It is deployed against one purchased capacity
+    # block -- its parameters are a reservation id, an instance type and the one availability zone
+    # the block was delivered in -- and it is torn down when that window ends, so a listing with
+    # no such stack is the normal state of the account rather than drift.
+    #
+    # A template under infra/ that this table does not claim fails
+    # tests/test_deployed_stacks.py, and that check exists because a hand-applied stack nobody
+    # recorded is exactly what this repository had no way to see until 2026-07-31. Leaving a
+    # parameterised, redeployable template out on the grounds that it is transient would recreate
+    # that hole in the one place where the stack costs four figures a day while it exists.
+    ("sbsandbox-intern-edullm-capacity-block", "infra/batch-capacity-block.yaml"),
     ("sbsandbox-intern-edullm-dataset-validator-iam", "infra/iam/dataset-validator-role.yaml"),
     ("sbsandbox-intern-edullm-researcher-iam", "infra/iam/researcher-role.yaml"),
     ("sbsandbox-intern-edullm-janitor-iam", "infra/iam/janitor-lambda-role.yaml"),

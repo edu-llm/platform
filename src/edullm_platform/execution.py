@@ -1015,6 +1015,45 @@ CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
     #   p4d.24xlarge        1179648      1148706     1118208     96   measured
     #   p5.4xlarge           262144       253952      249856     16   31/32 estimate
     #   p5.48xlarge         2097152      2031616     1982464    192   31/32 estimate
+    #   p4de.24xlarge       1179648      1148706     1118208     96   measured on p4d.24xlarge
+    #   p5en.48xlarge       2097152      2031616     1982464    192   31/32 estimate
+    #   p6-b200.48xlarge    2097152      2031616     1982464    192   31/32 estimate
+    #   p6-b300.48xlarge    4194304      3926791     3877632    192   lower bound, see below
+    #
+    # THE LAST FOUR ARE BLOCK-BACKED SHAPES AND NOT ONE OF THEM HAS EVER STARTED HERE, so their
+    # registered column is derived rather than read. Three derive by identity, which is a real
+    # argument rather than a convenience: a host's registration is a property of the instance
+    # type, and two instance types with the same vCPU count and the same advertised memory
+    # running the same AMI have nothing left to differ by.
+    #
+    #  * p4de.24xlarge is p4d.24xlarge with 80 GB A100 parts instead of 40 GB ones. Same 96
+    #    vCPU, same 1,179,648 MiB. Its row is the only one of the four resting on a MEASURED
+    #    figure, because p4d has actually run here, and it takes p4d's container value unchanged
+    #    rather than p4d's registered value less an allowance. That is deliberate: 1,118,208 is
+    #    30,498 MiB under the measured ceiling where the allowance would only ask 24,576, and a
+    #    number with runs behind it is worth more than seven thousand extra MiB.
+    #  * p5en.48xlarge is called an exact fit in infra/batch-compute-gpu-shapes.yaml on the same
+    #    reasoning and against the same figures, 192 vCPU and 2,097,152 MiB.
+    #  * p6-b200.48xlarge is also 192 vCPU and 2,097,152 MiB. AWS's published instance-type
+    #    reference gives it byte-for-byte the same instance memory as p5.48xlarge.
+    #
+    # Their inherited estimate is an estimate and inherits the warning below it. 2,031,616 is
+    # 31/32 of the advertised figure and no p5 has ever registered here, so three of these four
+    # rows rest on a fraction that is on the wrong side of five of the nine measured types.
+    #
+    # p6-b300.48xlarge HAS NO IDENTITY TO BORROW AND ITS FIGURE IS A BOUND RATHER THAN A
+    # MEASUREMENT. It is 4,194,304 MiB, twice every other P shape, so nothing here has a host of
+    # the same size to reason from. 3,926,791 is the advertised figure times 0.93622, the LOWEST
+    # fraction any host in this account has ever registered, which is guaranteed to sit under
+    # whatever this one actually publishes; 3,877,632 is that less the 49,152 allowance, rounded
+    # down until a quarter of it is a whole number. It leaves memory on the table on purpose.
+    # Overshooting is the direction that produces MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT on a
+    # machine already being billed by the hour under a block that cannot be cancelled.
+    #
+    # CORRECT IT FROM CloudTrail AFTER THE FIRST LAUNCH, which costs nothing and needs no probe:
+    # RegisterContainerInstance carries totalResources.MEMORY for the host that just joined, and
+    # the lookup is written out further up this comment. Until somebody runs it, this row is
+    # under-asking by an unknown amount and that is the safe way to be wrong.
     #
     # The two corrected rows, g6.xlarge and g6e.xlarge, are set at registered less the agent's
     # allowance, which is the reservation the rule always meant to make taken from the number
@@ -1090,6 +1129,18 @@ CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
     # and both carried the same wrong number.
     "gpu-1xh100": _gpu_shape(vcpus=16, memory_mib=249856, gpus=1, shared_memory_mib=62464),
     "gpu-8xh100": _gpu_shape(vcpus=192, memory_mib=1982464, gpus=8, shared_memory_mib=495616),
+    # The four block-backed shapes, derived rather than measured for the reasons set out in the
+    # table above. The three that borrow an identity carry numbers identical to the shape they
+    # borrowed it from, which is the point: two identical machines asking for different amounts
+    # would be a difference a reader looks for a reason behind and finds none.
+    "gpu-8xa100-80gb": _gpu_shape(
+        vcpus=96, memory_mib=1118208, gpus=8, shared_memory_mib=279552
+    ),
+    "gpu-8xh200": _gpu_shape(vcpus=192, memory_mib=1982464, gpus=8, shared_memory_mib=495616),
+    "gpu-8xb200": _gpu_shape(vcpus=192, memory_mib=1982464, gpus=8, shared_memory_mib=495616),
+    "gpu-8xb300": _gpu_shape(
+        vcpus=192, memory_mib=3877632, gpus=8, shared_memory_mib=969408
+    ),
 }
 
 

@@ -66,6 +66,19 @@ MEASURED = {
     "gpu-1xh100": ("H100", 1, 81920),
     "gpu-8xa100": ("A100", 8, 40960),
     "gpu-8xh100": ("H100", 8, 81920),
+    # THE FOUR BLOCK-BACKED SHAPES, AND THE NAME OF THIS TABLE IS WRONG FOR EXACTLY THESE FOUR
+    # ROWS. Every entry above came out of one describe-instance-types call against this account.
+    # These came out of AWS's published instance-type reference, because no p4de, p5en or P6 has
+    # ever been an argument this account could pass -- config/accelerators.yaml says so on each
+    # row rather than leaving a reader to infer it from a test.
+    #
+    # The two Blackwell figures are the ones worth a second look. 183,359 and 275,040 MiB are not
+    # round, and they are the reason AWS publishes 1,432 GB for a card NVIDIA announced at 1,440:
+    # the first is GiB counted as GB, the second is decimal bytes. Same silicon, different unit.
+    "gpu-8xa100-80gb": ("A100", 8, 81920),
+    "gpu-8xh200": ("H200", 8, 144384),
+    "gpu-8xb200": ("B200", 8, 183359),
+    "gpu-8xb300": ("B300", 8, 275040),
 }
 
 #: How a GPU profile name spells its device count and its device, as

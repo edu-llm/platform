@@ -425,7 +425,7 @@
       "module": "edullm_platform.contracts.workload",
       "name": "ComputeProfile",
       "schema_version": "unversioned",
-      "structural_digest": "sha256:980b84356011d721f565c7d3fdaa7c852ef286c429d1f2b796a6d4ae163ede20"
+      "structural_digest": "sha256:1344998c8ec4bc2f1a7007923c20b1442eabd0051108aea78fb2ebe6ba3cf2cc"
     },
     {
       "base": false,
@@ -439,7 +439,7 @@
       "module": "edullm_platform.contracts.workload",
       "name": "WorkloadCatalog",
       "schema_version": "unversioned",
-      "structural_digest": "sha256:626769fbb943492d6101b90e8cdfe8209635d669172569571d4fa134635a05d1"
+      "structural_digest": "sha256:e348b83c2f38b748029920dd75c882bb0208e47ec71348db16c0812d76155ac0"
     },
     {
       "base": false,

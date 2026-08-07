@@ -117,8 +117,15 @@ def register_repository_form(
 #: which is the same seam ``ADMISSION_JOB`` sits on. The four templates collapse into one
 #: triage form under a plan this module does not own, and the day that lands this list is red
 #: rather than quietly filing asks under labels nothing counts.
+#:
+#: ``capacity-block`` is the one kind here that asks somebody to spend money that cannot be
+#: got back. A block is charged upfront and is not cancellable, so the ask is a purchase
+#: request wearing an issue's clothes, and it is a kind of its own rather than an
+#: ``access-request`` because what it needs is a decision about several thousand dollars
+#: rather than a name added to a list.
 ASK_KINDS: Final[tuple[str, ...]] = (
     "access-request",
+    "capacity-block",
     "dataset-request",
     "feedback",
     "run-problem",

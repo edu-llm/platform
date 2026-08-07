@@ -112,6 +112,15 @@ ADVERTISED_MEMORY_MIB = {
     "p4d.24xlarge": 1152 * 1024,
     "p5.4xlarge": 256 * 1024,
     "p5.48xlarge": 2048 * 1024,
+    # The four block-backed types. Three of them are deliberately identical to a type already
+    # above -- p4de to p4d, p5en and p6-b200 to p5.48xlarge -- and that identity is the whole
+    # argument their container figures rest on, so a row here that drifted from its twin would
+    # silently break a derivation rather than fail an assertion.
+    "p4de.24xlarge": 1152 * 1024,
+    "p5en.48xlarge": 2048 * 1024,
+    "p6-b200.48xlarge": 2048 * 1024,
+    # The one with no twin, at twice the largest figure above it.
+    "p6-b300.48xlarge": 4096 * 1024,
 }
 
 
@@ -251,18 +260,29 @@ def test_every_gpu_shape_has_an_advertised_figure_to_be_checked_against() -> Non
     )
 
 
-def test_the_shapes_checked_against_an_estimate_are_the_seven_this_expects() -> None:
+def test_the_shapes_checked_against_an_estimate_are_the_eleven_this_expects() -> None:
     """WHICH SHAPES ARE NOT ACTUALLY CHECKED, held as a set so the set has to shrink.
 
     A shape whose instance type has never come up here is measured against 31/32 of its
     advertised memory, and 31/32 is the assumption that put two shapes over their ceiling.
-    So these seven are certified by nothing. gpu-8xl40s is the one to look at first: it sits
+    So these eleven are certified by nothing. gpu-8xl40s is the one to look at first: it sits
     exactly on the estimate for g6e.48xlarge, so it has no headroom against a number that has
     been wrong by as much as 533 MiB elsewhere.
 
     Named rather than counted so that promoting a shape onto a new instance type fails here,
     and so that reading a registration out of CloudTrail once the first instance of a type
     comes up is a deletion from this set rather than something nobody thinks to do.
+
+    SEVEN BECAME ELEVEN ON 2026-08-07 AND THE FOUR THAT JOINED ARE BLOCK-BACKED. Not one of them
+    can leave this set the ordinary way, because the ordinary way is somebody submitting to the
+    shape and no submission reaches any of the four until a block has been bought for it. The
+    first launch inside the first window is the only chance to read the registration, and
+    ``src/edullm_platform/execution.py`` says so beside the figures.
+
+    gpu-8xb300 IS THE ONE TO LOOK AT SECOND, AND IT IS NOT LIKE THE OTHER TEN. Every other entry
+    here is checked against 31/32, which over-states five of the nine measured hosts. That shape's
+    container figure was set from 0.93622 instead -- the lowest fraction ever observed here -- so
+    it is the only row in this set that is under its ceiling by construction rather than by luck.
     """
     on_an_estimate = {
         profile
@@ -278,6 +298,10 @@ def test_the_shapes_checked_against_an_estimate_are_the_seven_this_expects() -> 
         "gpu-8xl40s",  # g6e.48xlarge
         "gpu-1xh100",  # p5.4xlarge
         "gpu-8xh100",  # p5.48xlarge
+        "gpu-8xa100-80gb",  # p4de.24xlarge
+        "gpu-8xh200",  # p5en.48xlarge
+        "gpu-8xb200",  # p6-b200.48xlarge
+        "gpu-8xb300",  # p6-b300.48xlarge
     }
 
 

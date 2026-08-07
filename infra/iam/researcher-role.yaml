@@ -214,6 +214,21 @@ Resources:
               # It includes g4dn.metal, which is the gpu-8xt4 shape, so no separate bare-metal
               # statement is needed: an exact allow-list already refuses every other metal
               # size. aws-spend-controls.md carries one because its list was families.
+              #
+              # FOUR BLOCK-BACKED TYPES JOINED ON 2026-08-07 AND THE LIST IS NOT A STATEMENT THAT
+              # ANY OF THEM CAN BE LAUNCHED. This statement is a Deny that narrows a wildcard
+              # Allow, so a type's presence here only means the catalog prices it. All four carry
+              # `provisioned: false`, EC2 will not sell three of them on demand at all, and the
+              # only route to any of them is a purchased capacity block. Widening the list does
+              # not widen what anybody can actually obtain; leaving them out would mean a block
+              # somebody had already paid for was refused at RunInstances by this policy, which
+              # is the most expensive possible place to discover a missing line.
+              #
+              # p6-b200.48xlarge AND p6-b300.48xlarge ARE THE FIRST TYPES HERE WITH A HYPHEN, and
+              # they are the reason INSTANCE_TYPE_PATTERN in
+              # src/edullm_platform/contracts/workload.py had to learn one. Nothing about this
+              # statement cares, but a reader tidying the list into families would now be
+              # tempted by `p6-*`, which is exactly the wildcard the paragraph above refuses.
               - Sid: DenyInstanceTypesOutsideTheCatalog
                 Effect: Deny
                 Action: ec2:RunInstances
@@ -236,8 +251,12 @@ Resources:
                       - g6e.48xlarge
                       - g6e.xlarge
                       - p4d.24xlarge
+                      - p4de.24xlarge
                       - p5.48xlarge
                       - p5.4xlarge
+                      - p5en.48xlarge
+                      - p6-b200.48xlarge
+                      - p6-b300.48xlarge
               # PROPERTY TWO: the Project tag on every launch, matching the session tag.
               #
               # The value is the session tag rather than a literal, so what lands on the

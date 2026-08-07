@@ -366,10 +366,18 @@ def test_two_full_days_of_eight_a10g_is_the_shape_a_lead_still_sees() -> None:
 def test_the_largest_instance_in_the_account_for_one_hour_is_released_by_nobody() -> None:
     """What removing the rate ceiling actually admits, stated as a test rather than accepted.
 
-    ``p5.48xlarge`` is the dearest shape ``config/workload-catalog.yaml`` prices, and one
-    hour of it at one attempt is $55.04. Under v4 the rate ceiling made that an admin's
+    ``p6-b300.48xlarge`` is the dearest shape ``config/workload-catalog.yaml`` prices, and one
+    hour of it at one attempt is $112.32. Under v4 the rate ceiling made that an admin's
     call. Under v5 it is under the bound and nobody releases it, and the owner accepted that
     when the ceiling was removed.
+
+    THE FIGURE DOUBLED ON 2026-08-07 AND THE CLASSIFICATION DID NOT MOVE, which is the sharpest
+    version of this test that has existed. It was $55.04 on ``p5.48xlarge`` from the day the
+    ceiling came out until four block-backed shapes were priced, the dearest of them at $112.32 --
+    and that rate is a capacity block's rather than an on-demand hour's, so it is what the machine
+    genuinely costs rather than a hypothetical. An hour of the most expensive machine on the
+    platform is still nobody's decision to release, and the bound that would have caught it is
+    still the one the owner removed on purpose.
 
     Mutation: reintroduce any per-hour rule. This fails, which is the point of writing the
     accepted consequence down as an assertion: the next person to find it alarming has to
@@ -378,7 +386,7 @@ def test_the_largest_instance_in_the_account_for_one_hour_is_released_by_nobody(
     dearest = max(profile.hourly_rate_usd for profile in load_workload_catalog().compute_profiles)
     one_hour = compute_maximum_compute_cost_usd(dearest, 1, Decimal(1), 1)
 
-    assert one_hour == Decimal("55.04")
+    assert one_hour == Decimal("112.32")
     assert classify_request(facts(estimated_cost_usd=one_hour), thresholds()) is (
         ApprovalClass.AUTOMATIC
     )

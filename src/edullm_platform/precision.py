@@ -132,6 +132,20 @@ TURING: Final = GpuArchitecture(name="Turing", supports_bfloat16=False)
 AMPERE: Final = GpuArchitecture(name="Ampere", supports_bfloat16=True)
 ADA_LOVELACE: Final = GpuArchitecture(name="Ada Lovelace", supports_bfloat16=True)
 HOPPER: Final = GpuArchitecture(name="Hopper", supports_bfloat16=True)
+#: Blackwell, which this account has never run and which is here because two block-backed
+#: shapes in the catalog are on it. It has bfloat16 -- every generation after Turing does, and
+#: Blackwell adds FP4 and FP8 formats on top rather than taking anything away -- so this row
+#: makes ``require_bfloat16_only_where_the_hardware_has_it`` pass a request through, which is
+#: what it would have done anyway had the family been missing.
+#:
+#: THAT IS WORTH SAYING PLAINLY, BECAUSE IT MEANS THIS ROW BUYS NO SAFETY AND IS NOT MEANT TO.
+#: What it buys is the test in ``tests/test_bfloat16_guard.py``, which requires every GPU
+#: profile in the catalog to resolve here and would otherwise go red on the four new shapes.
+#: The real risk on Blackwell is not the precision a command asks for, it is whether the
+#: training image's driver can address the card at all: AWS publishes CUDA 12.8 and driver
+#: R570 as the minimum, and ``infra/batch-compute-gpu-shapes.yaml`` records that nothing here
+#: has confirmed either on the silicon. Nothing in this module can check that.
+BLACKWELL: Final = GpuArchitecture(name="Blackwell", supports_bfloat16=True)
 
 
 @dataclass(frozen=True)
@@ -165,6 +179,19 @@ GPUS_BY_INSTANCE_FAMILY: Final[Mapping[str, Gpu]] = {
     "g6e": Gpu(model="L40S", architecture=ADA_LOVELACE),
     "p4d": Gpu(model="A100", architecture=AMPERE),
     "p5": Gpu(model="H100", architecture=HOPPER),
+    # THE FOUR BLOCK-BACKED FAMILIES, AND EVERY ONE OF THEM IS A SEPARATE KEY FOR THE REASON
+    # THE g6/g6e NOTE ABOVE GIVES. ``p4d`` and ``p4de`` are one letter apart and carry
+    # different parts of the same card; ``p5`` and ``p5en`` are different cards outright. A
+    # prefix match would put an H200 under ``p5`` and an 80 GB A100 under ``p4d``, and both
+    # would be right about the generation and wrong about the machine.
+    #
+    # ``p6-b200`` AND ``p6-b300`` CARRY A HYPHEN, WHICH IS WHY ``INSTANCE_TYPE_PATTERN`` HAD TO
+    # LEARN ONE. :func:`instance_family` splits on the first dot and nothing else, so these
+    # keys are what that split produces and no parsing here needed changing.
+    "p4de": Gpu(model="A100", architecture=AMPERE),
+    "p5en": Gpu(model="H200", architecture=HOPPER),
+    "p6-b200": Gpu(model="B200", architecture=BLACKWELL),
+    "p6-b300": Gpu(model="B300", architecture=BLACKWELL),
 }
 
 #: How bfloat16 is written where a value is expected. Exact matches only, case-folded.

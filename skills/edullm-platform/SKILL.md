@@ -279,6 +279,67 @@ because what they print is a section of a job log with no structure under it.
 `edullm cancel <run-id> --reason "<why>"` stops an admitted run, and the reason is what the
 run's history records instead of a failure.
 
+## When the shape is backed by a capacity block
+
+Some of the largest shapes cannot be obtained on demand at all, because EC2 sells
+accelerated capacity to whoever asks first and this account loses. A capacity block is the
+way round it: a dated window during which the machines are yours because somebody paid for
+them in advance.
+[Capacity blocks](https://github.com/edu-llm/platform/blob/main/guides/capacity-blocks.md)
+says which shapes are bought that way and how one gets bought. What follows is only what
+changes about the loop above when you are submitting into one.
+
+**A block-backed shape is live between two dates, and outside them it is not a slow queue,
+it is nothing.** There is no machine, so nothing places, and the intuition that a queue
+eventually moves does not carry over. Once the window closes the shape is withdrawn from the
+reviewed configuration and `edullm check` refuses it with `unprovisioned_compute_profile`,
+which is the good outcome. The bad one is the fourth paragraph below.
+
+**AWS begins terminating the instances half an hour before the block ends.** The usable
+window is thirty minutes shorter than the number of hours bought, and that is AWS clearing
+the machines for the next customer rather than anything this platform can soften. A run
+sized to fill the window exactly does not overrun by half an hour, it is killed half an hour
+early and loses everything not checkpointed by then. Size it against the hours bought minus
+the half hour, with `--hours` where the workload's own bound is larger than that.
+
+```bash
+edullm check --json --compute <profile> --hours <hours-bought-minus-0.5> \
+  --experiment <slug> --dataset <release-or-none>
+```
+
+**Submit before the window opens rather than on the day.** Batch accepts a job against a
+block that is not yet active and places it the moment the machines appear, so admission, the
+image resolution and the approval all happen on your own time instead of on paid time. The
+approval is the reason this matters, because approval is a person. A day on an eight-card
+shape prices well above the bound a run starts on its own at, so `approval_class` usually
+comes back `routine` and a team lead has to open the run page. **The block bills from the
+moment it starts whether or not anybody has approved anything**, so a submission left at a
+gate until an approver wakes up spends paid-for minutes at the full block rate to produce
+nothing. Read `approval_class` out of `edullm check --json` rather than assuming which way
+it lands.
+
+**A job submitted outside the window sits in `RUNNABLE` and looks exactly like one that is
+merely queued.** This is the trap, and it is the part of this section worth remembering.
+There is no error against the job, nothing in any log and no field on it that says the
+window has not opened yet or closed yesterday, so what you get is a healthy-looking wait
+that never ends. `edullm status --json` answers and distinguishes nothing, and `edullm logs`
+prints nothing because a job that never started has printed nothing. **What tells the two
+apart is the calendar rather than the job.** Get the block's start and end from whoever
+bought it and check that now is between them, before spending an evening debugging a run
+that is only early.
+
+**Checkpointing is mandatory here rather than advisable, and it is the resume that has to
+have been tested.** A block does not pause while a bug is fixed, cannot be extended and
+cannot be cancelled. A crash partway through costs either the work since the last checkpoint
+or the whole remaining window, and which of the two it costs is decided entirely by whether
+the run comes back up where it left off. Writing a checkpoint and resuming from one are
+different features, and only one of them is exercised by writing one:
+`checkpoint_path_not_in_command` reads whether the command
+expands `$EDULLM_CHECKPOINT_DIR`, which is the write, and says nothing at all about the
+read. Kill a run on a cheap shape, restart it from what it wrote and watch it pick up rather
+than begin again. Do that before the window, because inside it the experiment costs the
+block.
+
 ## The exploration lane is not the submission path
 
 `edullm run` ships this working tree to a machine of your own and streams back the output of

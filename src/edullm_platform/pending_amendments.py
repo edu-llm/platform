@@ -880,16 +880,89 @@ def pending_releases() -> tuple[PendingRelease, ...]:
         PendingRelease(
             function="janitor",
             reason=(
-                "One member added to ConfigFile for config/accelerators.yaml, reached "
-                "through researcher_lane.py, which the janitor's zip carries for two tag "
-                "keys and a role name. janitor_handler.py builds its settings in "
-                "_settings_from_environment and never calls load_lane_settings, and nothing "
-                "it does reads the vocabulary, so this is bytes and no behaviour."
+                "A second member added to ConfigFile, for config/capacity-blocks.yaml, "
+                "reached through researcher_lane.py, which the janitor's zip carries for two "
+                "tag keys and a role name. Extended from the accelerators.yaml member "
+                "recorded on 2026-08-06 rather than added beside it, because one function "
+                "carries one record and a zip holds whatever the tree holds when it is "
+                "built. janitor_handler.py builds its settings in _settings_from_environment "
+                "and never calls load_lane_settings, and nothing it does reads the "
+                "vocabulary, so this is bytes and no behaviour."
             ),
             cleared_by="uv run python tools/release_lambda.py --function janitor",
-            builds_to="e07efe963ec9cadb79f7345a14d9074c125e359a588e0661f99db687a757e96a",
+            builds_to="e8dc2290655b2259bfe417d81cb51e71b32ec893b79d8ddc0125e6d0017ea28f",
             released="50922d41d3750af154e3b2342cfe634c4105b398ed2895a2de585b48579b98d9",
-            recorded_on=date(2026, 8, 6),
+            recorded_on=date(2026, 8, 7),
+        ),
+        # A FIFTEENTH, SIXTEENTH AND SEVENTEENTH, ALL FOUR ZIPS MOVING FOR ONE CHANGE, AND THE
+        # WINDOW IS UNREACHABLE BY ANY SUBMITTER RATHER THAN MERELY HARMLESS. Four compute
+        # profiles were priced for shapes obtainable only through a purchased capacity block:
+        # gpu-8xa100-80gb, gpu-8xh200, gpu-8xb200 and gpu-8xb300. config/workload-catalog.yaml is
+        # in both ADMISSION_CONFIG and NOTIFIER_CONFIG, and contracts/workload.py moved as well,
+        # so the validator and the notifier carry the change twice over.
+        #
+        # WHY NOBODY CAN MEET THE DIFFERENCE, WHICH IS A STRONGER CLAIM THAN THE USUAL "BYTES AND
+        # NO BEHAVIOUR" AND IS WORTH CHECKING RATHER THAN TRUSTING. All four profiles carry
+        # `provisioned: false` and none has an execution target, so a submission naming one is
+        # refused before placement is reached -- by `edullm check` on a laptop, and by admission if
+        # somebody skips it. The deployed validator would refuse the four names because it has
+        # never heard of them; the tree refuses them because they have no queue. Both refuse, for
+        # different reasons, and the submitter sees a refusal either way. The window closes on
+        # nothing.
+        #
+        # The one difference a reader might expect and will not find is a cost or approval change.
+        # Every one of the four is far above EXCEPTION_RATE_CEILING_USD_PER_HOUR, so no request
+        # naming them could be classified more weakly by either version.
+        #
+        # INSTANCE_TYPE_PATTERN WIDENED IN THE SAME CHANGE AND IT CANNOT STRAND A DEPLOYED ZIP.
+        # It learned to accept a hyphen in the family, for p6-b200.48xlarge and p6-b300.48xlarge.
+        # Widening only ever accepts more, so no payload or catalog the old pattern admitted is
+        # refused by the new one -- and the catalog is packaged inside the zip that validates it,
+        # so the deployed function reads the old pattern against the old catalog and agrees with
+        # itself. The regeneration of fixtures/goldens/contract-models.json in this commit is that
+        # reconstraint and nothing else.
+        PendingRelease(
+            function="validator",
+            reason=(
+                "Four block-backed compute profiles priced in "
+                "config/workload-catalog.yaml, which ADMISSION_CONFIG packages, and a "
+                "widened INSTANCE_TYPE_PATTERN in contracts/workload.py so that "
+                "p6-b200.48xlarge and p6-b300.48xlarge validate at all. All four profiles "
+                "are provisioned: false with no execution target, so both the deployed zip "
+                "and this tree refuse a submission naming one, and no submitter can meet the "
+                "difference. Widening a pattern accepts more and never less."
+            ),
+            cleared_by="uv run python tools/release_lambda.py --function validator",
+            builds_to="6210ad3312b0425f3bafa98594249babe4372b9271026d07b9af01f73cf05b18",
+            released="df9952459e54ff0ebbce89660b5faf3b7a87bae47d2a0856c2553c9735d2740f",
+            recorded_on=date(2026, 8, 7),
+        ),
+        PendingRelease(
+            function="notifier",
+            reason=(
+                "The same four compute profiles, reached through NOTIFIER_CONFIG in "
+                "tools/build_notifier_lambda.py, which names workload-catalog.yaml, and "
+                "through the contract the notifier imports. What it reads the catalog for is "
+                "describing a run in a message, and no run can name any of the four while "
+                "they are unprovisioned, so the window is bytes and no behaviour."
+            ),
+            cleared_by="uv run python tools/release_lambda.py --function notifier",
+            builds_to="0b783f0649941e943edfe0afc7b26aa5dc572fdaa8df26cf7caa5ef67e9277cc",
+            released="b291227b4905c7ac9b89b78e3f8b3491ab8912d5768059a9d00d945927e8c53f",
+            recorded_on=date(2026, 8, 7),
+        ),
+        PendingRelease(
+            function="recorder",
+            reason=(
+                "Moved through the contract rather than through configuration: the recorder "
+                "imports contracts/workload.py, where INSTANCE_TYPE_PATTERN widened. It "
+                "writes result manifests and reads no compute profile, so nothing it does "
+                "differs across the release."
+            ),
+            cleared_by="uv run python tools/release_lambda.py --function recorder",
+            builds_to="ad74bee4860fd1830e34bfe221ec00e48984e325f00053270d82cee0c043d4da",
+            released="11d4c78a8ddc2b22c8a43dd5224d00a3e038f86403a8ba2e50c8f88a6d92c8b1",
+            recorded_on=date(2026, 8, 7),
         ),
     )
     return one_record_per_function(releases)

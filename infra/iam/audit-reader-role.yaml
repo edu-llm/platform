@@ -351,6 +351,19 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase4-gpu-iam/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase4-gpu/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase4-gpu-shapes/*
+                  # THE ONE STACK IN THIS LIST THAT IS EXPECTED TO BE ABSENT MOST OF THE TIME,
+                  # and it is named for that reason rather than in spite of it. It is deployed
+                  # against one purchased capacity block and torn down when that window ends,
+                  # so a listing with no such stack is the account's normal state.
+                  #
+                  # A grant on a stack that does not exist reaches nothing -- GetTemplate on an
+                  # absent stack fails at CloudFormation, not at IAM -- so naming it costs no
+                  # access while it is gone. What it buys is that the one window in which the
+                  # account is being billed four figures a day for a machine somebody hand-
+                  # deployed is a window the drift check can actually see into. Leaving the line
+                  # out until first use would mean discovering the denial at 05:00 on the
+                  # morning after the money was spent.
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-capacity-block/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-dataset-validator-iam/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-researcher-iam/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-janitor-iam/*

@@ -13,7 +13,20 @@ from .base import (
 )
 from .validation import require_checkpoint_for_retries
 
-INSTANCE_TYPE_PATTERN = r"^[a-z][a-z0-9]*\.[a-z0-9]+$"
+#: One EC2 instance type, held to exactly one dot with a family in front of it and a size
+#: behind it.
+#:
+#: THE FAMILY MAY CARRY HYPHENS AND IT COULD NOT UNTIL 2026-08-07. This read
+#: ``^[a-z][a-z0-9]*\.[a-z0-9]+$``, which is every instance type AWS had sold this account and
+#: not the ones it now sells: ``p6-b200.48xlarge`` and ``p6-b300.48xlarge`` put the accelerator
+#: in the family name, and under the old pattern a catalog naming either was refused at load
+#: with a validation error rather than at review with an argument. The hyphen groups are spelled
+#: out rather than folded into the character class so that a trailing or doubled hyphen is still
+#: refused; ``[a-z0-9-]*`` would have admitted ``p6-.48xlarge``.
+#:
+#: Still exactly one dot, which is the property :func:`edullm_platform.precision.instance_family`
+#: rests on when it splits a family off the front.
+INSTANCE_TYPE_PATTERN = r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.[a-z0-9]+$"
 CHECKPOINT_DESTINATION_PREFIX_PATTERN = (
     rf"^s3://{SANDBOX_BUCKET_PREFIX}[a-z0-9](?:[a-z0-9.-]{{0,44}}[a-z0-9])?/.+/$"
 )

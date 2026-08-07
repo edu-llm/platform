@@ -1,0 +1,179 @@
+# What a capacity block can be bought for, and what each one maps to here.
+#
+# WHY THIS IS A FILE RATHER THAN A PARAGRAPH IN A GUIDE. Buying a block is the one decision on
+# this platform that spends four figures in a single irreversible call, and until this file the
+# menu it is chosen from lived in a pricing page nobody here could read and in prose in
+# guides/capacity-blocks.md. A number a person retypes from a web page into a purchase is a
+# number nothing checks, and the one purchase this account has made against that arrangement
+# was for a shape no queue could place.
+#
+# THIS IS NOT config/capacity.yaml AND THE TWO ANSWER OPPOSITE QUESTIONS. That file records
+# whether EC2 will sell this account a shape *on demand*, measured by asking. This one records
+# what can be *reserved in advance* and what the reservation costs. A shape can be dry in one
+# and buyable in the other -- that is the entire reason capacity blocks exist, and gpu-8xh100
+# is exactly that case: `places: unreliably` there against a real, purchasable offering here.
+#
+# WHAT `profile` MEANS, AND EVERY ROW CARRIES ONE AS OF 2026-08-07. It is the compute profile in
+# config/workload-catalog.yaml that this instance type would be submitted as. Four of these were
+# null until that date, which was this file's way of saying the catalog had never priced the
+# machine; the four were priced together, so the null branch is now unreached and is kept only
+# because the next shape AWS adds to the menu will need it. `tests/test_capacity_blocks.py` holds
+# every non-null name here to the catalog.
+#
+# A PROFILE IS NOT A ROUTE, AND THIS IS THE DISTINCTION THE COLUMN NO LONGER MAKES ON ITS OWN.
+# All four of the newly priced shapes carry `provisioned: false`, so a submission naming one is
+# refused before placement is reached. What a name here now means is that the metadata exists --
+# a profile, an accelerators.yaml row, a CONTAINER_SHAPES entry, a capacity.yaml verdict -- and
+# what is still missing for every one of them is a deployed queue, which is
+# `infra/batch-capacity-block.yaml` against a real reservation id.
+# `tools/price_capacity_block.py` reads `provisioned` and says which of the two is missing.
+#
+# THE RATES ARE AWS'S PUBLISHED EFFECTIVE HOURLY RESERVATION RATES AND THEY ARE NOT WHAT YOU
+# PAY. An offering's price is set by supply and demand at the moment it is delivered, and the
+# published table is the guide AWS gives for planning. `describe-capacity-block-offerings`
+# returns the real number and you see it before you commit. So these are for sizing a decision
+# and for noticing that one row is four times another; the figure that binds is on the offering.
+# AWS's page records that these are next scheduled to move in October 2026.
+#
+# ONLY us-east-1. Every queue and every subnet on this platform is in that region, and a block
+# bought elsewhere is a block nothing here can reach. Three families are deliberately absent
+# for that reason and are recorded in the excluded list below rather than dropped silently,
+# because each of the three is an obvious thing for somebody to propose a second time.
+#
+# THE DURATION RULES ARE AWS'S AND NOTHING HERE CAN SOFTEN THEM. Whole days only: one to
+# fourteen in one-day steps, then multiples of seven to 182. Bookable up to eight weeks ahead,
+# one to 64 instances per block. Every block ends at 11:30 UTC whatever time it starts, and AWS
+# begins terminating instances 30 minutes before that end, so the usable window is half an hour
+# shorter than the number bought. None of this is negotiable and all of it is priced in.
+schema_version: 1
+#: When the rates below were read off AWS's published pricing page. Unlike the silicon figures
+#: in config/accelerators.yaml this one is expected to move, and AWS names October 2026 as the
+#: next scheduled revision.
+observed_at: "2026-08-07"
+region: us-east-1
+blocks:
+  # THE CHEAPEST WAY TO PUT A REAL H100 IN FRONT OF THIS ACCOUNT, and the reason it is first.
+  # Nothing here has ever run on a P-family card: the training image pins CUDA against a driver
+  # version read off an A10G and carried to every other shape by inference, which
+  # infra/batch-compute-gpu.yaml flags at the point the inference is made. A day of this costs
+  # about what an hour of the eight-card machine costs, and it answers the question that
+  # otherwise gets answered inside a window somebody has already paid for.
+  - instance_type: p5.4xlarge
+    device: H100
+    devices: 1
+    device_memory_gb: 80
+    reservation_rate_usd_per_hour: "5.191"
+    profile: gpu-1xh100
+  # ALREADY PROVISIONED AND ALREADY PLACING, WHICH MAKES THIS THE ONE ROW THAT IS USUALLY THE
+  # WRONG PURCHASE. config/capacity.yaml records fourteen p4d nodes arriving over three days
+  # with a 61-minute median wait and nothing ever cancelled for want of capacity. Buying a block
+  # for a shape a queue already supplies is paying to skip a wait measured in tens of minutes.
+  # It is kept here because "the block you do not need to buy" is a fact a buyer should be able
+  # to read off the same table as the others.
+  - instance_type: p4d.24xlarge
+    device: A100
+    devices: 8
+    device_memory_gb: 320
+    reservation_rate_usd_per_hour: "11.80"
+    profile: gpu-8xa100
+  # THE SAME 640 GB AS p5.48xlarge FOR 43% OF THE PRICE, on older silicon. Worth reading twice
+  # before anybody reaches past it: if the constraint is memory rather than throughput, this is
+  # the row. It is also the cheapest block here that is not gpu-8xa100, which is the one above
+  # that should usually not be bought at all.
+  #
+  # PRICED ON 2026-08-07 AND THE ONLY ONE OF THE FOUR WHOSE CONTAINER CEILING RESTS ON A
+  # MEASUREMENT. p4de.24xlarge is p4d.24xlarge with the 80 GB part fitted -- same 96 vCPU, same
+  # 1,179,648 MiB -- and p4d has actually run here, so gpu-8xa100-80gb takes gpu-8xa100's
+  # container figure unchanged rather than an estimate. Every other row below is on a fraction.
+  - instance_type: p4de.24xlarge
+    device: A100
+    devices: 8
+    device_memory_gb: 640
+    reservation_rate_usd_per_hour: "17.712"
+    profile: gpu-8xa100-80gb
+  # THE SHAPE THIS WHOLE ROUTE WAS BUILT FOR. Priced in the catalog, its Batch queue and job
+  # definition deployed and enabled, and withdrawn from config/execution-targets.yaml on
+  # 2026-08-04 for one reason only: EC2 will not sell this account a p5. A block is precisely
+  # the thing that makes that untrue, so promoting it is restoring one row and flipping one
+  # flag rather than building anything.
+  - instance_type: p5.48xlarge
+    device: H100
+    devices: 8
+    device_memory_gb: 640
+    reservation_rate_usd_per_hour: "41.528"
+    profile: gpu-8xh100
+  # 78% OF A B200'S MEMORY FOR 56% OF THE PRICE, and the row most likely to be overlooked. The
+  # gpu-8xh100 compute environment already lists p5en.48xlarge as a fallback instance type, and
+  # infra/batch-compute-gpu-shapes.yaml calls it an exact fit: identical 192 vCPU and 2,097,152
+  # MiB, so the container memory ceiling estimated for p5.48xlarge carries over unchanged.
+  #
+  # MORE DEVICE MEMORY THAN gpu-8xh100 FOR LESS THAN gpu-8xh100'S OWN BLOCK, which makes the row
+  # above it the wrong purchase on both axes unless something needs an H100 specifically. 141 GiB
+  # a card against 80, at $54.920 against $41.528 -- so it is dearer per hour and much cheaper
+  # per gigabyte.
+  - instance_type: p5en.48xlarge
+    device: H200
+    devices: 8
+    device_memory_gb: 1128
+    reservation_rate_usd_per_hour: "54.920"
+    profile: gpu-8xh200
+  # THE SHAPE THE ONE PURCHASE THIS ACCOUNT HAS MADE WAS FOR, and it could not have been placed
+  # by anything here. Blackwell is a new architecture rather than a bigger card: AWS's published
+  # minimum for it is CUDA 12.8 and driver R570, which the training image's CUDA 12.8 base and
+  # measured driver clear on paper and which nothing has confirmed on the silicon.
+  # infra/batch-compute-gpu-shapes.yaml records p6-b200 as offered in us-east-1d alone and
+  # deliberately excluded from the H100 environment for exactly that reason.
+  #
+  # 192 vCPU and 2 TiB, identical to p5.48xlarge, so the container ceiling carries over.
+  #
+  # 1,432 RATHER THAN 1,440 AND BOTH FIGURES ARE AWS'S OWN. This row read 1440 until 2026-08-07,
+  # which is NVIDIA's announcement figure: eight cards at 180 GB counted in decimal bytes. AWS's
+  # accelerated-computing table says 1,432, which is the same silicon counted in GiB -- the card
+  # reports 183,359 MiB, which is 179.06 GiB, and eight of those is 1432.5. config/accelerators.yaml
+  # carries the per-device MiB and argues this at length; the column here is GB because every
+  # other row's is, so it takes the figure AWS publishes for the instance.
+  - instance_type: p6-b200.48xlarge
+    device: B200
+    devices: 8
+    device_memory_gb: 1432
+    reservation_rate_usd_per_hour: "98.84"
+    profile: gpu-8xb200
+  # THE LARGEST THING BUYABLE IN THIS REGION AND THE ONE WITH THE MOST UNKNOWNS. 4 TiB of system
+  # memory rather than 2, so unlike every other row here the container memory ceiling cannot be
+  # carried over from a shape already measured.
+  #
+  # gpu-8xb300 IS PRICED AND ITS MEMORY FIGURE IS A BOUND RATHER THAN A NUMBER. It asks 3,877,632
+  # MiB, which is 0.93622 of the advertised 4,194,304 less the agent's allowance -- 0.93622 being
+  # the lowest fraction any host in this account has ever registered, so it is guaranteed to sit
+  # under whatever a real p6-b300 publishes. That leaves an unknown amount of memory unused and
+  # that is the safe direction: asking too much is refused as
+  # MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT, statically, on a machine already being billed under
+  # a block that cannot be cancelled. Correct it from the RegisterContainerInstance event after
+  # the first launch, which costs nothing.
+  #
+  # It is also the dearest thing this platform prices, at twice gpu-8xh100's rate, and pricing it
+  # moved the shape `tests/test_compute_profiles.py` calls the dearest.
+  - instance_type: p6-b300.48xlarge
+    device: B300
+    devices: 8
+    device_memory_gb: 2144
+    reservation_rate_usd_per_hour: "112.32"
+    profile: gpu-8xb300
+# Named rather than omitted, because each is a reasonable thing to suggest and the reason it
+# does not work is not guessable from the pricing page.
+excluded:
+  - instance_type: p5e.48xlarge
+    because: >-
+      Not sold in us-east-1. AWS offers it in Ohio, Oregon, N. California and overseas, and
+      describe-instance-type-offerings on 2026-08-04 returned nothing for it in any us-east-1
+      zone, so two independent sources agree. It is the obvious third p5 name and it is not
+      a near miss.
+  - instance_type: u-p6e-gb200x72
+    because: >-
+      An UltraServer sold only in the US East (Dallas) Local Zone, which this account is not
+      opted into and which no subnet here reaches. The x36 half-size has the same problem.
+  - instance_type: trn1.32xlarge
+    because: >-
+      Trainium rather than a GPU. It is cheap and it is offered here, but it needs the Neuron
+      SDK and the training image is CUDA and torch, so nothing this platform can build would
+      run on it. Promoting it is a second image rather than a second profile.

@@ -298,10 +298,11 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     project_root = Path(__file__).resolve().parents[1]
     config_path = project_root / "config" / "workload-catalog.yaml"
     catalog = load_yaml(config_path, WorkloadCatalog)
-    # Seventeen: thirteen once gpu-8xa10g priced the g5.48xlarge, then gpu-8xt4, gpu-8xl4 and
-    # gpu-8xl40s filling the eight-device row, then gpu-1xh100. Same tripwire role as the
-    # workload count below: a profile arriving without a deliberate edit.
-    assert len(catalog.compute_profiles) == 17
+    # Twenty-one: thirteen once gpu-8xa10g priced the g5.48xlarge, then gpu-8xt4, gpu-8xl4 and
+    # gpu-8xl40s filling the eight-device row, then gpu-1xh100, then the four block-backed shapes
+    # on 2026-08-07. Same tripwire role as the workload count below: a profile arriving without a
+    # deliberate edit.
+    assert len(catalog.compute_profiles) == 21
     # Eleven: nine, plus olmo-eval-sweep and edullm-p1-check. Nine was seven plus
     # open-instruct-scored-rewards-check and open-instruct-scored-rewards-train. The seven
     # were five since the presets collapsed

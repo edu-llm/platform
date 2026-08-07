@@ -290,6 +290,86 @@ compute_profiles:
     pricing_source: "AWS Price List API get-products AmazonEC2 p5.48xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-25"
     provisioned: false
+  # THE FOUR BELOW ARE PRICED OFF A DIFFERENT PRODUCT TO THE SEVENTEEN ABOVE, AND A READER
+  # COMPARING A RATE ACROSS THE BOUNDARY IS COMPARING TWO THINGS. Every row above this line
+  # carries an on-demand rate from the Price List API. These four carry AWS's published
+  # effective hourly *reservation* rate for a capacity block, and `pricing_source` says which
+  # on every row so the two can never be mistaken for each other in a diff.
+  #
+  # WHY THAT IS THE RIGHT NUMBER HERE RATHER THAN A SHORTCUT. An on-demand rate is what an hour
+  # costs if you can buy an hour. Nothing in this account can buy an hour of any of these four:
+  # p5en shares the pool that produced 7,654 consecutive InsufficientInstanceCapacity refusals
+  # for p5, and the two P6 shapes have never been asked for at all. The only route to any of
+  # them is `config/capacity-blocks.yaml`, which is prepaid, whole-day and non-cancellable, so
+  # the reservation rate is not an approximation of what an hour costs -- it is what an hour
+  # costs, and the on-demand figure is the hypothetical.
+  #
+  # WHAT THIS DOES TO THE GATE, WHICH IS THE THING TO CHECK BEFORE EDITING ANY OF THEM. Read the
+  # note above gpu-1xh100: `hourly_rate_usd` is not only an estimate any more, because
+  # classify_request returns EXCEPTION for any rate above EXCEPTION_RATE_CEILING_USD_PER_HOUR in
+  # src/edullm_platform/contracts/policy.py. All four are far above the $20 ceiling -- the
+  # cheapest is $17.71 and that one is still over once nothing else about the request matters --
+  # so every request naming any of them needs an admin whatever its runtime is. That is the
+  # outcome the choice of rate would have to change to matter, and it does not: p4de's on-demand
+  # rate is higher than its reservation rate, not lower, so no substitution of one for the other
+  # moves a shape into a weaker approval class.
+  #
+  # ALL FOUR ARE `provisioned: false` AND NOT ONE OF THEM IS A MISTAKE. A block for none of them
+  # has been bought. `provisioned: true` is what `infra/batch-capacity-block.yaml` earns when it
+  # is deployed against a real reservation id, and it goes back to false in the commit that tears
+  # that stack down, alongside withdrawing the row from `config/execution-targets.yaml`. Flipping
+  # one of these without the queue behind it produces a submission that is admitted, approved and
+  # then sits in RUNNABLE forever, which is the failure `config/capacity.yaml` spends a hundred
+  # lines on.
+  #
+  # 80 GB A100, AND THE CHEAPEST WAY TO GET 640 GB OF DEVICE MEMORY ONTO THIS PLATFORM. Same
+  # machine as gpu-8xa100 with the larger part fitted, so the comment above gpu-8xa100 that
+  # calls that shape "eight 80 GB cards" describes this row and not that one.
+  - name: gpu-8xa100-80gb
+    instance_type: p4de.24xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "17.7120"
+    pricing_source: "AWS Capacity Blocks for ML published effective hourly reservation rate, p4de.24xlarge us-east-1"
+    pricing_observed_at: "2026-08-07"
+    provisioned: false
+  # Eight H200 at 141 GiB each, which is more device memory than gpu-8xh100 for less money than
+  # gpu-8xh100's own block. infra/batch-compute-gpu-shapes.yaml already lists p5en.48xlarge as
+  # the H100 environment's fallback instance type and records it as an exact fit on vCPU and
+  # instance memory, so this profile is the metadata that was missing rather than new ground.
+  - name: gpu-8xh200
+    instance_type: p5en.48xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "54.9200"
+    pricing_source: "AWS Capacity Blocks for ML published effective hourly reservation rate, p5en.48xlarge us-east-1"
+    pricing_observed_at: "2026-08-07"
+    provisioned: false
+  # BLACKWELL, WHICH IS A NEW ARCHITECTURE RATHER THAN A BIGGER CARD, AND THE ONE ROW HERE WITH A
+  # SOFTWARE RISK IN FRONT OF IT. AWS publishes a minimum of CUDA 12.8 and driver R570 for
+  # p6-b200. The training image's CUDA 12.8 base clears the first on paper; nothing has confirmed
+  # the second on the silicon, because the driver version this platform knows was read off an
+  # A10G. infra/batch-compute-gpu-shapes.yaml excludes p6-b200 from the H100 environment for
+  # exactly that reason, and a block is the first thing that would settle it.
+  - name: gpu-8xb200
+    instance_type: p6-b200.48xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "98.8400"
+    pricing_source: "AWS Capacity Blocks for ML published effective hourly reservation rate, p6-b200.48xlarge us-east-1"
+    pricing_observed_at: "2026-08-07"
+    provisioned: false
+  # The largest and most expensive machine this catalog prices, and the only one whose container
+  # memory ceiling is a bound rather than a figure -- see src/edullm_platform/execution.py, which
+  # explains what to correct and from where after the first launch.
+  - name: gpu-8xb300
+    instance_type: p6-b300.48xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "112.3200"
+    pricing_source: "AWS Capacity Blocks for ML published effective hourly reservation rate, p6-b300.48xlarge us-east-1"
+    pricing_observed_at: "2026-08-07"
+    provisioned: false
 workloads:
   # THESE NINE WERE RENAMED, IN TWO WAVES, AND RECORDS WRITTEN BEFORE EITHER WAVE STILL
   # CARRY THE OLD NAMES.
