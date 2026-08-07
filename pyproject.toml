@@ -35,8 +35,8 @@ name = "edullm"
 #
 # 0.2.0 rather than 0.1.1 because 0.1.0 was never released and nothing was ever installed
 # from a tag; the first tag this repository has should not look like the second.
-# WHY THIS IS A MINOR RATHER THAN A PATCH. edullm studio opens the browser itself instead of printing a sign-in URL nobody could copy in time, and lands in the running app rather than on a host that does not resolve; edullm console is new and opens the AWS console signed in as you
-version = "4.5.0"
+# WHY THIS IS A MINOR RATHER THAN A PATCH. a submission asking for more than one attempt is refused unless a run of that repository has been recorded resuming a checkpoint; edullm-alt-cl, edullm-p1 and open-instruct-scored-rewards are refused today, and EDULLM_RESUME_CHECK=waived in the command buys the attempt with the gap named on the approver's page
+version = "4.6.0"
 requires-python = ">=3.12"
 dependencies = [
   "pydantic>=2,<3",
@@ -85,7 +85,7 @@ reader = [
 # needs on day one -- `docs-frank/reference/system-overview.md` counts twelve of the
 # fourteen surfaces that reach a researcher as this one command:
 #
-#   uv tool install --force git+https://github.com/edu-llm/platform@v4.5.0
+#   uv tool install --force git+https://github.com/edu-llm/platform@v4.6.0
 #
 # THAT LINE IS TESTED RATHER THAN PROOFREAD, by tests/test_cli_install_command.py, which
 # holds it to the one in `edullm_platform.cli.release`. What used to be written here was
