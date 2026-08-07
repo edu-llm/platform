@@ -54,6 +54,17 @@ DOCUMENTED_URL = re.compile(
 #: that is not part of the path.
 TRAILING_PUNCTUATION = ".,;:!?'\"`)]}>\\"
 
+#: A placeholder, which means the line is code that *builds* a URL rather than a URL somebody
+#: was given.
+#:
+#: **THIS EXCLUSION WAS WRITTEN AFTER THE SCAN REPORTED ITS OWN WORKFLOW.** The
+#: ``documented-urls`` job composes each URL from a ref and a path with an f-string, and the
+#: template read as a URL whose path was ``{path``. That is a false report on correct code, and
+#: a guard that cries wolf gets routed around rather than fixed -- one in this repository was,
+#: three hours after it fired. No path in any tree here contains a brace, so nothing real is
+#: lost, and a URL that has to be built is not an instruction anybody follows by hand.
+TEMPLATED = re.compile(r"[{}]")
+
 #: Files whose bytes are not text, and are not worth decoding to find out.
 UNREADABLE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".pdf", ".ico", ".zip"})
 
@@ -81,21 +92,30 @@ BROADCAST: tuple[str, ...] = ("skills/edullm-platform/SKILL.md",)
 
 
 def tracked_files() -> list[str]:
-    """Every file git knows about, which is exactly the set a push carries.
+    """Every file git knows about or would carry, which is the set CI sees.
 
     ``git ls-files`` rather than a walk, for the reason ``tests/test_cli_install_command.py``
     gives about the same choice: a walk reads a local virtualenv, a coverage database and
     whatever else the machine happens to be carrying, so it finds matches in CI that no
     laptop has and matches on a laptop that CI never sees.
+
+    **``--others --exclude-standard`` IS HERE BECAUSE ITS ABSENCE COST A RED PULL REQUEST ON
+    THE FIRST RUN OF THIS FILE.** With ``--cached`` alone a file that has been written and not
+    yet staged is invisible, so the whole suite passed on a tree where the new workflow -- the
+    one carrying the very URL this scan is about -- had not been added. It went red in CI the
+    moment it was committed, which is the correct answer arriving at the least useful time.
+    Everything is tracked in CI, so the flag changes nothing there and moves the finding-out
+    to before the commit, which is the only place it is worth anything. Ignored files stay
+    out: that is what ``--exclude-standard`` keeps, and it is what keeps a virtualenv out.
     """
     listed = subprocess.run(
-        ("git", "ls-files"),
+        ("git", "ls-files", "--cached", "--others", "--exclude-standard"),
         cwd=PROJECT_ROOT,
         check=True,
         capture_output=True,
         text=True,
     )
-    return [line for line in listed.stdout.splitlines() if line]
+    return sorted({line for line in listed.stdout.splitlines() if line})
 
 
 def documented_urls() -> list[tuple[str, int, str, str]]:
@@ -111,6 +131,8 @@ def documented_urls() -> list[tuple[str, int, str, str]]:
             continue
         for number, line in enumerate(text.splitlines(), 1):
             for match in DOCUMENTED_URL.finditer(line):
+                if TEMPLATED.search(match.group(0)):
+                    continue
                 target = match.group("path").rstrip(TRAILING_PUNCTUATION)
                 if target:
                     found.append((name, number, match.group("ref"), target))
@@ -259,3 +281,32 @@ def test_the_path_is_read_out_of_the_shapes_this_tree_writes_urls_in(
 
     assert match is not None, f"no URL read out of: {written}"
     assert match.group("path").rstrip(TRAILING_PUNCTUATION) == expected
+    assert not TEMPLATED.search(match.group(0)), "a real URL was mistaken for a template"
+
+
+def test_a_line_that_builds_a_url_is_not_read_as_one() -> None:
+    """Guards :data:`TEMPLATED`, which is an exclusion and therefore the dangerous kind of rule.
+
+    Mutation: widen it until it swallows real URLs -- ``re.compile(".")`` is the extreme, and
+    anything matching a character every URL has is the realistic one. Every URL in the tree
+    would be skipped, the scan would compare an empty set, and this file would report green over
+    an install line pointing at nothing.
+
+    The line below is verbatim from ``.github/workflows/agent-layer-is-distributed.yml``, which
+    is the code that produced the false report in the first place. The pair of assertions is the
+    whole rule: the template is skipped, and the URL it renders to is not.
+    """
+    template = f"https://raw.githubusercontent.com/{OWNER_AND_REPOSITORY}/{{ref}}/{{path}}"
+    rendered = f"https://raw.githubusercontent.com/{OWNER_AND_REPOSITORY}/main/AGENTS.md"
+
+    templated = DOCUMENTED_URL.search(template)
+    assert templated is not None, "the template no longer looks like a URL at all"
+    assert TEMPLATED.search(templated.group(0)), "the placeholder is no longer recognised"
+
+    real = DOCUMENTED_URL.search(rendered)
+    assert real is not None
+    assert not TEMPLATED.search(real.group(0)), (
+        "the exclusion has been widened until it hides real URLs, which makes every case in "
+        "this file pass over a tree with none left"
+    )
+    assert (PROJECT_ROOT / real.group("path")).is_file()
