@@ -682,6 +682,36 @@ workloads:
     maximum_runtime_hours: "1"
     maximum_attempts: 1
     checkpoint: null
+  # THE 2 BELOW WAS COPIED FROM olmo-core-train AND IS NOT EARNED, AND ONCE THE DEMONSTRATED-RESUME
+  # GUARD LANDS THIS WORKLOAD IS REFUSED WITH resume_not_demonstrated. It is left at 2 on purpose,
+  # because every way of clearing it is somebody's decision rather than an edit, and the wrong one
+  # is cheap to make here and expensive elsewhere.
+  #
+  # What the second attempt actually buys is narrower than it looks. A timeout does not retry --
+  # measured, on a run submitted with two attempts and a bound it could not finish inside, which
+  # came back FAILED at Attempts 1 of 2 because a timeout terminates the job rather than ending an
+  # attempt the EvaluateOnExit rules are consulted about. So this 2 insures against a host dying,
+  # and only if the entrypoint resumes. Nobody has shown that it does; OLMo-core's demonstration
+  # is of OLMo-core's trainer and does not carry to a different program.
+  #
+  # DROPPING IT TO 1 IS THE HONEST CHANGE AND IT MOVES APPROVAL ROUTING, WHICH IS WHY IT IS NOT
+  # MADE HERE. Worst-case cost is rate x hours x attempts, so halving attempts halves it, and
+  # measured against config/policy.yaml on 2026-08-07 three provisioned profiles cross the
+  # automatic_below_cost_usd boundary as a result: gpu-4xl40s, gpu-8xl4 and gpu-8xa10g go from
+  # routine to automatic -- from a team lead releasing the run to nobody releasing it. That is a
+  # loosening of a gate for another team, arrived at as a side effect of a statement about
+  # checkpoints, and using maximum_attempts as a covert approval lever is the second copy of a
+  # number this repository forbids. If the routing is wanted, it belongs in policy.yaml.
+  #
+  # EDULLM_RESUME_CHECK=waived keeps the routing and is worse on the merits: it asserts what
+  # nobody has observed, and re-admits precisely the failure the guard is for -- a host dies, the
+  # retry starts from step 0, and the run reports success on a curve that never happened.
+  #
+  # So the ordered options are: demonstrate resume for this entrypoint and record it in
+  # config/reports/resume-demonstrations.yaml, which is a small cheap run and the only one that
+  # makes the 2 true; or drop to 1 and decide the routing question deliberately. Neither is
+  # urgent -- this workload is not on the capacity-block path, and until the guard merges the
+  # current behaviour is unchanged.
   - name: edullm-alt-cl-train
     repository: edullm-alt-cl
     maximum_runtime_hours: "24"
