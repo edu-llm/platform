@@ -40,6 +40,7 @@ from pathlib import Path
 
 import pytest
 
+import edullm_platform.cli.browser as browser_module
 import edullm_platform.cli.main as main_module
 from edullm_platform.cli.lane import AWS_BROKER, SESSION_PLUGIN
 from edullm_platform.cli.main import main
@@ -822,6 +823,7 @@ def invoke(
     aws_config: str | None = ONE_BROKER_PROFILE,
     aws_profile: str | None = None,
     ssh: bool = False,
+    headless: bool = False,
 ) -> tuple[int, str, str]:
     """Run the CLI as a person would, with both streams captured and no ambient identity.
 
@@ -932,6 +934,31 @@ def invoke(
         monkeypatch.delenv(named, raising=False)
     if ssh:
         monkeypatch.setenv("SSH_CONNECTION", "10.0.0.1 52814 10.0.0.2 22")
+    # AND THE DISPLAY IS THE OTHER HALF OF THE SAME FUNCTION, WHICH THE PARAGRAPH ABOVE MISSED
+    # AND CI PAID FOR. ``no_browser_here`` asks two questions, and pinning one while inheriting
+    # the other left the answer to whichever machine the suite ran on. On macOS ``_is_macos``
+    # short-circuits the display test, so five cases passed on the maintainer's laptop; on a
+    # headless Linux runner they took the printing branch and failed. That is the failure the
+    # SSH comment describes with the sign reversed -- reproducible everywhere except here --
+    # and it was the whole of what turned main red on 2026-08-06.
+    #
+    # Set rather than cleared, because the ordinary case in this suite is a browser that opens.
+    # ``headless`` is how a case asks for the other branch, and it clears both variables rather
+    # than one: Wayland sets ``WAYLAND_DISPLAY`` and may leave ``DISPLAY`` pointing at Xwayland,
+    # so clearing either alone leaves the machine's own session deciding.
+    #
+    # It also says the machine is not a Mac, which is not belt and braces but the whole of what
+    # makes the headless case expressible. ``no_browser_here`` scopes the display test to
+    # non-macOS deliberately and correctly -- a Mac has a window server whether or not
+    # ``DISPLAY`` is set -- so on the maintainer's laptop there is no environment that produces
+    # the branch, and a case asserting it would fail there and pass in CI. That is this bug
+    # again with the sign reversed a second time.
+    if headless:
+        for named in ("DISPLAY", "WAYLAND_DISPLAY"):
+            monkeypatch.delenv(named, raising=False)
+        monkeypatch.setattr(browser_module, "_is_macos", lambda: False)
+    else:
+        monkeypatch.setenv("DISPLAY", ":0")
     handoffs = cwd / "_handoffs"
     handoffs.mkdir(exist_ok=True)
     monkeypatch.setattr(tempfile, "tempdir", str(handoffs))
