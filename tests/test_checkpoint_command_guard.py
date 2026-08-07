@@ -31,6 +31,7 @@ import pytest
 from test_phase2_submission import (
     compile_payload,
     cpu_payload,
+    load_resume_demonstrations,
     olmo_payload,
     render,
     workload_profile,
@@ -41,9 +42,10 @@ from edullm_platform.checkpoint_commands import (
     CHECKPOINT_DIRECTORY_VARIABLE,
     expands_the_checkpoint_directory,
     require_a_save_folder_a_retry_can_find,
-    unverified_resume_note,
+    resume_note,
     waived_checkpoint_check_note,
 )
+from edullm_platform.contracts.resume_evidence import NO_RESUME_DEMONSTRATIONS
 from edullm_platform.contracts.workload import CheckpointContract
 from edullm_platform.errors import SubmissionRefusedError
 
@@ -52,6 +54,8 @@ from edullm_platform.errors import SubmissionRefusedError
 #: These were ``olmo-core-train-1gpu`` and ``olmo-core-check-gpu``, and each collapsed into
 #: the entry beside it when the catalog stopped letting a preset name a machine.
 CONTRACTED = "olmo-core-train"
+#: The repository behind both, which is what the resume question is asked of.
+REPOSITORY = "OLMo-core"
 UNCONTRACTED = "olmo-core-check"
 
 
@@ -423,10 +427,13 @@ def test_a_multi_attempt_run_is_told_that_nothing_here_checked_whether_it_resume
     and gates its load on ``os.path.exists`` against an ``s3://`` URI. So the sentence has to
     name what was checked rather than implying a clean bill.
     """
-    said = unverified_resume_note(
+    said = resume_note(
+        command=(),
         maximum_attempts=2,
+        repository=REPOSITORY,
         workload_profile=CONTRACTED,
         checkpoint=contract(),
+        demonstrations=NO_RESUME_DEMONSTRATIONS,
     )
 
     assert said is not None
@@ -434,29 +441,36 @@ def test_a_multi_attempt_run_is_told_that_nothing_here_checked_whether_it_resume
     assert CHECKPOINT_DIRECTORY_VARIABLE in said
     # Attributed to the profile rather than asserted, which is the whole correction.
     assert "resumes" in said
-    assert "nothing on this platform establishes" in said
+    assert "nothing establishes" in said
 
 
 def test_the_note_carries_the_finding_about_the_timeout_and_not_its_derivation() -> None:
     """Mutation: explain Batch's retry semantics to the person choosing ``--attempts``.
 
-    The paragraph used to end with the derivation -- Batch retries a failure matching none
-    of its rules, and an attempt stopped at its runtime bound reports no container exit code
-    for the rules to match. That is true, it is written out in this module's docstring and
-    again in ``config/policy.yaml``, and it answers an objection only a reader who already
-    knows ``EvaluateOnExit`` can raise. It is a fifth of what a first-time submitter reads
-    here and it changes nothing they can do.
+    The finding moved when somebody ran it. It used to be that the retry a submitter pays for
+    lands on the run that ran out of time and gets the same bound again -- derived from Batch
+    retrying a failure that matches none of its rules, and a timeout reporting no container
+    exit code for the rules to match. ``run_019fdd90-99d1-70e8-a005-e341452d9458`` was
+    submitted on 2026-08-07 with two attempts and a bound it could not finish inside, and
+    Batch reported ``FAILED`` at ``Attempts 1 of 2``: a timeout terminates the job rather than
+    ending an attempt the rules are asked about.
 
-    The finding is what they act on and it stays: the retry they are paying for lands on the
-    run that ran out of time, and it gets the same bound again.
+    What a submitter acts on is what the second attempt is for, which is a host dying. The
+    derivation stays out of the sentence for the reason it always did -- it answers an
+    objection only a reader who already knows ``EvaluateOnExit`` can raise.
     """
-    said = unverified_resume_note(
-        maximum_attempts=2, workload_profile=CONTRACTED, checkpoint=contract()
+    said = resume_note(
+        command=(),
+        maximum_attempts=2,
+        repository=REPOSITORY,
+        workload_profile=CONTRACTED,
+        checkpoint=contract(),
+        demonstrations=NO_RESUME_DEMONSTRATIONS,
     )
 
     assert said is not None
-    assert "ran out of time" in said
-    assert "same bound again" in said
+    assert "not retried at all" in said
+    assert "a host dying" in said
     assert "exit code" not in said
     assert "Batch" not in said
 
@@ -469,18 +483,24 @@ def test_a_single_attempt_run_is_told_nothing_because_it_has_no_second_attempt()
     question of what a retry would resume from does not arise.
     """
     assert (
-        unverified_resume_note(
+        resume_note(
+            command=(),
             maximum_attempts=1,
+            repository=REPOSITORY,
             workload_profile=CONTRACTED,
             checkpoint=contract(),
+            demonstrations=NO_RESUME_DEMONSTRATIONS,
         )
         is None
     )
     assert (
-        unverified_resume_note(
+        resume_note(
+            command=(),
             maximum_attempts=1,
+            repository=REPOSITORY,
             workload_profile=UNCONTRACTED,
             checkpoint=contract(UNCONTRACTED),
+            demonstrations=NO_RESUME_DEMONSTRATIONS,
         )
         is None
     )
@@ -498,8 +518,13 @@ def test_the_note_reads_the_same_in_a_terminal_a_document_and_a_markdown_page() 
     GitHub-flavoured markdown does not open an emphasis run inside a word, which is the
     whole reason the variable is named without backticks here rather than in spite of them.
     """
-    said = unverified_resume_note(
-        maximum_attempts=2, workload_profile=CONTRACTED, checkpoint=contract()
+    said = resume_note(
+        command=(),
+        maximum_attempts=2,
+        repository=REPOSITORY,
+        workload_profile=CONTRACTED,
+        checkpoint=contract(),
+        demonstrations=NO_RESUME_DEMONSTRATIONS,
     )
 
     assert said is not None
@@ -516,8 +541,13 @@ def test_a_retry_bound_with_no_contract_is_still_described_rather_than_passed_ov
     silence in the one case that is worst, which is the exact shape of defect the sentence
     exists to report -- a check that cannot fire looking like a check that passed.
     """
-    said = unverified_resume_note(
-        maximum_attempts=2, workload_profile=UNCONTRACTED, checkpoint=None
+    said = resume_note(
+        command=(),
+        maximum_attempts=2,
+        repository=REPOSITORY,
+        workload_profile=UNCONTRACTED,
+        checkpoint=None,
+        demonstrations=NO_RESUME_DEMONSTRATIONS,
     )
 
     assert said is not None
@@ -544,15 +574,20 @@ def test_the_approver_page_prices_two_attempts_and_says_what_the_second_one_buys
     """Mutation: leave the sentence in ``--json`` and off the page the lead reads.
 
     The lead is the one authorising the money. The worst-case block multiplies by attempts
-    and is correct to; this is the paragraph under it saying that the later attempts are
-    priced as though they reach further than the first and that nothing here established
-    they do.
+    and is correct to; this is the paragraph under it saying what the later attempts buy.
+
+    For OLMo-core that is now a citation rather than a disclaimer, because
+    ``config/reports/resume-demonstrations.yaml`` records a run of it that resumed. The
+    assertion is the run id, so this test fails if the shipped evidence is deleted as well
+    as if the section is.
     """
     page = render(compile_payload(olmo_payload()))
+    demonstration = load_resume_demonstrations().for_repository("OLMo-core")
 
+    assert demonstration is not None
     assert "x 2 attempt(s)" in page
     assert "## What the second attempt buys" in page
-    assert CHECKPOINT_DIRECTORY_VARIABLE in page
+    assert demonstration.run_id in page
 
 
 def test_the_approver_page_of_a_single_attempt_run_carries_no_such_section() -> None:

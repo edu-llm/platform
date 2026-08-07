@@ -40,8 +40,9 @@ from pydantic import BeforeValidator, Field, ValidationError, model_validator
 
 from edullm_platform.canonical import sha256_digest
 from edullm_platform.checkpoint_commands import (
+    require_a_demonstrated_resume_for_retries,
     require_a_save_folder_a_retry_can_find,
-    unverified_resume_note,
+    resume_note,
     waived_checkpoint_check_note,
 )
 from edullm_platform.contracts.admission import ApprovalEnvironment
@@ -73,6 +74,10 @@ from edullm_platform.contracts.policy import (
     classify_request,
 )
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
+from edullm_platform.contracts.resume_evidence import (
+    NO_RESUME_DEMONSTRATIONS,
+    ResumeDemonstrations,
+)
 from edullm_platform.contracts.workload import CostInputs, WorkloadCatalog, WorkloadProfile
 from edullm_platform.daily_ceiling import CeilingReading, class_under_the_ceiling
 from edullm_platform.errors import (
@@ -468,6 +473,10 @@ def compile_submission(
     #
     # It can only raise the class. See daily_ceiling.class_under_the_ceiling.
     daily_ceiling: CeilingReading | None = None,
+    # WHICH REPOSITORIES HAVE BEEN WATCHED RESUMING, defaulted to none for the reason
+    # ``published_images`` is defaulted to nothing: a caller that never passes it gets the
+    # refusal rather than a second attempt nobody established the value of.
+    resume_demonstrations: ResumeDemonstrations = NO_RESUME_DEMONSTRATIONS,
 ) -> CompiledSubmission:
     workload = _resolve_workload(
         catalog, inputs.workload_profile, repository=inputs.repository
@@ -602,6 +611,19 @@ def compile_submission(
         command=manifest.command,
         workload_profile=manifest.workload_profile,
         checkpoint=manifest.checkpoint,
+    )
+
+    # AND THE HALF NEITHER OF THOSE REACHES, WHICH IS WHETHER THE PROGRAM EVER LOADS BACK
+    # WHAT IT SAVED. The two above establish that a contract exists and that the command
+    # names the prefix, and both pass for a trainer that writes there and never reads. This
+    # asks whether anybody has watched this repository resume, which is the only question
+    # whose answer justifies the attempt factor in the price.
+    require_a_demonstrated_resume_for_retries(
+        command=manifest.command,
+        maximum_attempts=manifest.maximum_attempts,
+        repository=manifest.repository,
+        workload_profile=manifest.workload_profile,
+        demonstrations=resume_demonstrations,
     )
 
     # THE LAST RULE ABOUT THE TEXT OF A COMMAND, AND THE ONE WHOSE COST LANDS ON THE DEVICE
@@ -770,7 +792,9 @@ def _waiver_lines(manifest: RunManifest) -> tuple[str, ...]:
     return tuple(line for note in notes if note is not None for line in (note, ""))
 
 
-def _retry_lines(manifest: RunManifest) -> tuple[str, ...]:
+def _retry_lines(
+    manifest: RunManifest, demonstrations: ResumeDemonstrations
+) -> tuple[str, ...]:
     """What the attempt factor above buys, for a request that asks for more than one.
 
     Under the worst case rather than beside the table, because the sentence is about a
@@ -782,10 +806,13 @@ def _retry_lines(manifest: RunManifest) -> tuple[str, ...]:
     something the submitter did; this reports something the platform does not know, and it
     is owed to every lead releasing a multi-attempt run rather than to the unusual ones.
     """
-    said = unverified_resume_note(
+    said = resume_note(
+        command=manifest.command,
         maximum_attempts=manifest.maximum_attempts,
+        repository=manifest.repository,
         workload_profile=manifest.workload_profile,
         checkpoint=manifest.checkpoint,
+        demonstrations=demonstrations,
     )
     if said is None:
         return ()
@@ -846,6 +873,7 @@ def render_approver_context(
     scan_note: str | None = None,
     run_history: RunHistory | None = None,
     daily_ceiling: CeilingReading | None = None,
+    resume_demonstrations: ResumeDemonstrations = NO_RESUME_DEMONSTRATIONS,
 ) -> str:
     """What the reviewer reads before deciding, as GitHub step-summary markdown.
 
@@ -951,7 +979,7 @@ def render_approver_context(
             "you."
         ),
         "",
-        *_retry_lines(manifest),
+        *_retry_lines(manifest, resume_demonstrations),
         # SAID ONLY WHERE IT IS THE REASON, AND THAT IS WHAT MAKES IT WORTH READING. A run
         # over `automatic_below_cost_usd` was always going to reach a lead and the day has
         # nothing to do with why. A run under it that reaches one anyway is here because the

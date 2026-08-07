@@ -883,7 +883,7 @@ def test_every_compute_environment_buys_on_demand_rather_than_spot() -> None:
     environment in this tree is SPOT, so today that arm catches a genuine hardware fault and
     nothing else -- which is what makes the timeout the one failure a second attempt is
     reliably spent on, and is the reasoning ``config/policy.yaml`` and
-    ``checkpoint_commands.unverified_resume_note`` both rest on.
+    ``checkpoint_commands.resume_note`` both rest on.
 
     A SPOT environment would make all of that true in a different way rather than false, and
     that is exactly why it must not arrive silently. Reclaims would be routine, the retry arm
@@ -911,7 +911,7 @@ def test_every_compute_environment_buys_on_demand_rather_than_spot() -> None:
     assert not offenders, (
         "a Spot compute environment makes a reclaimed host an ordinary event, which is the "
         "case the one RETRY rule was written for and the case the reasoning in "
-        "config/policy.yaml and checkpoint_commands.unverified_resume_note currently says "
+        "config/policy.yaml and checkpoint_commands.resume_note currently says "
         f"does not arise. Read both before landing this: {'; '.join(offenders)}"
     )
 

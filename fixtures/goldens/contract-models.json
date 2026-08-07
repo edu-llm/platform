@@ -422,6 +422,20 @@
     },
     {
       "base": false,
+      "module": "edullm_platform.contracts.resume_evidence",
+      "name": "ResumeDemonstration",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:06b96fb35f2c289b32de606ef672d8ba5144b46240a4861e067300a6af850d04"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.resume_evidence",
+      "name": "ResumeDemonstrations",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:9db12455218a23a2272fdc38b3f54e55548e6903b304a59490ab31e68d498486"
+    },
+    {
+      "base": false,
       "module": "edullm_platform.contracts.source_identity",
       "name": "SourceIdentity",
       "schema_version": "1",

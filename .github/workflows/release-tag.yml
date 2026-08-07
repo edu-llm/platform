@@ -109,6 +109,7 @@ on:
       - "src/edullm_platform/contracts/policy.py"
       - "src/edullm_platform/contracts/repository_registry.py"
       - "src/edullm_platform/contracts/results.py"
+      - "src/edullm_platform/contracts/resume_evidence.py"
       - "src/edullm_platform/contracts/source_identity.py"
       - "src/edullm_platform/contracts/validation.py"
       - "src/edullm_platform/contracts/vocabulary.py"
@@ -131,6 +132,7 @@ on:
       - "config/image-exceptions.yaml"
       - "config/organization.yaml"
       - "config/policy.yaml"
+      - "config/reports/resume-demonstrations.yaml"
       - "config/repositories.yaml"
       - "config/run-history.json"
       - "config/workload-catalog.yaml"
@@ -504,13 +506,14 @@ jobs:
             config/organization.yaml
             config/policy.yaml
             config/repositories.yaml
+            config/reports/resume-demonstrations.yaml
             config/run-history.json
             config/workload-catalog.yaml
         run: |
           set -euo pipefail
-          # Split deliberately: CONFIGURATION_FILES is a list of seven, none of which
+          # Split deliberately: CONFIGURATION_FILES is a list of eight, none of which
           # contains a space or a glob character. Quoted, it would ask git for one path with
-          # six spaces in its name, which matches nothing and reports every release as
+          # seven spaces in its name, which matches nothing and reports every release as
           # code-only.
           set -- ${CONFIGURATION_FILES}
           if [ -z "${PREVIOUS}" ] || ! git diff --quiet "${PREVIOUS}" HEAD -- "$@"; then

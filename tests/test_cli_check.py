@@ -469,16 +469,16 @@ def test_what_a_second_attempt_does_not_establish_is_in_the_document_an_agent_re
 ) -> None:
     """Mutation: price two attempts and say nothing about whether the second one resumes.
 
-    ``cost`` multiplies by ``maximum_attempts`` and is right to. What it cannot carry is that
-    the platform has checked only that a checkpoint contract exists and that the command
-    expands the variable -- and that two registered repositories pass both and restart from
-    step 0. An agent that reads ``cost`` alone quotes a ceiling for a second attempt that may
-    buy nothing.
+    ``cost`` multiplies by ``maximum_attempts`` and is right to. What it cannot carry is
+    whether the later attempts reach further than the first, and an agent reading ``cost``
+    alone quotes a ceiling for a second attempt that may buy nothing.
 
-    ``maximum_attempts`` and ``resume_required`` are the structure and ``said`` is the
-    sentence, which is the split ``history`` and ``placement`` already make.
-    ``resume_required`` is the profile's declaration rather than a finding, which is the one
-    thing an agent must not read as a promise, so the sentence says so in words.
+    ``maximum_attempts``, ``resume_required`` and ``resume_demonstrated`` are the structure
+    and ``said`` is the sentence, which is the split ``history`` and ``placement`` already
+    make. The two flags are different kinds of thing and that is why both are here:
+    ``resume_required`` is the profile's declaration, which two registered repositories
+    carry while restarting from step 0, and ``resume_demonstrated`` is a run id an agent can
+    open. An agent must branch on the second.
     """
     root, runner = checkout(tmp_path, workload="olmo-core-train")
 
@@ -495,14 +495,20 @@ def test_what_a_second_attempt_does_not_establish_is_in_the_document_an_agent_re
     assert document["retries"]["maximum_attempts"] == 2
     assert document["retries"]["resume_required"] is True
 
+    demonstrated = document["retries"]["resume_demonstrated"]
+    assert demonstrated is not None, (
+        "config/reports/resume-demonstrations.yaml records a run of OLMo-core that resumed, "
+        "and it is what buys olmo-core-train its second attempt. Without it this submission "
+        "is refused rather than annotated."
+    )
+    assert demonstrated["resumed_from_step"] > 0
+    assert demonstrated["reached_step"] > demonstrated["resumed_from_step"]
+
     said = document["retries"]["said"]
-    assert "olmo-core-train" in said
-    assert "EDULLM_CHECKPOINT_DIR" in said
-    # The finding the sentence exists to carry rather than a paraphrase of the ceiling: the
-    # attempt Batch reliably spends matches none of the retry rules and gets the same bound
-    # again, so a run that resumes from nowhere cannot finish on it either.
-    assert "ran out of time" in said
-    assert "same bound again" in said
+    # The citation rather than a verdict: the run an agent can open, and the commit it ran,
+    # so that a reader can weigh evidence older than the code they are about to submit.
+    assert demonstrated["run_id"] in said
+    assert demonstrated["commit_sha"][:12] in said
 
 
 def test_a_single_attempt_check_carries_the_retries_key_holding_nothing(

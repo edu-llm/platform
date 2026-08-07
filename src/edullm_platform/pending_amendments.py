@@ -1142,7 +1142,46 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # about the tree they were built on and both are wrong about this one, which is the
     # ordinary arithmetic of integrating two changes that move one artifact and the reason
     # this was rebuilt rather than chosen between.
+    # A TWENTY-THIRD, AND IT IS THE FOURTEENTH ENTRY'S FINDING ARRIVING FOR THE FIFTH TIME
+    # PLUS A SECOND CAUSE THAT MOVES TWO OTHER ZIPS. The resume guard adds
+    # config/reports/resume-demonstrations.yaml, which is a reviewed configuration file,
+    # which is a ConfigFile member, which researcher_lane.py imports and the janitor's zip
+    # carries -- so a line in a StrEnum moves a Lambda for a file the sweep will never open,
+    # exactly as the fourteenth entry predicted every new report under config/ would. It
+    # also corrects a comment in config/policy.yaml, which ADMISSION_CONFIG and
+    # NOTIFIER_CONFIG both package, so the validator and the notifier move on prose.
+    #
+    # WHAT THE COMMENT SAID AND WHY IT COULD NOT STAY, WHICH IS THE ONLY PART OF THIS ENTRY
+    # THAT IS ABOUT ANYTHING. The v5 note derived that the one second attempt this platform
+    # reliably pays for is the one on a run stopped for outrunning attemptDurationSeconds,
+    # because a timeout reports no container exit code for the OnExitCode "*" rule to match
+    # and Batch retries a failure matching none of its rules. Nobody had run it.
+    # run_019fdd90-99d1-70e8-a005-e341452d9458 was submitted on 2026-08-07 with attempts: 2
+    # and a bound it could not finish inside, and Batch reported FAILED at "Attempts 1 of 2":
+    # a timeout terminates the job rather than ending an attempt the rules are asked about.
+    #
+    # NEITHER FUNCTION READS EITHER FILE FOR ANY OF THIS, SO ALL THREE ARE BYTES AND NO
+    # BEHAVIOUR. The validator re-derives an approval class from the manifest's own fields
+    # and from the compute profile's rate; the notifier quotes the ceiling; neither consults
+    # a comment, and neither opens the demonstrations file, which only the CLI and the
+    # compile job read. The janitor never reaches the enum member that moved.
     releases: tuple[PendingRelease, ...] = (
+        PendingRelease(
+            function="validator",
+            reason=(
+                "config/policy.yaml's v5 note derived that a Batch attempt stopped for "
+                "outrunning attemptDurationSeconds falls through to a retry, and "
+                "run_019fdd90-99d1-70e8-a005-e341452d9458 measured it reporting FAILED at "
+                "Attempts 1 of 2 on 2026-08-07. The comment is corrected and the note now "
+                "records the run. ADMISSION_CONFIG packages that file verbatim, so this is "
+                "prose moving a digest: the validator reads no comment and classifies the "
+                "same submissions either way."
+            ),
+            cleared_by=f"uv run python {RELEASE_COMMAND} --function validator",
+            builds_to="bb1305b53ae615407fac0f38d0a08e0c46f4485a4e918d10d9c768f24f06cb9c",
+            released="2cda942e9518cf23b6042a5b5ab35d550557a0784acfc9c3ee2d593844e9064c",
+            recorded_on=date(2026, 8, 7),
+        ),
         PendingRelease(
             function="notifier",
             reason=(
@@ -1150,10 +1189,15 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "without escaping it, so a run named <!channel> notified the whole workspace "
                 "every time it ended. messages.escaped now converts the three characters "
                 "Slack parses, per field and before the line is assembled so the link the "
-                "approval message builds survives."
+                "approval message builds survives. The digest then moved again for a "
+                "cause with no behaviour behind it: config/policy.yaml is in "
+                "NOTIFIER_CONFIG and its v5 note carried a derivation about Batch retrying "
+                "a timeout that run_019fdd90-99d1-70e8-a005-e341452d9458 measured false on "
+                "2026-08-07. This function reads the ceiling out of that file and never "
+                "reads a comment."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function notifier",
-            builds_to="15058807c08d7bddefbfa7413ee737a3ecd910de0955f4e6879cf0b2ddf75d8d",
+            builds_to="8bc5ec9b079ea3b360e67c518c494960f1880d4138704d738191cba3ee4de609",
             released="d78c4a48482558039e7affc51331ec558e5880f8e48876bafb567fe683ee67b9",
             recorded_on=date(2026, 8, 6),
         ),
@@ -1169,10 +1213,14 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "ConfigFile member, which researcher_lane.py imports and this zip carries, so "
                 "a line in a StrEnum moved a Lambda for two reports the sweep never reads. "
                 "The fourteenth entry in this register recorded that coupling as the finding "
-                "rather than a one-off, and this is its third and fourth arrival."
+                "rather than a one-off, and this is its third, fourth and now fifth "
+                "arrival: the resume guard adds config/reports/resume-demonstrations.yaml, "
+                "which is a reviewed configuration file, which is a ConfigFile member, "
+                "which this zip carries through the same import for a file the sweep will "
+                "never open."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function janitor",
-            builds_to="05a5cc589472e7d95800da952b740f438002ec0cd4e094ad0e71173d1e016339",
+            builds_to="6c96f99f9aee6a3eda09cf721e445d04d9cded007cdda5d4f1a542b041ff1aaa",
             released="e07efe963ec9cadb79f7345a14d9074c125e359a588e0661f99db687a757e96a",
             recorded_on=date(2026, 8, 6),
         ),

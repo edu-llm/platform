@@ -87,7 +87,10 @@ from typing import Final
 from pydantic import ValidationError
 
 from edullm_platform.admission import denied_outright_conditions
-from edullm_platform.checkpoint_commands import require_a_save_folder_a_retry_can_find
+from edullm_platform.checkpoint_commands import (
+    require_a_demonstrated_resume_for_retries,
+    require_a_save_folder_a_retry_can_find,
+)
 from edullm_platform.cli.configuration import ReviewedConfiguration
 from edullm_platform.cli.preferences import DefaultTeam
 from edullm_platform.cli.workspace import GitFacts
@@ -104,7 +107,6 @@ from edullm_platform.contracts.workload import (
     ComputeProfile,
     ComputeProfileResolutionError,
     CostInputs,
-    WorkloadCatalog,
     WorkloadProfile,
     resolve_compute_profile_for_execution,
 )
@@ -404,7 +406,7 @@ def run_preflight(
             history=shape.history,
         )
 
-    refusals.extend(_check_command(manifest, configuration.catalog))
+    refusals.extend(_check_command(manifest, configuration))
 
     priced = _price_and_derive_facts(manifest, configuration)
     if isinstance(priced, Refusal):
@@ -1357,7 +1359,9 @@ def _build_manifest(
     return manifest, []
 
 
-def _check_command(manifest: RunManifest, catalog: WorkloadCatalog) -> list[Refusal]:
+def _check_command(
+    manifest: RunManifest, configuration: ReviewedConfiguration
+) -> list[Refusal]:
     """Every rule about the text of a command, asked against the resolved profile.
 
     Against the resolved profile rather than the workload's, because ``--compute`` is what
@@ -1366,9 +1370,12 @@ def _check_command(manifest: RunManifest, catalog: WorkloadCatalog) -> list[Refu
     same reason, one step further along: the instance type behind the resolved profile is
     what decides whether the devices have bfloat16.
 
-    The catalog is passed rather than closed over because that is where the shapes are, and
-    the bfloat16 rule is derived from the instance type each profile declares there so that a
-    shape added to that file is covered without an edit anywhere else.
+    The whole reviewed configuration is passed rather than closed over, because that is where
+    the shapes are and now also where the resume demonstrations are: the bfloat16 rule is
+    derived from the instance type each profile declares in the catalog, so that a shape added
+    to that file is covered without an edit anywhere else, and the retry rule is derived from
+    a measurement file for the same reason. It took the catalog alone until the second of
+    those arrived, and taking two files by name would make the third an edit here.
 
     **THE SPELLING RULE WAS THE FOURTH AND WAS ASKED ONLY BY THE COMPILE STEP, WHICH IS THE
     FAILURE THIS WHOLE MODULE IS WRITTEN AGAINST.** A sweep asking for one device on a
@@ -1398,10 +1405,20 @@ def _check_command(manifest: RunManifest, catalog: WorkloadCatalog) -> list[Refu
     except SubmissionRefusedError as exc:
         refusals.append(Refusal(code=type(exc).reason_code, detail=str(exc)))
     try:
+        require_a_demonstrated_resume_for_retries(
+            command=manifest.command,
+            maximum_attempts=manifest.maximum_attempts,
+            repository=manifest.repository,
+            workload_profile=manifest.workload_profile,
+            demonstrations=configuration.resume_demonstrations,
+        )
+    except SubmissionRefusedError as exc:
+        refusals.append(Refusal(code=type(exc).reason_code, detail=str(exc)))
+    try:
         require_bfloat16_only_where_the_hardware_has_it(
             command=manifest.command,
             compute_profile=manifest.compute_profile,
-            catalog=catalog,
+            catalog=configuration.catalog,
         )
     except SubmissionRefusedError as exc:
         refusals.append(Refusal(code=type(exc).reason_code, detail=str(exc)))

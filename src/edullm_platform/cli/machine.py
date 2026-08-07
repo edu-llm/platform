@@ -45,13 +45,14 @@ from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any, Final, TextIO
 
-from edullm_platform.checkpoint_commands import unverified_resume_note
+from edullm_platform.checkpoint_commands import resume_note
 from edullm_platform.cli.actions import RunFacts, SubmissionRun
 from edullm_platform.cli.configuration import ReviewedConfiguration
 from edullm_platform.cli.lane import placement_said
 from edullm_platform.cli.preflight import DEFERRED_TO_SUBMIT, Preflight, Refusal
 from edullm_platform.cli.presentation import plain_decimal
 from edullm_platform.cli.release import installed_version
+from edullm_platform.contracts.resume_evidence import ResumeDemonstrations
 from edullm_platform.corpora import CorporaSnapshot, Corpus
 from edullm_platform.placement import PlacementRecord
 from edullm_platform.run_history import RUNGS
@@ -190,42 +191,63 @@ def check_document(
             else preflight.approving_environment.value
         ),
         "cost": _cost_of(preflight),
-        "retries": _retries_of(preflight),
+        "retries": _retries_of(preflight, configuration.resume_demonstrations),
         "history": _history_of(preflight),
         "placement": _placement_of(placement),
     }
 
 
-def _retries_of(preflight: Preflight) -> dict[str, Any] | None:
+def _retries_of(
+    preflight: Preflight, demonstrations: ResumeDemonstrations
+) -> dict[str, Any] | None:
     """What the attempt factor in ``cost`` buys, for a request asking for more than one.
 
     ``None`` for a single-attempt run, the way ``placement`` is ``None`` for a shape that
     places promptly: there is no second attempt to describe, and a key that appeared on
     every check carrying nothing is a key every caller reads past.
 
-    Branch on ``maximum_attempts`` and ``resume_required`` and print ``said``, which is the
-    split ``_history_of`` and ``_placement_of`` already make. The two numbers are reviewed
-    configuration and the sentence is prose this repository rewords.
+    Branch on ``maximum_attempts``, ``resume_required`` and ``resume_demonstrated`` and print
+    ``said``, which is the split ``_history_of`` and ``_placement_of`` already make. The
+    numbers are reviewed configuration and the sentence is prose this repository rewords.
 
-    ``resume_required`` is the workload profile's declaration and not a finding. Nothing on
-    this platform verifies it against the codebase that would have to honour it, which is
-    what ``said`` exists to state in words -- a caller that reads ``true`` here and concludes
-    a retry resumes has made exactly the inference this field cannot support.
+    **``resume_required`` AND ``resume_demonstrated`` ARE DIFFERENT KINDS OF THING AND ARE
+    BOTH HERE FOR THAT REASON.** The first is the workload profile's declaration, which
+    nothing verifies against the codebase that would have to honour it -- a caller reading
+    ``true`` there and concluding a retry resumes has made an inference the field cannot
+    support, and two of the six registered repositories declared it while restarting from
+    step 0. The second is a run id: a submission on which a second process was watched
+    loading a first one's checkpoint and continuing. Branch on the second.
     """
     manifest = preflight.manifest
     if manifest is None:
         return None
-    said = unverified_resume_note(
+    said = resume_note(
+        command=manifest.command,
         maximum_attempts=manifest.maximum_attempts,
+        repository=manifest.repository,
         workload_profile=manifest.workload_profile,
         checkpoint=manifest.checkpoint,
+        demonstrations=demonstrations,
     )
     if said is None:
         return None
+    demonstration = demonstrations.for_repository(manifest.repository)
     return {
         "maximum_attempts": manifest.maximum_attempts,
         "resume_required": (
             None if manifest.checkpoint is None else manifest.checkpoint.resume_required
+        ),
+        "resume_demonstrated": (
+            None
+            if demonstration is None
+            else {
+                "run_id": demonstration.run_id,
+                "commit_sha": demonstration.commit_sha,
+                "compute_profile": demonstration.compute_profile,
+                "resumed_from_step": demonstration.resumed_from_step,
+                "reached_step": demonstration.reached_step,
+                "recorded_at": demonstration.recorded_at.isoformat(),
+            }
         ),
         "said": said,
     }

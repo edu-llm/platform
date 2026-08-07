@@ -494,7 +494,7 @@ def test_an_attempt_stopped_at_its_time_bound_matches_no_rule_and_is_therefore_r
     ``test_every_compute_environment_buys_on_demand_rather_than_spot`` -- the one second
     attempt this platform reliably pays for is the one on the run that could not finish in
     its bound, given the same bound again. That is the arm least likely to be helped by
-    restarting, and it is why ``checkpoint_commands.unverified_resume_note`` exists.
+    restarting, and it is why ``checkpoint_commands.resume_note`` exists.
 
     Asserted against the reason string rather than against a comment, so a rule set that grew
     an entry covering the timeout would make this fail and be read rather than merely land.
@@ -522,7 +522,7 @@ def test_an_attempt_stopped_at_its_time_bound_matches_no_rule_and_is_therefore_r
     assert matched == [], (
         f"a rule now matches {BATCH_TIMEOUT_STATUS_REASON!r}. Batch retries an attempt "
         "matching nothing, and the reasoning in config/policy.yaml and in "
-        "checkpoint_commands.unverified_resume_note turns on the timeout being that case. "
+        "checkpoint_commands.resume_note turns on the timeout being that case. "
         f"Read both before landing this: {matched}"
     )
 
