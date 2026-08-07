@@ -156,6 +156,29 @@ Set for you. You never supply these, and a value you set yourself is one the rec
 
 The three dataset variables come from the registry entry behind the field you picked rather than from anything you typed.
 
+**`EDULLM_CHECKPOINT_DIR` and `EDULLM_OUTPUT_PREFIX` hold `s3://` URIs, not filesystem paths.** This is the one line in this table worth reading twice, because getting it wrong loses everything a run did and raises nothing while doing it. `pathlib.Path("s3://bucket/key")` is `PosixPath("s3:/bucket/key")`, a *relative local path*, so a program that hands the value to `Path()`, `os.makedirs` or `open()` writes into a directory called `s3:` beside itself, on a disk that goes away with the machine. The run exits zero. The prefix stays empty. Nothing in the run says so, and the nightly audit is what eventually notices.
+
+Two registered repositories have now done exactly this — one gating a checkpoint load on `os.path.exists()` against the URI, which is false on every attempt, and one taking the value as a save folder. Pass it to whatever your library calls its **remote** or **URI** destination. If your trainer only writes locally, write locally and upload; do not hand it the variable and hope.
+
+Submission refuses a command that never expands `$EDULLM_CHECKPOINT_DIR` under a workload profile that promised checkpoints. That check reads your command text and it cannot read your program, so it catches the run that forgot the variable and not the run that misuses the value. This paragraph is the only thing standing in front of the second one.
+
+## What a container can reach
+
+**Containers have outbound internet.** A training job can `pip install`, clone from GitHub, pull weights and tokenizers from the Hugging Face Hub, and reach Weights and Biases. Nothing needs baking into your image for network reasons alone.
+
+| Direction | What is allowed |
+| --- | --- |
+| Outbound, HTTPS | Anywhere |
+| Outbound, HTTP | Anywhere |
+| Outbound, anything else | Nothing. No SSH, no FTP, no arbitrary ports |
+| Inbound | Nothing at all. There is no ingress rule |
+
+This is worth stating plainly because a repository author cannot tell from the outside, and the correct design differs completely depending on the answer: with egress, nothing needs doing; without it, every repository has to bake its assets into its image at build time and every Hub fetch is a bug. Several guides here already assume it — the three corpora whose tokenizers are fetched from the Hub at container start only work because of this — and until now nothing said so.
+
+**It is public subnets with an internet gateway rather than a NAT gateway, and `infra/batch-network.yaml` argues the trade.** The container needs to reach ECR, S3 and CloudWatch Logs and nothing needs to reach it, so the two honest shapes were public subnets with public IPs, or private subnets behind a NAT gateway carrying exactly the same traffic in the same direction at a monthly cost. The security group has no ingress rule at all, which is what actually keeps the hosts unreachable; a public IP with no open port is not an exposure. The template also records the alternative it did not take: VPC endpoints for ECR, S3 and Logs would remove the internet path entirely, at about the cost of the NAT, and that is a hardening decision this phase deferred rather than missed.
+
+**Two things follow for you.** A dependency resolved at container start is a dependency that can fail at container start, on somebody else's outage, after you have been allocated a GPU — so pin what you can and prefer the image. And an egress path is an egress path: your job can send anywhere, so treat what you put in it accordingly.
+
 ## Fan-out
 
 A fan-out runs your command once per cell. Give the form a `fanout_size` and a `fanout_index_parameter` naming what varies, such as `seed` or `shard`.
@@ -203,6 +226,14 @@ edullm --version
 **One-time, for an install made before v4.2.2 and for nothing else.** The distribution used to be called `edullm-platform` while the command was `edullm`, which is why `uv tool uninstall edullm` used to answer `not installed` to somebody holding the binary. Run `uv tool uninstall edullm-platform` **before** the install line above rather than after it: an install of `edullm` does not replace an `edullm-platform` one, both own the same `edullm` executable, and uv deletes that file with the old entry without noticing the new install still needs it. The wrong order leaves `uv tool list` reporting a healthy `edullm` and `command not found` in the shell, which re-running the install line repairs. Where the old name was never installed it exits 2 with ``error: `edullm-platform` is not installed``, which is expected.
 
 **Read that version back, and read 3.4.8 or higher.** Below it, `submit` strips the quoting off your command on the way to the form and the compile job refuses the submission two minutes later. The fix travels with the install rather than with the platform, so an old install stays broken until that first line is run again. [Day one](day-one.md#install-the-tool-then-read-the-version-back) prints the refusal it earns, so you can recognise it.
+
+**If `edullm` answers with a traceback, or with a help page you do not recognise, something else on your PATH owns the name.** The usual something else is your project's own virtual environment: `edullm-data` ships a console script called `edullm` too, so a checkout whose `.venv` depends on it — OLMo-core's does — puts that binary in front of the tool this page is about whenever the environment is active. Nothing warns you. The two are different programs with the same name, and the one you want is the platform CLI declared by `edullm = "edullm_platform.cli:main"`.
+
+```
+which -a edullm
+```
+
+That prints every `edullm` on your PATH, in the order the shell will try them. If the first line is inside a `.venv`, that is your answer. Run the platform tool by an unambiguous path, deactivate the environment for the submission step, or run it with `uvx --from git+https://github.com/edu-llm/platform edullm`. Do not try to fix it by editing `edullm-data`; it is a different repository and its entry point is not a mistake.
 
 You need [uv](https://docs.astral.sh/uv/) and a `gh` that is logged in with `gh auth login`. That is the whole of it for the five verbs below. `check`, `submit`, `status`, `logs` and `cancel` drive `git` and `gh` rather than holding a credential of their own, so they can do what you can do and nothing more, and there is no AWS account anywhere in this. All five were run on 2026-08-06 with `AWS_PROFILE`, both key variables and both configuration paths pointed at nothing, and all five answered normally.
 

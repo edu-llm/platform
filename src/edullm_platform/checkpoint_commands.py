@@ -99,6 +99,7 @@ from .launchers import (
 __all__ = [
     "CHECKPOINT_CHECK_WAIVER",
     "CHECKPOINT_DIRECTORY_VARIABLE",
+    "URI_WARNING",
     "expands_the_checkpoint_directory",
     "require_a_save_folder_a_retry_can_find",
     "unverified_resume_note",
@@ -115,6 +116,57 @@ CHECKPOINT_DIRECTORY_VARIABLE: Final = "EDULLM_CHECKPOINT_DIR"
 #: platform's business. Spelled to match ``EDULLM_LAUNCH_CHECK=waived`` exactly, because the
 #: two escapes should be one convention rather than two.
 CHECKPOINT_CHECK_WAIVER: Final = "EDULLM_CHECKPOINT_CHECK=waived"
+
+#: THE HALF OF THIS GUARD THAT IS PROSE, BECAUSE THE OTHER HALF CANNOT BE WRITTEN.
+#:
+#: Two registered repositories have now written a full run into a local directory called
+#: ``s3:`` and exited zero. ``open-instruct-scored-rewards`` gates its checkpoint load on
+#: ``os.path.exists(checkpoint_state_dir)`` against the URI, which is false on every attempt;
+#: ``OLMo-core`` took the value as a save folder. Both expanded the variable, so both passed
+#: :func:`require_a_save_folder_a_retry_can_find`, and both were correct submissions by every
+#: test this platform can run before the money is spent.
+#:
+#: The mechanism is one line of Python: ``pathlib.Path("s3://bucket/key")`` is
+#: ``PosixPath("s3:/bucket/key")``, a *relative* path, which every filesystem call accepts
+#: and creates. There is no exception, no non-zero exit and no log line.
+#:
+#: WHY THIS IS A SENTENCE AND NOT A CHECK, WHICH IS A CHOICE AND IS ARGUED RATHER THAN
+#: ASSUMED. Three repairs were on the table and none of them is the one to build here.
+#:
+#: *Rename the variable to end ``_URI``.* It is the cheapest and it fixes the least. Neither
+#: incident was a submitter misreading the name -- both programs took the *value* and applied
+#: a local-filesystem operation to it, which a better name does not reach. It is also not
+#: free: the name is in every submitted command in flight, in the guides, in the fan-out
+#: prologue in :mod:`edullm_platform.execution` and in the stored manifests, so renaming it
+#: breaks running work to buy a hint.
+#:
+#: *Hand out a local path and sync it up when the run ends.* It fails in exactly the case a
+#: retry exists for. :func:`unverified_resume_note` records the finding: the one second
+#: attempt this platform reliably spends is on the run stopped for outrunning
+#: ``attemptDurationSeconds``, and an attempt killed at its bound runs no exit hook, so the
+#: sync would not happen on the only run that needed it. It would also need the platform to
+#: wrap every command, and a checkpoint to fit on instance disk.
+#:
+#: *Check after the run that a contracted run wrote something.* This is the right instrument
+#: and it is already built: ``tools/find_runs_that_saved_nothing.py`` reads every contracted
+#: run's prefix, distinguishes an empty prefix from a fragment from a loadable checkpoint,
+#: and fails the nightly audit. It caught both of these. What it does not do -- what nothing
+#: hanging off a *result* can do -- is prevent the burn, and its own docstring records the
+#: price of moving it earlier into the lifecycle recorder: a ``ResultManifest`` field, which
+#: moves a recorded structural digest, and an ``s3:ListBucket`` grant on a Lambda role that
+#: holds four ``PutObject`` grants and deliberately nothing else. That is a deploy from a
+#: laptop and a contract change, and it is the right next thing rather than this one.
+#:
+#: So what is left to do cheaply is to put the fact in front of the submitter at the moment
+#: they are wiring the variable into a command, which is this refusal, and in the guide. That
+#: is weak and it is honest about being weak.
+URI_WARNING: Final = (
+    f"And note what that variable holds: ${CHECKPOINT_DIRECTORY_VARIABLE} is an s3:// URI "
+    "rather than a filesystem path, so a program that passes it to pathlib.Path, "
+    "os.path.exists or open writes to a local directory named s3: and loses the run without "
+    "raising -- two registered repositories have done exactly that. Give it to whatever your "
+    "library calls its remote or URI destination, not to its local one."
+)
 
 #: ``$NAME`` and ``${NAME``, with the trailing lookahead doing the load-bearing work.
 #: ``$EDULLM_CHECKPOINT_DIRECTORY`` is a variable nothing sets, so a command using it expands
@@ -421,7 +473,7 @@ def _refusal(
         "saves where its own default says, which for the OLMo-core example is "
         "/tmp/{run_name} on local disk that stops existing with the machine. The run exits "
         "zero, the checkpoint prefix stays empty, and the retry this contract pays for "
-        "starts from nothing. If this run places its own checkpoints, or is a throwaway "
-        f"nobody will resume, write {CHECKPOINT_CHECK_WAIVER} into the command instead. A "
-        f"command that saves where a retry looks is {example}"
+        f"starts from nothing. {URI_WARNING} If this run places its own checkpoints, or is "
+        f"a throwaway nobody will resume, write {CHECKPOINT_CHECK_WAIVER} into the command "
+        f"instead. A command that saves where a retry looks is {example}"
     )

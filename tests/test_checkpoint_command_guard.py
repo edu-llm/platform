@@ -39,6 +39,7 @@ from test_phase2_submission import (
 from edullm_platform.checkpoint_commands import (
     CHECKPOINT_CHECK_WAIVER,
     CHECKPOINT_DIRECTORY_VARIABLE,
+    URI_WARNING,
     expands_the_checkpoint_directory,
     require_a_save_folder_a_retry_can_find,
     unverified_resume_note,
@@ -132,6 +133,26 @@ def test_the_refusal_names_the_profile_the_variable_and_the_way_through() -> Non
         "submission here needs"
     )
     assert CHECKPOINT_CHECK_WAIVER in message
+
+
+def test_the_refusal_says_the_variable_holds_a_uri_and_not_a_path() -> None:
+    """The second half of this failure, which the guard above cannot check for at all.
+
+    Passing the variable is necessary and is not sufficient. Two registered repositories
+    expanded it correctly and then applied a local-filesystem operation to the value:
+    ``pathlib.Path("s3://b/k")`` is a relative path, so the run writes into a directory
+    called ``s3:`` beside the process, exits zero and loses everything. Both would pass every
+    assertion above this one.
+
+    Mutation: drop the sentence. This refusal is the last place a submitter is looking at
+    that variable before the money is spent, and the module docstring records why the three
+    structural repairs are all somebody else's next commit.
+    """
+    message = refuse(SAVES_NOWHERE)
+
+    assert URI_WARNING in message
+    assert "s3://" in message
+    assert "pathlib.Path" in message
 
 
 # ---------------------------------------------------------------------------------------

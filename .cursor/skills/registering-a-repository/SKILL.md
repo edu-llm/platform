@@ -25,12 +25,26 @@ declares a path that points at nothing.
 - [ ] 1. Confirm it is not already registered
 - [ ] 2. Resolve the base image against what is approved
 - [ ] 3. Write .edullm/Dockerfile
-- [ ] 4. Write the build-caller workflow
-- [ ] 5. Write a first .edullm/run.yaml
-- [ ] 6. Commit and push to an edullm/** branch
-- [ ] 7. Prepare the configuration pull request
-- [ ] 8. Open it, and say what happens next
+- [ ] 4. Write .edullm/verify_image.py
+- [ ] 5. Write the build-caller workflow
+- [ ] 6. Write a first .edullm/run.yaml
+- [ ] 7. Commit and push to an edullm/** branch
+- [ ] 8. Prepare the configuration pull request
+- [ ] 9. Open it, and say what happens next
 ```
+
+Two facts about the environment, because both change what you write and neither is
+discoverable from a research checkout.
+
+**Containers have outbound internet on HTTPS and HTTP.** A run can pull from PyPI, GitHub
+and the Hugging Face Hub. You do not have to bake assets into the image for network reasons,
+though baking them still buys you not failing on somebody else's outage after a GPU has been
+allocated. Nothing can reach in. `guides/the-platform.md` has the shape and the trade-off.
+
+**A project `.venv` can shadow the platform CLI.** `edullm-data` ships a console script also
+called `edullm`, so an active environment depending on it answers `edullm` with a different
+program. `which -a edullm` is the diagnostic; the first line wins. Do not attempt to fix
+`edullm-data`, which is a separate repository.
 
 ### 1. Confirm it is not already registered
 
@@ -64,7 +78,56 @@ runtime. The command a run executes comes from the submission, not from the imag
 Keep it minimal. Every layer is rebuilt on every push to an `edullm/**` branch and the build
 cache is one of two levers on a bill that is not small.
 
-### 4. Write the build-caller workflow
+### 4. Write `.edullm/verify_image.py`
+
+The one assertion the platform cannot make for you, run inside the assembled image on every
+build, before the push. Write it, and a dependency your code needs and your image lacks is a
+red build instead of a billed GPU allocation that dies in the first seconds.
+
+This is not hypothetical and it is why the step exists. Every `olmo3_*` and `olmo2_*` factory
+in OLMo-core hardcodes `attn_backend=flash_2`; `Attention.__init__` calls `assert_supported()`
+while the model is being *constructed*; the registered image has no flash-attn and its base
+has no compiler to build one. So no model could be instantiated at all, and the way that got
+found out was a researcher waiting for a GPU, getting one, and losing it seconds later.
+
+**Assert what the image has to be able to do, not what it has to contain.** A version pin
+tells you a package is installed. Constructing the thing tells you the constructor does not
+raise, which is the failure above and is the one a pin cannot see.
+
+**Enumerate, never list.** A hardcoded set of model names is correct on the day it is typed
+and silently incomplete afterwards, which is the failure mode the check exists to prevent
+arriving one level up. Read the names off the object:
+
+```python
+from olmo_core.nn.transformer import TransformerConfig
+
+RUNGS = sorted(
+    name for name in dir(TransformerConfig)
+    if name.startswith(("olmo2_", "olmo3_"))
+)
+for rung in RUNGS:
+    getattr(TransformerConfig, rung)(vocab_size=100352).build(init_device="meta")
+```
+
+`init_device="meta"` is load-bearing: it runs every constructor and allocates no storage, so
+the whole ladder costs seconds and no memory. Print each name before you build it, so a red
+build names the rung that failed.
+
+**It runs with no network, with no GPU, and with only `.edullm/` mounted.** No device is
+available and none can be asked for, which is affordable for the case above — flash-attn is
+absent, so the import raises with no device in the question — and is affordable in the
+passing direction too, because loading a CUDA extension needs no card and constructing a
+module launches no kernel. **A check that genuinely needs a device must not go here.** It
+would go red on every build of a correct image. Put it behind your `*-check` workload
+profile instead, which is a short run on the smallest GPU shape and is what that profile is
+for.
+
+Exit non-zero, or raise, to refuse the image. Whatever the check printed is reproduced in the
+build log, so print what a reader will need. A repository with no such file is not refused —
+the build says so on every run rather than passing over it silently — so leaving this out is
+a choice you are making rather than a step you can skip unnoticed.
+
+### 5. Write the build-caller workflow
 
 A workflow in the research repository that calls the platform's reusable build. **Check what
 it fires on.** A caller that fires only on `edullm/**` pushes and manual dispatch never fires
@@ -89,7 +152,7 @@ variables endpoint — so the check lives in the reusable build, whose first ste
 empty value with `publisher_role_arn_is_empty` and the variable's name. If you see that, this
 is the step you skipped.
 
-### 5. Write a first `.edullm/run.yaml`
+### 6. Write a first `.edullm/run.yaml`
 
 It holds what is a property of the code, which is the command, the workload profile and a
 suggested machine. Everything else is supplied at submit time.
@@ -98,7 +161,7 @@ suggested machine. Everything else is supplied at submit time.
 write here is a placeholder that gets replaced. Write it anyway. It is what makes the pull
 request reviewable.
 
-### 6. Commit and push to an `edullm/**` branch
+### 7. Commit and push to an `edullm/**` branch
 
 ```bash
 git switch -c edullm/register
@@ -109,7 +172,7 @@ git push -u origin edullm/register
 
 The push is what builds the first image.
 
-### 7. Prepare the configuration pull request
+### 8. Prepare the configuration pull request
 
 ```bash
 edullm add repository --reason "<why this needs a repository of its own>"
@@ -124,7 +187,7 @@ request at. **The workflow does not open it.** This organization forbids Actions
 creating a pull request, and the one setting that would allow it also allows a workflow to
 submit an approving review, which is what protects the very files a registration edits.
 
-### 8. Open it, and say what happens next
+### 9. Open it, and say what happens next
 
 Wait for the run to go green, then open the compare URL. The title is filled in and the body
 is not — it runs to about eleven thousand characters, which is over twice what a URL will
