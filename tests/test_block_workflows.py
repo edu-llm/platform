@@ -25,10 +25,12 @@ visible than a timer inside a bootstrap -- so it is held here as well as argued 
 
 from __future__ import annotations
 
+import ast
 import gzip
 import re
 import subprocess
 import sys
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +42,7 @@ from workflow_support import (
     load_workflow,
     only_job,
     run_step_script,
+    shell_syntax_without_heredoc_bodies,
     step,
     unreal_context_references,
     write_stub,
@@ -112,6 +115,163 @@ fi
 printf '%s\\n' "$@" >> "${RECORDED}"
 echo '{}'
 """
+
+# --------------------------------------------------------------------------------------
+# WHAT THIS LANE ASKS AWS FOR, AGAINST WHAT ITS ROLE IS ALLOWED TO DO.
+#
+# The gap this closes cost the window it was found in. `block-launch-fleet.yml` asks the
+# registry whether the image tag exists, in the resolve step, ahead of the subnet and the
+# security group and the interface plan -- and `BlockFleetRole` held eight statements, none of
+# them naming an `ecr:` action. That is not a risk, it is an `AccessDeniedException` on the
+# first dispatch, before a single machine starts, against a reservation that began billing a
+# minute earlier and cannot be refunded.
+#
+# Nothing could have caught it by reading one file. The workflow is correct on its own terms
+# and so is the template; what is wrong is the seam, and the seam is only visible to something
+# that reads both. Every other test in this module holds a property of one artifact.
+#
+# THE CHECK IS AT SERVICE AND VERB LEVEL AND THAT IS DELIBERATE. Resource and condition
+# dimensions are where an IAM grant is subtlest, and a checker that tried to evaluate them
+# would be a policy simulator with a bug in it. A missing *action* is the coarsest possible
+# failure and the one that actually happens, because an action is what somebody forgets to add
+# when they add a call. The region dimension of the one cross-region grant here is held
+# separately below, by name.
+# --------------------------------------------------------------------------------------
+
+#: An ``aws <service> <verb>`` anywhere in a run body. Matched mid-line as well as at the start
+#: of one, because ``if ! aws ec2 wait ...`` is how the launch waits for its own fleet.
+AWS_CALL = re.compile(r"(?<![\w./-])aws\s+(?P<service>[a-z0-9-]+)\s+(?P<verb>[a-z0-9-]+)")
+
+#: The same word on its own, used to check that every ``aws`` in a body was read as a call. A
+#: form this regex cannot parse would otherwise drop out of the comparison silently, which is
+#: the failure mode of every checker like this one.
+AWS_WORD = re.compile(r"(?<![\w./-])aws(?=\s)")
+
+SHELL_COMMENT = re.compile(r"^[ \t]*#.*$", re.MULTILINE)
+
+#: Every tool a run body reaches for. Half this lane makes no ``aws`` call in YAML at all --
+#: `block-logs.yml`, `block-drain.yml` and `block-status.yml` each run one Python tool -- so a
+#: check that read only the workflows would report those three as needing nothing.
+TOOL_INVOCATION = re.compile(r"tools/(?P<tool>[a-z0-9_]+)\.py")
+
+#: The first word of a CLI argument list, when that word is a service. Used to find the calls
+#: the tools make, which are lists rather than command lines.
+AWS_SERVICES = frozenset(
+    {"cloudformation", "ec2", "ecr", "iam", "logs", "s3", "s3api", "secretsmanager", "ssm", "sts"}
+)
+
+#: Where the CLI name and the IAM name differ.
+IAM_SERVICE_PREFIX = {"s3api": "s3"}
+
+#: Calls whose IAM action is not the CamelCase of the verb, with the reason each is here.
+CALL_AUTHORISED_BY = {
+    # A waiter is not an API call. It polls one, and for `instance-running` that is
+    # DescribeInstances -- which is why the launch could add the wait without touching IAM.
+    ("ec2", "wait"): "ec2:DescribeInstances",
+    # S3 authorises a listing against the bucket rather than against an operation named after
+    # the CLI verb, and the ListObjectsV2 spelling appears in no policy anywhere.
+    ("s3api", "list-objects-v2"): "s3:ListBucket",
+    # HeadObject is GetObject with the body discarded and is authorised as GetObject. A policy
+    # granting `s3:HeadObject` grants nothing at all, which is the trap this entry names.
+    ("s3api", "head-object"): "s3:GetObject",
+}
+
+#: Calls that need no grant. ``sts get-caller-identity`` is available to every principal and
+#: cannot be granted, so requiring it in the policy would fail this check forever.
+CALL_NEEDS_NO_GRANT = frozenset({("sts", "get-caller-identity")})
+
+
+def iam_action(service: str, verb: str) -> str | None:
+    """The IAM action one ``aws <service> <verb>`` is authorised by, or ``None`` for the free ones."""
+    if (service, verb) in CALL_NEEDS_NO_GRANT:
+        return None
+    known = CALL_AUTHORISED_BY.get((service, verb))
+    if known is not None:
+        return known
+    operation = "".join(part[:1].upper() + part[1:] for part in verb.split("-"))
+    return f"{IAM_SERVICE_PREFIX.get(service, service)}:{operation}"
+
+
+def calls_in_shell(script: str) -> set[tuple[str, str]]:
+    """Every AWS call a run body makes itself, with the heredocs and the comments taken out.
+
+    Comments go because this lane writes long ones and they name the calls they are about -- a
+    paragraph explaining why there is no ``aws s3 sync`` here would otherwise read as one.
+
+    Heredoc bodies go for a sharper reason, and the first draft of this check found it:
+    ``block-run.yml`` prints ``aws ssm start-session --target ...`` out of a Python heredoc, as
+    the line a person types on their own laptop to get a shell on the node they were given.
+    That is somebody else calling AWS with their own credentials. Reading it as a call this
+    role makes would demand ``ssm:StartSession`` on a workflow that never opens a session, and
+    a grant added to satisfy a checker is the worst kind of grant there is.
+    """
+    body = SHELL_COMMENT.sub("", shell_syntax_without_heredoc_bodies(script))
+    found = {(match["service"], match["verb"]) for match in AWS_CALL.finditer(body)}
+    assert len(AWS_CALL.findall(body)) == len(AWS_WORD.findall(body)), (
+        "an aws invocation in this body is written in a form this check cannot read, so it "
+        "would be left out of the comparison rather than fail it:\n" + body
+    )
+    return found
+
+
+def calls_in_tool(source: str) -> set[tuple[str, str]]:
+    """Every AWS call a tool makes, read off the argument lists it builds.
+
+    ``aws_json(["ec2", "describe-instances", ...])`` and its siblings are the only shape any of
+    these use, and reading the literal rather than the helper name means a tool that reaches
+    for a second helper is still covered.
+    """
+    found: set[tuple[str, str]] = set()
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.List) or len(node.elts) < 2:
+            continue
+        service, verb = node.elts[0], node.elts[1]
+        if not isinstance(service, ast.Constant) or not isinstance(service.value, str):
+            continue
+        if not isinstance(verb, ast.Constant) or not isinstance(verb.value, str):
+            continue
+        if service.value in AWS_SERVICES:
+            found.add((service.value, verb.value))
+    return found
+
+
+def block_lane_calls() -> dict[str, set[tuple[str, str]]]:
+    """Every AWS call the lane makes, by the file that makes it, workflows and tools alike."""
+    made: dict[str, set[tuple[str, str]]] = {}
+    for name in BLOCK_WORKFLOWS:
+        path = WORKFLOWS_ROOT / name
+        bodies = [
+            str(item.get("run", "")) for item in only_job(load_workflow(path))["steps"]
+        ]
+        for body in bodies:
+            made.setdefault(name, set()).update(calls_in_shell(body))
+        for tool in {found for body in bodies for found in TOOL_INVOCATION.findall(body)}:
+            source = PROJECT_ROOT / "tools" / f"{tool}.py"
+            assert source.is_file(), f"{name} runs {source} and it is not there"
+            made.setdefault(f"{name} -> tools/{tool}.py", set()).update(
+                calls_in_tool(source.read_text(encoding="utf-8"))
+            )
+    return made
+
+
+def fleet_role_statements() -> list[dict[str, Any]]:
+    template = yaml.safe_load(ROLE_TEMPLATE.read_text(encoding="utf-8"))
+    statements = template["Resources"]["BlockFleetRole"]["Properties"]["Policies"][0][
+        "PolicyDocument"
+    ]["Statement"]
+    assert isinstance(statements, list)
+    return statements
+
+
+def fleet_role_grants() -> set[str]:
+    return {
+        action
+        for statement in fleet_role_statements()
+        if statement["Effect"] == "Allow"
+        for action in (
+            statement["Action"] if isinstance(statement["Action"], list) else [statement["Action"]]
+        )
+    }
 
 
 @pytest.fixture(scope="module")
@@ -686,6 +846,85 @@ def test_the_status_tool_can_reach_the_nodes_through_the_role_a_workflow_lends_i
         "ssm:ListCommandInvocations",
         "ssm:GetCommandInvocation",
     }
+
+
+def test_every_aws_call_this_lane_makes_is_an_action_the_role_allows() -> None:
+    """THE SEAM BETWEEN A WORKFLOW AND ITS POLICY, AND IT HAS ALREADY BEEN WRONG ONCE.
+
+    ``block-launch-fleet.yml`` checked the training image tag with ``aws ecr describe-images``,
+    in the resolve step, under ``set -euo pipefail``, ahead of everything the launch needs --
+    and ``BlockFleetRole`` named no ``ecr:`` action at all. Both files reviewed clean. The
+    result was an access denial on the first dispatch, before a machine started, a minute into
+    a window that had begun billing and could not be refunded.
+
+    A missing action is the coarsest thing an IAM grant can get wrong and the one that
+    genuinely happens, because an action is what somebody forgets when they add a call. So
+    this reads every ``aws`` the lane makes -- in the run bodies and in the tools those bodies
+    run, which is where three of the six workflows keep all of theirs -- maps each to the
+    action that authorises it, and asks the template.
+    """
+    granted = fleet_role_grants()
+    missing = sorted(
+        f"{source} calls `aws {service} {verb}`, which needs {action}"
+        for source, calls in block_lane_calls().items()
+        for service, verb in sorted(calls)
+        for action in [iam_action(service, verb)]
+        if action is not None
+        and not any(fnmatch(action, allowed) for allowed in granted)
+    )
+
+    assert not missing, (
+        "these calls are refused by the role the lane assumes, which fails as an "
+        "AccessDeniedException at the moment of the dispatch:\n" + "\n".join(missing)
+    )
+
+
+def test_the_cross_check_reads_the_tools_a_workflow_runs_and_not_only_its_yaml() -> None:
+    """A checker that matched nothing would pass the test above and prove nothing.
+
+    Half this lane makes no AWS call in YAML: `block-logs.yml`, `block-drain.yml` and
+    `block-status.yml` each run one Python tool and pass it a bucket. A reader that stopped at
+    the run bodies would report those three as needing no grant whatsoever, which is the
+    reading under which the S3 statement is dead weight and gets removed.
+
+    The three calls named here are one from each direction -- a workflow call, a tool call, and
+    the S3 spelling whose IAM action is not its CLI verb.
+    """
+    made = block_lane_calls()
+    everything = {call for calls in made.values() for call in calls}
+
+    assert ("ecr", "describe-images") in made[LAUNCH_FILE]
+    assert ("s3api", "list-objects-v2") in everything
+    assert ("ssm", "send-command") in everything
+    assert iam_action("s3api", "list-objects-v2") == "s3:ListBucket"
+    assert iam_action("ec2", "run-instances") == "ec2:RunInstances"
+    assert iam_action("sts", "get-caller-identity") is None
+
+
+def test_the_registry_grant_names_the_region_the_registry_is_in() -> None:
+    """The resource dimension of the one grant here that crosses a region, held by name.
+
+    The fleet is in us-east-2 and the repository it pre-pulls from is in us-east-1. ECR
+    authorisation is per-region, so a grant naming the fleet region matches nothing, and the
+    denial reads as the repository being absent rather than as the policy being wrong -- which
+    is the wrong thing to be debugging with eight machines already billing. The node role has
+    carried this property since it was written and the fleet role now needs it too.
+    """
+    checking = [
+        statement
+        for statement in fleet_role_statements()
+        if statement["Action"] == "ecr:DescribeImages"
+    ]
+
+    assert len(checking) == 1
+    assert checking[0]["Resource"]["Fn::Sub"] == (
+        "arn:${AWS::Partition}:ecr:${ImageRegion}:${AWS::AccountId}:repository/"
+        "${TrainingRepository}"
+    )
+    assert "ecr:GetAuthorizationToken" not in fleet_role_grants(), (
+        "DescribeImages is authorised on its own action. A token grant takes Resource: * and "
+        "buys nothing for a call that never asks for one"
+    )
 
 
 def test_the_flush_is_a_timer_on_the_node_and_not_a_cron_in_a_workflow() -> None:
