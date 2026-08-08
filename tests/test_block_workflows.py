@@ -404,6 +404,28 @@ def test_the_launch_refuses_a_security_group_that_does_not_carry_efa(
     assert "Groups=" not in script, "the group belongs on the interfaces the library builds"
 
 
+def test_the_group_refusal_only_fires_on_a_launch_that_asked_for_the_fabric(
+    launch: dict[str, Any],
+) -> None:
+    """Mutation: judge the group before reading how much fabric was asked for, which it did.
+
+    The refusal ends by offering ``efa_interfaces=0`` as the way past it, and that sentence was
+    a loop: the check ran unconditionally, so the re-dispatch it recommends met the identical
+    refusal. A fleet asking for no EFA devices has nothing for the self-referencing rule to
+    carry, so on that path there is nothing here to refuse.
+
+    Held as an ordering as well as a condition, because reading ``EFA_INPUT`` after the check
+    is the state this was in and it reads as a tidy grouping of the parsing.
+    """
+    script = step(only_job(launch), RESOLVE_STEP)["run"]
+
+    assert "if wanted != 0 and not admits_its_own_members(" in script
+    assert script.index('wanted = int(os.environ["EFA_INPUT"])') < script.index(
+        "admits_its_own_members("
+    )
+    assert "efa_interfaces=0 to launch without the fabric" in script
+
+
 def test_the_fabric_check_refuses_the_fleet_and_does_not_terminate_it(
     launch: dict[str, Any],
 ) -> None:

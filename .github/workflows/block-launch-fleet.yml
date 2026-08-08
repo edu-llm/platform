@@ -487,7 +487,20 @@ jobs:
                   "name a group on every interface it asks for"
               )
           group_id = default_group["GroupId"]
-          if not admits_its_own_members(groups, group_id=group_id):
+
+          # BUILT FROM WHAT EC2 SAID ABOUT THE SHAPE, NEVER FROM A NUMBER TYPED HERE. See
+          # `edullm_platform.block_fleet.interface_plan`: a p5.48xlarge carries thirty-two
+          # network cards and one EFA on each, a p6-b200 carries eight, and an interface list
+          # that disagrees with the shape is a launch EC2 refuses on the morning of the window.
+          wanted = int(os.environ["EFA_INPUT"]) if os.environ["EFA_INPUT"].strip() else None
+
+          # READ BEFORE THE GROUP IS JUDGED, WHICH IS THE ORDER THE REFUSAL BELOW DEPENDS ON.
+          # It ends by offering `efa_interfaces=0` as the way past it, and while this ran
+          # unconditionally that sentence sent somebody back to the form to be refused by the
+          # identical line -- at the one moment in the weekend nobody has a second dispatch to
+          # spend. A fleet asking for no fabric has nothing for the self-referencing rule to
+          # carry, so there is nothing here to refuse it on.
+          if wanted != 0 and not admits_its_own_members(groups, group_id=group_id):
               raise SystemExit(
                   f"{group_id} does not allow all traffic to and from itself, which is what EFA "
                   "requires. Attached anyway, every device would come up and every packet "
@@ -496,11 +509,6 @@ jobs:
                   "efa_interfaces=0 to launch without the fabric."
               )
 
-          # BUILT FROM WHAT EC2 SAID ABOUT THE SHAPE, NEVER FROM A NUMBER TYPED HERE. See
-          # `edullm_platform.block_fleet.interface_plan`: a p5.48xlarge carries thirty-two
-          # network cards and one EFA on each, a p6-b200 carries eight, and an interface list
-          # that disagrees with the shape is a launch EC2 refuses on the morning of the window.
-          wanted = int(os.environ["EFA_INPUT"]) if os.environ["EFA_INPUT"].strip() else None
           plan = interface_plan(
               types, subnet_id=subnet["SubnetId"], security_group_id=group_id, efa_wanted=wanted
           )
