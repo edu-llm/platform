@@ -904,11 +904,16 @@ jobs:
               print("\n".join(refusals))
               print("")
               raise SystemExit(
-                  "block_fleet_came_up_without_the_fabric. Nothing is being terminated: these "
-                  "machines are on the reservation and the window is paid for either way. "
-                  "Terminate them and re-run this workflow to try the launch again, or re-run "
-                  "with efa_interfaces=0 for a fleet that reaches the nodes and runs "
-                  "multi-node jobs over TCP."
+                  "block_fleet_came_up_without_the_fabric. Nothing is being terminated here: "
+                  "these machines are on the reservation and the window is paid for either "
+                  "way. Terminate this fleet yourself, and then re-run this workflow -- to "
+                  "try the fabric launch again, or with efa_interfaces=0 for a fleet that "
+                  "reaches the nodes and runs multi-node jobs over TCP. Terminating first is "
+                  "not the tidy half of that instruction, it is the load-bearing half: a "
+                  "re-run launches only the shortfall, machines left up keep the interfaces "
+                  "they came up with, and this check holds the whole fleet against one "
+                  "number -- so every node that came up correctly is reported here against "
+                  "whatever the re-run asked for."
               )
           print("")
           print(f"EVERY INSTANCE CARRIES {expected} EFA INTERFACES AND A PUBLIC ADDRESS")

@@ -417,6 +417,16 @@ def without_the_fabric(fleet: Iterable[FleetNode], *, expected: int) -> tuple[Fl
     runs on a thirty-second of the bandwidth the block was bought for while every surface says
     ``efa``. More than expected is flagged for the same reason and not because it is harmful:
     the fleet disagrees with the launch that made it, and that is a fact about the launch path.
+
+    **ONE EXPECTATION FOR THE WHOLE FLEET, WHICH DECIDES WHAT THE CALLER MAY ADVISE.** There is
+    no per-node record of what a given machine was launched with -- the count is written once by
+    the step that builds the interface list and read once by the step that reads the fleet back
+    -- so a fleet whose nodes were launched by two different dispatches cannot be judged here
+    node by node. That is not hypothetical: the launch re-run starts only the shortfall, so a
+    re-run with ``efa_wanted=0`` after a partial fabric launch leaves some nodes at thirty-two
+    and some at zero, and every one of them is reported. The workflow's refusal therefore tells
+    the reader to terminate before re-running rather than offering the re-run as an alternative
+    to terminating, and that wording is the thing this constraint is holding up.
     """
     return tuple(node for node in fleet if node.efa_interfaces != expected)
 

@@ -444,6 +444,26 @@ def test_the_fabric_check_refuses_the_fleet_and_does_not_terminate_it(
     assert "block_fleet_came_up_without_the_fabric" in script
 
 
+def test_the_fabric_refusal_does_not_offer_a_re_run_instead_of_terminating(
+    launch: dict[str, Any],
+) -> None:
+    """Mutation: the wording this file carried, which recommended an escape that does not work.
+
+    It said to terminate the fleet and re-run, "or" to re-run with ``efa_interfaces=0``. The
+    second half is the half somebody in a hurry reads, and it produces a fleet the check cannot
+    pass: the re-run launches only the shortfall, the machines still up keep their thirty-two
+    interfaces, and ``without_the_fabric`` holds the whole fleet against one number -- so the
+    next run of this step reports every healthy node. ``tests/test_block_fleet.py`` holds the
+    behaviour; this holds the sentence that has to agree with it.
+    """
+    script = step(only_job(launch), FABRIC_STEP)["run"]
+
+    assert "Terminate this fleet yourself" in script
+    assert "launches only the shortfall" in script
+    assert "or re-run " not in script
+    assert "Terminate them and re-run" not in script
+
+
 def test_the_expected_interface_count_is_the_one_the_launch_used(launch: dict[str, Any]) -> None:
     """Mutation: type the expected count into the check.
 

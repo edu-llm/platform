@@ -676,6 +676,32 @@ def test_a_fleet_that_got_every_interface_it_asked_for_is_left_alone() -> None:
     assert unaddressable(fleet) == ()
 
 
+def test_a_fleet_launched_by_two_dispatches_cannot_be_judged_against_one_number() -> None:
+    """THE LIMIT THAT DECIDES WHAT THE WORKFLOW MAY TELL SOMEBODY TO DO, HELD SO IT STAYS TRUE.
+
+    Nothing records what a given machine was launched with, so the comparison is fleet-wide
+    against one expectation. Re-running the launch with ``efa_interfaces=0`` after a partial
+    fabric launch starts only the shortfall, which leaves a fleet at thirty-two and zero at
+    once -- and every node in it is reported, the healthy ones included.
+
+    That is the behaviour rather than a defect, and the defect it used to produce was in the
+    prose beside it: the refusal offered the re-run as an alternative to terminating the fleet,
+    which is the one reading of it that does not work. ``tests/test_block_workflows.py`` holds
+    the wording; this holds the fact the wording is about.
+    """
+    fleet = read_fleet(
+        described(
+            instance(instance_id="i-0001", node=1, efa=P5_EFA),
+            instance(instance_id="i-0002", node=2, efa=0),
+        )
+    )
+
+    assert [found.instance_id for found in without_the_fabric(fleet, expected=0)] == ["i-0001"]
+    assert [found.instance_id for found in without_the_fabric(fleet, expected=P5_EFA)] == [
+        "i-0002"
+    ]
+
+
 def test_a_node_with_no_public_address_is_reported_before_anybody_waits_on_it() -> None:
     """Only the primary interface can hold a public address, and the fabric layout cannot ask
     for one -- so it arrives from the subnet or not at all. Without it the Systems Manager agent
