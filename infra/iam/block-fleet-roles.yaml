@@ -150,6 +150,31 @@ Resources:
               # the control that stops the expensive mistake -- see the header. What the
               # family bound does buy is that a transposed instance type in a dispatch input
               # is refused rather than launched.
+              #
+              # us-east-2 DENIES ec2:RunInstances AND THIS ROLE CANNOT LAUNCH ANYTHING WHILE IT
+              # POINTS THERE. Measured 2026-08-08T02:06Z with --dry-run against the live API by
+              # an intern SSO role holding AdministratorAccess and this same
+              # InternSandboxBoundary. EC2 names the cause in the refusal itself: an explicit
+              # deny in an organization service control policy, on the account's us-east-2
+              # instance/* resource. The identical probe in us-east-1 returns DryRunOperation,
+              # so the difference is the region and not the credentials, the instance type or
+              # the probe. Run the probe below to see the policy ARN; it is an identifier of the
+              # parent organization and does not belong in a public file.
+              #
+              # An SCP sits above every principal in this account, so it will refuse this role
+              # too the moment it is created -- there is nothing to test after applying the
+              # stack, and no policy that can be written here to get around it. The boundary is
+              # not the obstacle; InternSandboxBoundary's region lock permits both regions.
+              # ec2:CreateLaunchTemplate and ec2:CreateInternetGateway are still authorized in
+              # us-east-2, which is why the region reads open until something tries to launch.
+              #
+              # infra/batch-network.yaml and infra/README.md both say this in the same words:
+              # "us-east-2 is not a fallback and looks like one." Re-measure with
+              # tools/probe_ec2_authorization.py before believing otherwise; getting the deny
+              # lifted is a request to whoever administers the organization, not a change here.
+              #
+              # BEFORE MOVING THIS TO us-east-1, READ TerminateAFleetThatCameUpWrong BELOW. Its
+              # safety argument is a fact about us-east-2 and this edit is what falsifies it.
               - Sid: LaunchOnlyAcceleratedInstancesInTheBlockRegion
                 Effect: Allow
                 Action: ec2:RunInstances
@@ -192,6 +217,23 @@ Resources:
               #
               # What bounds it instead is the region and the trust policy: two workflow files
               # on `main`, and this account holds no other P-family instances in us-east-2.
+              #
+              # THAT SENTENCE IS THE WHOLE BOUND, IT IS A FACT ABOUT us-east-2, AND THE ONE EDIT
+              # THIS LANE IS GOING TO NEED FALSIFIES IT. us-east-2 denies ec2:RunInstances under
+              # an organization service control policy -- measured 2026-08-08, see
+              # LaunchOnlyAcceleratedInstancesInTheBlockRegion above -- so the fleet has to move
+              # to us-east-1 to launch at all. us-east-1 is where every Batch GPU compute
+              # environment in this account lives. Change the region on this statement and the
+              # role stops being one that can terminate a fleet nobody else owns and becomes one
+              # that can terminate any GPU instance the platform is running, including a job
+              # halfway through a capacity block somebody paid for.
+              #
+              # So the region here does not move on its own. It moves together with a bound that
+              # is true in the new region: ec2:ResourceTag/edullm:block equal to the reservation
+              # id, which the launch applies atomically through TagWhatItLaunches above, or a
+              # narrower substitute argued in the same change. Accepting the unconditioned grant
+              # in us-east-1 is a decision to be made out loud, not one to arrive by find and
+              # replace.
               - Sid: TerminateAFleetThatCameUpWrong
                 Effect: Allow
                 Action: ec2:TerminateInstances
