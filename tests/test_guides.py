@@ -49,6 +49,9 @@ README_PATH = PROJECT_ROOT / "README.md"
 WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "submit-run.yml"
 CANCEL_WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "cancel-run.yml"
 GPU_ROLES_PATH = PROJECT_ROOT / "infra" / "iam" / "batch-gpu-roles.yaml"
+CPU_ROLES_PATH = PROJECT_ROOT / "infra" / "iam" / "batch-roles.yaml"
+EVAL_GUIDE_PATH = GUIDES_DIR / "olmo-eval-full.md"
+OUTPUTS_BUCKET_NAME = "sbsandbox-intern-edullm-outputs"
 POLICY_PATH = PROJECT_ROOT / "config" / "policy.yaml"
 CAPACITY_PATH = PROJECT_ROOT / "config" / "capacity.yaml"
 CONFIG_DIR = PROJECT_ROOT / "config"
@@ -132,6 +135,11 @@ def day_one_guide() -> str:
 @pytest.fixture(scope="module")
 def olmo_core_guide() -> str:
     return OLMO_CORE_GUIDE_PATH.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def eval_guide() -> str:
+    return EVAL_GUIDE_PATH.read_text(encoding="utf-8")
 
 
 @pytest.fixture(scope="module")
@@ -355,6 +363,65 @@ def workload_role_statements() -> list[dict[str, Any]]:
         for policy in role["Policies"]
         for statement in policy["PolicyDocument"]["Statement"]
     ]
+
+
+def cpu_workload_role_statements() -> list[dict[str, Any]]:
+    """Every statement on the CPU workload role, read the same way as the GPU one."""
+    parsed: dict[str, Any] = yaml.safe_load(CPU_ROLES_PATH.read_text(encoding="utf-8"))
+    role = parsed["Resources"]["BatchWorkloadRole"]["Properties"]
+    return [
+        statement
+        for policy in role["Policies"]
+        for statement in policy["PolicyDocument"]["Statement"]
+    ]
+
+
+def _reads_the_outputs_bucket(statements: list[dict[str, Any]]) -> bool:
+    return any(
+        statement.get("Effect", "Allow") == "Allow"
+        and "s3:GetObject" in _actions_of(statement)
+        and any(OUTPUTS_BUCKET_NAME in resource for resource in _resources_of(statement))
+        for statement in statements
+    )
+
+
+def test_the_eval_guide_says_which_profile_can_read_a_checkpoint(eval_guide: str) -> None:
+    """Mutation: give the CPU role an outputs read, or take the GPU role's away.
+
+    THIS IS THE CLAIM THAT WAS WRONG AND THAT NOTHING HELD. The row said the workload role
+    holds ``s3:PutObject`` under the outputs bucket "and no ``s3:GetObject`` at all", which
+    is one role's story told about both, and the guide then told every reader to pick
+    ``cpu-32vcpu``. An evaluation reads a checkpoint somebody else wrote, so following both
+    sentences produces a run that is priced, approved, queued, given a machine and denied on
+    its first read -- the most expensive way this platform can say no, and the one nothing
+    on the form catches, because no field declares the checkpoint a run intends to open.
+
+    The asymmetry is deliberate rather than an oversight, and ``infra/iam/batch-roles.yaml``
+    argues for it at length: only a job that wrote a checkpoint resumes from one. That makes
+    it exactly the kind of fact a guide has to carry, because a researcher cannot read it off
+    anything they have.
+    """
+    gpu = workload_role_statements()
+    cpu = cpu_workload_role_statements()
+
+    assert _reads_the_outputs_bucket(gpu), (
+        "the GPU workload role no longer reads the outputs bucket, so the guide's promise "
+        "that a GPU profile can open a checkpoint is false and the row needs rewriting "
+        "rather than this assertion relaxing"
+    )
+    assert not _reads_the_outputs_bucket(cpu), (
+        "the CPU workload role has gained a read on the outputs bucket, which is the trap "
+        "this guide spends a paragraph on; delete the paragraph in the same commit"
+    )
+
+    assert "**none on the outputs bucket**" in eval_guide, (
+        "the capability table stopped saying that the CPU role cannot read the outputs "
+        "bucket, which is the one fact that decides whether an eval run works"
+    )
+    assert "denied after it has been paid for" in eval_guide, (
+        "the guide stopped naming what following it on cpu-32vcpu costs, which is a machine "
+        "rather than a refusal"
+    )
 
 
 def _actions_of(statement: dict[str, Any]) -> set[str]:
