@@ -59,10 +59,12 @@ RUN_FILE = "block-run.yml"
 DRAIN_FILE = "block-drain.yml"
 LOGS_FILE = "block-logs.yml"
 DISTRIBUTED_FILE = "block-run-distributed.yml"
+STATUS_FILE = "block-status.yml"
 LAUNCH_PATH = WORKFLOWS_ROOT / LAUNCH_FILE
 RUN_PATH = WORKFLOWS_ROOT / RUN_FILE
 DRAIN_PATH = WORKFLOWS_ROOT / DRAIN_FILE
 LOGS_PATH = WORKFLOWS_ROOT / LOGS_FILE
+STATUS_PATH = WORKFLOWS_ROOT / STATUS_FILE
 BOOTSTRAP_PATH = PROJECT_ROOT / "infra" / "block-node-bootstrap.sh"
 ROLE_TEMPLATE = PROJECT_ROOT / "infra" / "iam" / "block-fleet-roles.yaml"
 STATUS_TOOL = PROJECT_ROOT / "tools" / "block_status.py"
@@ -78,7 +80,7 @@ GUARD_STEP = "Refuse a hand-started launch from somebody who may not make one"
 #: Every workflow file in this lane. One role serves all of them -- see the template for why
 #: splitting it would suggest a boundary that does not exist -- and this tuple is the thing the
 #: trust policy has to agree with in both directions.
-BLOCK_WORKFLOWS = (LAUNCH_FILE, RUN_FILE, DRAIN_FILE, LOGS_FILE, DISTRIBUTED_FILE)
+BLOCK_WORKFLOWS = (LAUNCH_FILE, RUN_FILE, DRAIN_FILE, LOGS_FILE, DISTRIBUTED_FILE, STATUS_FILE)
 
 #: The variable each of them names for the role it assumes.
 ROLE_VARIABLE = "AWS_BLOCK_FLEET_ROLE_ARN"
@@ -1086,12 +1088,35 @@ def test_the_drain_schedule_never_stops_anybody_s_run() -> None:
     assert '"${STOP_RUNS}" = "true"' in body
 
 
+def test_the_reading_that_says_which_node_is_free_has_a_workflow_of_its_own() -> None:
+    """THE QUESTION THIS LANE IS ASKED MOST, AND THE HALF OF THE TEAM THAT COULD NOT ASK IT.
+
+    ``tools/block_status.py`` says which of the eight machines is idle and who is on the rest.
+    It ran from a laptop under ``--profile sbsandbox``, which is a credential roughly fifteen
+    of the thirty-five people here do not hold -- and unlike the drain and the log reader it
+    had no workflow. What those fifteen had instead was ``block-run.yml``: pick a node,
+    dispatch, read ``node_is_busy``, pick another. The failure mode of that loop is somebody
+    deciding the refusal is stale and passing ``take_the_node_anyway``.
+
+    The table is teed rather than passed a ``--summary`` path, because this tool prints one
+    table and has no such flag; the fences are what keep a fixed-width table readable in a job
+    summary, which is Markdown.
+    """
+    job = only_job(load_workflow(STATUS_PATH))
+    body = "".join(str(item.get("run", "")) for item in job["steps"])
+
+    assert "tools/block_status.py" in body
+    assert "--no-profile" in body
+    assert 'tee -a "${GITHUB_STEP_SUMMARY}"' in body
+    assert STATUS_TOOL.is_file()
+
+
 def test_reading_a_log_is_deliberately_not_limited_to_admins() -> None:
     """The property somebody tidying this up would break first, and it is the same one
-    ``block-run.yml`` carries. These two workflows exist because roughly fifteen of the
-    thirty-five people here hold no AWS role; an admin guard on either hands the door back to
-    the twenty who never needed it."""
-    for path in (DRAIN_PATH, LOGS_PATH):
+    ``block-run.yml`` carries. These three workflows exist because roughly fifteen of the
+    thirty-five people here hold no AWS role; an admin guard on any of them hands the door back
+    to the twenty who never needed it."""
+    for path in (DRAIN_PATH, LOGS_PATH, STATUS_PATH):
         job = only_job(load_workflow(path))
         names = [item.get("name", "") for item in job["steps"]]
 
@@ -1099,12 +1124,13 @@ def test_reading_a_log_is_deliberately_not_limited_to_admins() -> None:
         assert "if" not in job, path.name
 
 
-def test_every_expression_in_the_two_reporting_workflows_names_something_real() -> None:
+def test_every_expression_in_the_reporting_workflows_names_something_real() -> None:
     """GitHub resolves an unknown property on a known context to the empty string rather than
     failing, so a plausible typo surfaces as an unexplained AssumeRole failure -- which for a
     reader with no AWS access is indistinguishable from the platform being broken."""
     assert unreal_context_references(DRAIN_PATH) == []
     assert unreal_context_references(LOGS_PATH) == []
+    assert unreal_context_references(STATUS_PATH) == []
 
 
 @pytest.mark.slow

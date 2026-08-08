@@ -1,0 +1,124 @@
+name: "Block: which node is free"
+
+# THE QUESTION THIS LANE IS ASKED MOST, AND UNTIL NOW THE ONLY PEOPLE WHO COULD ASK IT WERE THE
+# ONES WHO DID NOT NEED TO.
+#
+# `tools/block_status.py` reads every node at once and says which of the eight is idle, who is
+# on the rest and how long they have been there. It has answered that from a laptop since it
+# was written, under `--profile sbsandbox`, which is a credential roughly fifteen of the
+# thirty-five people here do not hold. `block-drain.yml` and `block-logs.yml` were each given a
+# workflow for exactly that population and this one was not, so what those fifteen have instead
+# is `block-run.yml`'s refusal: pick a node, dispatch, read `node_is_busy`, pick another. That
+# is trial and error against a shared fleet, and its failure mode is somebody deciding the
+# refusal is stale and passing `take_the_node_anyway`.
+#
+# NO ADMIN GUARD, FOR THE REASON `block-logs.yml` AND `block-drain.yml` HAVE NONE. This reads
+# and spends nothing. `block-launch-fleet.yml` is guarded because it starts eight machines
+# against a purchase that cannot be refunded; copying that guard onto a reader hands the door
+# back to the twenty people who already had one.
+#
+# IT ASKS THE MACHINES RATHER THAN A SHEET, WHICH IS THE WHOLE OF WHY IT IS WORTH A DISPATCH. A
+# shared sheet records what people said they would do, and that diverges from what is running
+# by hour three of a window and diverges fastest at the moment somebody is in a hurry.
+#
+# A DISPATCH FROM A BRANCH IS REFUSED AT AssumeRole. `infra/iam/block-fleet-roles.yaml` pins
+# `job_workflow_ref` to this path at `refs/heads/main`, as every OIDC role in this account does.
+# Merge, re-apply the IAM stack -- it has to learn this file exists -- and only then does a
+# dispatch reach anything.
+
+on:
+  workflow_dispatch:
+    inputs:
+      reservation_id:
+        description: "Optional. Only needed if two blocks have a fleet up at once, because node numbers repeat across them."
+        required: false
+        default: ""
+        type: string
+      region:
+        description: "Where the fleet is."
+        required: true
+        default: us-east-2
+        type: string
+
+permissions:
+  contents: read
+
+# NO CONCURRENCY GROUP, DELIBERATELY, WHICH IS THE SAME CHOICE `block-logs.yml` MADE AND THE
+# OPPOSITE OF THE LAUNCH AND THE DRAIN. Two readings at once put two `nvidia-smi` invocations on
+# each node and collide over nothing, and eight people asking which machine is free at the same
+# moment is the Saturday afternoon this exists for rather than a queue to form.
+
+jobs:
+  read:
+    name: Read every node and say which one is free
+    runs-on: ubuntu-latest
+    # The tool stops waiting for the slowest node on its own, well inside this. What this bounds
+    # is a Systems Manager call that never returns rather than a fleet that is slow to answer.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RESERVATION_INPUT: ${{ inputs.reservation_id }}
+      BLOCK_REGION: ${{ inputs.region }}
+    steps:
+      # BEFORE THE CREDENTIALS, BECAUSE THIS REFUSAL IS FREE. A mistyped reservation id is
+      # answerable on a runner with no AWS access at all, and the alternative is a reading that
+      # matches no instance and reports an empty fleet -- which says "the block is gone" to
+      # somebody who typed one character wrong.
+      - name: Refuse a reservation id that is not one
+        run: |
+          set -euo pipefail
+          case "${RESERVATION_INPUT}" in
+            "" | cr-[0-9a-f][0-9a-f]*) ;;
+            *)
+              echo "reservation_is_not_a_capacity_reservation_id:${RESERVATION_INPUT}" >&2
+              echo "It is the cr- id off the EC2 console row whose reservation type is" >&2
+              echo "capacity-block. Leave it empty unless two blocks have a fleet up." >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install the platform library
+        run: |
+          set -euo pipefail
+          uv sync --locked
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_BLOCK_FLEET_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+          role-duration-seconds: 3600
+          mask-aws-account-id: true
+
+      # THE TOOL RATHER THAN AN INLINE SCRIPT, WHICH IS THE ARGUMENT THE DRAIN AND THE LOG
+      # READER BOTH MAKE. A maintainer runs exactly this from a laptop with `--profile
+      # sbsandbox` in place of `--no-profile`, and the distinction the reading turns on -- a
+      # node that did not answer is never reported as a free one -- is held by
+      # `tests/test_block_status_tool.py` rather than by a reviewer reading a heredoc once.
+      #
+      # Teed rather than passed a `--summary` path, because this tool prints one table and has
+      # no summary flag to grow. The fences are what keep a fixed-width table fixed-width in a
+      # job summary, which is Markdown.
+      - name: Read the fleet and print it into the summary
+        run: |
+          set -euo pipefail
+          arguments=(--no-profile --region "${BLOCK_REGION}")
+          if [ -n "${RESERVATION_INPUT}" ]; then
+            arguments+=(--reservation "${RESERVATION_INPUT}")
+          fi
+          {
+            echo '```'
+            uv run python tools/block_status.py "${arguments[@]}"
+            echo '```'
+          } | tee -a "${GITHUB_STEP_SUMMARY}"

@@ -13,11 +13,12 @@ Description: The two identities the capacity block lane needs -- the one the blo
 # reservation.
 #
 # THE SAME IS TRUE OF EACH FILE SEPARATELY, WHICH IS WHY ADDING ONE MEANS APPLYING THIS AGAIN.
-# `block-drain.yml`, `block-logs.yml` and `block-run-distributed.yml` were each written after
-# this stack was first drafted, and until it is applied with them in the list they hold nothing:
-# the drain report is red every quarter of an hour, the log reader refuses everybody it was
-# written for, and the multi-node launch -- which is the run this window was bought for --
-# cannot reach a single machine.
+# `block-drain.yml`, `block-logs.yml`, `block-run-distributed.yml` and `block-status.yml` were
+# each written after this stack was first drafted, and until it is applied with them in the list
+# they hold nothing: the drain report is red every quarter of an hour, the log reader refuses
+# everybody it was written for, the reading that says which node is free refuses them too, and
+# the multi-node launch -- which is the run this window was bought for -- cannot reach a single
+# machine.
 #
 # THIS IS APPLIED FROM A LAPTOP AND MUST BE APPLIED BEFORE THE WINDOW OPENS. `infra/README.md`,
 # "Why IAM is laptop-only": the deployer role holds no `iam:CreateRole`, on purpose, so no
@@ -84,8 +85,9 @@ Resources:
   # than laziness.
   #
   # `block-launch-fleet.yml` starts the fleet, `block-run.yml` puts work on one node,
-  # `block-run-distributed.yml` puts one job on all of them, `block-drain.yml` reads what has
-  # not reached S3 yet and `block-logs.yml` reads a log back out of it. A trust policy cannot
+  # `block-run-distributed.yml` puts one job on all of them, `block-status.yml` says which node
+  # is free, `block-drain.yml` reads what has not reached S3 yet and `block-logs.yml` reads a
+  # log back out of it. A trust policy cannot
   # distinguish jobs within a workflow anyway -- `infra/iam/image-resolver-role.yaml` records
   # that. Separate roles would have been the tidier diff and would have bought nothing real:
   # most of them need `ssm:SendCommand` on the nodes, and anybody holding that on a machine
@@ -138,6 +140,7 @@ Resources:
                   - edu-llm/platform/.github/workflows/block-drain.yml@refs/heads/main
                   - edu-llm/platform/.github/workflows/block-logs.yml@refs/heads/main
                   - edu-llm/platform/.github/workflows/block-run-distributed.yml@refs/heads/main
+                  - edu-llm/platform/.github/workflows/block-status.yml@refs/heads/main
                 token.actions.githubusercontent.com:repository_owner_id: "306859726"
                 token.actions.githubusercontent.com:repository_id: "1311508598"
                 token.actions.githubusercontent.com:sub: repo:edu-llm@306859726/platform@1311508598:ref:refs/heads/main
