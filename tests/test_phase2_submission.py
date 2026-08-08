@@ -21,6 +21,7 @@ from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import FanOut, RunManifest
 from edullm_platform.contracts.policy import ApprovalClass, ApprovalPolicy
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
+from edullm_platform.contracts.resume_evidence import ResumeDemonstrations
 from edullm_platform.contracts.workload import WorkloadCatalog, WorkloadProfile
 from edullm_platform.errors import SubmissionRefusedError
 from edullm_platform.image_resolution import PublishedImage
@@ -143,6 +144,20 @@ def load_approval_policy() -> ApprovalPolicy:
 
 def load_workload_catalog() -> WorkloadCatalog:
     return load_yaml(PROJECT_ROOT / "config" / "workload-catalog.yaml", WorkloadCatalog)
+
+
+def load_resume_demonstrations() -> ResumeDemonstrations:
+    """The shipped record of which repositories have been watched resuming.
+
+    The committed file rather than a fixture, which is deliberate and is what makes the
+    suite notice if the entry for OLMo-core is ever deleted: every test here that compiles a
+    two-attempt submission is a test that the evidence behind those two attempts still
+    exists. A fixture would keep passing over an empty file.
+    """
+    return load_yaml(
+        PROJECT_ROOT / "config" / "reports" / "resume-demonstrations.yaml",
+        ResumeDemonstrations,
+    )
 
 
 def load_dataset_registry() -> DatasetRegistry:
@@ -274,6 +289,7 @@ def compile_payload(
         published_images=(
             published_images if published_images is not None else published_from_the_commit()
         ),
+        resume_demonstrations=load_resume_demonstrations(),
     )
 
 
@@ -291,6 +307,7 @@ def render(
         repository_url=REPOSITORY_URL,
         wandb_username=wandb_username,
         inventory=inventory if inventory is not None else load_organization_inventory(),
+        resume_demonstrations=load_resume_demonstrations(),
     )
 
 

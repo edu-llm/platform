@@ -149,26 +149,34 @@ thresholds:
   # Two of the six registered repositories pass every check here and cannot use the attempt
   # they are granted.
   #
-  # A SENTENCE RATHER THAN A REFUSAL, AND THE CHOICE IS ABOUT WHICH DIRECTION A WRONG ANSWER
-  # FAILS IN. Refusing maximum_attempts above one unless resume is demonstrable needs the
-  # platform to know a trainer's load path, which it cannot see. The only way to give it one
-  # is a per-repository field somebody writes by hand, which is the same easy question
-  # standing in for the same hard one, one level further up; and it would refuse a run the
-  # platform should accept on the day a repository changed its trainer, starting with
-  # olmo-core-train, which is the profile every new researcher reaches for. So
-  # checkpoint_commands.unverified_resume_note says plainly, on the approver page and under
-  # "retries" in edullm check --json, that the attempt factor is priced correctly and that
-  # nothing here establishes the later attempts reach further than the first.
+  # A REFUSAL NOW, AND IT WAS A SENTENCE. What stood here was: refusing maximum_attempts
+  # above one unless resume is demonstrable needs the platform to know a trainer's load path,
+  # which it cannot see; the only way to give it one is a per-repository field somebody writes
+  # by hand, which is the same easy question standing in for the same hard one. That is right
+  # about inference and does not reach observation. checkpoint_commands
+  # .require_a_demonstrated_resume_for_retries refuses a second attempt where
+  # config/reports/resume-demonstrations.yaml cites no run of that repository in which a
+  # second process reported resuming from a step above zero and went on past it. The entry is
+  # a run id and two integers rather than a claim about a codebase, EDULLM_RESUME_CHECK=waived
+  # is the way past it, and a repository whose trainer moved since keeps its evidence with the
+  # commit printed beside it rather than losing the attempt.
   #
-  # AND THE ATTEMPT THAT ACTUALLY GETS SPENT IS NOT THE ONE THE RETRY RULES DESCRIBE. The
-  # only RETRY arm in RETRY_ONLY_WHAT_A_RETRY_FIXES matches Host EC2*, and all sixteen Batch
-  # compute environments under infra/ are Type: EC2 rather than SPOT, so nothing reclaims a
-  # host on purpose and that arm has almost nothing left to catch. What Batch does retry is a
-  # failure matching none of the rules, and an attempt stopped for outrunning
-  # attemptDurationSeconds carries the status reason "Job attempt duration exceeded timeout"
-  # and no container exit code at all -- so the rule globbing OnExitCode "*" has nothing to
-  # match either. The one second attempt this platform reliably pays for is therefore the one
-  # on the run that could not finish in its bound, given the same bound again.
+  # AND THE SECOND ATTEMPT IS VERY NEARLY UNREACHABLE, WHICH WAS DERIVED WRONGLY HERE UNTIL
+  # SOMEBODY RAN IT. This said: the only RETRY arm in RETRY_ONLY_WHAT_A_RETRY_FIXES matches
+  # Host EC2*, and every Batch compute environment under infra/ is Type: EC2 rather than SPOT,
+  # so nothing reclaims a host on purpose -- but Batch retries a failure matching none of the
+  # rules, and a timeout carries no container exit code for the OnExitCode "*" rule to match,
+  # so the one second attempt this platform reliably pays for is the one on the run that could
+  # not finish in its bound. The first half is still true and the conclusion is false.
+  # run_019fdd90-99d1-70e8-a005-e341452d9458 was submitted on 2026-08-07 with attempts: 2 and
+  # a bound it could not finish inside. Batch stopped it with statusReason "Job attempt
+  # duration exceeded timeout" and reported FAILED at "Attempts 1 of 2". A timeout terminates
+  # the job; it is not an attempt outcome the retry rules are consulted about at all.
+  #
+  # So the attempt factor buys a retry on hardware failure and on nothing else that has ever
+  # been observed here. It is still priced, it is still what a lead approves, and the honest
+  # reading of a two-attempt submission is that the second attempt is insurance against a host
+  # dying rather than against a run overrunning.
   #
   # UNDER THIS FIGURE AND IN ONE CELL, NOBODY RELEASES IT. At it exactly, or above it, or in
   # more than one cell, a team lead does. Strictly under, unlike every routine_maximum_

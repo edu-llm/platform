@@ -804,7 +804,7 @@ def _cost_block(preflight: Preflight) -> str:
     """The ceiling, the five factors under it, and the lever for each factor that has one.
 
     THE ATTEMPT FACTOR GETS A LINE BECAUSE THE SUBMITTER IS THE ONE WHO CAN STILL MOVE IT.
-    :func:`~edullm_platform.checkpoint_commands.unverified_resume_note` says the same thing
+    :func:`~edullm_platform.checkpoint_commands.resume_note` says the same thing
     at length on the approver page and under ``retries`` in ``check --json``, and the person
     reading it there is deciding about somebody else's run with an approval already asked
     for. Here it is being read by whoever chose the count, before anything is dispatched,

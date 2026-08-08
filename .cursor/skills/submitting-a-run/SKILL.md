@@ -53,6 +53,7 @@ The `detail` names the field and usually the file. The common ones and what they
 | `process_per_device` | The command starts fewer processes than the machine has cards. Fix the launcher or pick a smaller `--compute`. |
 | `bfloat16_not_in_the_hardware` | The chosen card cannot do the dtype the command asks for. Pick another shape or another dtype. |
 | `unregistered_dataset` | Run `edullm data` and pick one off it. Do not invent a release id. |
+| `resume_not_demonstrated` | More than one attempt against a repository nobody has watched resume. Pass `--attempts 1`, or run the demonstration once and record it. `EDULLM_RESUME_CHECK=waived` in the command buys the attempt now and says so on the approver's page. |
 
 Anything else, read the `detail`. It was written to be acted on.
 

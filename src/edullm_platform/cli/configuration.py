@@ -24,6 +24,10 @@ from edullm_platform.contracts.image_scan import ImageScanExceptionRegistry
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
+from edullm_platform.contracts.resume_evidence import (
+    NO_RESUME_DEMONSTRATIONS,
+    ResumeDemonstrations,
+)
 from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.reviewed_configuration import (
     CONFIG_DIRECTORY_VARIABLE,
@@ -73,6 +77,34 @@ class ReviewedConfiguration:
     #: a missing measurement is a thing to say out loud, which
     #: :data:`~edullm_platform.run_history.NO_HISTORY_PACKAGED` is.
     run_history: RunHistory | None = None
+    #: Which repositories have been watched resuming a checkpoint. The eighth file, and the
+    #: second measurement rather than rule, so it is defaulted the same way ``run_history``
+    #: is -- except that its default is fail-closed rather than silent, because an absent
+    #: measurement here refuses a second attempt where an absent duration only declines to
+    #: print one.
+    resume_demonstrations: ResumeDemonstrations = NO_RESUME_DEMONSTRATIONS
+
+
+def load_resume_demonstrations(directory: Path) -> ResumeDemonstrations:
+    """The demonstrations this install carries, or none where the file is not there.
+
+    Absent rather than fatal, the way ``run-history.json`` is absent rather than fatal, and
+    for the same reason: it is a measurement rather than a rule, and a directory holding
+    every rule and no measurement is an old install or a directory a test built rather than
+    a broken one.
+
+    **AND THE EMPTY ANSWER IS THE FAIL-CLOSED ONE, WHICH IS WHY THIS DIFFERS FROM AN ABSENT
+    HISTORY IN CONSEQUENCE IF NOT IN SHAPE.** A missing duration declines to print a
+    sentence. A missing demonstration refuses a second attempt, which is the direction that
+    costs a submitter one flag rather than costing them a retry they thought they had. A
+    file that will not *parse* is still fatal, because a measurement this tree cannot read
+    is a broken install rather than an absent measurement.
+    """
+    if not (directory / ConfigFile.RESUME_DEMONSTRATIONS.value).exists():
+        return NO_RESUME_DEMONSTRATIONS
+    return load_config_file(
+        ConfigFile.RESUME_DEMONSTRATIONS, ResumeDemonstrations, directory=directory
+    )
 
 
 def load_reviewed_configuration(directory: Path) -> ReviewedConfiguration:
@@ -103,6 +135,7 @@ def load_reviewed_configuration(directory: Path) -> ReviewedConfiguration:
                 ConfigFile.IMAGE_EXCEPTIONS, ImageScanExceptionRegistry, directory=directory
             ),
             run_history=load_run_history(directory),
+            resume_demonstrations=load_resume_demonstrations(directory),
         )
     except (
         OSError,

@@ -134,6 +134,7 @@ class ConfigFile(StrEnum):
     CORPORA = "reports/corpora.json"
     LEAD_GATE = "reports/lead-gate.yaml"
     RESEARCHER_LANE = "reports/researcher-lane.yaml"
+    RESUME_DEMONSTRATIONS = "reports/resume-demonstrations.yaml"
     STUDIO = "reports/studio.yaml"
     SURFACES = "reports/surfaces.yaml"
     WORKING_TIER = "reports/working-tier.yaml"
