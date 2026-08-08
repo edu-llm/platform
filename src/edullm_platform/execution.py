@@ -745,6 +745,48 @@ class ContainerOverridesTooLargeError(ValueError):
 #: admitted and no job ever reaches a queue -- an accepted run that does not exist. It
 #: applies to every submission and not only retryable ones, because this block is sent
 #: unconditionally. Found by a submission failing exactly that way.
+#:
+#: AN ATTEMPT STOPPED AT ITS TIME BOUND NEVER REACHES THESE RULES, AND BOTH OF THE READINGS
+#: THAT SAY OTHERWISE ARE WRONG IN A WAY THAT LOOKS RIGHT. Batch's job-timeouts page settles
+#: it in two sentences: "If a job is terminated for exceeding the timeout duration, it isn't
+#: retried. If a job attempt fails on its own, then it can retry if retries are enabled, and
+#: the timeout countdown is started over for the new attempt." Outrunning
+#: ``attemptDurationSeconds`` is the first of those, and the retry-strategy reference lists a
+#: terminated job beside an invalid job definition as a case jobs are not retried in at all.
+#: ``EvaluateOnExit`` describes how an attempt that ended on its own is judged, and a
+#: terminated job never becomes one.
+#:
+#: SO THE ARM A READER WILL WANT TO ADD ABOVE THE CATCH-ALL IS DEAD CODE, AND IT HAS ALREADY
+#: BEEN PROPOSED TWICE FROM TWO CONTRADICTORY READINGS OF THE SAME EVIDENCE. One held that a
+#: timeout carries no container exit code, so the ``*`` rule has nothing to match, so Batch
+#: falls through to a retry -- which made the timeout the one failure a second attempt was
+#: reliably spent on. The other held that the attempt record carries 137 from the SIGKILL, so
+#: the ``*`` rule does match and exits -- which made the timeout the one failure that never
+#: retries, repairable by an ``OnStatusReason: "Job attempt duration exceeded timeout*"``
+#: RETRY arm placed above it. Both are arguments about which rule fires. No rule fires, so
+#: the first conclusion is false and the second one's repair would change nothing.
+#:
+#: THE ACCOUNT AGREES WITH THE DOCUMENTATION AND CARRIES ITS OWN CONTROL.
+#: ``run_019fdd90-99d1-70e8-a005-e341452d9458`` and ``run_019fdedc-b4f3-70f1-b1eb-5d99be56ac22``
+#: were submitted on 2026-08-07 with two attempts each and a bound neither could finish
+#: inside; both reported FAILED at one attempt of two under the timeout status reason, and
+#: the second had written eight checkpoints by then. ``run_019fbe1f`` lost its host, matched
+#: the first arm below, and ran a second attempt. The retry machinery works; the timeout is
+#: not delivered to it.
+#:
+#: WHICH LEAVES THE SECOND ATTEMPT INSURING AGAINST A LOST HOST AND NOTHING ELSE, AND THAT IS
+#: A PRICING FACT RATHER THAN A DEFECT TO REPAIR HERE.
+#: :func:`~edullm_platform.checkpoint_commands.resume_note` is where a submitter meets it and
+#: ``config/policy.yaml`` carries it for a reader of the bound; both reached it from the first
+#: of the runs above, and this is the third place rather than a fourth opinion. A run that
+#: overran its bound is
+#: recovered by a new submission pointed at the dead run's checkpoint prefix, which is
+#: measured. Buying a real retry on an overrun would mean the container stopping itself
+#: before Batch's deadline -- an attempt that exits on its own is judged by these rules and
+#: its successor gets the whole bound again -- so it needs the deadline handed to the
+#: container, a trainer that checkpoints and exits on it, and only then an arm here matching
+#: that exit code. That is a change to what every container is told, not a fourth entry in
+#: this tuple.
 RETRY_ONLY_WHAT_A_RETRY_FIXES: Final = (
     # The host went away underneath a running attempt: hardware failure today, a Spot
     # reclaim once the A100 tier is promoted. The attempt died with work behind it and the
