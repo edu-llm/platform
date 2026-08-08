@@ -45,10 +45,12 @@ from edullm_platform.launchers import (
     SHELLS_THAT_READ_A_COMMAND_STRING,
     TENSOR_PARALLEL_OPTION,
     TENSOR_PARALLEL_SHORT_FORM,
+    carries_the_token,
     corrected_command,
     read_launch_plan,
     require_a_process_for_every_device,
     require_a_tensor_parallel_flag_vllm_reads,
+    shell_command_string,
     waived_launch_check_note,
 )
 
@@ -664,3 +666,119 @@ def test_the_long_form_passes_the_spelling_check() -> None:
 
 def test_a_command_naming_neither_form_passes_the_spelling_check() -> None:
     require_a_tensor_parallel_flag_vllm_reads(("python", "train.py"))
+
+
+# ---------------------------------------------------------------------------------------
+# A shell that is not the first word, which five callers were reading as no shell at all
+# ---------------------------------------------------------------------------------------
+
+#: The four-rank command that goes inside every wrapper below, so that the only thing
+#: differing between the cases is how the shell was reached.
+LAUNCHED = 'torchrun --nproc-per-node=4 .edullm/train_on_corpus.py "$EDULLM_RUN_ID"'
+
+#: Every way of reaching a shell that a container can actually exec, each running the same
+#: four-rank launcher inside the same wrapper. The launcher is inside the command string, so
+#: a reader that cannot find the shell finds one process and refuses a correct submission.
+SHELL_BEHIND_A_PREFIX = (
+    ("bash", "-lc", LAUNCHED),
+    ("bash", "-o", "pipefail", "-c", LAUNCHED),
+    ("bash", "-o", "pipefail", "-o", "errexit", "-c", LAUNCHED),
+    ("bash", "+o", "histexpand", "-c", LAUNCHED),
+    ("env", "bash", "-lc", LAUNCHED),
+    ("env", "WANDB_MODE=offline", "bash", "-lc", LAUNCHED),
+    ("env", "-i", "bash", "-lc", LAUNCHED),
+    ("env", "-u", "PYTHONPATH", "bash", "-lc", LAUNCHED),
+    ("env", "-u", "PYTHONPATH", "TOKENIZERS_PARALLELISM=false", "bash", "-lc", LAUNCHED),
+    ("nohup", "bash", "-lc", LAUNCHED),
+    ("/usr/bin/env", "/bin/bash", "-lc", LAUNCHED),
+    ("env", "nohup", "bash", "-o", "pipefail", "-c", LAUNCHED),
+)
+
+
+@pytest.mark.parametrize("command", SHELL_BEHIND_A_PREFIX, ids=range(len(SHELL_BEHIND_A_PREFIX)))
+def test_a_launcher_inside_a_wrapper_is_found_however_the_shell_was_reached(
+    command: tuple[str, ...],
+) -> None:
+    """THE FALSE REFUSAL. Mutation: require the shell to be the first word.
+
+    Every one of these runs four ranks. Reading the shell only in position zero found one
+    process in all but the first, so a correct command was refused for idling three cards it
+    was in fact using -- and the same blindness reached four other callers at once.
+
+    ``bash -o pipefail -c`` is the case that made this urgent. A pipeline reports its last
+    command's status, which is how a run that died of ENOSPC was recorded as having exited
+    zero; ``pipefail`` is the remedy, and this refused the remedy.
+    """
+    assert read_launch_plan(command).processes == 4
+    require_a_process_for_every_device(command=command, compute_profile=FOUR_GPUS)
+
+
+@pytest.mark.parametrize("command", SHELL_BEHIND_A_PREFIX, ids=range(len(SHELL_BEHIND_A_PREFIX)))
+def test_the_waiver_is_found_inside_a_wrapper_however_the_shell_was_reached(
+    command: tuple[str, ...],
+) -> None:
+    """The documented escape has to work wherever the refusal it escapes can fire.
+
+    ``carries_the_token`` reads through the same wrapper reader, so while a shell behind a
+    prefix was invisible the waiver written inside it was invisible too -- a submitter met a
+    refusal that named an escape, wrote the escape, and met the refusal again.
+    """
+    waived = (*command[:-1], f"{LAUNCH_CHECK_WAIVER} {command[-1]}")
+
+    assert carries_the_token(waived, LAUNCH_CHECK_WAIVER)
+
+
+#: Shapes that reach no shell, and must go on reaching none. Widening what counts as a shell
+#: invocation is only safe while these stay refused: each one execs a program directly, so a
+#: `$` in it is literal text and a launcher named in it is the only process there will be.
+NO_SHELL_HERE = (
+    ("python", "train.py"),
+    ("env", "python", "train.py"),
+    ("env", "VAR=1", "python", "train.py"),
+    ("nohup", "python", "train.py"),
+    ("env", "-u", "PYTHONPATH", "python", "train.py"),
+    # `exec` is a shell builtin with no binary, so this argv cannot start at all. Reading it
+    # as a shell would admit a submission that fails before it runs.
+    ("exec", "bash", "-lc", LAUNCHED),
+    # A shell running a script file rather than a command string hands `-c` nothing.
+    ("bash", "script.sh"),
+    ("env", "bash", "script.sh"),
+    # `--` ends the options, so the `-c` after it is an argument rather than a flag.
+    ("bash", "--", "-c", LAUNCHED),
+    ("env",),
+    ("env", "nohup"),
+)
+
+
+@pytest.mark.parametrize("command", NO_SHELL_HERE, ids=range(len(NO_SHELL_HERE)))
+def test_a_command_that_reaches_no_shell_is_still_read_as_reaching_none(
+    command: tuple[str, ...],
+) -> None:
+    """THE PERMISSIVE FAILURE, WHICH IS THE ONE THE WIDENING COULD HAVE INTRODUCED.
+
+    A prefix in front of something that is not a shell is not a shell, and an empty argv past
+    the prefixes is not one either. If any of these started reading as a wrapper, the
+    checkpoint guard would accept a literal ``$EDULLM_CHECKPOINT_DIR`` and the run would
+    train for its full bound and save nowhere -- which is the defect all of this exists for.
+    """
+    assert shell_command_string(command) is None
+
+
+def test_exec_is_the_one_transparent_prefix_with_no_binary_behind_it() -> None:
+    """Mutation: derive one set from the other without the exclusion, or retype it.
+
+    The two sets are used in different positions. ``_program_and_arguments`` reads words a
+    shell is already running, where ``exec bash -c`` is ordinary. ``_shell_command_position``
+    is asked about an argv, and the outermost one is ``ContainerOverrides.Command``, which
+    Batch execs directly -- so ``exec`` there names no program on any PATH.
+
+    Held as a relationship rather than as a literal set, so that a fifth transparent program
+    is covered without an edit and only the exception needs a decision.
+    """
+    from edullm_platform.launchers import (
+        _TRANSPARENT_PREFIXES,
+        _TRANSPARENT_PREFIXES_WITH_A_BINARY,
+    )
+
+    assert _TRANSPARENT_PREFIXES_WITH_A_BINARY == _TRANSPARENT_PREFIXES - {"exec"}
+    assert "exec" in _TRANSPARENT_PREFIXES

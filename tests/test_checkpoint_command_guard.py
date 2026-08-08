@@ -228,8 +228,30 @@ def test_a_command_exec_d_without_a_shell_expands_nothing_and_is_told_so() -> No
     """
     message = refuse(("python", "train.py", "--save-folder", "$EDULLM_CHECKPOINT_DIR"))
 
-    assert "nothing expands" in message
+    assert "Nothing in this command runs a shell" in message
     assert "bash -lc" in message
+
+
+def test_a_command_that_has_a_shell_is_not_told_that_it_has_none() -> None:
+    """THE MISDIAGNOSIS. Mutation: list every cause at once, as this used to.
+
+    The sentence named all four causes together -- single quotes, a backslash, a comment, or
+    no shell at all -- so whichever applied, the reader was also told about three that did
+    not. The reader with a shell had the worse time of it: nothing about their command is
+    missing a wrapper, so "or in a command the container execs without a shell" sends them to
+    add one they already have, and the loop has no exit.
+
+    Which half applies is known here. A command handing text to a shell has quoting to get
+    wrong; one handing text to nothing does not.
+    """
+    quoted = refuse(wrapped("python train.py --save-folder '$EDULLM_CHECKPOINT_DIR'"))
+
+    assert "This command does run a shell" in quoted
+    assert "single quotes" in quoted
+    assert "Nothing in this command runs a shell" not in quoted, (
+        "a command wrapped in bash -lc is being told it has no shell, which is the one "
+        "thing about it that is not true"
+    )
 
 
 def test_a_command_that_names_the_variable_nowhere_is_not_told_about_quoting() -> None:
@@ -238,7 +260,10 @@ def test_a_command_that_names_the_variable_nowhere_is_not_told_about_quoting() -
     A submitter who never wrote the variable is not confused about quoting, and a paragraph
     about single quotes on every refusal is a paragraph readers learn to skip.
     """
-    assert "nothing expands" not in refuse(SAVES_NOWHERE)
+    message = refuse(SAVES_NOWHERE)
+
+    assert "runs a shell" not in message
+    assert "single quotes" not in message
 
 
 # ---------------------------------------------------------------------------------------

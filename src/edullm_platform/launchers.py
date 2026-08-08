@@ -111,6 +111,37 @@ SHELLS_THAT_READ_A_COMMAND_STRING: Final = frozenset({"sh", "bash", "dash", "zsh
 #: tried to be complete would be guessing.
 _TRANSPARENT_PREFIXES: Final = frozenset({"env", "exec", "nohup", "time"})
 
+#: ``exec`` is a shell builtin and the only member above with no binary behind it, which is
+#: the whole of why this set exists separately from the one above.
+#:
+#: The two are used in different positions and only one of them is reached by a container.
+#: ``_program_and_arguments`` reads words a shell is already running, where ``exec bash -c``
+#: is ordinary. :func:`_shell_command_position` is asked about an argv, and the outermost one
+#: it is ever asked about is ``ContainerOverrides.Command``, which Batch execs directly --
+#: so an argv beginning ``exec`` names a program that is not on any PATH and cannot start.
+#: Admitting it here would pass a submission that fails before it runs, and refuse nothing in
+#: exchange, since ``exec`` in front of the program a shell is already running is stripped by
+#: ``_program_and_arguments`` a few lines further down.
+#:
+#: DERIVED RATHER THAN RETYPED, because two hand-written lists of the same four words are two
+#: things to remember and one of them gets remembered wrongly. A fifth transparent program
+#: added above is a real binary like the other three and belongs here without an edit;
+#: ``exec`` is the exception and is named with its reason. ``tests/test_multi_gpu_launcher.py``
+#: holds the relationship.
+_TRANSPARENT_PREFIXES_WITH_A_BINARY: Final = _TRANSPARENT_PREFIXES - {"exec"}
+
+#: Shell options that take the following word as their value, so the scan for ``-c`` has to
+#: step over both. ``-o pipefail`` is the one that matters and is the reason this exists:
+#: it is the fix for a pipeline reporting the wrong command's exit status, so a guard that
+#: refused it would be refusing the remedy for a defect this platform has already been bitten
+#: by. ``+o`` is the same option turning the setting off and is spelled the same way.
+_SHELL_OPTIONS_TAKING_A_VALUE: Final = frozenset({"-o", "+o"})
+
+#: ``env``'s own options that consume the following word. Short: these are the ones that
+#: appear in front of a shell in a container command, and a list that tried to be complete
+#: would be guessing at the difference between GNU and BusyBox coreutils.
+_ENV_OPTIONS_TAKING_A_VALUE: Final = frozenset({"-u", "-C", "-S"})
+
 #: The launchers that start one process per device. ``torch.distributed.launch`` is deprecated
 #: and still works, which is exactly why it is here: a command that runs is a command this
 #: must recognise, whatever upstream thinks of it.
@@ -332,15 +363,70 @@ def _shell_command_position(words: Sequence[str]) -> int | None:
     everything in front of it verbatim. Searching for the word again with ``list.index`` would
     find the first equal one, which is the same word in every realistic command and not in
     every possible one.
+
+    **THE SHELL DOES NOT HAVE TO BE THE FIRST WORD, AND READING IT THAT WAY REFUSED WORKING
+    COMMANDS.** ``env bash -lc``, ``env VAR=value bash -lc``, ``nohup bash -lc`` and
+    ``bash -o pipefail -c`` all run a shell, and every one of them was answered ``None`` here
+    -- which told five callers at once that a command with a shell in it had none. The
+    checkpoint guard then refused it for not expanding a variable the shell would have
+    expanded, the device-count guard read the launcher inside the wrapper as one process, the
+    precision guard could not see the flags at all, and ``carries_the_token`` could not find
+    either waiver, so the documented escape from the first two refusals did not work either.
+
+    ``-o pipefail`` is the case that made this urgent rather than tidy. A pipeline reports the
+    exit status of its last command, which is how a run that died of ENOSPC before step 1 came
+    to be recorded ``exit_code: 0, outcome: succeeded``; ``set -o pipefail`` is the fix, and
+    the submission carrying it was refused with a sentence saying it had no shell.
+
+    Failing this way is safe and is not harmless. Every one of the five is a refusal of a
+    correct command, and a guard that refuses what it should allow is one people learn to
+    waive rather than read -- which costs the refusals that are right.
     """
-    if not words or PurePosixPath(words[0]).name not in SHELLS_THAT_READ_A_COMMAND_STRING:
+    start = _past_the_transparent_prefixes(words)
+    if start >= len(words):
         return None
-    for position, word in enumerate(words[1:], start=1):
-        if not word.startswith("-") or word == "--":
+    if PurePosixPath(words[start]).name not in SHELLS_THAT_READ_A_COMMAND_STRING:
+        return None
+    position = start + 1
+    while position < len(words):
+        word = words[position]
+        if not word.startswith(("-", "+")) or word == "--":
             return None
-        if word.endswith("c") and len(word) > 1:
+        if word in _SHELL_OPTIONS_TAKING_A_VALUE:
+            # The value is not a flag and must not end the scan the way a bare word does.
+            position += 2
+            continue
+        if word.startswith("-") and word.endswith("c") and len(word) > 1:
             return position + 1 if position + 1 < len(words) else None
+        position += 1
     return None
+
+
+def _past_the_transparent_prefixes(words: Sequence[str]) -> int:
+    """Where the real program starts, past anything that only arranges to run it.
+
+    ``env`` is the one that carries arguments of its own -- its flags and the assignments it
+    exists to make -- and they are stepped over rather than treated as the end of the search,
+    because ``env VAR=value bash -lc`` is the ordinary way to set one variable for one run.
+
+    A prefix followed by something that is not a shell still answers with that word's
+    position, so the caller refuses it exactly as before: ``env python train.py`` names no
+    shell and this must not pretend otherwise.
+    """
+    index = 0
+    while index < len(words):
+        if PurePosixPath(words[index]).name not in _TRANSPARENT_PREFIXES_WITH_A_BINARY:
+            return index
+        index += 1
+        while index < len(words) and (
+            _ASSIGNMENT.match(words[index]) or words[index].startswith("-")
+        ):
+            # `-u NAME` and `-S CMD` take the following word; a flag that does not is stepped
+            # over on its own. Both are ordinary `env` usage and neither is the shell.
+            if words[index] in _ENV_OPTIONS_TAKING_A_VALUE:
+                index += 1
+            index += 1
+    return index
 
 
 def shell_command_string(words: Sequence[str]) -> str | None:
