@@ -31,8 +31,21 @@ from pathlib import Path
 
 import pytest
 
+from edullm_platform.block_images import (
+    POST_TRAINING_REPOSITORY,
+    PULLABLE_REPOSITORIES,
+    TRAINING_REPOSITORY,
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BOOTSTRAP_PATH = PROJECT_ROOT / "infra" / "block-node-bootstrap.sh"
+
+#: The registry host the fixture node pre-pulled from, and the reference it holds. Spelled
+#: with the real repository name rather than a short one, because what the helper does with
+#: ``--image`` is split a reference on its first colon and prepend this host -- and a
+#: fixture using names shorter than the real ones would exercise none of that.
+FIXTURE_REGISTRY = "123456789012.dkr.ecr.us-east-1.amazonaws.com"
+PRE_PULLED_IMAGE = f"{FIXTURE_REGISTRY}/{TRAINING_REPOSITORY}:abc123"
 
 #: The helper, out of the ``cat > /usr/local/bin/edullm-node <<'HELPER'`` the bootstrap writes it
 #: with. Anchored on that exact path so that a rename of the installed command fails here rather
@@ -111,7 +124,23 @@ if [ "${1:-}" = ps ]; then
   fi
   exit 0
 fi
+if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
+  # On the machine only if it is the one the bootstrap pre-pulled, or if this stub has
+  # since been asked to pull it. That is what makes "was a pull needed" a consequence of
+  # the image the run named rather than a fixture setting.
+  if [ "${3:-}" = "${DOCKER_PRE_PULLED}" ] || [ -f "${DOCKER_MARKER}-pulled" ]; then
+    exit 0
+  fi
+  echo "Error: No such image: ${3:-}" >&2
+  exit 1
+fi
+if [ "${1:-}" = pull ]; then
+  : > "${DOCKER_MARKER}-pulled"
+  echo "Status: Downloaded newer image for ${2:-}"
+  exit 0
+fi
 if [ "${1:-}" = run ]; then
+  printf '%s\n' "$@" > "${DOCKER_RUN_ARGV}"
   for argument in "$@"; do
     case "${argument}" in
       edullm-*) started="${argument#edullm-}" ;;
@@ -166,8 +195,9 @@ def node(tmp_path: Path) -> dict[str, object]:
                 "EDULLM_BLOCK_NODE=3",
                 "EDULLM_BLOCK_OUTPUTS_BUCKET=edullm-block-outputs-us-east-2",
                 "EDULLM_BLOCK_DATA_BUCKET=edullm-data-us-east-2",
-                "EDULLM_BLOCK_IMAGE=registry/olmo-core:abc123",
+                f"EDULLM_BLOCK_IMAGE={PRE_PULLED_IMAGE}",
                 "EDULLM_BLOCK_IMAGE_REGION=us-east-1",
+                "EDULLM_BLOCK_PULLABLE_REPOSITORIES=" + ",".join(PULLABLE_REPOSITORIES),
                 "EDULLM_BLOCK_REGION=us-east-2",
                 "EDULLM_BLOCK_WANDB_SECRET_ID=a-secret",
                 "EDULLM_BLOCK_LOG_SYNC_SECONDS=60",
@@ -195,6 +225,7 @@ def node(tmp_path: Path) -> dict[str, object]:
         "claim": state / "claim.json",
         "binaries": binaries,
         "marker": tmp_path / "container-is-up",
+        "docker_run_argv": tmp_path / "docker-run-argv.txt",
     }
 
 
@@ -213,6 +244,8 @@ def _run(
             **os.environ,
             "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
             "DOCKER_MARKER": str(node["marker"]),
+            "DOCKER_PRE_PULLED": PRE_PULLED_IMAGE,
+            "DOCKER_RUN_ARGV": str(node["docker_run_argv"]),
             "DOCKER_RUN_FAILS": "yes" if docker_run_fails else "no",
         },
     )
@@ -222,6 +255,13 @@ def _claim(node: dict[str, object]) -> Path:
     path = node["claim"]
     assert isinstance(path, Path)
     return path
+
+
+def _docker_run_argv(node: dict[str, object]) -> list[str]:
+    path = node["docker_run_argv"]
+    assert isinstance(path, Path)
+    assert path.is_file(), "nothing reached docker run"
+    return path.read_text(encoding="utf-8").splitlines()
 
 
 def test_a_clone_that_is_refused_gives_the_node_back(node: dict[str, object]) -> None:
@@ -377,3 +417,126 @@ def test_a_second_start_of_a_live_run_leaves_its_claim_alone(node: dict[str, obj
     assert again.returncode != 0
     assert "already running" in again.stderr
     assert _claim(node).exists(), "a refused second start cleared the claim of the live run"
+
+
+# ---------------------------------------------------------------------------------------
+# Which image the run goes in
+# ---------------------------------------------------------------------------------------
+
+
+def test_a_run_that_names_no_image_goes_in_the_one_the_node_pre_pulled(
+    node: dict[str, object],
+) -> None:
+    """THE PROPERTY EVERY EXISTING DISPATCH DEPENDS ON, AND THE REASON IT IS HELD HERE.
+
+    ``--image`` is new, and every run made before it existed and most made after it will not
+    pass one. What those get has to be exactly what they got: the container the bootstrap
+    pulled at boot, already on the disk, with no registry round trip between a dispatch and a
+    training run starting. A default that resolved to anything else -- a tag, a second
+    repository, a reference assembled here -- would be a cold pull on all eight machines for
+    a change nobody asked for.
+    """
+    done = _run(
+        node,
+        "run",
+        "--name",
+        "an-arm",
+        "--branch",
+        "edullm/final-model",
+        git=GIT_CLONES_A_TREE_WITH_A_SPEC,
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert PRE_PULLED_IMAGE in _docker_run_argv(node)
+    assert "pulling" not in done.stdout, "the pre-pulled image was fetched again"
+
+
+def test_a_run_naming_the_second_image_pulls_it_and_says_so(
+    node: dict[str, object],
+) -> None:
+    """THE WHOLE POINT OF THE INPUT, AND THE LINE THAT STOPS IT READING AS A HANG.
+
+    Post-training runs `open-instruct` and the fleet booted on OLMo-core's image, so the
+    downstream node has to fetch a second one. It is fetched here rather than at boot because
+    pre-pulling it on all eight machines is gigabytes apiece for something one of them needs
+    -- and the cost of that choice is that one dispatch takes minutes instead of seconds,
+    with a `docker pull` nobody watching a workflow can see. The line saying so is the whole
+    difference between a slow run and a run somebody cancels.
+
+    The reference handed to ``docker run`` is assembled on the node from the registry host it
+    already pre-pulled from, because that host carries the account id and nothing should have
+    to type it into a dispatch form.
+    """
+    done = _run(
+        node,
+        "run",
+        "--name",
+        "post-train-1",
+        "--branch",
+        "edullm/final-model",
+        "--image",
+        f"{POST_TRAINING_REPOSITORY}:1cf5f26",
+        git=GIT_CLONES_A_TREE_WITH_A_SPEC,
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert f"{FIXTURE_REGISTRY}/{POST_TRAINING_REPOSITORY}:1cf5f26" in _docker_run_argv(node)
+    assert PRE_PULLED_IMAGE not in _docker_run_argv(node)
+    assert "pulling" in done.stdout
+    assert "only the first run pays it" in done.stdout
+
+
+def test_an_image_no_node_may_pull_is_refused_before_the_claim(
+    node: dict[str, object],
+) -> None:
+    """Mutation: let IAM answer instead, which is what this did before the argument existed.
+
+    The node role names its repositories one ARN at a time, so ``docker pull`` of anything
+    else is denied on the machine. Reaching that denial means the claim has already been
+    taken and the branch already cloned, and what arrives is an ``AccessDeniedException``
+    naming a registry path -- which reads as a broken image rather than as a list somebody is
+    not on. The refusal here happens before any of that and names the list.
+    """
+    done = _run(
+        node,
+        "run",
+        "--name",
+        "post-train-1",
+        "--branch",
+        "edullm/final-model",
+        "--image",
+        "sbsandbox-intern-edullm-p1:abc123",
+        git=GIT_CLONES_A_TREE_WITH_A_SPEC,
+    )
+
+    assert done.returncode != 0
+    assert "may pull" in done.stderr
+    assert POST_TRAINING_REPOSITORY in done.stderr, "the refusal does not name what is allowed"
+    assert not _claim(node).exists(), "an image refusal took the node out of the fleet"
+
+
+def test_a_whole_image_uri_is_refused_rather_than_pasted_into_docker(
+    node: dict[str, object],
+) -> None:
+    """Mutation: accept a reference carrying a registry host.
+
+    Then the repository the allow-list is checked against is a path segment somebody chose,
+    and the host is one nobody checked -- so an image from another account, or from a public
+    registry, passes a check written to answer whether this fleet may pull it. The argument
+    is a repository and a tag, and the node supplies the rest.
+    """
+    done = _run(
+        node,
+        "run",
+        "--name",
+        "post-train-1",
+        "--branch",
+        "edullm/final-model",
+        "--image",
+        f"docker.io/library/{POST_TRAINING_REPOSITORY}:1cf5f26",
+        git=GIT_CLONES_A_TREE_WITH_A_SPEC,
+    )
+
+    assert done.returncode != 0
+    assert "not a whole image URI" in done.stderr
+    assert not _claim(node).exists()

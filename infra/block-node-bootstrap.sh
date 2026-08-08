@@ -41,6 +41,10 @@ readonly OUTPUTS_BUCKET="${EDULLM_BLOCK_OUTPUTS_BUCKET:?the launch workflow must
 readonly DATA_BUCKET="${EDULLM_BLOCK_DATA_BUCKET:?the launch workflow must prepend EDULLM_BLOCK_DATA_BUCKET}"
 readonly TRAINING_IMAGE="${EDULLM_BLOCK_IMAGE:?the launch workflow must prepend EDULLM_BLOCK_IMAGE}"
 readonly IMAGE_REGION="${EDULLM_BLOCK_IMAGE_REGION:?the launch workflow must prepend EDULLM_BLOCK_IMAGE_REGION}"
+# Every ECR repository the node role may fetch from, comma separated. Prepended out of
+# `edullm_platform.block_images` rather than written here, so the list the helper refuses
+# against and the list the IAM template grants are decided in one place.
+readonly PULLABLE_REPOSITORIES="${EDULLM_BLOCK_PULLABLE_REPOSITORIES:?the launch workflow must prepend EDULLM_BLOCK_PULLABLE_REPOSITORIES}"
 readonly BLOCK_REGION="${EDULLM_BLOCK_REGION:?the launch workflow must prepend EDULLM_BLOCK_REGION}"
 readonly EXPECTED_GPUS="${EDULLM_BLOCK_EXPECTED_GPUS:?the launch workflow must prepend EDULLM_BLOCK_EXPECTED_GPUS}"
 readonly WANDB_SECRET_ID="${EDULLM_BLOCK_WANDB_SECRET_ID:?the launch workflow must prepend EDULLM_BLOCK_WANDB_SECRET_ID}"
@@ -214,6 +218,7 @@ EDULLM_BLOCK_OUTPUTS_BUCKET=${OUTPUTS_BUCKET}
 EDULLM_BLOCK_DATA_BUCKET=${DATA_BUCKET}
 EDULLM_BLOCK_IMAGE=${TRAINING_IMAGE}
 EDULLM_BLOCK_IMAGE_REGION=${IMAGE_REGION}
+EDULLM_BLOCK_PULLABLE_REPOSITORIES=${PULLABLE_REPOSITORIES}
 EDULLM_BLOCK_REGION=${BLOCK_REGION}
 EDULLM_BLOCK_WANDB_SECRET_ID=${WANDB_SECRET_ID}
 EDULLM_BLOCK_LOG_SYNC_SECONDS=${LOG_SYNC_SECONDS}
@@ -270,6 +275,8 @@ set -euo pipefail
 STATE="${EDULLM_BLOCK_STATE}"
 CLAIM="${STATE}/claim.json"
 SCRATCH="${EDULLM_BLOCK_SCRATCH}"
+PULLABLE="${EDULLM_BLOCK_PULLABLE_REPOSITORIES}"
+REGISTRY="${EDULLM_BLOCK_IMAGE%%/*}"
 
 # THE CHARACTER SET IS A SAFETY CONTROL RATHER THAN TIDINESS. A run name becomes a directory
 # under /scratch, a docker container name, and a segment of an S3 key, and it is written into
@@ -313,6 +320,48 @@ total_gpus() {
 write_claim() {
   printf '{"run":"%s","who":"%s","repository":"%s","branch":"%s","commit":"%s","started_at":"%s"}\n' \
     "$1" "$2" "$3" "$4" "$5" "$(now)" > "${CLAIM}"
+}
+
+# WHICH IMAGE THIS RUN GOES IN, AND THE REFUSAL FOR ONE NO NODE MAY PULL.
+#
+# `--image` is a repository and a tag, not a whole reference: the registry host carries the
+# account id and the node already knows it. The list is the node role's own, so this and
+# IAM cannot disagree -- and this arrives before a claim is taken, where IAM's arrives as an
+# AccessDeniedException naming a registry path. `block-run.yml` asks the same thing earlier
+# and for free; a person in a shell here never passes through it.
+IMAGE=""
+resolve_image() {
+  local wanted="$1" repository allowed
+  if [ -z "${wanted}" ]; then
+    IMAGE="${EDULLM_BLOCK_IMAGE}"
+    return 0
+  fi
+  case "${wanted}" in
+    */*) die "--image is <repository>:<tag>, not a whole image URI: ${wanted}" ;;
+  esac
+  repository="${wanted%%:*}"
+  [ "${repository}" != "${wanted}" ] || die "--image carries no tag: ${wanted}"
+  for allowed in ${PULLABLE//,/ }; do
+    if [ "${allowed}" = "${repository}" ]; then
+      IMAGE="${REGISTRY}/${wanted}"
+      return 0
+    fi
+  done
+  die "node ${EDULLM_BLOCK_NODE} may pull ${PULLABLE} and nothing else, so ${repository} is refused here rather than by IAM on the machine"
+}
+
+# FETCHED WHEN IT IS ASKED FOR RATHER THAN AT BOOT. Pre-pulling every image any node might
+# name is gigabytes apiece across eight machines for something one of them needs, so the
+# first run in a second image pays for it -- and says so, because a dispatch that takes
+# minutes instead of seconds otherwise reads as hung to somebody who cannot see a pull.
+fetch_image() {
+  if docker image inspect "$1" > /dev/null 2>&1; then
+    return 0
+  fi
+  echo "pulling $1, which is not on this node yet -- minutes, and only the first run pays it"
+  aws ecr get-login-password --region "${EDULLM_BLOCK_IMAGE_REGION}" |
+    docker login --username AWS --password-stdin "${REGISTRY}" > /dev/null
+  docker pull "$1"
 }
 
 # THE CLAIM `run` TOOK, GIVEN BACK WHEN NOTHING ENDS UP RUNNING. THIS IS THE OTHER HALF OF
@@ -408,13 +457,14 @@ do_release() {
 
 do_run() {
   local name="" repository="edu-llm/OLMo-core" branch="" override="" who="unknown" force=""
-  local project="capacity-block"
+  local project="capacity-block" wanted_image=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --name) name="$2"; shift 2 ;;
       --repository) repository="$2"; shift 2 ;;
       --branch) branch="$2"; shift 2 ;;
       --command) override="$2"; shift 2 ;;
+      --image) wanted_image="$2"; shift 2 ;;
       --who) who="$2"; shift 2 ;;
       --wandb-project) project="$2"; shift 2 ;;
       --force) force=--force; shift ;;
@@ -424,6 +474,7 @@ do_run() {
   [[ "${name}" =~ ${SAFE_NAME} ]] || die "--name must match ${SAFE_NAME}"
   [[ "${branch}" =~ ${SAFE_REF} ]] || die "--branch must match ${SAFE_REF}"
   [[ "${repository}" =~ ${SAFE_REF} ]] || die "--repository must match ${SAFE_REF}"
+  resolve_image "${wanted_image}"
 
   local held
   held="$(claim_field run)"
@@ -486,6 +537,10 @@ do_run() {
   local prefix="s3://${EDULLM_BLOCK_OUTPUTS_BUCKET}/${EDULLM_BLOCK_S3_PREFIX}/${name}"
   write_claim "${name}" "${who}" "${repository}" "${branch}" "${commit}"
 
+  # After the clone. A missing branch and a tree with no `.edullm/run.yaml` are both
+  # seconds; a cold pull is minutes, and paying it to then meet one of those is backwards.
+  fetch_image "${IMAGE}"
+
   # `--ipc=host` and the two ulimits are the NCCL recipe AWS publishes for its own deep
   # learning containers. The default 64 MiB of /dev/shm is where a multi-GPU run dies
   # several minutes in with a message about a bootstrap timeout that names nothing.
@@ -517,12 +572,13 @@ do_run() {
     --env "EDULLM_WANDB_PROJECT=${project}" \
     --env "WANDB_RUN_ID=${name}" \
     --env "WANDB_NAME=${name}" \
-    "${EDULLM_BLOCK_IMAGE}" \
+    "${IMAGE}" \
     bash -lc "set -o pipefail; ${command} 2>&1 | tee -a /work/log/train.log"
 
   echo "run        ${name}"
   echo "node       ${EDULLM_BLOCK_NODE}"
   echo "commit     ${commit}"
+  echo "image      ${IMAGE}"
   echo "container  edullm-${name}"
   echo "logs       ${prefix}/log/train.log"
 }

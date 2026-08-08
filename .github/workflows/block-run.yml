@@ -37,6 +37,21 @@ name: "Block: start a run on a node"
 # different code, and the only record of which is the commit printed below and the claim file
 # on the machine. Anything that has to be reproducible later goes through `edullm submit` on
 # the platform, in us-east-1, after the window.
+#
+# A RUN MAY NAME A SECOND IMAGE, AND THE LIST IT MAY NAME FROM IS SHORT ON PURPOSE.
+#
+# The pre-pulled container is OLMo-core's, and post-training is not OLMo-core -- it is
+# `open-instruct`, a different trainer with vLLM and DeepSpeed in it, so the downstream node
+# cannot do that work in the image the fleet booted with. The `image` input names an ECR
+# repository and a tag; left empty, nothing about a dispatch changes.
+#
+# What it may name is `edullm_platform.block_images.PULLABLE_REPOSITORIES`, which is the same
+# list `infra/iam/block-fleet-roles.yaml` grants the node role and no wider. That narrowness is
+# the control rather than an oversight: an untrusted training command on one of these machines
+# holds the instance role, and a wildcard over the registry would hand it every image the
+# platform has ever published. The refusal below is here so that an image outside the list is a
+# sentence naming the list, on a runner, before anything is claimed -- rather than an
+# AccessDeniedException on the node, after a clone, naming a registry path.
 
 on:
   workflow_dispatch:
@@ -60,6 +75,11 @@ on:
         type: string
       command:
         description: "Optional. Left empty, the command is read from .edullm/run.yaml on the branch, which is where it belongs."
+        required: false
+        default: ""
+        type: string
+      image:
+        description: "Optional. `<ecr repository>:<tag>` to run in -- post-training wants open-instruct rather than OLMo-core. Left empty, the image every node already pulled at boot."
         required: false
         default: ""
         type: string
@@ -100,7 +120,9 @@ jobs:
   start:
     name: Start a run on one capacity block node
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Thirty rather than twenty, and the twenty minutes of polling below is what spends it.
+    # A run that names a second image waits for that image to reach the node, once.
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
@@ -110,9 +132,14 @@ jobs:
       RUN_NAME: ${{ inputs.run_name }}
       REPOSITORY: ${{ inputs.repository }}
       COMMAND_OVERRIDE: ${{ inputs.command }}
+      IMAGE: ${{ inputs.image }}
       WANDB_PROJECT: ${{ inputs.wandb_project }}
       RESERVATION_INPUT: ${{ inputs.reservation_id }}
       BLOCK_REGION: ${{ inputs.region }}
+      # The registry is in the region the platform lives in and the fleet is not, which is
+      # the same cross-region dependency the launch records. Only read when a run names an
+      # image: the tag it names is checked against the registry before the node is touched.
+      IMAGE_REGION: us-east-1
       TAKE_ANYWAY: ${{ inputs.take_the_node_anyway }}
       DISPATCHED_BY: ${{ github.actor }}
       WANDB_ENTITY: eduLLM
@@ -144,6 +171,9 @@ jobs:
           import os
           import re
           import sys
+          from pathlib import Path
+
+          from edullm_platform.block_images import ImageIsNotPullableHere, parse_image
 
           name = os.environ["RUN_NAME"]
           if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", name) is None:
@@ -155,6 +185,28 @@ jobs:
               )
           if re.fullmatch(r"[0-9]{1,3}", os.environ["NODE"]) is None:
               sys.exit(f"node_is_not_a_number:{os.environ['NODE']!r}")
+
+          # THE THIRD REFUSAL THAT IS FREE, AND THE ONE WHOSE ALTERNATIVE IS UNREADABLE.
+          #
+          # A node may fetch from the repositories `infra/iam/block-fleet-roles.yaml` names
+          # and no others, which is deliberate: eight people share the fleet, nothing they
+          # run is reviewed, and a wildcard on the registry would hand an untrusted training
+          # command every image the platform has ever published. What IAM answers for an
+          # image outside that list is an AccessDeniedException naming a registry path,
+          # delivered on the machine, after a claim was taken and a branch cloned -- which
+          # reads as a broken image rather than as a list somebody is not on.
+          #
+          # `edullm_platform.block_images` holds the list the template grants, so this says
+          # the same thing here, for nothing, and names what is allowed.
+          try:
+              image = parse_image(os.environ["IMAGE"])
+          except ImageIsNotPullableHere as refusal:
+              sys.exit(str(refusal))
+          Path(os.environ["RUNNER_TEMP"], "image.txt").write_text(
+              (image.reference if image is not None else "") + "\n", encoding="utf-8"
+          )
+          if image is not None:
+              print(f"running in {image.reference} rather than the pre-pulled training image")
           PY
 
           # `ls-remote` rather than a clone. It is one round trip, it needs no checkout, and
@@ -180,6 +232,29 @@ jobs:
       # terminate, or two live blocks whose node numbers overlap -- and picking the first one
       # would start a run on whichever the API happened to return. The optional reservation
       # input is the disambiguator; without it, ambiguity is a refusal naming both.
+      # A TAG THAT IS NOT IN THE REGISTRY, ASKED ABOUT BEFORE THE MACHINE IS TOUCHED.
+      #
+      # The pre-pulled image is on the node already, so a run naming none of this cannot get
+      # it wrong. A run naming a second image can, and the way it goes wrong is expensive:
+      # the helper claims the node, clones the branch and then spends minutes on a pull that
+      # ends in a manifest that does not exist. `block-launch-fleet.yml` asks the identical
+      # question about the training tag for the identical reason, and the grant this needs
+      # is the same statement in the same role.
+      - name: Refuse an image tag the registry does not carry
+        run: |
+          set -euo pipefail
+          read -r named_image < "${RUNNER_TEMP}/image.txt" || named_image=""
+          if [ -z "${named_image}" ]; then
+            echo "no image was named, so this run uses the one every node pre-pulled"
+            exit 0
+          fi
+          aws ecr describe-images \
+            --repository-name "${named_image%%:*}" \
+            --image-ids "imageTag=${named_image##*:}" \
+            --region "${IMAGE_REGION}" \
+            --query 'imageDetails[].imageDigest' \
+            --output text
+
       - name: Find the node and read what it is doing
         run: |
           set -euo pipefail
@@ -352,6 +427,16 @@ jobs:
           ]
           if os.environ["COMMAND_OVERRIDE"]:
               argv += ["--command", os.environ["COMMAND_OVERRIDE"]]
+          # Only when one was named, so every dispatch that says nothing about images sends
+          # the identical command line it sent before this input existed and the node
+          # answers with the image it pre-pulled. A default spelled out here would be a
+          # second opinion about what a node is carrying, held by something that cannot see
+          # the machine.
+          named_image = Path(os.environ["RUNNER_TEMP"], "image.txt").read_text(
+              encoding="utf-8"
+          ).strip()
+          if named_image:
+              argv += ["--image", named_image]
           if os.environ["TAKE_ANYWAY"] == "true":
               argv.append("--force")
           Path(sys.argv[1]).write_text(
@@ -370,11 +455,22 @@ jobs:
             --output text > "${run_command}"
           read -r command_id < "${run_command}"
 
-          # Ten minutes of polling against a ten-minute command timeout. The slow part is the
-          # clone, not the container: `docker run --detach` returns as soon as the container is
-          # started, which is the whole reason a training run can be launched from a workflow
-          # that finishes in under a minute.
-          for _attempt in $(seq 1 120); do
+          # TWENTY MINUTES OF POLLING, WHICH IS NINETEEN MORE THAN THE ORDINARY RUN NEEDS.
+          #
+          # `docker run --detach` returns as soon as the container is started, so a dispatch
+          # into the pre-pulled image finishes in well under a minute and the clone is the
+          # slow part of it. A dispatch naming a second image is the case this window is for:
+          # the helper pulls that image if the node does not have it, which is a cross-region
+          # fetch of a multi-gigabyte layer set, and the first run on the downstream node
+          # pays for it once.
+          #
+          # `--timeout-seconds` above is not what bounds any of this. It is how long Systems
+          # Manager will wait for a command to *start*, and the execution bound is
+          # AWS-RunShellScript's own hour. So the only thing polling too briefly changes is
+          # what this workflow says about a run that is starting perfectly well: it would
+          # report `run_did_not_start:InProgress` and send somebody to release a claim that
+          # is about to be used.
+          for _attempt in $(seq 1 240); do
             sleep 5
             aws ssm get-command-invocation \
               --region "${BLOCK_REGION}" \
@@ -452,6 +548,9 @@ jobs:
           node = os.environ["NODE"]
           instance = read("instance-id.txt")
           commit = read("commit.txt") or "unknown"
+          image = read("image.txt")
+          if image in ("", "unknown"):
+              image = "the image this node pre-pulled at boot"
           region = os.environ["BLOCK_REGION"]
           project = os.environ["WANDB_PROJECT"]
           entity = os.environ["WANDB_ENTITY"]
@@ -463,6 +562,7 @@ jobs:
           print(f"| instance | `{instance}` |")
           print(f"| commit | `{commit}` |")
           print(f"| branch | `{os.environ['REPOSITORY']}@{os.environ['BRANCH']}` |")
+          print(f"| image | `{image}` |")
           print(f"| W&B | https://wandb.ai/{entity}/{project}/runs/{run} |")
           print("")
           print("Logs are synced to S3 once a minute; reading them needs an AWS credential, so")

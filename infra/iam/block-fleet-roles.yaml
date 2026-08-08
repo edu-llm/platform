@@ -79,6 +79,32 @@ Parameters:
     Default: sbsandbox-intern-edullm-olmo-core
     Description: The ECR repository the nodes pull once at boot.
 
+  # THE SECOND IMAGE, AND WHY THERE IS A SECOND PARAMETER RATHER THAN A LIST.
+  #
+  # Post-training and the evaluations after it run `open-instruct` -- a different trainer,
+  # vLLM, DeepSpeed -- so the downstream node cannot do that work in the training image, and
+  # until this parameter existed it could not fetch any other: the grant below named one
+  # repository ARN, so `docker pull` of anything else was denied on the machine, from the
+  # helper, from a shell, from anywhere.
+  #
+  # A COMMA-SEPARATED LIST WAS THE FIRST SHAPE TRIED AND CLOUDFORMATION CANNOT SPEND ONE.
+  # `CommaDelimitedList` resolves to a list, and a `Resource` here needs one ARN per element
+  # -- which means mapping a prefix over a list, and the template language has no map.
+  # `Fn::Join` cannot help because its delimiter must be a literal and the prefix carries
+  # `${AWS::AccountId}`; `Fn::Select` can, at the price of a fixed arity that silently
+  # ignores anything past the last index somebody wrote. A parameter the resource does not
+  # actually spend is worse than no parameter, so this is two named repositories, which is
+  # the shape `infra/iam/ecr-publisher-role.yaml` already reached for the same reason.
+  #
+  # Both defaults are the values that make the downstream lane work as shipped, so a
+  # deployer who overrides nothing gets exactly what the fleet needs. Overriding this one
+  # with the training repository's name is how a window that wants no second image is
+  # deployed with the grant it had before.
+  PostTrainingRepository:
+    Type: String
+    Default: sbsandbox-intern-edullm-open-instruct
+    Description: The second ECR repository a run may name. Pulled on demand by the node that asks for it, never at boot.
+
 Resources:
   # -------------------------------------------------------------------------------------
   # THE WORKFLOW IDENTITY. One role for every file in the lane, and that is a decision rather
@@ -201,11 +227,19 @@ Resources:
               # the parameter records: ECR is per-region and the platform registry is not where
               # the fleet is. A grant naming us-east-2 matches nothing and reads as the
               # repository being absent.
+              #
+              # BOTH REPOSITORIES, BECAUSE `block-run.yml` NOW ASKS THE SAME QUESTION ABOUT THE
+              # SECOND ONE. A run naming an image checks that tag exists before it touches the
+              # node, for the reason every other refusal in that file is where it is: a tag
+              # that is not in the registry is otherwise discovered by the machine, several
+              # minutes into a cold pull, after a claim was taken -- and a typo is worth
+              # exactly one free refusal rather than one paid one.
               - Sid: CheckTheTrainingImageTagExists
                 Effect: Allow
                 Action: ecr:DescribeImages
                 Resource:
-                  Fn::Sub: arn:${AWS::Partition}:ecr:${ImageRegion}:${AWS::AccountId}:repository/${TrainingRepository}
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${ImageRegion}:${AWS::AccountId}:repository/${TrainingRepository}
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${ImageRegion}:${AWS::AccountId}:repository/${PostTrainingRepository}
 
               # THE LAUNCH, BOUNDED BY REGION AND BY NOTHING ELSE.
               #
@@ -384,6 +418,18 @@ Resources:
                 Effect: Allow
                 Action: ecr:GetAuthorizationToken
                 Resource: "*"
+              # ONE ARN PER REPOSITORY A RUN MAY NAME, AND NO WILDCARD. The obvious tidying is
+              # `repository/sbsandbox-intern-edullm-*`, which would cover every repository the
+              # platform ever registers without anybody deciding to -- and what runs on these
+              # machines is an untrusted training command with this role's credentials one
+              # metadata hop away. The narrow scope is the control; two entries are what it
+              # costs. `infra/iam/ecr-publisher-role.yaml` refused the same wildcard for the
+              # same reason and its list is six long.
+              #
+              # `src/edullm_platform/block_images.py` is the other half of this list, and
+              # `tests/test_block_workflows.py` holds the two equal in both directions. A
+              # repository added there and not here is a run refused on the machine by IAM;
+              # added here and not there is a grant nothing spends.
               - Sid: PullTheTrainingImageAcrossRegions
                 Effect: Allow
                 Action:
@@ -391,7 +437,8 @@ Resources:
                   - ecr:GetDownloadUrlForLayer
                   - ecr:BatchCheckLayerAvailability
                 Resource:
-                  Fn::Sub: arn:${AWS::Partition}:ecr:${ImageRegion}:${AWS::AccountId}:repository/${TrainingRepository}
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${ImageRegion}:${AWS::AccountId}:repository/${TrainingRepository}
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${ImageRegion}:${AWS::AccountId}:repository/${PostTrainingRepository}
 
               - Sid: WriteTheNodeLogGroup
                 Effect: Allow

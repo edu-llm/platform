@@ -415,6 +415,7 @@ jobs:
           from pathlib import Path
 
           from edullm_platform.block_fleet import admits_its_own_members, interface_plan
+          from edullm_platform.block_images import PULLABLE_REPOSITORIES
 
           temporary = Path(os.environ["RUNNER_TEMP"])
           image, subnets, types, groups = (
@@ -513,6 +514,16 @@ jobs:
               types, subnet_id=subnet["SubnetId"], security_group_id=group_id, efa_wanted=wanted
           )
 
+          # EVERY REPOSITORY A NODE MAY PULL FROM, CARRIED ONTO THE NODES RATHER THAN TYPED
+          # THERE. The helper `infra/block-node-bootstrap.sh` installs refuses an image
+          # outside this list, and the list it has to refuse against is the one
+          # `infra/iam/block-fleet-roles.yaml` grants -- so it is written out of the library
+          # both of them are held against and only ever transcribed, exactly as the reclaim
+          # margin above is. A second spelling on the machine would be the copy that is
+          # wrong on the day somebody widens the role and not the fleet.
+          (temporary / "pullable-repositories.txt").write_text(
+              ",".join(PULLABLE_REPOSITORIES) + "\n", encoding="utf-8"
+          )
           (temporary / "subnet-id.txt").write_text(subnet["SubnetId"] + "\n", encoding="utf-8")
           (temporary / "root-device.txt").write_text(root_device + "\n", encoding="utf-8")
           (temporary / "gpu-count.txt").write_text(f"{cards}\n", encoding="utf-8")
@@ -559,6 +570,7 @@ jobs:
           read -r ends_at < "${RUNNER_TEMP}/ends-at.txt"
           read -r reclaim_minutes < "${RUNNER_TEMP}/reclaim-minutes.txt"
           read -r drain_from_minutes < "${RUNNER_TEMP}/drain-from-minutes.txt"
+          read -r pullable_repositories < "${RUNNER_TEMP}/pullable-repositories.txt"
           registry="${account}.dkr.ecr.${IMAGE_REGION}.amazonaws.com"
 
           # An array rather than thirty-three arguments inlined, because on this shape that is a
@@ -613,6 +625,7 @@ jobs:
               printf 'EDULLM_BLOCK_DATA_BUCKET=%s\n' "${DATA_BUCKET}"
               printf 'EDULLM_BLOCK_IMAGE=%s\n' "${registry}/${IMAGE_REPOSITORY}:${IMAGE_TAG}"
               printf 'EDULLM_BLOCK_IMAGE_REGION=%s\n' "${IMAGE_REGION}"
+              printf 'EDULLM_BLOCK_PULLABLE_REPOSITORIES=%s\n' "${pullable_repositories}"
               printf 'EDULLM_BLOCK_REGION=%s\n' "${BLOCK_REGION}"
               printf 'EDULLM_BLOCK_EXPECTED_GPUS=%s\n' "${gpus}"
               printf 'EDULLM_BLOCK_WANDB_SECRET_ID=%s\n' "${WANDB_SECRET_ID}"

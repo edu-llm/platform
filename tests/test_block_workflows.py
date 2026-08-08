@@ -50,6 +50,11 @@ from workflow_support import (
 )
 
 from edullm_platform.block_drain import DRAIN_FROM_MINUTES, RECLAIM_MARGIN_MINUTES
+from edullm_platform.block_images import (
+    POST_TRAINING_REPOSITORY,
+    PULLABLE_REPOSITORIES,
+    TRAINING_REPOSITORY,
+)
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.inventory import OrganizationInventory
 
@@ -507,6 +512,7 @@ def test_the_interfaces_the_library_built_are_the_ones_run_instances_is_handed(
         "ends-at.txt": "2026-08-12T11:30:00Z",
         "reclaim-minutes.txt": str(RECLAIM_MARGIN_MINUTES),
         "drain-from-minutes.txt": str(DRAIN_FROM_MINUTES),
+        "pullable-repositories.txt": ",".join(PULLABLE_REPOSITORIES),
         "network-interfaces.txt": "\n".join(plan_arguments),
     }.items():
         (tmp_path / name).write_text(contents + "\n", encoding="utf-8")
@@ -1030,6 +1036,10 @@ def test_the_registry_grant_names_the_region_the_registry_is_in() -> None:
     denial reads as the repository being absent rather than as the policy being wrong -- which
     is the wrong thing to be debugging with eight machines already billing. The node role has
     carried this property since it was written and the fleet role now needs it too.
+
+    Two repositories rather than one since ``block-run.yml`` learned to name a second image:
+    it asks the identical question about the tag a run named, so a tag typo is refused on a
+    runner instead of discovered by the node partway through a multi-gigabyte pull.
     """
     checking = [
         statement
@@ -1038,14 +1048,180 @@ def test_the_registry_grant_names_the_region_the_registry_is_in() -> None:
     ]
 
     assert len(checking) == 1
-    assert checking[0]["Resource"]["Fn::Sub"] == (
-        "arn:${AWS::Partition}:ecr:${ImageRegion}:${AWS::AccountId}:repository/"
-        "${TrainingRepository}"
-    )
+    across_regions = "arn:${AWS::Partition}:ecr:${ImageRegion}:${AWS::AccountId}:repository/"
+
+    assert [resource["Fn::Sub"] for resource in checking[0]["Resource"]] == [
+        f"{across_regions}${{TrainingRepository}}",
+        f"{across_regions}${{PostTrainingRepository}}",
+    ]
     assert "ecr:GetAuthorizationToken" not in fleet_role_grants(), (
         "DescribeImages is authorised on its own action. A token grant takes Resource: * and "
         "buys nothing for a call that never asks for one"
     )
+
+
+def node_role_pull_scope() -> set[str]:
+    """Every ECR repository the node role may fetch layers from, by name.
+
+    Read through the parameter each ARN names rather than off the ARN text, which is two
+    assertions for the price of one: a ``Resource`` entry that stopped being a parameter --
+    a literal somebody pasted, or the wildcard this list exists instead of -- has no default
+    to resolve and fails here rather than quietly widening the fleet.
+    """
+    template = yaml.safe_load(ROLE_TEMPLATE.read_text(encoding="utf-8"))
+    defaults = {
+        name: str(parameter["Default"]) for name, parameter in template["Parameters"].items()
+    }
+    pulling = [
+        statement
+        for statement in template["Resources"]["BlockNodeRole"]["Properties"]["Policies"][0][
+            "PolicyDocument"
+        ]["Statement"]
+        if statement["Sid"] == "PullTheTrainingImageAcrossRegions"
+    ]
+    assert len(pulling) == 1
+    resources = pulling[0]["Resource"]
+    assert isinstance(resources, list), "one ARN is one repository, and there are two"
+
+    named: set[str] = set()
+    for resource in resources:
+        arn = str(resource["Fn::Sub"])
+        assert "*" not in arn, (
+            "a wildcard here hands an untrusted training command every image the platform "
+            "has ever published, which is the property the named list exists to keep"
+        )
+        parameter = arn.rsplit("repository/", 1)[-1]
+        assert parameter.startswith("${") and parameter.endswith("}"), arn
+        named.add(defaults[parameter[2:-1]])
+    return named
+
+
+def test_the_node_role_may_pull_exactly_the_repositories_a_run_may_name() -> None:
+    """THE SEAM THIS WHOLE CHANGE IS, AND IT IS INVISIBLE FROM EITHER FILE ALONE.
+
+    ``block-run.yml`` decides which images a dispatch may ask for and
+    ``infra/iam/block-fleet-roles.yaml`` decides which ones a machine may fetch, and they
+    are different files nobody reads together. Each direction fails in its own way and
+    neither is legible where it lands. A repository the workflow accepts and the role does
+    not is an ``AccessDeniedException`` on the node, after a claim was taken and a branch
+    cloned, naming a registry path -- the exact shape of the denial that took the training
+    image out of reach in the first place. A repository the role grants and the workflow
+    refuses is a grant nothing spends, which is worse than useless on a role whose narrowness
+    is the control.
+
+    So the list is written once, in ``edullm_platform.block_images``, and held against the
+    template in both directions here.
+    """
+    assert node_role_pull_scope() == set(PULLABLE_REPOSITORIES)
+    assert TRAINING_REPOSITORY in PULLABLE_REPOSITORIES
+    assert POST_TRAINING_REPOSITORY in PULLABLE_REPOSITORIES
+
+
+def test_the_image_every_node_pre_pulls_is_named_in_one_place() -> None:
+    """Mutation: leave the launch workflow's own spelling of the training repository alone.
+
+    ``block-launch-fleet.yml`` builds the reference each node pre-pulls out of
+    ``IMAGE_REPOSITORY``, and the library says which repository that is. Two spellings would
+    disagree the day somebody renames one, and what a disagreement produces is a fleet that
+    booted on an image the node role was never granted -- eight machines that pass every
+    check in the launch and fail at the pull, unattended, with the window already billing.
+    """
+    job = only_job(load_workflow(LAUNCH_PATH))
+    parameters = yaml.safe_load(ROLE_TEMPLATE.read_text(encoding="utf-8"))["Parameters"]
+
+    assert job["env"]["IMAGE_REPOSITORY"] == TRAINING_REPOSITORY
+    assert parameters["TrainingRepository"]["Default"] == TRAINING_REPOSITORY
+    assert parameters["PostTrainingRepository"]["Default"] == POST_TRAINING_REPOSITORY
+
+
+def test_the_list_a_node_refuses_against_is_carried_onto_it_by_the_launch() -> None:
+    """Mutation: write the allowed repositories into the bootstrap as a literal.
+
+    The helper on the machine refuses an image outside the list, so a person in a shell gets
+    the same answer the workflow gives. A literal there is a third spelling of the same list,
+    on the artifact nobody can watch fail, updated by whoever remembers -- and the failure of
+    forgetting is the machine refusing an image the role would have let it pull. It is
+    prepended out of the library instead, the way the reclaim margin already is.
+    """
+    resolve = step(only_job(load_workflow(LAUNCH_PATH)), RESOLVE_STEP)["run"]
+    launch = step(only_job(load_workflow(LAUNCH_PATH)), LAUNCH_STEP)["run"]
+    bootstrap = BOOTSTRAP_PATH.read_text(encoding="utf-8")
+
+    assert "from edullm_platform.block_images import PULLABLE_REPOSITORIES" in resolve
+    assert "pullable-repositories.txt" in resolve
+    assert "pullable-repositories.txt" in launch
+    assert "printf 'EDULLM_BLOCK_PULLABLE_REPOSITORIES=%s\\n'" in launch
+    assert "EDULLM_BLOCK_PULLABLE_REPOSITORIES:?" in bootstrap
+    for repository in PULLABLE_REPOSITORIES:
+        assert repository not in bootstrap, (
+            f"{repository} is written into the bootstrap, which is a second list to keep in "
+            "step with the role"
+        )
+
+
+def test_a_dispatch_that_names_no_image_is_the_dispatch_it_was_before(
+    runner: dict[str, Any],
+) -> None:
+    """THE PROPERTY THAT KEEPS THIS CHANGE FREE FOR EVERY RUN THAT DOES NOT WANT IT.
+
+    Seven of the eight nodes never name an image, and what they get has to be the container
+    the bootstrap already pulled: on the disk, no registry round trip, a dispatch that
+    finishes in under a minute. So the input defaults to empty and ``--image`` is appended
+    only when it is not -- rather than the workflow resolving a default of its own, which
+    would be a second opinion about what a node is carrying held by something that cannot see
+    the machine.
+    """
+    inputs = runner["on"]["workflow_dispatch"]["inputs"]
+    argv = step(only_job(runner), "Take the node and start the run")["run"]
+
+    assert inputs["image"]["default"] == ""
+    assert inputs["image"]["required"] is False
+    assert 'if named_image:\n    argv += ["--image", named_image]' in argv
+
+
+def test_an_image_no_node_may_pull_is_refused_before_the_credentials(
+    runner: dict[str, Any],
+) -> None:
+    """Mutation: check the image after the node has been found, or not at all.
+
+    IAM refuses it either way. What differs is what a person reads: an
+    ``AccessDeniedException`` naming a registry path, arriving from a machine that has
+    already taken a claim and cloned a branch, against a sentence on a runner naming the
+    repositories a node may pull. The first reads as a broken image and sends somebody to
+    look at the registry; the second says which list they are not on.
+
+    Held as an ordering as well as a call, because the step that does it needs no AWS
+    credential at all and a refusal that is free should stay free.
+    """
+    job = only_job(runner)
+    names = [item.get("name", "") for item in job["steps"]]
+    refusal = step(job, "Refuse a run name or a branch that would fail on the machine")["run"]
+
+    assert "from edullm_platform.block_images import" in refusal
+    assert 'parse_image(os.environ["IMAGE"])' in refusal
+    assert names.index(
+        "Refuse a run name or a branch that would fail on the machine"
+    ) < names.index("Configure AWS credentials")
+    assert names.index("Refuse an image tag the registry does not carry") < names.index(
+        "Find the node and read what it is doing"
+    )
+
+
+def test_the_run_workflow_waits_out_a_pull_rather_than_calling_it_a_failure(
+    runner: dict[str, Any],
+) -> None:
+    """Mutation: leave the polling window at the ten minutes an already-pulled image needs.
+
+    A node that does not have the image a run named fetches it, which is a cross-region pull
+    of a multi-gigabyte layer set and the whole reason a second image is not pre-pulled on
+    eight machines. Polled for ten minutes, that run reports ``run_did_not_start:InProgress``
+    while it is starting perfectly well, and sends the one person holding the downstream node
+    to release a claim that is about to be used.
+    """
+    start = step(only_job(runner), "Take the node and start the run")["run"]
+
+    assert "for _attempt in $(seq 1 240); do" in start
+    assert only_job(runner)["timeout-minutes"] >= 30
 
 
 def test_the_flush_is_a_timer_on_the_node_and_not_a_cron_in_a_workflow() -> None:
