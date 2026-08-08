@@ -585,6 +585,52 @@ def test_the_verification_terminates_and_then_fails(launch: dict[str, Any]) -> N
     assert "exit 1" in script
 
 
+def test_the_fleet_is_read_back_even_when_the_launch_step_failed(launch: dict[str, Any]) -> None:
+    """THE PARTIAL LAUNCH, WHICH IS THE CASE THE SHORTFALL RE-RUN WAS WRITTEN FOR.
+
+    ``set -euo pipefail`` means one refused ``run-instances`` -- an
+    ``InsufficientInstanceCapacity`` on machine six, a throttle on machine seven -- ends the
+    launch step with five machines already started. Without ``if: always()`` nothing reads
+    those five back, so the one guarantee this file exists to give is skipped on the one path
+    where the fleet is least likely to be what was asked for.
+
+    The empty fleet is passed rather than refused for the other half of the same reason: when
+    the launch failed before starting anything, restating that as a verification failure buries
+    the message that says which call was refused.
+    """
+    verify = step(only_job(launch), VERIFY_STEP)
+
+    assert verify["if"] == "always()"
+    assert "raise SystemExit(0)" in verify["run"]
+    assert "nothing carries this block tag, so there is nothing to verify" in verify["run"]
+
+
+def test_a_fleet_short_of_the_count_says_so_rather_than_blaming_the_bootstrap(
+    launch: dict[str, Any],
+) -> None:
+    """Mutation: the single verdict this step used to have, which named the wrong fault.
+
+    Three machines that were never started and eight whose bootstraps hung both left here as
+    ``block_nodes_never_became_ready`` with an instruction to read
+    ``/var/lib/edullm/bootstrap.log`` on each node -- which on the first of those is a file on
+    machines that do not exist. The person reading it is the one holding the reservation, and
+    what they are sent to do is look for evidence of a fault that is not the fault.
+
+    The shortfall is checked first because it is the more specific finding and because what it
+    calls for is a re-run rather than a debugging session.
+    """
+    final = only_job(launch)["steps"][-1]["run"]
+
+    assert "fleet-size.txt" in final
+    assert '"${launched}" -lt "${INSTANCE_COUNT}"' in final
+    assert final.index("block_fleet_is_short_of_the_count_asked_for") < final.index(
+        "block_nodes_never_became_ready"
+    )
+    assert final.index("block_fleet_is_short_of_the_count_asked_for") < final.index(
+        "bootstrap.log"
+    )
+
+
 def test_a_fleet_that_never_answered_is_not_reported_as_ready(launch: dict[str, Any]) -> None:
     """Mutation: gate the workflow on ``not-ready.txt`` being empty, which is what it did.
 

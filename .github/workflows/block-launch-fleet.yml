@@ -753,7 +753,21 @@ jobs:
       # listing shows.
       #
       # The whole fleet goes if any one of them is wrong. See the header.
+      #
+      # `if: always()` BECAUSE THE PATH THIS IS MOST NEEDED ON IS THE ONE IT USED TO SKIP.
+      # `set -euo pipefail` in the launch step means one refused `run-instances` -- an
+      # `InsufficientInstanceCapacity` on machine six, a throttle on machine seven, which is
+      # exactly what the shortfall re-run exists for -- ends that step with five machines
+      # already started. Without this the one guarantee the file offers is then never given:
+      # nothing reads those five back, and whether they are drawing from the block is a
+      # question nobody has asked of the fleet that is now billing.
+      #
+      # An empty fleet is reported and passed rather than refused, which is the other half of
+      # running on failure. Nothing launched is a fact about the step that failed above, and
+      # restating it as a verification failure buries the message that says what went wrong.
+      # `Print the fleet` compares the fleet against the count asked for and refuses there.
       - name: Verify every instance is drawing from the block, or terminate all of them
+        if: always()
         run: |
           set -euo pipefail
           fleet_json="${RUNNER_TEMP}/fleet.json"
@@ -784,7 +798,8 @@ jobs:
               encoding="utf-8",
           )
           if not fleet:
-              raise SystemExit("nothing carries this block tag, so there is nothing to verify")
+              print("nothing carries this block tag, so there is nothing to verify")
+              raise SystemExit(0)
           if wrong:
               print("")
               print("THESE INSTANCES ARE NOT DRAWING FROM THE BLOCK:")
@@ -1002,6 +1017,14 @@ jobs:
       # PRINTED WHATEVER HAPPENED ABOVE, BECAUSE THE TABLE IS WHAT SOMEBODY ACTS ON. A launch
       # that verified cleanly and then had one node fail its bootstrap is seven usable machines
       # and one to look at, and a step that only ran on success would hide all eight.
+      #
+      # "MISSING" AND "NOT READY" ARE DIFFERENT FINDINGS AND THIS SAYS WHICH. A fleet three
+      # machines short and a fleet of eight whose bootstraps hung both used to leave here with
+      # `block_nodes_never_became_ready` and an instruction to read
+      # `/var/lib/edullm/bootstrap.log` -- which on the first of those is a file on machines
+      # that do not exist, sending the one person holding the reservation to look for evidence
+      # of a fault that is not the fault. The shortfall is checked first because it is the more
+      # specific answer and because the action it calls for is a re-run rather than a debug.
       - name: Print the fleet
         if: always()
         run: |
@@ -1021,14 +1044,27 @@ jobs:
 
           from edullm_platform.block_fleet import fleet_table, read_fleet
 
+          temporary = Path(os.environ["RUNNER_TEMP"])
           fleet = read_fleet(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")))
-          record = Path(os.environ["RUNNER_TEMP"]) / "not-ready.txt"
+          record = temporary / "not-ready.txt"
           unready = set(record.read_text(encoding="utf-8").split()) if record.is_file() else set()
+          (temporary / "fleet-size.txt").write_text(f"{len(fleet)}\n", encoding="utf-8")
 
           print("```")
           print(fleet_table(fleet, unready=unready))
           print("```")
           PY
+
+          read -r launched < "${RUNNER_TEMP}/fleet-size.txt"
+          if [ "${launched}" -lt "${INSTANCE_COUNT}" ]; then
+            echo "block_fleet_is_short_of_the_count_asked_for:${launched}_of_${INSTANCE_COUNT}" >&2
+            echo "Machines are missing rather than unready, so there is no bootstrap log to" >&2
+            echo "read: the nodes that are not in the table above were never started. The" >&2
+            echo "launch step says which call was refused and why -- capacity and throttling" >&2
+            echo "are the two that reach here. Re-running this workflow launches only the" >&2
+            echo "shortfall, so it is the whole of the fix once the cause is understood." >&2
+            exit 1
+          fi
 
           verdict=missing
           if [ -f "${RUNNER_TEMP}/fleet-ready.txt" ]; then
