@@ -19,7 +19,7 @@ from __future__ import annotations
 import shlex
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pytest
 import yaml
@@ -27,6 +27,7 @@ import yaml
 from edullm_platform.errors import ExitStatusIsNotTheProgramsError
 from edullm_platform.exit_status import (
     EXIT_STATUS_CHECK_WAIVER,
+    _the_shells_own_options_set_pipefail,
     require_the_program_to_report_its_own_failure,
     status_the_shell_would_report,
     waived_exit_status_note,
@@ -111,6 +112,104 @@ def test_the_same_pipeline_with_pipefail_is_allowed() -> None:
     allow("""bash -lc 'set -o pipefail; python t.py 2>&1 | tee /work/log/train.log'""")
     allow("""bash -lc 'set -euo pipefail; python t.py 2>&1 | tail -n 200'""")
     allow("""bash -lc 'set -e -o pipefail; python t.py | tail'""")
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("argv", "status"),
+    [
+        (["bash", "-o", "pipefail", "-c"], 28),
+        (["bash", "-eo", "pipefail", "-c"], 28),
+        (["bash", "+o", "pipefail", "-c"], 0),
+        (["bash", "-lc"], 0),
+    ],
+)
+def test_the_option_on_the_shell_is_the_same_setting_as_the_one_in_the_string(
+    argv: list[str], status: int
+) -> None:
+    """The premise of the row below, taken from bash rather than from a docstring.
+
+    Mutation: none available -- this asserts about bash. The guard may only treat
+    ``bash -o pipefail -c`` as equivalent to ``set -o pipefail;`` for as long as bash does,
+    and ``+o`` has to be the option going the other way or reading the last word as the
+    setting would be wrong.
+    """
+    finished = subprocess.run(
+        [*argv, "python3 -c 'import sys; sys.exit(28)' 2>&1 | tail -n 200"],
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+    assert finished.returncode == status
+
+
+#: Every argv this has to answer about, and the answer.
+#:
+#: ASKED OF THE READER RATHER THAN THROUGH A REFUSAL, and the reason is a fact about the
+#: merge queue rather than a preference. ``_shell_command_position`` on this branch requires
+#: the shell to be the first word and stops its scan at the first flag that does not end in
+#: ``c``, so ``bash -o pipefail -c`` is a command it reports as having no shell at all --
+#: which means nothing here is checked, nothing is refused, and a refusal-level test would
+#: pass on a guard that never ran. #429 teaches that function to step over the option, and
+#: on the stack every row below reaches the refusal. The two rows that ``allow`` covers are
+#: the ones whose outcome is the same either way, so they are asserted end to end.
+_PIPEFAIL_ON_THE_SHELL: Final = [
+    (["bash", "-o", "pipefail", "-c", "python t.py | tail"], True),
+    (["bash", "-eo", "pipefail", "-c", "python t.py | tail"], True),
+    (["bash", "-euo", "pipefail", "-c", "python t.py | tail"], True),
+    # The option's value is read, so the scan steps over it and reaches a later one.
+    (["bash", "-o", "errexit", "-o", "pipefail", "-c", "python t.py | tail"], True),
+    # An option that is not this one leaves the pipeline as much of a defect as it was.
+    (["bash", "-o", "errexit", "-c", "python t.py | tail"], False),
+    (["bash", "-o", "nounset", "-c", "python t.py | tail"], False),
+    # Same spelling, opposite meaning, and the measured row above agrees.
+    (["bash", "+o", "pipefail", "-c", "python t.py | tail"], False),
+    # The ordinary shapes, which say nothing about the option.
+    (["bash", "-lc", "python t.py | tail"], False),
+    (["bash", "-c", "python t.py | tail"], False),
+    (["python", "train.py"], False),
+    # Behind a transparent prefix, which is what #429 makes reachable and this already reads.
+    (["env", "bash", "-o", "pipefail", "-c", "python t.py | tail"], True),
+]
+
+
+@pytest.mark.parametrize(("argv", "expected"), _PIPEFAIL_ON_THE_SHELL)
+def test_the_option_on_the_shell_is_read_off_the_shells_own_words(
+    argv: list[str], expected: bool
+) -> None:
+    """Mutation: return true for any ``-o``, or for ``+o``, or ignore the argv entirely.
+
+    Ignoring it is what this shipped doing, and it is the whole defect: a submitter who
+    wrote the option on the shell was told they had not set it, with a remedy instructing
+    them to set it. Nothing in their command was wrong, so the refusal had no exit -- and a
+    guard that refuses correct submissions is one people learn to waive rather than read,
+    which costs the refusals that are right.
+    """
+    assert _the_shells_own_options_set_pipefail(tuple(argv)) is expected
+
+
+def test_pipefail_written_on_the_shell_rather_than_in_the_string_is_allowed() -> None:
+    """Mutation: refuse a pipeline whose shell carries the option.
+
+    The end-to-end half of the row above, and the assertion a submitter cares about. It
+    holds on this branch because the shell is not found and on the stack because the option
+    is read, which is why it is worth asserting from here rather than after #429: the
+    outcome is the same and the reason changes underneath it.
+    """
+    allow("""bash -o pipefail -c 'python t.py 2>&1 | tail -n 200'""")
+    allow("""bash -euo pipefail -c 'python t.py 2>&1 | tail -n 200'""")
+
+
+def test_the_option_on_an_outer_shell_does_not_excuse_an_inner_one() -> None:
+    """Mutation: let the outermost shell's options answer for every depth.
+
+    A child ``bash -c`` starts with its own options unless ``SHELLOPTS`` is exported, so the
+    inner pipeline really does report its last stage. Reading the setting as inherited would
+    turn one correct submission into a way past the rule for every nested one. Asked of the
+    reader for the reason the table above is: the outer form is not found on this branch.
+    """
+    assert _the_shells_own_options_set_pipefail(("bash", "-c", 'python t.py | tail')) is False
+    refuse("""bash -lc 'bash -c "python t.py | tail"'""")
 
 
 def test_an_unconditional_or_true_is_refused() -> None:

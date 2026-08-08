@@ -96,6 +96,12 @@ EXIT_STATUS_CHECK_WAIVER: Final = "EDULLM_EXIT_STATUS_CHECK=waived"
 #: flags written separately as ``set -e -o pipefail``. Matched over the text rather than over
 #: words because that is where the option is written, and anchored on ``set`` so that a path
 #: or a note carrying the word is not read as the option being set.
+#:
+#: THE COMMAND STRING IS ONE OF THE TWO PLACES THE OPTION IS WRITTEN, AND THIS READS THE
+#: OTHER ONE NOWHERE. ``bash -o pipefail -c '...'`` sets it on the shell itself, before the
+#: string exists, and the string then carries no ``set``. Anchoring on ``set`` is right for
+#: text and is not the whole question, which is what
+#: :func:`_the_shells_own_options_set_pipefail` answers.
 _PIPEFAIL = re.compile(r"\bset\s+(?:-[a-zA-Z]+\s+)*-[a-zA-Z]*o[a-zA-Z]*\s+pipefail\b")
 
 #: The right-hand sides of ``||`` that swallow a status unconditionally. Deliberately short:
@@ -198,7 +204,7 @@ def _read(words: Sequence[str], *, depth: int) -> SwallowedStatus | None:
     text = shell_command_string(words)
     if text is None or depth >= MAXIMUM_WRAPPER_DEPTH:
         return None
-    found = _swallowed_in(text)
+    found = _swallowed_in(text, pipefail=_the_shells_own_options_set_pipefail(words))
     if found is not None:
         return found
     # One shell inside another is ordinary, and the defect may be in either. The outer text
@@ -214,18 +220,76 @@ def _read(words: Sequence[str], *, depth: int) -> SwallowedStatus | None:
     return None
 
 
-def _swallowed_in(text: str) -> SwallowedStatus | None:
+def _the_shells_own_options_set_pipefail(words: Sequence[str]) -> bool:
+    """Whether this shell was handed ``pipefail`` as an option of its own.
+
+    ``bash -o pipefail -c 'python train.py | tail'`` is the same setting as writing
+    ``set -o pipefail;`` at the front of the string, arrived at one word earlier, and the
+    shell has it before the first stage of the pipeline runs. Read here rather than folded
+    into :data:`_PIPEFAIL` because these are words and that is text: the option is on the
+    argv, where a regex over the command string cannot reach it however it is spelled.
+
+    **THE COST OF NOT READING IT WAS A REFUSAL TELLING SOMEBODY TO ADD WHAT THEY HAD.** A
+    submitter who wrote the option on the shell got "does not set `pipefail`" and a remedy
+    instructing them to set it, which is the shape of message that has no exit: nothing they
+    read in their own command is wrong. A guard that refuses a correct submission is one
+    people learn to waive rather than read, which costs the refusals that are right.
+
+    **NOT INHERITED BY A NESTED SHELL, AND THAT IS THE BEHAVIOUR RATHER THAN A SHORTCUT.** A
+    child ``bash -c`` starts with its own options unless ``SHELLOPTS`` is exported into it,
+    so ``bash -o pipefail -c 'bash -c "python train.py | tail"'`` really does report the
+    inner pipeline's last stage and really is the defect. :func:`_read` asks this of each
+    level's own argv as it recurses, so no level answers for another.
+
+    Written as a scan for the option rather than a test for the exact word ``-o``, because
+    ``-eo pipefail`` and ``-euo pipefail`` set it too and are how most people write it --
+    the same clusterings :data:`_PIPEFAIL` already reads after ``set``. ``+o pipefail`` is
+    the option being turned off and is read as the last word on the subject wins.
+    """
+    start = next(
+        (
+            position
+            for position, word in enumerate(words)
+            if PurePosixPath(word).name in SHELLS_THAT_READ_A_COMMAND_STRING
+        ),
+        None,
+    )
+    if start is None:
+        return False
+    setting = False
+    position = start + 1
+    while position < len(words):
+        word = words[position]
+        if not word.startswith(("-", "+")) or word == "--":
+            break
+        if "o" not in word[1:]:
+            position += 1
+            continue
+        # An `-o`-bearing flag takes the following word as its value, so the scan steps over
+        # both. Without that, `bash -o errexit -o pipefail -c` ends at `errexit`.
+        if position + 1 < len(words) and words[position + 1] == "pipefail":
+            setting = word.startswith("-")
+        position += 2
+    return setting
+
+
+def _swallowed_in(text: str, *, pipefail: bool = False) -> SwallowedStatus | None:
     """The three shapes, in the order a reader meets them.
 
     Pipefail first because it is the one a pipeline needs and the one whose remedy is a
     single clause. Then the unconditional ``||``, which no option repairs. Then the trailing
     command, which is last because establishing it needs to know which segment is the
     program and the other two do not.
+
+    ``pipefail`` says the shell running this text already has the option, which only the
+    caller holding that shell's argv can know. It defaults to false so that a reader asking
+    this of a bare command string gets the answer for a shell with nothing set, which is
+    what a bare string is.
     """
     segments = _top_level_segments(text)
     operators = _top_level_operators(text)
 
-    if "|" in operators and not _PIPEFAIL.search(text):
+    if "|" in operators and not pipefail and not _PIPEFAIL.search(text):
         return SwallowedStatus(
             kind="pipeline",
             text=(
