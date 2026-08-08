@@ -24,6 +24,53 @@
 # AN ENTRY IS NEVER DELETED BECAUSE IT GOT OLD. `commit_sha` is what a reader judges staleness
 # by, and `resume_note` prints it beside the date on the approver's page. An entry is deleted
 # when the run it cites is found not to say what it says.
+#
+# ---------------------------------------------------------------------------------------
+# edullm-alt-cl HAS NO ENTRY, IT WAS TRIED, AND THE TRY IS WORTH WRITING DOWN SO THAT THE
+# NEXT PERSON DOES NOT SPEND THE SAME HOUR FINDING OUT WHY.
+#
+# `edullm-alt-cl-train` declares `maximum_attempts: 2` in config/workload-catalog.yaml, so
+# the default submission of it is refused with resume_not_demonstrated from the moment this
+# guard merges. That refusal is correct: nothing has watched that entrypoint resume.
+#
+# WHAT WAS TRIED, ON 2026-08-08. run_019fdedc-b4f3-70f1-b1eb-5d99be56ac22, experiment
+# `resume-proof`, submitted with two attempts against configs/resume_proof.yaml. It was
+# admitted, it ran, and it wrote checkpoints -- step28 and step32 both landed under
+# teams/scratch/runs/<run>/checkpoints/. Then it reached FAILED with "Job attempt duration
+# exceeded timeout" at "Attempts 1 of 2", having got to step 32 of 44.
+#
+# So it produced nothing citable, and the reason is the finding config/policy.yaml's v5 note
+# already carries: a timeout terminates the job rather than ending an attempt the
+# EvaluateOnExit rules are consulted about, so the second attempt never started and no second
+# process ever loaded the first one's checkpoint. The run demonstrates that this entrypoint
+# checkpoints. It does not demonstrate that anything reads one back, which is the only thing
+# an entry here may claim.
+#
+# WHAT WOULD CLEAR IT, AND IT IS THE SAME SMALL RUN WITH ONE NUMBER CHANGED. The bound has to
+# be one the doubled run can finish inside -- either a longer `--hours` or a config that
+# reaches its step count sooner -- and the command has to run the trainer twice against one
+# $EDULLM_CHECKPOINT_DIR, killing the first partway, as the paragraph above describes.
+# `OLMo-core@.edullm/run-resume-proof.yaml` is the worked example and the entry below is what
+# came out of it.
+#
+# WHY THE 2 WAS NOT SIMPLY DROPPED TO 1, WHICH WOULD ALSO CLEAR THE REFUSAL AND IS THE OTHER
+# HONEST OPTION. Worst-case cost is rate x hours x attempts, so halving attempts halves it,
+# and measured against config/policy.yaml on 2026-08-08 three provisioned profiles cross
+# automatic_below_cost_usd as a result: gpu-8xa10g ($782 -> $391), gpu-8xl4 ($641 -> $320)
+# and gpu-4xl40s ($504 -> $252) all go from routine to automatic -- from a team lead
+# releasing the run to nobody releasing it. That is a gate loosened for another team as a
+# side effect of a statement about checkpoints, and config/workload-catalog.yaml already
+# records that using maximum_attempts as a covert approval lever is not the way to move
+# routing. If that routing is wanted it belongs in policy.yaml, argued on its own.
+#
+# AND WHY IT WAS NOT WAIVED. EDULLM_RESUME_CHECK=waived keeps the routing and asserts exactly
+# what the run above failed to show. It is the one option the evidence got worse for.
+#
+# SO IT IS LEFT REFUSED ON PURPOSE, AND THAT IS NOT AN OUTAGE. `maximum_attempts` is an
+# override as well as a default: `edullm submit --attempts 1` is admitted for this workload
+# today, and the refusal's own text names that remedy first. What is refused is the default,
+# which is the number nobody earned.
+# ---------------------------------------------------------------------------------------
 schema_version: 1
 
 demonstrations:

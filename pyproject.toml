@@ -35,8 +35,7 @@ name = "edullm"
 #
 # 0.2.0 rather than 0.1.1 because 0.1.0 was never released and nothing was ever installed
 # from a tag; the first tag this repository has should not look like the second.
-# WHY THIS IS A MINOR RATHER THAN A PATCH. edullm data derives a corpus's runnability from a recorded reading of what each published training image holds rather than from this platform's own tokenizer map, and a submission naming a --model-factory no reading of that repository's image has is now refused at edullm check instead of exiting 70 with the machine already allocated.
-version = "4.10.0"
+version = "4.10.1"
 requires-python = ">=3.12"
 dependencies = [
   "pydantic>=2,<3",
@@ -85,7 +84,7 @@ reader = [
 # needs on day one -- `docs-frank/reference/system-overview.md` counts twelve of the
 # fourteen surfaces that reach a researcher as this one command:
 #
-#   uv tool install --force git+https://github.com/edu-llm/platform@v4.10.0
+#   uv tool install --force git+https://github.com/edu-llm/platform@v4.10.1
 #
 # THAT LINE IS TESTED RATHER THAN PROOFREAD, by tests/test_cli_install_command.py, which
 # holds it to the one in `edullm_platform.cli.release`. What used to be written here was
