@@ -1,0 +1,136 @@
+name: "Block: drain the fleet before AWS takes it back"
+
+# WHAT THIS FILE IS AND, MORE IMPORTANTLY, WHAT IT IS NOT.
+#
+# It is not the drain. The drain is a systemd timer laid down by
+# `infra/block-node-bootstrap.sh` that flushes `/scratch` to S3 on the machine holding the
+# data, and it is there rather than here for one reason: a scheduled GitHub Actions workflow is
+# delivered late. Not rarely and not by seconds -- under load the scheduled queue is minutes
+# deep, GitHub commits to no bound at all, and a run scheduled for 10:50 that lands at 11:04 is
+# an ordinary Tuesday. Everywhere else on this platform that costs nothing, because the thing
+# waiting on the other side is a person. Here the thing waiting is AWS terminating eight
+# machines against a wall clock at a minute nobody can move, against a purchase that cannot be
+# refunded and does not repeat.
+#
+# What this file is, is the report -- and the report is not decoration. Roughly fifteen of the
+# thirty-five people here hold no AWS role, so a drain that only prints on a maintainer's
+# terminal is addressed to the half of the team that was already fine. This reads every node at
+# once, says who is holding what and what has not reached S3 yet, and prints it into a job
+# summary that a repository login is enough to read. It tolerates being ten minutes late
+# because a warning is useful late and a flush is not.
+#
+# `tools/block_drain.py` is this same reading from a laptop, and it is the answer to the case
+# this file cannot cover: GitHub being the thing that is broken on the last morning.
+#
+# TURN THE SCHEDULE OFF WHEN THE WINDOW CLOSES. Nothing here expires. After the fleet is gone
+# the tool answers "nothing carries a block tag" and exits clean, which is quiet but is still a
+# role assumption and two API calls every quarter of an hour, forever.
+#
+#     gh workflow disable block-drain.yml
+#
+# A DISPATCH FROM A BRANCH IS REFUSED AT AssumeRole AND A SCHEDULE CANNOT RUN FROM ONE AT ALL.
+# `infra/iam/block-fleet-roles.yaml` pins `job_workflow_ref` to this path at `refs/heads/main`,
+# which is what every OIDC role in this account does, and GitHub only ever runs a scheduled
+# workflow from the default branch. Merge, re-apply the IAM stack -- it has to learn this file
+# exists -- and only then does the schedule mean anything.
+
+on:
+  schedule:
+    # Every quarter of an hour, which is the granularity of the warning rather than of the
+    # flush. It puts a report inside each of the horizons a person is warned at, and the run
+    # that finds more than a couple of hours left costs one listing and prints one line.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      reservation_id:
+        description: "Optional. Only needed if two blocks have a fleet up at once, because node numbers repeat across them."
+        required: false
+        default: ""
+        type: string
+      stop_runs:
+        description: "Ask the trainer in every container to shut down so it writes a final checkpoint whole. This ends people's runs. Only in the last few minutes of the window, and tell them first."
+        required: false
+        default: false
+        type: boolean
+      region:
+        description: "Where the fleet is."
+        required: true
+        default: us-east-2
+        type: string
+
+permissions:
+  contents: read
+
+# One group across both triggers, and not cancel-in-progress. Two drains at once would have
+# every node running two `aws s3 sync` calls over the same prefix, which is harmless in what it
+# writes and misleading in what it counts -- the second one can read a prefix the first is still
+# filling and report a shortfall on a healthy node. With this setting GitHub holds at most one
+# run and one waiting behind it, and a third replaces the one that is waiting, which is exactly
+# the behaviour wanted from a report that fires four times an hour.
+concurrency:
+  group: capacity-block-drain
+  cancel-in-progress: false
+
+jobs:
+  drain:
+    name: Flush every node and say what is still in flight
+    runs-on: ubuntu-latest
+    # The nodes are copying a filesystem, and the first drain of a run directory nobody has
+    # drained before is the slow one. The tool stops waiting on its own well inside this.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RESERVATION_INPUT: ${{ inputs.reservation_id }}
+      STOP_RUNS: ${{ inputs.stop_runs }}
+      BLOCK_REGION: ${{ inputs.region || 'us-east-2' }}
+    steps:
+      # DELIBERATELY NOT GUARDED BY THE ADMIN LIST `block-launch-fleet.yml` CARRIES, and that
+      # is the same decision `block-run.yml` made for the same population. Somebody who cannot
+      # assume a role has no other way to find out whether their work is safe, and this
+      # dispatch spends nothing and destroys nothing.
+      #
+      # `stop_runs` is the exception inside that and is handled where it belongs -- in the
+      # node helper, which never stops a container unless the flag arrives, and in the input
+      # description above, which says in as many words that it ends people's runs.
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install the platform library
+        run: |
+          set -euo pipefail
+          uv sync --locked
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_BLOCK_FLEET_ROLE_ARN }}
+          aws-region: ${{ inputs.region || 'us-east-2' }}
+          role-duration-seconds: 3600
+          mask-aws-account-id: true
+
+      # THE TOOL AND NOT AN INLINE SCRIPT, WHICH IS THE SAME CHOICE `tools/block_status.py`
+      # ALREADY MADE FOR THE SAME LANE. Two things follow from it. A maintainer runs exactly
+      # what this runs, from a laptop, with `--profile sbsandbox` instead of `--no-profile` --
+      # which is the fallback for the morning GitHub is the broken thing. And the arithmetic
+      # this turns on, which is how much usable time is left once AWS's reclaim margin is
+      # subtracted, is held by `tests/test_block_drain.py` rather than by a reviewer reading a
+      # heredoc once.
+      - name: Drain every node and read back what landed
+        run: |
+          set -euo pipefail
+          arguments=(--no-profile --region "${BLOCK_REGION}" --summary "${GITHUB_STEP_SUMMARY}")
+          if [ -n "${RESERVATION_INPUT}" ]; then
+            arguments+=(--reservation "${RESERVATION_INPUT}")
+          fi
+          if [ "${STOP_RUNS}" = "true" ]; then
+            arguments+=(--stop-runs)
+          fi
+          uv run python tools/block_drain.py "${arguments[@]}"

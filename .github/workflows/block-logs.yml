@@ -1,0 +1,158 @@
+name: "Block: read a run's log"
+
+# THE HALF OF THE TEAM THIS IS FOR CANNOT READ S3, AND THAT IS THE WHOLE OF WHY IT EXISTS.
+#
+# Roughly fifteen of the thirty-five people here hold no AWS role at all. The nodes already
+# sync every run's `train.log` to the outputs bucket once a minute, which made the log durable
+# and did nothing at all about who can read it: `s3://` needs a credential, so what those
+# fifteen people actually have is the Weights and Biases page. W&B draws a loss curve better
+# than anything here will and cannot show a stack trace, a CUDA error or the line where a
+# config was rejected -- which is what somebody is looking for in the ninety seconds after a
+# run stops moving.
+#
+# So this workflow holds the credential and prints the tail into the job summary. Reading it
+# needs a repository login and nothing else, and there is no admin guard here for the same
+# reason `block-run.yml` has none: this reads and spends nothing.
+#
+# IT RESOLVES THE RUN OUT OF S3 RATHER THAN OFF THE MACHINE, WHICH IS WHAT MAKES IT USEFUL
+# AFTER TUESDAY. Asking the node which run it holds is the shorter implementation and it stops
+# working the moment the fleet is reclaimed -- at which point the logs in the bucket are the
+# only surviving record of the window and the question gets asked more rather than less.
+#
+# THE TAIL IS A RANGE READ AND NOT A DOWNLOAD. Three days of training output is a large object,
+# and pulling all of it through a runner to print two hundred lines is the difference between
+# an answer in seconds and an answer somebody stops waiting for.
+
+on:
+  workflow_dispatch:
+    inputs:
+      node:
+        description: "Which node, 1 through 8. Left empty, every node is searched and the most recently written log wins."
+        required: false
+        default: ""
+        type: string
+      run_name:
+        description: "Optional. Left empty, the most recently written log under the search is taken, which is almost always the run you mean."
+        required: false
+        default: ""
+        type: string
+      lines:
+        description: "How many lines of the end of the log to print."
+        required: true
+        default: "200"
+        type: string
+      reservation_id:
+        description: "Optional. Only needed if the bucket holds more than one block, which it does from the second window onwards."
+        required: false
+        default: ""
+        type: string
+      region:
+        description: "Where the outputs bucket is."
+        required: true
+        default: us-east-2
+        type: string
+      outputs_bucket:
+        description: "Where the nodes sync their logs. Must match what the fleet was launched with."
+        required: true
+        default: edullm-block-outputs-us-east-2
+        type: string
+
+permissions:
+  contents: read
+
+# NO CONCURRENCY GROUP, DELIBERATELY, WHICH IS THE OPPOSITE OF WHAT EVERY OTHER FILE IN THIS
+# LANE DOES. `block-launch-fleet.yml` serialises because two launches would bring up sixteen
+# machines against a reservation for eight, and `block-drain.yml` serialises because two drains
+# make each other's object counts unreadable. This one reads a bucket and touches no node and
+# no fleet, so there is nothing for two dispatches to collide over -- and eight people looking
+# at eight logs at once is the intended Saturday afternoon rather than a queue. A group keyed
+# on the run id would express the same thing and would be a control that controls nothing,
+# which is worse than saying so here.
+
+jobs:
+  read:
+    name: Print the tail of one run's log
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      NODE_INPUT: ${{ inputs.node }}
+      RUN_INPUT: ${{ inputs.run_name }}
+      LINES: ${{ inputs.lines }}
+      RESERVATION_INPUT: ${{ inputs.reservation_id }}
+      BLOCK_REGION: ${{ inputs.region }}
+      OUTPUTS_BUCKET: ${{ inputs.outputs_bucket }}
+    steps:
+      # BEFORE THE CREDENTIALS, BECAUSE THIS REFUSAL IS FREE. A node that is not a number and a
+      # line count that is not a number are both answerable on a runner with no AWS access, and
+      # the alternative is argparse's usage message inside a job that has already assumed a
+      # role -- which reads to somebody with no AWS access as the platform being broken.
+      - name: Refuse a node or a line count that is not a number
+        run: |
+          set -euo pipefail
+          case "${NODE_INPUT}" in
+            "" | [0-9] | [0-9][0-9] | [0-9][0-9][0-9]) ;;
+            *)
+              echo "node_is_not_a_number:${NODE_INPUT}" >&2
+              exit 1
+              ;;
+          esac
+          case "${LINES}" in
+            [1-9] | [1-9][0-9] | [1-9][0-9][0-9] | [1-9][0-9][0-9][0-9]) ;;
+            *)
+              echo "lines_is_not_a_count_this_page_can_hold:${LINES}" >&2
+              echo "A job summary is truncated at one mebibyte, so this is capped well below" >&2
+              echo "what would fill one. Ask for fewer lines." >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install the platform library
+        run: |
+          set -euo pipefail
+          uv sync --locked
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_BLOCK_FLEET_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+          role-duration-seconds: 3600
+          mask-aws-account-id: true
+
+      # The tool rather than an inline script, and it is the same argument the drain makes: a
+      # maintainer runs exactly this from a laptop with `--profile sbsandbox`, and what the
+      # page says about a run -- the step it reached, the last loss it logged, whether a
+      # checkpoint save started and never reported landing -- is parsing that
+      # `tests/test_block_logs.py` holds rather than a regex nobody re-reads.
+      - name: Fetch the tail and print it into the summary
+        run: |
+          set -euo pipefail
+          arguments=(
+            --no-profile
+            --region "${BLOCK_REGION}"
+            --bucket "${OUTPUTS_BUCKET}"
+            --lines "${LINES}"
+            --summary "${GITHUB_STEP_SUMMARY}"
+          )
+          if [ -n "${NODE_INPUT}" ]; then
+            arguments+=(--node "${NODE_INPUT}")
+          fi
+          if [ -n "${RUN_INPUT}" ]; then
+            arguments+=(--run "${RUN_INPUT}")
+          fi
+          if [ -n "${RESERVATION_INPUT}" ]; then
+            arguments+=(--reservation "${RESERVATION_INPUT}")
+          fi
+          uv run python tools/block_logs.py "${arguments[@]}"

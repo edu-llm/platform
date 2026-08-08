@@ -46,6 +46,16 @@ readonly EXPECTED_GPUS="${EDULLM_BLOCK_EXPECTED_GPUS:?the launch workflow must p
 readonly WANDB_SECRET_ID="${EDULLM_BLOCK_WANDB_SECRET_ID:?the launch workflow must prepend EDULLM_BLOCK_WANDB_SECRET_ID}"
 readonly LOG_SYNC_SECONDS="${EDULLM_BLOCK_LOG_SYNC_SECONDS:?the launch workflow must prepend EDULLM_BLOCK_LOG_SYNC_SECONDS}"
 
+# THE THREE THE DRAIN READS, AND THE FIRST OF THEM IS THE ONE NOBODY MAY GUESS. The launch
+# workflow reads `EndDate` off the reservation itself and prepends it here, so a node knows
+# when it is going to be taken away without holding a grant to ask, without a date written
+# into a file, and without a second block's fleet inheriting the first one's deadline. The
+# other two come from `edullm_platform.block_drain`, which is where the reasoning for each
+# number is, and are prepended for the same reason: one place decides, everywhere else is told.
+readonly ENDS_AT="${EDULLM_BLOCK_ENDS_AT:?the launch workflow must prepend EDULLM_BLOCK_ENDS_AT}"
+readonly RECLAIM_MINUTES="${EDULLM_BLOCK_RECLAIM_MINUTES:?the launch workflow must prepend EDULLM_BLOCK_RECLAIM_MINUTES}"
+readonly DRAIN_FROM_MINUTES="${EDULLM_BLOCK_DRAIN_FROM_MINUTES:?the launch workflow must prepend EDULLM_BLOCK_DRAIN_FROM_MINUTES}"
+
 readonly STATE_DIRECTORY=/var/lib/edullm
 readonly SETTINGS_FILE=/etc/edullm-block.env
 readonly READY_FILE="${STATE_DIRECTORY}/ready.json"
@@ -129,10 +139,26 @@ echo "driver ${driver_version}, ${observed_gpus} devices"
 # in the trap. `mdadm` in particular is not guaranteed to be on this image family, and losing
 # a whole node out of eight because a package was not preinstalled is exactly the trade the
 # header refuses to make.
+#
+# AND THE IMAGE GETS THERE FIRST, WHICH IS THE CASE THAT ACTUALLY HAPPENS. The Deep Learning
+# Base AMI ships `dlami-nvme.service` enabled: before user-data runs it has already striped
+# every instance store device into one LVM volume and mounted it, so those devices are in use
+# and `mkfs.ext4 -F` answers "apparently in use by the system". That is a `|| return 1`, so the
+# fallback below puts /scratch on the root volume -- on every node, with one line in a log
+# nobody reads, trading a p5's thirty terabytes of local NVMe for a 500 GiB EBS root that a
+# single run can fill and take the machine down with. The array the image built is the array
+# this was going to build, so it is used rather than torn down and rebuilt.
 SCRATCH_DEVICE=root-volume
 prepare_scratch() {
   local devices=("$@")
-  local target="${devices[0]}"
+  local target="${devices[0]}" claimed
+  claimed="$(lsblk --noheadings --output MOUNTPOINT "${devices[@]}" 2> /dev/null |
+    awk 'NF {print; exit}')"
+  if [ -n "${claimed}" ]; then
+    mount --bind "${claimed}" "${SCRATCH}" || return 1
+    SCRATCH_DEVICE="${claimed}"
+    return 0
+  fi
   if [ "${#devices[@]}" -gt 1 ]; then
     if command -v mdadm > /dev/null 2>&1; then
       mdadm --create --verbose /dev/md0 --level=0 \
@@ -151,7 +177,16 @@ prepare_scratch() {
 }
 
 mkdir -p "${SCRATCH}"
-mapfile -t instance_store < <(
+# A read loop rather than mapfile, for the reason `cancel-run.yml` and the launch workflow
+# both record against the same choice: mapfile wants bash 4.2 and the bash macOS ships is 3.2,
+# so a body using it is one the test suite cannot execute. That is not a stylistic point here.
+# This section is the one place in the bootstrap that decides something about the machine, it
+# had no test that ran it, and what it got wrong -- an image that had already mounted these
+# disks -- is invisible in a diff and obvious the first time the thing is executed.
+instance_store=()
+while read -r device; do
+  instance_store+=("${device}")
+done < <(
   lsblk --nodeps --noheadings --output NAME,MODEL |
     awk '/Instance Storage/ {print "/dev/" $1}'
 )
@@ -182,6 +217,9 @@ EDULLM_BLOCK_IMAGE_REGION=${IMAGE_REGION}
 EDULLM_BLOCK_REGION=${BLOCK_REGION}
 EDULLM_BLOCK_WANDB_SECRET_ID=${WANDB_SECRET_ID}
 EDULLM_BLOCK_LOG_SYNC_SECONDS=${LOG_SYNC_SECONDS}
+EDULLM_BLOCK_ENDS_AT=${ENDS_AT}
+EDULLM_BLOCK_RECLAIM_MINUTES=${RECLAIM_MINUTES}
+EDULLM_BLOCK_DRAIN_FROM_MINUTES=${DRAIN_FROM_MINUTES}
 EDULLM_BLOCK_S3_PREFIX=${S3_PREFIX}
 EDULLM_BLOCK_SCRATCH=${SCRATCH}
 EDULLM_BLOCK_STATE=${STATE_DIRECTORY}
@@ -277,9 +315,36 @@ write_claim() {
     "$1" "$2" "$3" "$4" "$5" "$(now)" > "${CLAIM}"
 }
 
+# THE CLAIM `run` TOOK, GIVEN BACK WHEN NOTHING ENDS UP RUNNING. THIS IS THE OTHER HALF OF
+# TAKING IT BEFORE THE CLONE.
+#
+# Writing the claim first is what closes the window two people dispatching seconds apart would
+# otherwise both walk through, and everything after that point can still fail: a branch deleted
+# since the workflow resolved it, a repository this node cannot reach, a tree carrying no
+# `.edullm/run.yaml` -- which is every registered repository except OLMo-core, so it is the
+# first thing a new one meets rather than an unlucky one. Under `set -e` each of those left the
+# claim behind, and a node claimed for a run that does not exist reads as busy to the whole
+# fleet and to `block-run.yml` until somebody who has never heard of `release` finds it.
+#
+# ONLY A CLAIM NAMING THIS RUN, AND ONLY WHILE NO CONTAINER IS UP, which is the same rule
+# `tools/block_run_distributed.py` rolls back by. A container that started owns the machine
+# whatever this shell went on to exit, and a node somebody else claimed in the seconds since is
+# theirs. What this deliberately does not do is put back a claim `--force` overwrote: forcing
+# already means taking a machine off somebody, and the node then reads as carrying unclaimed
+# work, which `block-run.yml` refuses on by name.
+UNSTARTED=""
+give_the_claim_back() {
+  local status=$?
+  if [ "${status}" -ne 0 ] && [ -n "${UNSTARTED}" ] &&
+    [ -z "$(container_of "${UNSTARTED}")" ] && [ "$(claim_field run)" = "${UNSTARTED}" ]; then
+    rm -f "${CLAIM}"
+    echo "edullm-node: nothing started, so node ${EDULLM_BLOCK_NODE} is not held" >&2
+  fi
+}
+
 known_verb() {
   case "${1:-}" in
-    status | claim | release | run | logs) return 0 ;;
+    status | claim | release | run | logs | drain) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -374,6 +439,8 @@ do_run() {
   # both proceed. Writing the claim first closes the window at the cost of a claim carrying
   # no commit for as long as the clone takes, which reads as what it is on `status`.
   write_claim "${name}" "${who}" "${repository}" "${branch}" ""
+  UNSTARTED="${name}"
+  trap give_the_claim_back EXIT
 
   # CLONED FRESH EVERY TIME RATHER THAN PULLED INTO WHAT IS THERE. A directory left by an
   # earlier run of the same name is a tree at an unknown commit with unknown local edits,
@@ -382,7 +449,17 @@ do_run() {
   local tree="${SCRATCH}/${name}"
   rm -rf "${tree}"
   mkdir -p "${tree}/log"
-  git clone --depth 1 --branch "${branch}" "https://github.com/${repository}.git" "${tree}/repo"
+  # GIT IS TOLD NOT TO ASK FOR A PASSWORD, AND THE REFUSAL SAYS WHY THERE IS NOWHERE TO TYPE
+  # ONE. This node holds no GitHub credential, which works because the repositories this lane
+  # runs are public and stops dead the moment one is not -- seconds after the claim was taken,
+  # inside a Systems Manager invocation that has no terminal. Git's own message is about
+  # failing to read a username, which names neither the design nor the way out of it.
+  if ! GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch "${branch}" \
+    "https://github.com/${repository}.git" "${tree}/repo"; then
+    echo "edullm-node: this node holds no GitHub credential, so a private repository cannot" >&2
+    echo "be cloned here at all. On a public one the branch is gone or GitHub refused." >&2
+    die "could not clone ${repository}@${branch}"
+  fi
   local commit
   commit="$(git -C "${tree}/repo" rev-parse HEAD)"
 
@@ -456,7 +533,153 @@ do_logs() {
   tail --follow=name --lines=200 "${SCRATCH}/${run}/log/train.log"
 }
 
-known_verb "${1:-}" || die "usage: edullm-node status|claim|release|run|logs"
+# ---------------------------------------------------------------------------------------
+# THE DRAIN. Everything on this machine that is not already in S3, put in S3, and then
+# counted rather than assumed.
+# ---------------------------------------------------------------------------------------
+#
+# WHAT IS ACTUALLY AT RISK, BECAUSE IT IS NOT THE CHECKPOINTS. An OLMo-core run here writes
+# its checkpoints to an s3:// save folder directly and the log sync carries train.log up
+# every minute, so those two are the parts of a run that are already safe. What is on
+# /scratch and nowhere else is the tree that was cloned, the resolved .edullm/run.yaml, the
+# commit that produced it, and whatever a researcher wrote beside their code -- plus the
+# entirety of any run whose command did not follow the convention. /scratch is a RAID0 over
+# local NVMe. It does not survive a stop and it certainly does not survive AWS reclaiming
+# the instance, so at 11:00 UTC on the Tuesday all of it is simply gone.
+#
+# THE COUNT IS TAKEN BEFORE THE SYNC AND THE LISTING AFTER IT, AND THAT ORDER IS LOAD
+# BEARING. A training run writes files while this is copying. Counting the disk afterwards
+# would count files created during the sync, report them as missing from S3, and hand
+# somebody a shortfall on every healthy node with a live run on it -- which is the reading
+# that teaches people to ignore the report. Counting first means anything created mid-sync
+# lands on the remote side of the comparison, where it is harmless.
+#
+# WHY A COUNT AT ALL RATHER THAN THE EXIT STATUS OF `aws s3 sync`. The sync reports success
+# for a partial copy in the cases that matter here: a file rotated out from under it, a
+# permissions refusal on one path, a throttle it retried past its own limit. Those all leave
+# a zero exit and a prefix that is missing objects, and the whole reason this runs is that
+# nobody gets a second chance to find out.
+#
+# .git IS THE ONE THING DELIBERATELY LEFT BEHIND. A depth-one clone's object store is the
+# largest thing in a run directory and is the only thing in it that is reconstructible: the
+# repository, the branch and the commit are recorded beside the files, and the files
+# themselves are copied. History is not worth the minutes at the deadline.
+#
+# THE PATTERN IS `*/.git/*` AND NOT `repo/.git/*` BECAUSE THE TWO SIDES MATCH AGAINST
+# DIFFERENT STRINGS. `aws s3 sync` evaluates a filter against the source path it walked,
+# which for a local directory is the absolute one, and `find -path` does the same -- so a
+# pattern anchored at the run directory matches on neither, silently, and copies the object
+# store it was written to skip. A leading `*` costs nothing here and catches a `.git` a
+# researcher cloned somewhere else under their own tree as well.
+flush_run() {
+  local run="$1"
+  local source="${SCRATCH}/${run}"
+  local destination="s3://${EDULLM_BLOCK_OUTPUTS_BUCKET}/${EDULLM_BLOCK_S3_PREFIX}/${run}/scratch"
+  local held status=ok expected observed
+  held="$(claim_field run)"
+
+  # Written into the run directory so that it is synced with everything else, which makes the
+  # S3 prefix self-describing to somebody reading it a week later with no access to this
+  # machine and no memory of who was on which node.
+  if [ "${held}" = "${run}" ]; then
+    printf '{"run":"%s","node":%s,"block":"%s","drained_at":"%s","who":"%s","repository":"%s","branch":"%s","commit":"%s"}\n' \
+      "${run}" "${EDULLM_BLOCK_NODE}" "${EDULLM_BLOCK_RESERVATION}" "$(now)" \
+      "$(claim_field who)" "$(claim_field repository)" "$(claim_field branch)" \
+      "$(claim_field commit)" > "${source}/edullm-drain.json" || true
+  else
+    printf '{"run":"%s","node":%s,"block":"%s","drained_at":"%s","who":""}\n' \
+      "${run}" "${EDULLM_BLOCK_NODE}" "${EDULLM_BLOCK_RESERVATION}" "$(now)" \
+      > "${source}/edullm-drain.json" || true
+  fi
+
+  expected="$(find "${source}" -type f -not -path '*/.git/*' 2> /dev/null |
+    grep --count . || true)"
+  aws s3 sync "${source}" "${destination}/" \
+    --region "${EDULLM_BLOCK_REGION}" \
+    --exclude '*/.git/*' \
+    --only-show-errors || status=failed
+  observed="$(aws s3 ls "${destination}/" --recursive --region "${EDULLM_BLOCK_REGION}" \
+    2> /dev/null | grep --count . || true)"
+  if [ "${status}" = ok ] && [ "${observed:-0}" -lt "${expected:-0}" ]; then
+    status=short
+  fi
+  printf 'run\t%s\t%s\t%s\t%s\n' "${run}" "${expected:-0}" "${observed:-0}" "${status}"
+}
+
+# ASK THE TRAINER TO STOP, WHICH IS NOT THE SAME AS STOPPING THE CONTAINER.
+#
+# `docker stop` sends SIGTERM to PID 1, and PID 1 in this container is the bash that owns the
+# `cmd | tee` pipeline rather than the trainer. Non-interactive bash takes the default action
+# on SIGTERM and dies -- whereupon the kernel SIGKILLs everything else in the namespace,
+# which is the trainer, mid-write, with no chance to finish a checkpoint. That is the exact
+# outcome this is trying to avoid, produced by the command that looks like it avoids it.
+#
+# So the signal is delivered inside the container, to every process except PID 1 and except
+# the shells and the `tee` carrying the log. OLMo-core's Trainer installs a SIGTERM handler
+# that cancels the run, and a cancelled run still runs `post_train`, where CheckpointerCallback
+# saves synchronously if the current step is past the last saved one. That is the final
+# checkpoint, and it is a whole one rather than a torn one.
+#
+# NOTHING CALLS THIS UNLESS SOMEBODY ASKS FOR IT. `release` refuses to abandon a claim while a
+# container is up and makes `--force` the sentence you have to type; ending somebody's training
+# run early is a larger act than that and gets the same treatment. The scheduled drain never
+# passes --stop-runs.
+stop_training() {
+  docker exec "edullm-$1" bash -c '
+    for entry in /proc/[0-9]*; do
+      pid="${entry##*/}"
+      if [ "${pid}" = 1 ]; then continue; fi
+      read -r comm < "${entry}/comm" 2>/dev/null || continue
+      case "${comm}" in tee|bash|sh|dash) continue ;; esac
+      kill -TERM "${pid}" 2>/dev/null || true
+    done' > /dev/null 2>&1 || return 1
+}
+
+do_drain() {
+  local stop_runs=no directory run held usable ends
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --stop-runs) stop_runs=yes; shift ;;
+      *) die "unknown argument $1" ;;
+    esac
+  done
+
+  ends="$(date -u -d "${EDULLM_BLOCK_ENDS_AT}" +%s)" ||
+    die "EDULLM_BLOCK_ENDS_AT is ${EDULLM_BLOCK_ENDS_AT}, which date(1) will not read"
+  usable=$((ends - EDULLM_BLOCK_RECLAIM_MINUTES * 60 - $(date -u +%s)))
+  held="$(claim_field run)"
+
+  printf 'node\t%s\n' "${EDULLM_BLOCK_NODE}"
+  printf 'usable_seconds\t%s\n' "${usable}"
+  printf 'claim\t%s\t%s\n' "$(claim_field who)" "${held}"
+  if [ -n "${held}" ] && [ -n "$(container_of "${held}")" ]; then
+    printf 'container\trunning\n'
+  else
+    printf 'container\tnone\n'
+  fi
+
+  if [ "${stop_runs}" = yes ] && [ -n "${held}" ] && [ -n "$(container_of "${held}")" ]; then
+    if stop_training "${held}"; then
+      # Bounded, because the flush behind it is the thing with the deadline. A model whose
+      # final save takes longer than this is one whose checkpoint was never going to land in
+      # the time left, and holding the drain open for it costs the files that would have.
+      for _attempt in $(seq 1 30); do
+        [ -n "$(container_of "${held}")" ] || break
+        sleep 10
+      done
+      printf 'stopped\t%s\n' "${held}"
+    fi
+  fi
+
+  for directory in "${SCRATCH}"/*/; do
+    [ -d "${directory}" ] || continue
+    run="$(basename "${directory}")"
+    flush_run "${run}"
+  done
+  printf 'drained_at\t%s\n' "$(now)"
+}
+
+known_verb "${1:-}" || die "usage: edullm-node status|claim|release|run|logs|drain"
 verb="$1"
 shift
 case "${verb}" in
@@ -465,6 +688,7 @@ case "${verb}" in
   release) do_release "$@" ;;
   run) do_run "$@" ;;
   logs) do_logs "$@" ;;
+  drain) do_drain "$@" ;;
 esac
 HELPER
 chmod 0755 /usr/local/bin/edullm-node
@@ -509,8 +733,93 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 UNIT
+# ---------------------------------------------------------------------------------------
+# THE DRAIN TIMER, WHICH IS ON THE NODE AND NOT IN GITHUB ACTIONS. THIS IS THE DECISION.
+# ---------------------------------------------------------------------------------------
+#
+# A scheduled GitHub Actions workflow is delivered late. Not occasionally and not by seconds:
+# under load the queue for scheduled runs is minutes deep and GitHub commits to no bound at
+# all, so "runs at 10:50" means "runs at some point after 10:50". Everywhere else on this
+# platform that is fine, because the deadline on the other side is a person. Here the deadline
+# is AWS terminating eight machines against a wall clock, the data that has not reached S3 by
+# then does not exist afterwards, and the window is not refundable and does not repeat.
+#
+# So the flush runs here: a systemd timer on the machine holding the data, needing nothing
+# from GitHub, nothing from Systems Manager, nothing from a credential vending path and
+# nobody being awake. It keeps its schedule while the repository is rate-limited, while the
+# Actions service is degraded, and at four in the morning on a Sunday.
+#
+# WHAT GITHUB IS FOR IS THE HALF A NODE CANNOT DO. `.github/workflows/block-drain.yml` reads
+# every node at once and prints who is holding what and what is still outstanding into a job
+# summary, because roughly fifteen of the thirty-five people here hold no AWS role and a
+# warning that only exists on a maintainer's terminal is addressed to the half of the team
+# that was already fine. That report tolerates being ten minutes late. The flush does not, and
+# the two are separate for exactly that reason. `tools/block_drain.py` is the same report from
+# a laptop for the case where GitHub is the thing that is broken.
+#
+# EVERY TICK FLUSHES ONCE THE WINDOW IS CLOSING, RATHER THAN FIRING AT NAMED HORIZONS. A
+# horizon table needs state to stay idempotent, and state is what goes wrong on the one run
+# nobody watches. `aws s3 sync` is already incremental, so repeating it costs a listing over a
+# prefix that has not changed and buys the property that matters: by the last tick almost
+# everything is already up, and the copy that has to finish in the final minutes is small.
+# Outside that window it still flushes hourly, because a node lost to a hardware fault on the
+# Sunday loses the same disk for the same reason.
+cat > /usr/local/bin/edullm-block-drain-tick <<'TICK'
+#!/usr/bin/env bash
+# Not `set -e`, the same as the log sync and for the same reason: one failed tick must not be
+# able to stop the timer, because a stopped timer is silent and the next thing that reads this
+# node is AWS terminating it.
+set -uo pipefail
+. /etc/edullm-block.env
+
+marker=/var/lib/edullm/last-flush
+usable=$(($(date -u -d "${EDULLM_BLOCK_ENDS_AT}" +%s) \
+  - EDULLM_BLOCK_RECLAIM_MINUTES * 60 - $(date -u +%s)))
+
+due=no
+if [ "${usable}" -le $((EDULLM_BLOCK_DRAIN_FROM_MINUTES * 60)) ]; then
+  due=yes
+elif [ ! -f "${marker}" ] || [ -z "$(find "${marker}" -newermt '-60 minutes' 2> /dev/null)" ]; then
+  due=yes
+fi
+[ "${due}" = yes ] || exit 0
+
+{
+  printf -- '--- %s usable_seconds=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${usable}"
+  edullm-node drain
+} >> /var/lib/edullm/drain.log 2>&1
+touch "${marker}"
+TICK
+chmod 0755 /usr/local/bin/edullm-block-drain-tick
+
+cat > /etc/systemd/system/edullm-block-drain.service <<'UNIT'
+[Unit]
+Description=Copy everything on this capacity block node that is not already in S3
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/edullm-block-drain-tick
+UNIT
+
+cat > /etc/systemd/system/edullm-block-drain.timer <<'UNIT'
+[Unit]
+Description=Run the capacity block drain often enough that the last one has little left to do
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=5min
+# systemd batches timers within their accuracy window to let a machine sleep, which is the
+# wrong trade on a node that is about to be taken away at a fixed minute.
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
+UNIT
+
 systemctl daemon-reload
 systemctl enable --now edullm-block-log-sync.service
+systemctl enable --now edullm-block-drain.timer
 
 # ---------------------------------------------------------------------------------------
 # THE SENTINEL. Written last and only on the path where everything above worked, which is

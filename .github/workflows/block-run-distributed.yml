@@ -1,0 +1,286 @@
+name: "Block: start one run across several nodes"
+
+# THE RUN THE BLOCK WAS BOUGHT FOR, AND THE REASON IT IS NOT `block-run.yml` WITH A LOOP.
+#
+# That file hands out one node, refuses it if somebody else is on it, and is right for the
+# weekend's ordinary work. Run eight times it produces eight independent jobs, and the thing
+# needed here is one job on sixty-four cards -- which is a different claim, a different
+# container and a different launcher, not a bigger number.
+#
+# THE CLAIM IS ALL OR NOTHING, WHICH IS THE PART THAT IS NEW. A loop over the single-node path
+# takes node one, takes node two, and meets somebody on node six -- leaving five machines
+# locked for a run that never started, which reads to everybody else in the window as a fleet
+# that is fully occupied. `tools/block_run_distributed.py` decides the whole set before writing
+# anything, takes the claims in one call, and gives back what it took if the set comes back
+# short. Nothing is cloned and no container is started until every machine has said yes.
+#
+# THE LAUNCHER IS THE RENDEZVOUS FORM AND EVERY NODE GETS THE SAME LINE. `torchrun` can be told
+# ranks statically with `--node-rank` or told to work them out with `--rdzv-backend=c10d`, and
+# the second silently ignores the first. So there is exactly one command here, it carries no
+# rank, no node index and no master flag, and it goes to every machine in one Systems Manager
+# call -- which is also why there is no loop that can fail half way.
+#
+# NO ADMIN GUARD, DELIBERATELY, AND THE REASONING IS `block-run.yml`'S. Roughly fifteen of the
+# thirty-five people here hold no AWS role at all, so a workflow holding the credential is not
+# a convenience for them, it is the whole access path. `block-launch-fleet.yml` is guarded
+# because it spends money against a purchase that cannot be refunded; this spends nothing. The
+# fleet is already up and already paid for, and what stops somebody taking a machine out from
+# under a colleague is the claim on the machine rather than a list of names in a file.
+#
+# THE ROLE THIS ASSUMES HAS TO BE TOLD ABOUT THIS FILE BEFORE IT WORKS.
+# `infra/iam/block-fleet-roles.yaml` pins `job_workflow_ref` to an enumeration of workflow
+# paths at `refs/heads/main`, so until this path is in that list and the stack has been
+# re-applied from a laptop, a dispatch fails at `configure-aws-credentials` with a message
+# about a subject claim rather than about a missing entry. Merge, apply, then dispatch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_name:
+        description: "Names the claim on every node, the container, the S3 prefix and the W&B group. Letters, digits, dot, dash and underscore."
+        required: true
+        type: string
+      branch:
+        description: "The branch every node clones. Resolved before a node is touched, so a typo costs nothing."
+        required: true
+        type: string
+      command:
+        description: "The training entrypoint and its arguments, with NO launcher. Example: python .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4 --dataset-id=... The torchrun flags and the MoE mesh flags are added here. The first word is exec'd rather than read by a shell, so it names a program: write `python <script>` and not `<script>`, and put no VAR=value in front of it."
+        required: true
+        default: ""
+        type: string
+      node_count:
+        description: "How many nodes, taking the lowest-numbered free ones. Leave empty and fill nodes instead to name them."
+        required: false
+        default: ""
+        type: string
+      nodes:
+        description: "Which nodes, comma-separated, e.g. 1,2,3,4,5,6,7 to hold node 8 back for the downstream lane. Leave empty and fill node_count instead."
+        required: false
+        default: ""
+        type: string
+      expert_parallel:
+        description: "Optional MoE expert-parallel degree, which is also the HSDP shard degree. Left empty, the widest degree that still fits inside one machine is used, which keeps the all-to-all on NVLink."
+        required: false
+        default: ""
+        type: string
+      repository:
+        description: "The GitHub repository holding the branch. It must be public: the nodes clone it with no credential."
+        required: true
+        default: edu-llm/OLMo-core
+        type: string
+      wandb_project:
+        description: "Which Weights and Biases project the charts appear in. Every rank logs into one group named after the run."
+        required: true
+        default: capacity-block
+        type: string
+      fabric:
+        description: "auto takes EFA where the devices are there and TCP where they are not. efa refuses a node with none, which is what to pick when the run is only worth doing on the fabric."
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - efa
+          - tcp
+      dry_run:
+        description: "Read the fleet, print the plan and the exact command, and claim nothing. The rehearsal to do before the real dispatch."
+        required: false
+        default: false
+        type: boolean
+      take_the_nodes_anyway:
+        description: "Start even on nodes somebody else holds. Their runs keep their cards and yours will fight them for memory. Ask them first."
+        required: false
+        default: false
+        type: boolean
+      reservation_id:
+        description: "Optional. Only needed if two blocks are live at once, because node numbers repeat across fleets."
+        required: false
+        default: ""
+        type: string
+      region:
+        description: "Where the fleet is."
+        required: true
+        default: us-east-2
+        type: string
+      outputs_bucket:
+        description: "Where the nodes sync their logs. Only used to print the log URI; each node builds its own prefix from what its bootstrap wrote."
+        required: true
+        default: edullm-block-outputs-us-east-2
+        type: string
+
+permissions:
+  contents: read
+
+# ONE GROUP FOR THE WHOLE LANE, SHARED WITH `block-launch-fleet.yml`, AND NOT
+# CANCEL-IN-PROGRESS. Two distributed dispatches racing would each read the other's half-taken
+# claims and both roll back, which is a correct outcome reached expensively; serialising makes
+# the second one meet a fleet that is simply busy. Sharing the group with the launch is the
+# other half: a distributed run must not start into a fleet that is still coming up, and a
+# launch must not re-verify a fleet in the middle of being claimed. A cancelled dispatch would
+# be worse than a queued one -- it would abandon claims between the claim phase and the start
+# phase, which is the one window where nothing else releases them.
+concurrency:
+  group: capacity-block-fleet
+  cancel-in-progress: false
+
+jobs:
+  start:
+    name: Claim every node at once and start one job on all of them
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RUN_NAME: ${{ inputs.run_name }}
+      BRANCH: ${{ inputs.branch }}
+      COMMAND: ${{ inputs.command }}
+      NODE_COUNT: ${{ inputs.node_count }}
+      NODES: ${{ inputs.nodes }}
+      EXPERT_PARALLEL: ${{ inputs.expert_parallel }}
+      REPOSITORY: ${{ inputs.repository }}
+      WANDB_PROJECT: ${{ inputs.wandb_project }}
+      FABRIC: ${{ inputs.fabric }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      TAKE_ANYWAY: ${{ inputs.take_the_nodes_anyway }}
+      RESERVATION_INPUT: ${{ inputs.reservation_id }}
+      BLOCK_REGION: ${{ inputs.region }}
+      OUTPUTS_BUCKET: ${{ inputs.outputs_bucket }}
+      DISPATCHED_BY: ${{ github.actor }}
+      WANDB_ENTITY: eduLLM
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install the platform library
+        run: |
+          set -euo pipefail
+          uv sync --locked
+
+      # BEFORE THE CREDENTIALS AND BEFORE ANY NODE, BECAUSE EVERY ONE OF THESE IS FREE HERE AND
+      # EXPENSIVE LATER. A run name that is not a legal directory, container name and S3 key
+      # segment at once fails part way through a clone on eight machines somebody is paying
+      # for. A branch that does not exist fails at the same point. A node list and a node count
+      # both filled in is a form where one of the two answers is going to be ignored, and the
+      # ignored one is whichever the person cared about.
+      - name: Refuse a form that cannot describe a job
+        run: |
+          set -euo pipefail
+          uv run python - <<'PY'
+          import os
+          import re
+          import sys
+
+          name = os.environ["RUN_NAME"]
+          if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", name) is None:
+              sys.exit(
+                  f"run_name_is_not_usable:{name!r}. It becomes a directory under /scratch, a "
+                  "docker container name and a segment of an S3 key, so it is letters, digits, "
+                  "dot, dash and underscore, up to 64 characters, starting with a letter or a "
+                  "digit."
+              )
+          nodes = os.environ["NODES"].strip()
+          count = os.environ["NODE_COUNT"].strip()
+          if bool(nodes) == bool(count):
+              sys.exit(
+                  "name the nodes or give a count, and not both and not neither: a list says "
+                  "which machines and a count says how many, and honouring both means ignoring "
+                  "one of them."
+              )
+          if nodes and re.fullmatch(r"[0-9]+(,[0-9]+)*", nodes) is None:
+              sys.exit(f"nodes_is_not_a_list_of_numbers:{nodes!r}")
+          if count and re.fullmatch(r"[0-9]{1,3}", count) is None:
+              sys.exit(f"node_count_is_not_a_number:{count!r}")
+          degree = os.environ["EXPERT_PARALLEL"].strip()
+          if degree and re.fullmatch(r"[0-9]{1,3}", degree) is None:
+              sys.exit(f"expert_parallel_is_not_a_number:{degree!r}")
+          PY
+
+          # `ls-remote` rather than a clone. One round trip, no checkout, and it answers the
+          # question that matters: does this ref exist on that repository right now. The tip it
+          # reports is what the nodes will clone, and the authoritative answer is still each
+          # node reading its own working tree afterwards -- somebody can push between the two
+          # moments and on a Saturday somebody will.
+          git ls-remote --exit-code --heads "https://github.com/${REPOSITORY}.git" "${BRANCH}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_BLOCK_FLEET_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+          role-duration-seconds: 3600
+          mask-aws-account-id: true
+
+      # THE TOOL RATHER THAN AN INLINE SCRIPT, WHICH IS THE ARGUMENT `block-drain.yml` MAKES.
+      # A maintainer runs exactly this from a laptop with `--profile sbsandbox` when GitHub is
+      # the thing that is broken, and the decisions inside it -- whether the node set can be
+      # assembled, what the mesh is, whether the command already names a launcher, what to
+      # release when a phase comes back short -- are held by `tests/test_block_multinode.py`
+      # rather than by a reviewer reading a hundred lines of YAML once.
+      - name: Claim the nodes and start the job
+        run: |
+          set -euo pipefail
+          # THE UNCONDITIONAL FLAGS ARE ON THE INVOCATION AND ONLY THE CONDITIONAL ONES ARE IN
+          # AN ARRAY, WHICH IS NOT A STYLE PREFERENCE. `tests/test_workflow_tool_arguments.py`
+          # reads a call by matching the tool's path and its line continuations, so a flag
+          # hidden behind an array expansion is a flag it cannot check -- and the failure it
+          # exists to catch is a required argument added to a tool and not to the one caller no
+          # unit test runs. Everything that is always passed is therefore visible to it.
+          optional=()
+          if [ -n "${NODES}" ]; then
+            optional+=(--nodes "${NODES}")
+          fi
+          if [ -n "${NODE_COUNT}" ]; then
+            optional+=(--node-count "${NODE_COUNT}")
+          fi
+          if [ -n "${EXPERT_PARALLEL}" ]; then
+            optional+=(--expert-parallel "${EXPERT_PARALLEL}")
+          fi
+          if [ -n "${RESERVATION_INPUT}" ]; then
+            optional+=(--reservation "${RESERVATION_INPUT}")
+          fi
+          if [ "${DRY_RUN}" = "true" ]; then
+            optional+=(--dry-run)
+          fi
+          if [ "${TAKE_ANYWAY}" = "true" ]; then
+            optional+=(--force)
+          fi
+
+          uv run python tools/block_run_distributed.py \
+            --no-profile \
+            --run "${RUN_NAME}" \
+            --branch "${BRANCH}" \
+            --command "${COMMAND}" \
+            --repository "${REPOSITORY}" \
+            --who "${DISPATCHED_BY}" \
+            --region "${BLOCK_REGION}" \
+            --bucket "${OUTPUTS_BUCKET}" \
+            --wandb-project "${WANDB_PROJECT}" \
+            --wandb-entity "${WANDB_ENTITY}" \
+            --fabric "${FABRIC}" \
+            --summary "${GITHUB_STEP_SUMMARY}" \
+            "${optional[@]}"
+
+      # WHAT A REFUSAL MEANS, FOR SOMEBODY WHO CANNOT READ ANY OF THE THINGS IT NAMES. The tool
+      # writes its reasons to stderr, which is in the log, and the fifteen people this lane was
+      # made workflow-shaped for can read a log but cannot check a node. What they need in the
+      # summary is the one fact the reasons do not state: that nothing is holding the fleet.
+      - name: Say that a refused launch left nothing behind
+        if: failure()
+        run: |
+          set -euo pipefail
+          {
+            echo "### \`${RUN_NAME}\` did not start"
+            echo ""
+            echo "Every claim this dispatch took has been given back and every container it"
+            echo "started has been removed, so the fleet is in the state it was in before."
+            echo "The reasons are in the step above, one line per node. Fix them and dispatch"
+            echo "again; there is nothing to clean up first."
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
