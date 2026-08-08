@@ -446,18 +446,23 @@ def test_what_a_researcher_is_told_to_type_is_what_the_code_spells() -> None:
     a bump has to rewrite, which is a coupling that has already gone wrong three times.
     Re-running the unpinned line is the upgrade, which is the property being documented.
 
-    ``AGENTS.md`` is here for the same reason and one worse. It is loaded into every agent
-    session on this repository, so a tag written into it is a stale number read more often
-    than any other line in the tree, by a reader with no reason to doubt it and no habit of
-    checking. It is also the file that tells an agent never to quote a number from a
-    document, which it would then be doing.
+    ``skills/edullm-platform/SKILL.md`` is here for the same reason and one worse. It is
+    loaded into every agent session in whatever repository somebody copied it into, so a tag
+    written into it is a stale number read more often than any other line, by a reader with
+    no reason to doubt it and no habit of checking. It is also the file that tells an agent
+    that these numbers move, which it would then be contradicting.
+
+    ``AGENTS.md`` is deliberately not in this list. It is the maintainer rule for this
+    checkout, where the tool is run out of the tree with ``uv run`` rather than installed,
+    and a fourth copy of the install line would be a fourth thing to keep true for a reader
+    who does not need it.
     """
     unpinned = install_command(repository=PLATFORM_REPOSITORY)
 
     for path in (
         PROJECT_ROOT / "README.md",
         PROJECT_ROOT / "guides" / "the-platform.md",
-        PROJECT_ROOT / "AGENTS.md",
+        PROJECT_ROOT / "skills" / "edullm-platform" / "SKILL.md",
     ):
         assert unpinned in path.read_text(encoding="utf-8"), (
             f"{path.name} does not carry the install line, so the only instruction a "

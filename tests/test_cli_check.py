@@ -438,9 +438,10 @@ def test_the_capacity_answer_is_in_the_document_an_agent_reads(
 ) -> None:
     """Mutation: print the sentence and leave ``--json`` alone.
 
-    ``AGENTS.md`` tells an agent to read ``check --json`` and to match on codes rather than
-    on prose, so a warning that exists only in the paragraphs is invisible to every caller
-    the machine-readable form was built for. The verdict is carried beside the sentence for
+    ``skills/edullm-platform/SKILL.md`` tells an agent to read ``check --json`` and to match
+    on codes rather than on prose, so a warning that exists only in the paragraphs is
+    invisible to every caller the machine-readable form was built for. The verdict is carried
+    beside the sentence for
     the same reason ``history`` carries counts beside ``said``: the verdict is the structure
     to branch on and the sentence is prose that will be reworded.
 
@@ -697,8 +698,9 @@ def test_the_refused_runtime_carries_a_code_a_caller_can_match_on(
 ) -> None:
     """Mutation: refuse in prose, the way this rule would arrive if it were a warning.
 
-    ``AGENTS.md`` tells an agent to branch on ``refusals[].code`` and never on the detail,
-    and this is the refusal an agent sweeping ``--hours`` is likeliest to meet. The exit
+    ``skills/edullm-platform/SKILL.md`` tells an agent to branch on ``refusals[].code`` and
+    never on the detail, and this is the refusal an agent sweeping ``--hours`` is likeliest
+    to meet. The exit
     code is asserted beside it because 1 is the one that means "something has to change",
     and an agent that retried a 3 here would loop.
     """

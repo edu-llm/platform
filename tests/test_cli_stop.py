@@ -5,7 +5,8 @@ machine and nothing in the binary ended one. ``--hours 1`` is the smallest lifet
 accepts, so the floor on a researcher's mistake -- the wrong shape, or the right shape they
 immediately realised they did not want -- was about an hour of billing they could watch and
 could not stop. An agent that hit this on 2026-08-06 correctly refused to reach past the binary
-to the AWS CLI, which ``AGENTS.md`` forbids, and waited for the expiry janitor.
+to the AWS CLI, which is what ``skills/edullm-platform/SKILL.md`` sends a researcher's agent
+to the binary for, and waited for the expiry janitor.
 
 The cases below are in three groups: what the verb does, what it says, and what it will not
 reach. The third is the one to read first.
@@ -331,9 +332,10 @@ def test_it_says_what_the_machine_ran_up_at_the_catalog_s_own_rate(
 
     A researcher stopping a machine is stopping a charge, and a verb that would not say how
     big it had got is asking them to go to Cost Explorer to find out what the tool already
-    knew. ``AGENTS.md`` forbids quoting a price from memory or from a document; this reads the
-    rate out of ``config/workload-catalog.yaml`` and names the file, which is that discipline
-    pointed at a figure rather than at a refusal.
+    knew. ``skills/edullm-platform/SKILL.md`` tells an agent that a price quoted from memory
+    or from a document has probably moved; this reads the rate out of
+    ``config/workload-catalog.yaml`` and names the file, which is that discipline pointed at a
+    figure rather than at a refusal.
 
     The expected number is computed here from the same catalog rather than written down, so
     this case follows a repricing instead of going red on one.

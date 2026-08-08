@@ -344,7 +344,8 @@ def placement_verdict(
 
     **THE RECORD IS HANDED BACK AND NOT ONLY THE SENTENCE, WHICH IS WHAT ``--json`` NEEDS.** A
     caller that had to recognise a verdict by matching the prose would be reading a string this
-    repository rewords, which is the thing ``AGENTS.md`` tells every agent not to do.
+    repository rewords, which is the thing ``skills/edullm-platform/SKILL.md`` tells every
+    agent not to do.
     """
     return next(
         (record for record in _capacity(configuration) if record.profile == profile_name), None
@@ -1139,8 +1140,9 @@ def what_stopping_did(
 
     **THE COST IS QUOTED WITH WHAT IT IS AND IS NOT, RATHER THAN AS A NUMBER.** It is the
     catalog's on-demand rate against the hours the machine was running, so it excludes the
-    volume and the traffic and it is a ceiling for a machine bought on Spot. ``AGENTS.md``
-    forbids quoting a price from memory or from a document; this reads it out of reviewed
+    volume and the traffic and it is a ceiling for a machine bought on Spot.
+    ``skills/edullm-platform/SKILL.md`` tells an agent that a price quoted from memory or from
+    a document has probably moved; this reads it out of reviewed
     configuration at the moment of asking and names the file it came from, which is the same
     discipline pointed at a figure rather than at a refusal.
 
@@ -1473,7 +1475,8 @@ ZONE_SHAPED_REFUSALS: Final[frozenset[str]] = frozenset(
 )
 
 #: How the AWS CLI spells an API error code in what it writes to stderr. The rest of that line
-#: is prose AWS rewords, which is the thing ``AGENTS.md`` tells every caller not to match on.
+#: is prose AWS rewords, which is the thing ``skills/edullm-platform/SKILL.md`` tells every
+#: caller not to match on.
 #:
 #: **THE DOT IS IN THE CLASS AND IT WAS NOT UNTIL 2026-08-06.** A whole family of EC2 codes is
 #: spelled with one -- ``InvalidInstanceID.NotFound``, ``InvalidInstanceID.Malformed``,

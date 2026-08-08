@@ -400,7 +400,7 @@ FOLLOW_UPS: tuple[FollowUp, ...] = (
             "repository and set by hand, and there is no organization variable behind it**, "
             "so this is not inherited and the five repositories that already have one say "
             "nothing about the sixth. Until 2026-08-06 this step appeared nowhere: not in "
-            "this runbook, not in `.cursor/skills/registering-a-repository/`, and the "
+            "this runbook, not in the skill a researcher's agent loads, and the "
             "variable's only mention in this repository was one example comment. That is why "
             "`edullm-p1` sat registered and publishing nothing for days. Nothing here can "
             "check it for you -- a token scoped to this repository is refused by the "
@@ -1072,8 +1072,8 @@ def refuse_a_repository_that_is_not_as_described(
 
     EVERY FINDING IS REPORTED AT ONCE. The caller is a person waiting on a workflow dispatch,
     and one refusal per dispatch is three dispatches to learn three things -- the argument
-    ``AGENTS.md`` makes about ``edullm check`` applies to the tool that opens the pull
-    request as well.
+    ``skills/edullm-platform/SKILL.md`` makes about ``edullm check`` applies to the tool that
+    opens the pull request as well.
 
     A READ THAT COULD NOT BE MADE IS NOT A PASS, and it is not a refusal either. It leaves by
     the ``SourceUnusable`` door, which is exit 2 and means the tool could not be driven,
