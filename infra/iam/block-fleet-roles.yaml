@@ -182,6 +182,28 @@ Resources:
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:ssm:*::parameter/aws/service/deeplearning/*
 
+              # THE TAG CHECK THAT RUNS BEFORE ANY MACHINE STARTS, AND THE GRANT IT WAS
+              # MISSING. `block-launch-fleet.yml` asks the registry whether the image tag it
+              # was handed exists, in the resolve step, under `set -euo pipefail` and ahead of
+              # the subnet, the group and the interface plan. Without this the first dispatch
+              # dies on an `AccessDeniedException` before it has written a single fact the
+              # launch needs -- at 11:31 against a window that started billing at 11:30.
+              #
+              # `DescribeImages` and nothing else. The node role beside it needs
+              # `GetAuthorizationToken` because it runs `docker login` and then pulls layers;
+              # this is a control-plane read authorised on its own action, so a token grant
+              # here would be a wildcard resource bought for a call that never asks for one.
+              #
+              # The repository is in `ImageRegion` rather than the block region, for the reason
+              # the parameter records: ECR is per-region and the platform registry is not where
+              # the fleet is. A grant naming us-east-2 matches nothing and reads as the
+              # repository being absent.
+              - Sid: CheckTheTrainingImageTagExists
+                Effect: Allow
+                Action: ecr:DescribeImages
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ecr:${ImageRegion}:${AWS::AccountId}:repository/${TrainingRepository}
+
               # THE LAUNCH, BOUNDED BY REGION AND BY NOTHING ELSE.
               #
               # A `Deny` on the instance type was written here and then removed, and the
