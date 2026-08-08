@@ -139,10 +139,26 @@ echo "driver ${driver_version}, ${observed_gpus} devices"
 # in the trap. `mdadm` in particular is not guaranteed to be on this image family, and losing
 # a whole node out of eight because a package was not preinstalled is exactly the trade the
 # header refuses to make.
+#
+# AND THE IMAGE GETS THERE FIRST, WHICH IS THE CASE THAT ACTUALLY HAPPENS. The Deep Learning
+# Base AMI ships `dlami-nvme.service` enabled: before user-data runs it has already striped
+# every instance store device into one LVM volume and mounted it, so those devices are in use
+# and `mkfs.ext4 -F` answers "apparently in use by the system". That is a `|| return 1`, so the
+# fallback below puts /scratch on the root volume -- on every node, with one line in a log
+# nobody reads, trading a p5's thirty terabytes of local NVMe for a 500 GiB EBS root that a
+# single run can fill and take the machine down with. The array the image built is the array
+# this was going to build, so it is used rather than torn down and rebuilt.
 SCRATCH_DEVICE=root-volume
 prepare_scratch() {
   local devices=("$@")
-  local target="${devices[0]}"
+  local target="${devices[0]}" claimed
+  claimed="$(lsblk --noheadings --output MOUNTPOINT "${devices[@]}" 2> /dev/null |
+    awk 'NF {print; exit}')"
+  if [ -n "${claimed}" ]; then
+    mount --bind "${claimed}" "${SCRATCH}" || return 1
+    SCRATCH_DEVICE="${claimed}"
+    return 0
+  fi
   if [ "${#devices[@]}" -gt 1 ]; then
     if command -v mdadm > /dev/null 2>&1; then
       mdadm --create --verbose /dev/md0 --level=0 \
@@ -161,7 +177,16 @@ prepare_scratch() {
 }
 
 mkdir -p "${SCRATCH}"
-mapfile -t instance_store < <(
+# A read loop rather than mapfile, for the reason `cancel-run.yml` and the launch workflow
+# both record against the same choice: mapfile wants bash 4.2 and the bash macOS ships is 3.2,
+# so a body using it is one the test suite cannot execute. That is not a stylistic point here.
+# This section is the one place in the bootstrap that decides something about the machine, it
+# had no test that ran it, and what it got wrong -- an image that had already mounted these
+# disks -- is invisible in a diff and obvious the first time the thing is executed.
+instance_store=()
+while read -r device; do
+  instance_store+=("${device}")
+done < <(
   lsblk --nodeps --noheadings --output NAME,MODEL |
     awk '/Instance Storage/ {print "/dev/" $1}'
 )
