@@ -40,6 +40,7 @@ from edullm_platform.cli.actions import (
     ADMISSION_JOB,
     ADMITTED,
     CANCEL_WORKFLOW,
+    LOG_HEADINGS,
     PRINTED_RUN_ID,
     SUBMIT_WORKFLOW,
     report_ceiling_seconds,
@@ -83,6 +84,30 @@ REPORT_LOG = "\n".join(
 #: that called it ``SUBMITTED``.
 SUCCEEDED_REPORT_LOG = REPORT_LOG.replace("`RUNNABLE`", "`SUCCEEDED`").replace(
     "no compute environment capacity yet", "Essential container in task exited"
+)
+
+#: What the same job log holds when the dispatch asked for the other end of the stream: a
+#: different heading, and the lines a run writes on the way up. Both container lines carry
+#: the tabs OLMo-core's logger puts in them, so this fixture is also the end-to-end half of
+#: the truncation ``tests/test_cli_actions.py`` covers at the parser.
+HEAD_REPORT_LOG = "\n".join(
+    f"cancel\tShow fifty lines\t2099-01-01T00:00:0{index}.0000000Z {line}"
+    for index, line in enumerate(
+        [
+            f"### {LOG_HEADINGS[True]}",
+            "3 line(s), oldest first. This is the start of the stream.",
+            "```",
+            (
+                "2026-08-07 20:29:09.986\tip-10-20-55-74:0\tolmo_core.train.trainer:935\t"
+                "INFO\tLoading checkpoint from 's3://bucket/step20'..."
+            ),
+            (
+                "2026-08-07 20:29:52.030\tip-10-20-55-74:0\tolmo_core.train.trainer:412\t"
+                "INFO\tWill resume training from step 20, epoch 1"
+            ),
+            "```",
+        ]
+    )
 )
 
 
@@ -241,6 +266,38 @@ def test_logs_prints_the_tail_and_not_the_description_beside_it(
     assert "step 200   loss  5.9042" in out
     assert "| Status |" not in out
     assert dispatched_fields(runner)["stop"] == "false"
+    # The tail is the default, so nothing is sent about which end to read. See the comment
+    # on ``from_start`` in ``_drive_the_run_report``.
+    assert "from_start" not in dispatched_fields(runner)
+
+
+def test_logs_can_ask_for_the_head_of_a_stream_and_reads_the_section_it_asked_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE END OF A LOG A RESEARCHER COULD NOT REACH. Mutation: accept the flag and go on
+    dispatching for the tail, or send it and go on reading the tail's heading.
+
+    Everything a run prints before its first batch is above the fifty lines the tail holds,
+    on a training log measured in hundreds of megabytes -- which is why ``resumed_from_step``
+    had to be added to OLMo-core's end-of-run summary in another repository, to move one line
+    into a window this verb could see.
+
+    Both halves are asserted together because either alone is a worse answer than the flag
+    not existing. Sending the field and reading the tail's heading prints "the workflow named
+    no section this verb reads" over an answer that is sitting in the step summary; reading
+    the head's heading without sending the field finds nothing at all.
+    """
+    runner = submission(log=HEAD_REPORT_LOG)
+
+    code, out, _ = invoke(
+        ["logs", RUN_ID, "--from-start"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch
+    )
+
+    assert code == EXIT_OK
+    assert dispatched_fields(runner)["from_start"] == "true"
+    assert LOG_HEADINGS[True] in out
+    assert "Loading checkpoint from" in out
+    assert "Will resume training from step 20" in out
 
 
 def test_cancel_sends_stop_and_carries_the_reason_that_gets_recorded(
