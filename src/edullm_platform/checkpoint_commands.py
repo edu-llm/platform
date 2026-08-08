@@ -392,6 +392,28 @@ def _contract_said(checkpoint: CheckpointContract) -> str:
     return f"{interval}, and that a retry resumes from it" if checkpoint.resume_required else interval
 
 
+def _why_it_is_inert(command: Sequence[str]) -> str:
+    """Why this particular command names the directory and does not expand it.
+
+    Two answers, because there are two causes and they have different remedies. A command
+    that hands text to no shell needs a wrapper; a command that hands text to one has the
+    wrapper already and needs the quoting inside it changed. Telling somebody with a shell
+    to add a shell is the misdiagnosis this exists to stop.
+    """
+    if not _texts_a_shell_would_expand(tuple(command)):
+        return (
+            f" Nothing in this command runs a shell -- the container execs it exactly as "
+            f"typed -- so the program receives the literal text "
+            f"${CHECKPOINT_DIRECTORY_VARIABLE} and creates a directory by that name."
+        )
+    return (
+        f" This command does run a shell, and the name is somewhere in it the shell will "
+        f"not read: inside single quotes, behind a backslash, or after a #. The program "
+        f"receives the literal text ${CHECKPOINT_DIRECTORY_VARIABLE} and creates a "
+        f"directory by that name."
+    )
+
+
 def _refusal(
     command: Sequence[str],
     *,
@@ -401,14 +423,15 @@ def _refusal(
     # Said only to the submitter who wrote the name somewhere the shell will not read it.
     # They have already done the thinking this refusal would otherwise be explaining, and a
     # paragraph about quoting on every refusal is a paragraph people stop reading.
-    inert = (
-        f" The name is in this command where nothing expands it, inside single quotes, "
-        f"behind a backslash, in a comment, or in a command the container execs without a "
-        f"shell, so the program receives the literal text "
-        f"${CHECKPOINT_DIRECTORY_VARIABLE} and creates a directory by that name."
-        if _names_the_directory(command)
-        else ""
-    )
+    #
+    # NAMING THE CAUSE THIS COMMAND HAS RATHER THAN THE FOUR IT MIGHT. This listed all of
+    # them at once, so a submission with a shell in it was told it might have no shell and
+    # one with no shell was told to check its quoting. Both readers go looking in the wrong
+    # place, and the reader who has a shell has the worse time of it: nothing about their
+    # quoting is wrong, so the sentence sends them round a loop with no exit. Which half
+    # applies is known here -- a command handing text to a shell has quoting to get wrong,
+    # and one handing text to nothing does not.
+    inert = "" if not _names_the_directory(command) else _why_it_is_inert(command)
     example = (
         f"bash -lc 'python train.py --save-folder \"${CHECKPOINT_DIRECTORY_VARIABLE}\"'"
     )
