@@ -7,9 +7,17 @@ Description: The two identities the capacity block lane needs -- the one the blo
 # workflow file allowed to assume it. That is deliberate and `infra/iam/audit-reader-role.yaml`
 # argues it at length: it is what makes a role blast radius readable off the one file that can
 # wear it. The consequence is the thing that bites here. A token minted for
-# `block-launch-fleet.yml` matches none of the existing roles, so without this template those
-# two workflows have no AWS identity whatsoever -- not a narrow one, none -- and the launch
-# fails at `configure-aws-credentials` before it has read a single thing about the reservation.
+# `block-launch-fleet.yml` matches none of the existing roles, so without this template the
+# four block workflows have no AWS identity whatsoever -- not a narrow one, none -- and the
+# launch fails at `configure-aws-credentials` before it has read a single thing about the
+# reservation.
+#
+# THE SAME IS TRUE OF EACH FILE SEPARATELY, WHICH IS WHY ADDING ONE MEANS APPLYING THIS AGAIN.
+# `block-drain.yml`, `block-logs.yml` and `block-run-distributed.yml` were each written after
+# this stack was first drafted, and until it is applied with them in the list they hold nothing:
+# the drain report is red every quarter of an hour, the log reader refuses everybody it was
+# written for, and the multi-node launch -- which is the run this window was bought for --
+# cannot reach a single machine.
 #
 # THIS IS APPLIED FROM A LAPTOP AND MUST BE APPLIED BEFORE THE WINDOW OPENS. `infra/README.md`,
 # "Why IAM is laptop-only": the deployer role holds no `iam:CreateRole`, on purpose, so no
@@ -72,20 +80,28 @@ Parameters:
 
 Resources:
   # -------------------------------------------------------------------------------------
-  # THE WORKFLOW IDENTITY. Two files, one role, and that is a decision rather than laziness.
+  # THE WORKFLOW IDENTITY. One role for every file in the lane, and that is a decision rather
+  # than laziness.
   #
-  # `block-launch-fleet.yml` starts the fleet and `block-run.yml` puts work on it, and a
-  # trust policy cannot distinguish jobs within a workflow anyway -- `infra/iam/
-  # image-resolver-role.yaml` records that. Two roles would have been the tidier diff and
-  # would have bought nothing real: the run workflow needs `ssm:SendCommand` on the nodes,
-  # and anybody holding that on a machine with an instance profile can already do whatever
-  # the machine can do. Splitting them would suggest a boundary that does not exist.
+  # `block-launch-fleet.yml` starts the fleet, `block-run.yml` puts work on one node,
+  # `block-run-distributed.yml` puts one job on all of them, `block-drain.yml` reads what has
+  # not reached S3 yet and `block-logs.yml` reads a log back out of it. A trust policy cannot
+  # distinguish jobs within a workflow anyway -- `infra/iam/image-resolver-role.yaml` records
+  # that. Separate roles would have been the tidier diff and would have bought nothing real:
+  # most of them need `ssm:SendCommand` on the nodes, and anybody holding that on a machine
+  # with an instance profile can already do whatever the machine can do. Splitting them would
+  # suggest a boundary that does not exist.
   #
-  # What is worth saying is which of the two is guarded and which is not.
-  # `block-launch-fleet.yml` carries an admin-only dispatch guard because it spends money.
-  # `block-run.yml` deliberately does not: roughly fifteen of the thirty-five people on this
-  # team hold no AWS role at all, and that workflow existing for them is the entire reason
-  # this lane is workflow-shaped instead of a shell script.
+  # The one boundary that does exist is the one drawn below rather than in the trust: this
+  # role reads the outputs bucket and cannot write to it, where the node role writes it. That
+  # is a real asymmetry between the machines that produce a window's output and the two
+  # workflows that report on it, and it survives all four files sharing an identity.
+  #
+  # What is worth saying is which of them is guarded and which are not.
+  # `block-launch-fleet.yml` carries an admin-only dispatch guard because it spends money. The
+  # others deliberately do not: roughly fifteen of the thirty-five people on this team
+  # hold no AWS role at all, and those workflows existing for them is the entire reason this
+  # lane is workflow-shaped instead of a shell script.
   # -------------------------------------------------------------------------------------
   BlockFleetRole:
     Type: AWS::IAM::Role
@@ -105,12 +121,23 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                # An array under one key is an OR across its elements, so this accepts either
-                # file. The other four condition keys are separate keys and are therefore
-                # ANDed, which is what keeps this from being assumable by a fork.
+                # An array under one key is an OR across its elements, so this accepts any of
+                # these files. The other four condition keys are separate keys and are
+                # therefore ANDed, which is what keeps this from being assumable by a fork.
+                #
+                # THE LIST HAS GROWN SINCE THIS STACK WAS LAST APPLIED, AND THAT MEANS APPLYING
+                # IT AGAIN. A workflow whose path is not in here has no AWS identity whatsoever
+                # -- not a narrow one, none -- and fails at `configure-aws-credentials` with a
+                # message about a subject claim. `tests/test_block_workflows.py` holds the tree
+                # against this list in both directions, so a file reaching for the role variable
+                # without being named here is red on a pull request rather than at the moment
+                # somebody dispatches it.
                 token.actions.githubusercontent.com:job_workflow_ref:
                   - edu-llm/platform/.github/workflows/block-launch-fleet.yml@refs/heads/main
                   - edu-llm/platform/.github/workflows/block-run.yml@refs/heads/main
+                  - edu-llm/platform/.github/workflows/block-drain.yml@refs/heads/main
+                  - edu-llm/platform/.github/workflows/block-logs.yml@refs/heads/main
+                  - edu-llm/platform/.github/workflows/block-run-distributed.yml@refs/heads/main
                 token.actions.githubusercontent.com:repository_owner_id: "306859726"
                 token.actions.githubusercontent.com:repository_id: "1311508598"
                 token.actions.githubusercontent.com:sub: repo:edu-llm@306859726/platform@1311508598:ref:refs/heads/main
@@ -124,6 +151,14 @@ Resources:
               # subnet is in the block zone, how many cards the instance type has, and --
               # the one that matters -- what reservation each launched instance says it is
               # drawing from.
+              #
+              # `DescribeSecurityGroups` IS THE NEWEST OF THEM AND THE ONE THAT WILL BE MISSING.
+              # The launch names a security group on every network interface it asks for, and
+              # refuses unless that group admits all traffic to and from itself -- which is what
+              # EFA is matched on, and without which every fabric device attaches and every
+              # packet between nodes is dropped. Denied, the launch stops at the resolve step
+              # with an access denial rather than starting anything, which is the safe direction
+              # and is still a stack that has to be applied from a laptop before the window.
               - Sid: ReadWhatTheLaunchRefusesOn
                 Effect: Allow
                 Action:
@@ -131,6 +166,7 @@ Resources:
                   - ec2:DescribeInstances
                   - ec2:DescribeInstanceTypes
                   - ec2:DescribeImages
+                  - ec2:DescribeSecurityGroups
                   - ec2:DescribeSubnets
                   - ec2:DescribeTags
                 Resource: "*"
@@ -209,6 +245,29 @@ Resources:
                   - ssm:GetCommandInvocation
                   - ssm:DescribeInstanceInformation
                 Resource: "*"
+
+              # READ-ONLY ON THE OUTPUTS BUCKET, AND THE ASYMMETRY AGAINST THE NODE ROLE IS
+              # THE POINT. A node writes its checkpoints and its logs; the two workflows that
+              # read them write nothing at all. `block-logs.yml` fetches the tail of a
+              # `train.log` so that the fifteen people here with no AWS role can read it in a
+              # job summary, and `block-drain.yml` lists a run's checkpoint prefix to tell a
+              # complete save from the wreckage of one that was interrupted. Neither has any
+              # business putting an object into the bucket the window's whole output is in,
+              # and a report is exactly the kind of thing that acquires a write by accident.
+              #
+              # `ListBucket` on the bucket ARN and the object actions on the object ARNs, for
+              # the reason the node role gives: S3 authorises a list against the bucket and a
+              # get against the object, and one resource covering both is what makes a listing
+              # answer "empty" where it should answer "denied".
+              - Sid: ReadWhatTheFleetWrote
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:s3:::${OutputsBucket}
+                  - Fn::Sub: arn:${AWS::Partition}:s3:::${OutputsBucket}/*
 
               # PASSING THE NODE ROLE IS ITS OWN GRANT AND ITS OWN RISK. Without a resource
               # bound here, this role could attach any instance profile in the account to a
