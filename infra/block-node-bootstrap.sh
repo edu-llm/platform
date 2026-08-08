@@ -290,6 +290,33 @@ write_claim() {
     "$1" "$2" "$3" "$4" "$5" "$(now)" > "${CLAIM}"
 }
 
+# THE CLAIM `run` TOOK, GIVEN BACK WHEN NOTHING ENDS UP RUNNING. THIS IS THE OTHER HALF OF
+# TAKING IT BEFORE THE CLONE.
+#
+# Writing the claim first is what closes the window two people dispatching seconds apart would
+# otherwise both walk through, and everything after that point can still fail: a branch deleted
+# since the workflow resolved it, a repository this node cannot reach, a tree carrying no
+# `.edullm/run.yaml` -- which is every registered repository except OLMo-core, so it is the
+# first thing a new one meets rather than an unlucky one. Under `set -e` each of those left the
+# claim behind, and a node claimed for a run that does not exist reads as busy to the whole
+# fleet and to `block-run.yml` until somebody who has never heard of `release` finds it.
+#
+# ONLY A CLAIM NAMING THIS RUN, AND ONLY WHILE NO CONTAINER IS UP, which is the same rule
+# `tools/block_run_distributed.py` rolls back by. A container that started owns the machine
+# whatever this shell went on to exit, and a node somebody else claimed in the seconds since is
+# theirs. What this deliberately does not do is put back a claim `--force` overwrote: forcing
+# already means taking a machine off somebody, and the node then reads as carrying unclaimed
+# work, which `block-run.yml` refuses on by name.
+UNSTARTED=""
+give_the_claim_back() {
+  local status=$?
+  if [ "${status}" -ne 0 ] && [ -n "${UNSTARTED}" ] &&
+    [ -z "$(container_of "${UNSTARTED}")" ] && [ "$(claim_field run)" = "${UNSTARTED}" ]; then
+    rm -f "${CLAIM}"
+    echo "edullm-node: nothing started, so node ${EDULLM_BLOCK_NODE} is not held" >&2
+  fi
+}
+
 known_verb() {
   case "${1:-}" in
     status | claim | release | run | logs | drain) return 0 ;;
@@ -387,6 +414,8 @@ do_run() {
   # both proceed. Writing the claim first closes the window at the cost of a claim carrying
   # no commit for as long as the clone takes, which reads as what it is on `status`.
   write_claim "${name}" "${who}" "${repository}" "${branch}" ""
+  UNSTARTED="${name}"
+  trap give_the_claim_back EXIT
 
   # CLONED FRESH EVERY TIME RATHER THAN PULLED INTO WHAT IS THERE. A directory left by an
   # earlier run of the same name is a tree at an unknown commit with unknown local edits,
@@ -395,7 +424,17 @@ do_run() {
   local tree="${SCRATCH}/${name}"
   rm -rf "${tree}"
   mkdir -p "${tree}/log"
-  git clone --depth 1 --branch "${branch}" "https://github.com/${repository}.git" "${tree}/repo"
+  # GIT IS TOLD NOT TO ASK FOR A PASSWORD, AND THE REFUSAL SAYS WHY THERE IS NOWHERE TO TYPE
+  # ONE. This node holds no GitHub credential, which works because the repositories this lane
+  # runs are public and stops dead the moment one is not -- seconds after the claim was taken,
+  # inside a Systems Manager invocation that has no terminal. Git's own message is about
+  # failing to read a username, which names neither the design nor the way out of it.
+  if ! GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch "${branch}" \
+    "https://github.com/${repository}.git" "${tree}/repo"; then
+    echo "edullm-node: this node holds no GitHub credential, so a private repository cannot" >&2
+    echo "be cloned here at all. On a public one the branch is gone or GitHub refused." >&2
+    die "could not clone ${repository}@${branch}"
+  fi
   local commit
   commit="$(git -C "${tree}/repo" rev-parse HEAD)"
 
