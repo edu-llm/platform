@@ -39,6 +39,7 @@ import yaml
 from workflow_support import (
     WORKFLOWS_ROOT,
     aws_commands,
+    command_tokens,
     load_workflow,
     only_job,
     run_step_script,
@@ -67,6 +68,7 @@ ROLE_TEMPLATE = PROJECT_ROOT / "infra" / "iam" / "block-fleet-roles.yaml"
 STATUS_TOOL = PROJECT_ROOT / "tools" / "block_status.py"
 
 LAUNCH_STEP = "Launch the nodes that are not already up"
+WAIT_STEP = "Wait for every node to reach running before anything reads it back"
 RESERVATION_STEP = "Refuse a reservation that is not open for business"
 RESOLVE_STEP = "Resolve the image, the subnet, the security group, the cards and the root device"
 VERIFY_STEP = "Verify every instance is drawing from the block, or terminate all of them"
@@ -506,6 +508,35 @@ def test_the_interfaces_the_library_built_are_the_ones_run_instances_is_handed(
     assert argv[:2] == ["ec2", "run-instances"]
     assert handed == plan_arguments
     assert "--subnet-id" not in argv
+
+
+def test_nothing_reads_the_fleet_back_until_every_instance_is_running(
+    launch: dict[str, Any],
+) -> None:
+    """THE READ-BACK THAT TERMINATES A FLEET USED TO RUN AGAINST INSTANCES IN ``pending``.
+
+    The launch loop returns when the last ``run-instances`` is accepted, so node eight is
+    described roughly zero seconds after being asked for. A ``p5.48xlarge`` is ``pending`` for
+    a minute or more and an auto-assigned public address is routinely absent from
+    ``describe-instances`` until it is ``running``. One of the two steps that read the fleet
+    back terminates every instance in it and the other prints an instruction to.
+
+    Named by instance id rather than by the tag filter, which is the part a rewrite would lose:
+    under a filter, a machine that terminates while the waiter runs stops matching and the rest
+    satisfy the condition, so a fleet that lost a node reads as ready.
+    """
+    job = only_job(launch)
+    names = [item.get("name", "") for item in job["steps"]]
+    waiting = step(job, WAIT_STEP)
+    tokens = command_tokens(waiting["run"], "ec2", "wait")
+
+    assert names.index(LAUNCH_STEP) < names.index(WAIT_STEP) < names.index(VERIFY_STEP)
+    assert names.index(WAIT_STEP) < names.index(FABRIC_STEP)
+    assert tokens[3] == "instance-running"
+    assert "--instance-ids" in tokens
+    assert "--filters" not in tokens
+    assert waiting["if"] == "always()"
+    assert "block_nodes_never_reached_running" in waiting["run"]
 
 
 def test_the_metadata_hop_limit_reaches_a_container(launch: dict[str, Any]) -> None:

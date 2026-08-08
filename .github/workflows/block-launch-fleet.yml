@@ -674,6 +674,76 @@ jobs:
             echo "launched node ${node}"
           done < "${RUNNER_TEMP}/missing-nodes.txt"
 
+      # NOTHING IS READ BACK UNTIL EVERY MACHINE HAS LEFT `pending`, AND WHAT THAT PREVENTS IS
+      # THE VERIFICATION BELOW DESTROYING A HEALTHY FLEET.
+      #
+      # The launch loop returns the moment the last `run-instances` is accepted, which is
+      # seconds after the eighth machine was asked for and minutes before it exists. A
+      # `p5.48xlarge` sits in `pending` for a minute or more, and a described instance in that
+      # state does not carry everything a running one does -- an auto-assigned public address
+      # is routinely absent until the state flips, which is the fabric step's other check.
+      #
+      # Both read-backs below act on what they read and one of them terminates every instance
+      # in the fleet. So a field that has not been filled in yet is not a flaky check here, it
+      # is eight machines killed on the strength of a half-built answer, or an instruction to
+      # kill them printed for somebody to follow by hand.
+      #
+      # TEN MINUTES IS THE WAITER'S OWN BOUND AND NOT A NUMBER THIS FILE CHOSE -- forty polls
+      # fifteen seconds apart, not settable from the command line. It is named here because a
+      # step that sits still for that long looks hung, and because what happens at the end of
+      # it is a refusal rather than a shrug.
+      #
+      # `if: always()` for the reason the verification below carries one: a launch that failed
+      # on the sixth machine leaves five that are coming up, and those five are read back by
+      # the next step whether this one ran or not. Waiting for them is worth more on that path
+      # than on the clean one.
+      - name: Wait for every node to reach running before anything reads it back
+        if: always()
+        run: |
+          set -euo pipefail
+          booting_file="${RUNNER_TEMP}/booting.txt"
+
+          aws ec2 describe-instances \
+            --region "${BLOCK_REGION}" \
+            --filters "Name=tag:edullm:block,Values=${RESERVATION_ID}" "Name=instance-state-name,Values=pending,running" \
+            --query 'Reservations[].Instances[].InstanceId' \
+            --output text > "${booting_file}"
+
+          # Word splitting rather than mapfile, for the reason the launch step above records
+          # against the same choice: the bash macOS ships is 3.2 and a body using mapfile is
+          # one the test suite cannot execute. An instance id carries no whitespace.
+          # shellcheck disable=SC2207
+          booting=($(cat "${booting_file}"))
+          if [ "${#booting[@]}" -eq 0 ]; then
+            echo "nothing carries this block tag, so there is nothing to wait for"
+            exit 0
+          fi
+          echo "waiting for ${#booting[@]} instances to reach running: ${booting[*]}"
+
+          # NAMED BY ID RATHER THAN BY THE TAG FILTER, WHICH IS THE DIFFERENCE THAT MATTERS.
+          # The condition a waiter holds is that every instance it was handed is running.
+          # Given a filter, an instance that terminates while it waits simply stops matching
+          # and the remainder satisfy that, so a fleet which lost a machine reads as ready.
+          # Given ids, that machine is a failure state the waiter stops on.
+          #
+          # No apostrophes in this body on purpose, and the call below starts its own line
+          # rather than sitting behind an `if`. Both are for `tests/workflow_support.py`, which
+          # lexes a run script to find every CLI call in it: an apostrophe in a comment reads
+          # there as an unclosed quote, and a call that is not the first word of a line is one
+          # it counts and cannot read.
+          waited=0
+          aws ec2 wait instance-running \
+            --region "${BLOCK_REGION}" \
+            --instance-ids "${booting[@]}" || waited=$?
+          if [ "${waited}" -ne 0 ]; then
+            echo "block_nodes_never_reached_running:${booting[*]}" >&2
+            echo "Ten minutes is the bound the waiter carries, and a p5 that has not started" >&2
+            echo "in ten minutes is not slow. Nothing is being terminated here. The steps" >&2
+            echo "still read the fleet back, and the table they print is what to act on." >&2
+            exit 1
+          fi
+          echo "every instance carrying this block tag reports running"
+
       # THE STEP THIS WHOLE FILE IS FOR.
       #
       # `CapacityReservationId` on a described instance is the only field anywhere that says
