@@ -150,6 +150,16 @@ on:
           - gpu-4xt4
           - gpu-8xa100
           - gpu-8xa10g
+          # THE ONLY OPTION HERE WHOSE QUEUE MAY NOT EXIST WHEN SOMEBODY PICKS IT. Every other
+          # entry names a queue that is part of the permanent estate; this one is created per
+          # purchase from infra/batch-capacity-block.yaml and deleted when the window closes.
+          # It is listed anyway, and listed early, because the H100 lesson above cuts the other
+          # way for a block: a choice input rejects a value it does not list, so a shape absent
+          # from this list cannot be submitted at all -- and adding it later means editing this
+          # file, releasing the validator and deploying, on the clock of a window that is
+          # already being paid for. Picked with no block bought, it fails at Batch on a missing
+          # queue, before any machine starts and before any money moves.
+          - gpu-8xb200
           - gpu-8xl4
           - gpu-8xl40s
           - gpu-8xt4

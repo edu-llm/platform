@@ -50,7 +50,7 @@ Ask for all three through the [ask](https://github.com/edu-llm/platform/issues/n
 
 ## Choosing a machine
 
-`compute_profile` is a closed dropdown, and it is the most expensive field on the form by a wide margin. **Two ranges, and reading the wrong one is how people plan a run they cannot have.** Twenty-one shapes are priced, from $0.53 an hour to $112.32. Fourteen of them can be started, and that range stops at $30.13. Nothing infers the field from what you are running, and nothing refuses a small job on a large machine.
+`compute_profile` is a closed dropdown, and it is the most expensive field on the form by a wide margin. **Two ranges, and reading the wrong one is how people plan a run they cannot have.** Twenty-one shapes are priced, from $0.53 an hour to $112.32. Fifteen of them can be started, and that range stops at $98.84. Nothing infers the field from what you are running, and nothing refuses a small job on a large machine.
 
 **The three that are priced and cannot be started.** `gpu-8xh100` and `gpu-1xh100` catch people, because eight H100s at $55.04 an hour is the number everybody remembers and 640 GB has no peer in the catalogue. EC2 has never sold this account a p5 of either size: `config/capacity.yaml` records 7,654 refusals for the eight-card shape and 4,060 for the single-card one, both over a day, and not one instance from either. So both read `provisioned: false` and naming one is refused with `unprovisioned_compute_profile`, before anything is dispatched and before anybody is asked to release it. `gpu-1xa10g-sagemaker` is the third and nothing was ever built for it. Both profile tables carry a column that says which is which, in [training a model](olmo-core.md#one-big-card).
 

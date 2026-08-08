@@ -537,7 +537,25 @@ Resources:
       # tell that job from the one waiting correctly for tomorrow, so the control is a person:
       # whoever bought the block confirms the reservation reached `scheduled` rather than
       # `payment-failed`, and watches the first placement. That is a weaker guard than a
-      # timeout and it is the honest one.
+      # timeout and it is the honest one. tools/check_capacity_reservation.py is that control
+      # written down, so it is one command rather than a memory, and `--watch` lets a purchase
+      # confirm itself.
+      #
+      # THERE IS A SECOND ROUTE INTO THE SAME STUCK STATE AND IT ARRIVES ON A *SUCCESSFUL* RUN,
+      # WHICH MAKES IT THE EASIER ONE TO WALK INTO. AWS begins terminating instances thirty
+      # minutes before a block ends. An attempt still running at that moment dies with its host
+      # taken away, which Batch reports as a host EC2 status reason -- and
+      # RETRY_ONLY_WHAT_A_RETRY_FIXES in src/edullm_platform/execution.py matches `Host EC2*` to
+      # RETRY, because on every other queue that is a hardware failure or a Spot reclaim and the
+      # next attempt resumes from the last checkpoint. Here it is neither. With
+      # maximum_attempts at 2 the second attempt is submitted into a queue whose block has just
+      # ended, and lands in exactly the RUNNABLE state the paragraph above says nothing will end.
+      #
+      # The fix is at submit time and needs nothing here: give the run a duration that expires
+      # before AWS reclaims, so the platform's own timeout fires first. That is a clean SIGTERM
+      # and it matches `OnExitCode: *` to EXIT, which is not retried. For a 24-hour block, submit
+      # 23 hours. Sizing a run to the whole window is what produces the retry, and the half hour
+      # it appears to buy was never usable in the first place.
       #
       # The two MISCONFIGURATION cancels stay at 1800 unchanged. Both describe a job that is
       # statically wrong -- asking for more vCPU than the ceiling, or a resource shape no

@@ -377,12 +377,18 @@ compute_profiles:
     pricing_observed_at: "2026-08-07"
     provisioned: false
     capacity_block_backed: true
-  # BLACKWELL, WHICH IS A NEW ARCHITECTURE RATHER THAN A BIGGER CARD, AND THE ONE ROW HERE WITH A
-  # SOFTWARE RISK IN FRONT OF IT. AWS publishes a minimum of CUDA 12.8 and driver R570 for
-  # p6-b200. The training image's CUDA 12.8 base clears the first on paper; nothing has confirmed
-  # the second on the silicon, because the driver version this platform knows was read off an
-  # A10G. infra/batch-compute-gpu-shapes.yaml excludes p6-b200 from the H100 environment for
-  # exactly that reason, and a block is the first thing that would settle it.
+  # BLACKWELL, WHICH IS A NEW ARCHITECTURE RATHER THAN A BIGGER CARD. AWS publishes a minimum of
+  # CUDA 12.8 and driver R570 for p6-b200, and on 2026-08-07 both were established by reading
+  # rather than by running. The training image has no CUDA base -- it is the bare python image,
+  # and its CUDA arrives with the torch wheel, which is the cu128 build and carries native sm_100
+  # SASS in every one of its fatbins with no PTX to fall back on and none needed. The driver is a
+  # property of the AMI rather than of the image: ECS_AL2023_NVIDIA ships 580.159.03, above R570,
+  # and the same image type backs every GPU environment here. The figure this comment used to
+  # distrust for having been read off an A10G was the AMI's figure all along.
+  #
+  # infra/batch-compute-gpu-shapes.yaml still excludes p6-b200 from the H100 environment and
+  # should keep doing so. That exclusion is not about the software: an on-demand p6-b200 reached
+  # as a scarcity fallback is $113.93/hour that nobody chose.
   - name: gpu-8xb200
     instance_type: p6-b200.48xlarge
     accelerator: gpu
@@ -390,7 +396,17 @@ compute_profiles:
     hourly_rate_usd: "98.8400"
     pricing_source: "AWS Capacity Blocks for ML published effective hourly reservation rate, p6-b200.48xlarge us-east-1"
     pricing_observed_at: "2026-08-07"
-    provisioned: false
+    # PROVISIONED WITHOUT A BLOCK BOUGHT, WHICH IS DELIBERATE AND IS THE ONLY ROW LIKE IT.
+    # provisioned means config/execution-targets.yaml carries a row, and it does. It does not
+    # mean a machine is reachable today: the queue that row names is created per purchase by
+    # a dispatch of the phase-3 deploy carrying a reservation id, so until a block is bought a
+    # gpu-8xb200 submission is admitted and then fails at Batch on a queue that is not there.
+    #
+    # That is the cheaper of the two failures. Promoting a profile is a Lambda release -- see
+    # infra/admission-state-machine.yaml, which records four times this seam has been met --
+    # and a release is two CI runs and a deploy. Left until after the purchase, that is spent
+    # out of a paid window that is already running. Spent now, it is free.
+    provisioned: true
     capacity_block_backed: true
   # The largest and most expensive machine this catalog prices, and the only one whose container
   # memory ceiling is a bound rather than a figure -- see src/edullm_platform/execution.py, which
@@ -666,6 +682,36 @@ workloads:
     maximum_runtime_hours: "1"
     maximum_attempts: 1
     checkpoint: null
+  # THE 2 BELOW WAS COPIED FROM olmo-core-train AND IS NOT EARNED, AND ONCE THE DEMONSTRATED-RESUME
+  # GUARD LANDS THIS WORKLOAD IS REFUSED WITH resume_not_demonstrated. It is left at 2 on purpose,
+  # because every way of clearing it is somebody's decision rather than an edit, and the wrong one
+  # is cheap to make here and expensive elsewhere.
+  #
+  # What the second attempt actually buys is narrower than it looks. A timeout does not retry --
+  # measured, on a run submitted with two attempts and a bound it could not finish inside, which
+  # came back FAILED at Attempts 1 of 2 because a timeout terminates the job rather than ending an
+  # attempt the EvaluateOnExit rules are consulted about. So this 2 insures against a host dying,
+  # and only if the entrypoint resumes. Nobody has shown that it does; OLMo-core's demonstration
+  # is of OLMo-core's trainer and does not carry to a different program.
+  #
+  # DROPPING IT TO 1 IS THE HONEST CHANGE AND IT MOVES APPROVAL ROUTING, WHICH IS WHY IT IS NOT
+  # MADE HERE. Worst-case cost is rate x hours x attempts, so halving attempts halves it, and
+  # measured against config/policy.yaml on 2026-08-07 three provisioned profiles cross the
+  # automatic_below_cost_usd boundary as a result: gpu-4xl40s, gpu-8xl4 and gpu-8xa10g go from
+  # routine to automatic -- from a team lead releasing the run to nobody releasing it. That is a
+  # loosening of a gate for another team, arrived at as a side effect of a statement about
+  # checkpoints, and using maximum_attempts as a covert approval lever is the second copy of a
+  # number this repository forbids. If the routing is wanted, it belongs in policy.yaml.
+  #
+  # EDULLM_RESUME_CHECK=waived keeps the routing and is worse on the merits: it asserts what
+  # nobody has observed, and re-admits precisely the failure the guard is for -- a host dies, the
+  # retry starts from step 0, and the run reports success on a curve that never happened.
+  #
+  # So the ordered options are: demonstrate resume for this entrypoint and record it in
+  # config/reports/resume-demonstrations.yaml, which is a small cheap run and the only one that
+  # makes the 2 true; or drop to 1 and decide the routing question deliberately. Neither is
+  # urgent -- this workload is not on the capacity-block path, and until the guard merges the
+  # current behaviour is unchanged.
   - name: edullm-alt-cl-train
     repository: edullm-alt-cl
     maximum_runtime_hours: "24"

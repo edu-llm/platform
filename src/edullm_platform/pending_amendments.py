@@ -1203,10 +1203,14 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "a run in a message, no run can name any of the four while they are "
                 "unprovisioned, and _why_this_gate already carried the exception sentence and "
                 "was already tested, so nothing the deployed notifier prints for a reachable "
-                "run moves. The escape is still the reason to cut the release."
+                "run moves. The escape is still the reason to cut the release. It moved a third "
+                "time when gpu-8xb200 was promoted, which edits both workload-catalog.yaml and "
+                "execution-targets.yaml -- and that promotion is deliberately made before a "
+                "block is bought, because promoting a profile is a Lambda release and cutting "
+                "one out of a paid window spends the thing being paid for."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function notifier",
-            builds_to="14e2fb190a2205388e5682f786595c31c7f253859540a984ea38a63c7f8af5f6",
+            builds_to="a5cb4389464694bcee3b2563ee6b9d84707edc6d87c96e9617bd3d29c9086128",
             released="d78c4a48482558039e7affc51331ec558e5880f8e48876bafb567fe683ee67b9",
             recorded_on=date(2026, 8, 7),
         ),
@@ -1281,10 +1285,19 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "deployed zip would decide and it is still unreachable for the same reason: "
                 "the deployed validator has never heard of the four profiles and refuses them "
                 "as unregistered, and the release that gives any of them a queue packages this "
-                "field along with it."
+                "field along with it. THAT RELEASE IS NOW THIS ONE, AND IT IS THE POINT OF IT. "
+                "gpu-8xb200 is promoted -- provisioned in workload-catalog.yaml with a row in "
+                "execution-targets.yaml naming the queue and definition its block stack creates "
+                "-- so unlike the amendments above, this release does change what the deployed "
+                "validator decides for a reachable submission: it is what makes gpu-8xb200 "
+                "admissible instead of unprovisioned_compute_profile. It is deliberately cut "
+                "before a block is bought. The queue does not exist until a purchase deploys "
+                "it, so until then a gpu-8xb200 submission is admitted and fails at Batch "
+                "before a machine starts; cutting the release afterwards instead would spend "
+                "two CI runs and a deploy out of a window already being billed."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function validator",
-            builds_to="fdddb38bc524af5bc2bc943c26004667c00607e704b9d20894459cf5cc07e0c7",
+            builds_to="9d6e48a3664a6d5dbdc7614746c84985166215d3e1a35db098e2c310ca327db2",
             released="2cda942e9518cf23b6042a5b5ab35d550557a0784acfc9c3ee2d593844e9064c",
             recorded_on=date(2026, 8, 7),
         ),

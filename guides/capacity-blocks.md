@@ -21,10 +21,12 @@ Capacity blocks cover the P and Trainium families. These are the ones sold in `u
 | `p4de.24xlarge` | 8 × A100 80GB | 640 GB | $17.712/hr | ~$425 | `gpu-8xa100-80gb` | **refused** |
 | `p5.48xlarge` | 8 × H100 | 640 GB | $41.528/hr | ~$997 | `gpu-8xh100` | **refused** |
 | `p5en.48xlarge` | 8 × H200 | 1128 GB | $54.920/hr | ~$1,318 | `gpu-8xh200` | **refused** |
-| `p6-b200.48xlarge` | 8 × B200 | 1432 GB | $98.84/hr | ~$2,372 | `gpu-8xb200` | **refused** |
+| `p6-b200.48xlarge` | 8 × B200 | 1432 GB | $98.84/hr | ~$2,372 | `gpu-8xb200` | **fails at Batch** |
 | `p6-b300.48xlarge` | 8 × B300 | 2144 GB | $112.32/hr | ~$2,696 | `gpu-8xb300` | **refused** |
 
-Every row has a profile behind it as of 7 August 2026. **Only one of them has a queue behind it**, which is a different thing, and the last column is that difference. Six of the seven carry `provisioned: false`, so `edullm check` refuses them with `unprovisioned_compute_profile` until a block is actually bought and its stack deployed. A profile means the platform knows the machine's size, rate and memory ceiling. It does not mean anything can run there yet. `gpu-8xa100` is the exception and is the one shape here you can also have without buying anything, which is why a block for it is worth arguing about rather than assuming.
+Every row has a profile behind it as of 7 August 2026. **Only one of them has a queue standing behind it**, which is a different thing, and the last column is that difference. Five of the seven carry `provisioned: false`, so `edullm check` refuses them with `unprovisioned_compute_profile` until a block is actually bought and its stack deployed. A profile means the platform knows the machine's size, rate and memory ceiling. It does not mean anything can run there yet.
+
+Two rows are exceptions and they are exceptions in different ways, which is worth separating because the column cannot say it. `gpu-8xa100` is the one shape here you can also have without buying anything, which is why a block for it is worth arguing about rather than assuming. `gpu-8xb200` is provisioned without a standing queue: you can name it and it will be admitted, and then the submission fails at Batch, because the queue behind it is created by a purchase and deleted when the window closes. Nothing starts and nothing is billed. It was promoted ahead of a purchase deliberately — the files that carry the flag are packaged into the admission validator, so promoting a profile means cutting a Lambda release, and cutting one inside a paid window spends the thing being paid for.
 
 The rates are AWS's published effective hourly rates and they move with supply and demand. **The number that matters is the one on the offering**, which you see before you commit. Read that rather than this table.
 
@@ -51,7 +53,7 @@ Two rows are easy to reach past and should not be. `p4de.24xlarge` is the cheape
 
 `gpu-8xb300` is the one to be careful with, and not because of the price. Its container memory ceiling has never been measured: nothing has run a `p6-b300.48xlarge` here, and the figure the platform asks for is a deliberate under-estimate derived from the lowest fraction any host in this account has ever registered. A first run there gets less memory than the machine has. Correcting it needs one CloudTrail lookup after the first launch, and `src/edullm_platform/execution.py` says which.
 
-Both Blackwell rows carry a software risk that is not visible in this table. AWS publishes CUDA 12.8 and driver R570 as the minimum for `p6-b200`. The training image's CUDA base clears the first; nothing has confirmed the driver on the actual silicon, because the driver version this platform knows was read off an A10G. A block is the first thing that would settle it, which is an argument for buying a short one first.
+Both Blackwell rows used to carry a software risk that is not visible in this table, and for `p6-b200` it has since been read out of the binaries rather than guessed at. AWS publishes CUDA 12.8 and driver R570 as the minimum. The training image installs a torch wheel carrying native `sm_100` kernels, and the Batch GPU AMI ships a driver well above R570. Both minimums are met; the section below has the figures. What no reading settles is whether a job places and runs, and that is still what a block would be the first thing to establish.
 
 ## The modifications to make before the window opens
 
@@ -73,16 +75,20 @@ The container asks for a fixed slice of host RAM, and it is deliberately under w
 | --- | --- | --- | --- | --- |
 | `gpu-8xa100-80gb` | 640 GB | 1152 GiB | 1092 GiB | **refused** |
 | `gpu-8xh200` | 1128 GB | 2048 GiB | 1936 GiB | **refused** |
-| `gpu-8xb200` | 1432 GB | 2048 GiB | 1936 GiB | **refused** |
+| `gpu-8xb200` | 1432 GB | 2048 GiB | 1936 GiB | **fails at Batch** |
 | `gpu-8xb300` | 2144 GB | 4096 GiB | 3787 GiB | **refused** |
 
-The last column reads the same on all four rows and is carried anyway, because a table is the part of a page people arrive at from a search rather than read down to. These four are exactly the block-backed shapes, so a row lifted out of this table on its own would otherwise look like a machine somebody can pick.
+The last column is carried on every row, because a table is the part of a page people arrive at from a search rather than read down to. These four are exactly the block-backed shapes, so a row lifted out of this table on its own would otherwise look like a machine somebody can pick. `gpu-8xb200` reads differently from the other three only in where it stops: it is admitted and then refused by Batch for a queue that does not exist, rather than refused at admission. Neither starts a machine.
 
 **`gpu-8xb300` is the row to read twice.** A researcher sizing a dataloader or an offload buffer to the 4 TiB the machine advertises will not get it, and will not get 4 TiB minus a small allowance either — they get about 3787 GiB, some 309 GiB short. That figure is not a measurement. No `p6-b300.48xlarge` has ever started in this account, so it is a deliberate lower bound: the advertised memory times the smallest fraction any host here has ever registered, chosen to be certainly under whatever the real host publishes. It leaves memory on the table on purpose, because overshooting costs a job that will not place on a machine already being billed under a block that cannot be cancelled. `src/edullm_platform/execution.py` carries the arithmetic and the CloudTrail lookup that corrects it after the first launch, which costs nothing and needs no probe.
 
 ### Blackwell needs CUDA 12.8 and driver R570, and that may be a change to your repository
 
-`gpu-8xb200` and `gpu-8xb300` are a new architecture rather than larger cards. AWS publishes CUDA 12.8 and driver R570 as the minimum for `p6-b200`. The training image's CUDA base clears the first on paper. Nothing has confirmed the second on the silicon, because the driver version this platform knows about was read off an A10G.
+`gpu-8xb200` and `gpu-8xb300` are a new architecture rather than larger cards. AWS publishes CUDA 12.8 and driver R570 as the minimum for `p6-b200`.
+
+**Both were open questions until 7 August 2026 and both are now closed, by reading rather than by running.** The training image's torch 2.9.0 CUDA wheel carries 399 native `sm_100` SASS cubins and no PTX entries for them, counted out of the fatbin containers in `libtorch_cuda.so` — so Blackwell kernels are compiled in, and nothing depends on JIT from PTX at startup. On the driver, the Batch GPU AMI `al2023-ami-ecs-gpu-hvm-2023.0.20260805` ships 580.159.03, comfortably above R570. The earlier hedge here was that the driver version this platform knew about had been read off an A10G, which was true and is no longer what the figure comes from.
+
+Neither reading is a run, and the honest residue is that no `p6-b200` has started through Batch on this platform. One did start in this account: a block bought on 25 July ran a `p6-b200` for 42.95 of its 43.25 reserved hours, launched by hand from a Deep Learning AMI rather than through any of this. That is worth knowing in both directions — the silicon works here, and the path through Batch is the part that has not been exercised.
 
 What that means for you, in order:
 
@@ -188,6 +194,6 @@ Worth stating plainly, because a guide that reads as a guarantee is one nobody d
 
 **A configuration that was never run.** A clean `check` on an eight-card shape says the launcher starts eight processes. It says nothing about whether the batch size somebody reaches for on 640 GB fits in 640 GB. Submit the configuration that has actually run, and scale it once it is running.
 
-**A card nobody has used here.** The training image pins CUDA against a driver version read off an A10G and carried to other shapes by inference. It is a reasonable inference and it has not been confirmed on a P-family card. The cheap rehearsal block is the only thing that turns that from an assumption into a fact.
+**A card nothing has been placed on here.** The software questions are answered — the kernels are in the wheel and the driver is in the AMI, both read directly. What has never happened is Batch putting a job on a P-family instance at all: every p5 launch this account has attempted was refused for capacity, so the placement path is unexercised rather than known-good. A block removes the capacity question and leaves that one. Submit something deliberately tiny first; it costs minutes of a window you have already paid for and it is the only way to find out.
 
 **A crash without a resume.** Writing checkpoints and resuming from them are different features, and only one of them is tested by writing one. A block does not pause while you fix a bug.

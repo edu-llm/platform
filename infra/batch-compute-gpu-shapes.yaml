@@ -1861,11 +1861,16 @@ Resources:
         # p5e.48xlarge WAS EVALUATED AND IS NOT OFFERED HERE. It is the obvious third name and
         # describe-instance-type-offerings on 2026-08-04 returns nothing for it in any
         # us-east-1 zone, so listing it would be a type Batch could never launch. p6-b200
-        # is offered, in us-east-1d alone, and is deliberately absent: it is a Blackwell card
-        # and the training image's CUDA build is pinned against a driver read off an A10G and
-        # never confirmed on a p5, which the image comment in infra/batch-compute-gpu.yaml
-        # already flags. Adding an unproven architecture to a scarcity fallback would trade a
-        # job that does not start for a job that starts and fails on a device nobody has run.
+        # is offered, in us-east-1d alone, and is deliberately absent -- though the reason has
+        # changed since this was written. It said the training image's CUDA build was pinned
+        # against a driver read off an A10G and never confirmed. That was answered on 2026-08-07:
+        # the torch wheel carries native sm_100 kernels and the ECS_AL2023_NVIDIA AMI ships a
+        # driver above the R570 that AWS requires, so the architecture is no longer unproven on
+        # paper. The exclusion stands on the price instead, which is the better reason anyway. A
+        # fallback is reached when the primary type has no capacity, by a queue nobody is watching
+        # at the time; landing there on an on-demand p6-b200 costs $113.93/hour that no submitter
+        # chose and no approval priced. Where a b200 is wanted it is bought as a block, and
+        # infra/batch-capacity-block.yaml is the only place it is reachable from.
         #
         # $63.296/hour against $55.04, 15% above the estimate, reached only after p5 fails
         # because BEST_FIT_PROGRESSIVE prefers the cheaper type. Both are far above the

@@ -165,3 +165,33 @@ targets:
     execution_role: sbsandbox-intern-edullm-batch-gpu-execution
     workload_role: sbsandbox-intern-edullm-batch-gpu-workload
     log_group: /aws/batch/sbsandbox-intern-edullm-gpu
+
+  # THE ONE ROW WHOSE QUEUE IS NOT PART OF THE PERMANENT ESTATE. Every pair above names a queue
+  # and definition that exist whether or not anybody is using them. These two exist only while a
+  # purchased capacity block does: infra/batch-capacity-block.yaml is deployed per purchase, by a
+  # dispatch carrying the reservation id, and deleted when the window closes.
+  #
+  # BOTH NAMES ARE DERIVED FROM THE STACK NAME AND NEITHER DEPENDS ON THE RESERVATION. The stack
+  # is sbsandbox-intern-edullm-capacity-block-<profile>, the queue takes the stack's name and the
+  # definition takes it with -run appended. That is what makes this row writable before anything
+  # is bought, which is the whole reason it is here rather than in a pull request somebody opens
+  # after paying: promoting a profile is a Lambda release, and a release costs two CI runs and a
+  # deploy. Doing that on a block's own clock spends a window; doing it in advance costs nothing.
+  #
+  # WHAT IT MEANS FOR THIS ROW TO BE PRESENT WITH NO BLOCK BOUGHT. The validator accepts a
+  # gpu-8xb200 submission and the state machine submits it to a queue that does not exist, so the
+  # submission fails at Batch rather than quietly costing money -- and the reports that loop over
+  # every queue in this file already treat a queue the account has not been given as empty. That
+  # is the cost of pre-promotion and it is bounded. The alternative cost is unbounded and is paid
+  # in window.
+  #
+  # The log group is the shared GPU one, as every GPU row above. The block stack deliberately
+  # creates no group of its own; a group per purchase would scatter one project's runs across
+  # groups that come and go.
+  - compute_profile: gpu-8xb200
+    region: us-east-1
+    job_queue: sbsandbox-intern-edullm-capacity-block-gpu-8xb200
+    job_definition: sbsandbox-intern-edullm-capacity-block-gpu-8xb200-run
+    execution_role: sbsandbox-intern-edullm-batch-gpu-execution
+    workload_role: sbsandbox-intern-edullm-batch-gpu-workload
+    log_group: /aws/batch/sbsandbox-intern-edullm-gpu
