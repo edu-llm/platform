@@ -883,9 +883,12 @@ def test_every_compute_environment_buys_on_demand_rather_than_spot() -> None:
     ``RETRY`` arm in ``RETRY_ONLY_WHAT_A_RETRY_FIXES`` matches ``Host EC2*``, and its own
     comment names "a Spot reclaim once the A100 tier is promoted" as the case it is for. No
     environment in this tree is SPOT, so today that arm catches a genuine hardware fault and
-    nothing else -- which is what makes the timeout the one failure a second attempt is
-    reliably spent on, and is the reasoning ``config/policy.yaml`` and
-    ``checkpoint_commands.resume_note`` both rest on.
+    nothing else -- and since a job terminated for exceeding its timeout is never retried at
+    all, a hardware fault is the whole of what a second attempt insures against. That is the
+    reasoning ``config/policy.yaml`` and ``checkpoint_commands.resume_note`` both rest on.
+    The sentence here used to say the opposite, that the timeout was the one failure a second
+    attempt was reliably spent on, and it was the last place in the tree still saying it:
+    ``RETRY_ONLY_WHAT_A_RETRY_FIXES`` carries the correction and the runs that measured it.
 
     A SPOT environment would make all of that true in a different way rather than false, and
     that is exactly why it must not arrive silently. Reclaims would be routine, the retry arm
@@ -913,8 +916,10 @@ def test_every_compute_environment_buys_on_demand_rather_than_spot() -> None:
     assert not offenders, (
         "a Spot compute environment makes a reclaimed host an ordinary event, which is the "
         "case the one RETRY rule was written for and the case the reasoning in "
-        "config/policy.yaml and checkpoint_commands.resume_note currently says "
-        f"does not arise. Read both before landing this: {'; '.join(offenders)}"
+        "config/policy.yaml and checkpoint_commands.resume_note currently says does not "
+        "arise. It is also the only case a second attempt reaches at all, so making it "
+        f"routine changes what every multi-attempt run is buying. Read both before landing "
+        f"this: {'; '.join(offenders)}"
     )
 
 

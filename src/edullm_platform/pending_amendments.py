@@ -1340,10 +1340,17 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "run_019fdd90-99d1-70e8-a005-e341452d9458 measured it reporting FAILED at "
                 "Attempts 1 of 2 on 2026-08-07. The comment is corrected and the note now "
                 "records the run. ADMISSION_CONFIG packages that file verbatim, and the "
-                "validator reads no comment, so it classifies the same submissions either way."
+                "validator reads no comment, so it classifies the same submissions either way. "
+                "A sixth cause of the same kind arrived with the correction to why that run "
+                "was not retried: RETRY_ONLY_WHAT_A_RETRY_FIXES in execution.py, which this "
+                "zip imports, now carries the AWS sentences and the runs establishing that a "
+                "job terminated for exceeding its timeout never reaches the retry rules at "
+                "all. The rules themselves are byte-for-byte what was released -- the point "
+                "of that change is that an arm matching the timeout would have been dead "
+                "code -- so it too is a comment, and the zip differs by it."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function validator",
-            builds_to="03ad975f9b4faa734fb82f6912af37a5eafe0b07583dd2cbfdc86dc0522a67ec",
+            builds_to="6d4e11d6b65a2e53db6ac49e2c11a92edf886839cf3c97726c133beed64a77bd",
             released="2cda942e9518cf23b6042a5b5ab35d550557a0784acfc9c3ee2d593844e9064c",
             recorded_on=date(2026, 8, 7),
         ),
