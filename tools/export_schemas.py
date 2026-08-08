@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from edullm_platform.contracts.admission import DecisionRecord, IntentRecord
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.execution import BatchJobBinding
+from edullm_platform.contracts.image_contents import ImageContentsRecord
 from edullm_platform.contracts.image_scan import ImageScanExceptionRegistry
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.lifecycle import (
@@ -39,6 +40,12 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     # and a published shape is what makes a malformed entry fail at load rather than at
     # admission.
     "image-exceptions.schema.json": ImageScanExceptionRegistry,
+    # Reviewed configuration again, and the one that is a measurement rather than a
+    # decision: what each published training image was seen to contain. Exported
+    # because `tools/probe_image_contents.py` writes entries a person then reviews, and a
+    # published shape is what makes a malformed one fail at load rather than at the point
+    # `edullm data` tells somebody a corpus will run.
+    "image-contents.schema.json": ImageContentsRecord,
     # The execution records Phase 3 writes into the lineage store. These were defined in
     # Phase 0 and constructed by nothing until Phase 3, which is why they are only being
     # exported now: an unexported schema for a model nothing writes is a shape nobody can

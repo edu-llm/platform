@@ -219,6 +219,27 @@
     },
     {
       "base": false,
+      "module": "edullm_platform.contracts.image_contents",
+      "name": "ImageContentsReading",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:1611696f5521488bd01b4ca03972327a8f9693424a713d8b7cce9a5e2310203d"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.image_contents",
+      "name": "ImageContentsRecord",
+      "schema_version": "1",
+      "structural_digest": "sha256:81662b83a50531785d520ddceaa041be04487699210fcd4ecb54b393375e7134"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.image_contents",
+      "name": "ImageVocabulary",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:6b963cc46c52ba8bdade2181de35c224eadff8b0f6ebfbbc81fbd2cbb7332e96"
+    },
+    {
+      "base": false,
       "module": "edullm_platform.contracts.image_scan",
       "name": "ImageScanException",
       "schema_version": "unversioned",

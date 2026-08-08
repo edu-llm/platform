@@ -17,6 +17,7 @@ does the command start one process per card  ``launchers.require_a_process_for_e
 does vLLM read the size the command names    ``launchers.require_a_tensor_parallel_flag_vllm_reads``
 does it save where a retry will look         ``checkpoint_commands.require_a_save_folder_a_retry_can_find``
 can the card run the dtype it asks for       ``precision.require_bfloat16_only_where_the_hardware_has_it``
+does the image have the factory it names     ``model_factory.require_a_model_factory_the_image_has``
 is the command startable and still quoted    ``contracts.manifest.RunManifest``
 what does it cost, and who releases it       ``manifest_helpers`` and ``contracts.policy``
 what have runs like this one taken           ``run_history.history_for``
@@ -125,6 +126,7 @@ from edullm_platform.launchers import (
     require_a_tensor_parallel_flag_vllm_reads,
 )
 from edullm_platform.manifest_helpers import build_request_facts, compute_manifest_cost_inputs
+from edullm_platform.model_factory import require_a_model_factory_the_image_has
 from edullm_platform.precision import require_bfloat16_only_where_the_hardware_has_it
 from edullm_platform.run_history import HistoryAnswer, history_for
 from edullm_platform.submission import (
@@ -1371,11 +1373,12 @@ def _check_command(
     what decides whether the devices have bfloat16.
 
     The whole reviewed configuration is passed rather than closed over, because that is where
-    the shapes are and now also where the resume demonstrations are: the bfloat16 rule is
-    derived from the instance type each profile declares in the catalog, so that a shape added
-    to that file is covered without an edit anywhere else, and the retry rule is derived from
-    a measurement file for the same reason. It took the catalog alone until the second of
-    those arrived, and taking two files by name would make the third an edit here.
+    the shapes are and now also where the resume demonstrations and the image readings are:
+    the bfloat16 rule is derived from the instance type each profile declares in the catalog,
+    so that a shape added to that file is covered without an edit anywhere else, and the retry
+    and model-factory rules are derived from measurement files for the same reason. It took
+    the catalog alone until the second of those arrived, and taking each file by name would
+    have made this the third edit here rather than the none it was.
 
     **THE SPELLING RULE WAS THE FOURTH AND WAS ASKED ONLY BY THE COMPILE STEP, WHICH IS THE
     FAILURE THIS WHOLE MODULE IS WRITTEN AGAINST.** A sweep asking for one device on a
@@ -1419,6 +1422,14 @@ def _check_command(
             command=manifest.command,
             compute_profile=manifest.compute_profile,
             catalog=configuration.catalog,
+        )
+    except SubmissionRefusedError as exc:
+        refusals.append(Refusal(code=type(exc).reason_code, detail=str(exc)))
+    try:
+        require_a_model_factory_the_image_has(
+            command=manifest.command,
+            repository=manifest.repository,
+            images=configuration.image_contents,
         )
     except SubmissionRefusedError as exc:
         refusals.append(Refusal(code=type(exc).reason_code, detail=str(exc)))

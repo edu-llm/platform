@@ -121,6 +121,13 @@ class ConfigFile(StrEnum):
     DATASETS = "datasets.yaml"
     ORGANIZATION = "organization.yaml"
     IMAGE_EXCEPTIONS = "image-exceptions.yaml"
+    #: What each published training image was measured to contain: the tokenizers it can build
+    #: a config for, which decides whether a corpus is runnable, and the model factories it can
+    #: resolve, which decides whether a command will build one. Beside the rules rather than
+    #: under ``reports/`` deliberately, and ``corpora.py`` names the reason: these are the
+    #: measurements that can lose somebody a machine, so an install must not answer out of a
+    #: stale copy.
+    IMAGE_CONTENTS = "image-contents.yaml"
     EXECUTION_TARGETS = "execution-targets.yaml"
     CAPACITY = "capacity.yaml"
     #: What can be *reserved in advance* and what the reservation costs, which is the opposite

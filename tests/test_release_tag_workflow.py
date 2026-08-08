@@ -384,7 +384,7 @@ def test_the_release_note_asks_about_the_files_the_cli_actually_opens(
     declared = str(step(release_job(), CUT_STEP)["env"]["CONFIGURATION_FILES"]).split()
 
     assert sorted(declared) == sorted(f"config/{name}" for name in configuration_files)
-    assert len(configuration_files) == 8, "the loader opens a different number of files now"
+    assert len(configuration_files) == 9, "the loader opens a different number of files now"
     assert f"config/{HISTORY_FILENAME}" in declared, (
         "the digest is what edullm check quotes durations from, so a release that moves it "
         "is a release after which an install answers differently"

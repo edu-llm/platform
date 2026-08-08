@@ -1,0 +1,138 @@
+# What each published training image was seen to contain.
+#
+# THIS FILE IS A MEASUREMENT AND NOT A LIST. Every reading names the commit it was taken at and
+# what took it, and nothing here is a decision anybody made -- it is what somebody found when
+# they looked. `src/edullm_platform/contracts/image_contents.py` carries the argument for why
+# two separate things the platform says about a run have to read this rather than reading a file
+# on this side that describes what the platform can express.
+#
+# THE SHORT OF IT IS TWO FAILURES OF ONE SHAPE, FOUR HOURS APART.
+# `src/edullm_platform/tokenizers.py` says what this platform knows how to express and the
+# `tokenizers` vocabulary below says what an image knows how to build; on 2026-08-07 those two
+# disagreed by two entries, `edullm data` marked three corpora runnable on the strength of the
+# first, and `run_019fdd88-3ac4` was admitted on one of them, allocated a GPU and exited 69.
+# `guides/olmo-core.md` tells a researcher to write `--model-factory olmo2_1B` and nothing
+# checked that any image has it. It does, which is luck rather than a check: the container
+# resolves the name with `getattr(TransformerConfig, ...)` and exits 70 on a miss, after the
+# run has been priced, released by a lead, admitted and given a machine.
+#
+# WRITTEN BY `tools/probe_image_contents.py` AND NOT BY HAND. Editing a reading here by hand is
+# asserting something about somebody else's image, which is the failure this replaces.
+# `tests/test_image_contents.py` holds every recorded name to the file on this side that offers
+# it, in both directions, so a reading that has stopped being true of either goes red.
+#
+# A VOCABULARY NOBODY HAS READ IS NOT A VOCABULARY AN IMAGE LACKS, and the two callers of this
+# file treat that difference deliberately differently because what each costs when it is wrong
+# is different. The corpus verdict reads absence as "cannot train it" and under-promises: a
+# researcher is told a corpus will not run when it might, nothing is blocked, and the sentence
+# `edullm data` prints names the images that were asked so the gap is visible to the person it
+# affects. The submission gate on `model_factories` reads absence as no opinion and lets the
+# run through, because refusing on absence there would stop every run naming any factory on any
+# repository nobody has probed. Five of the six registered repositories have no reading at all:
+# `EDULLM_DATASET_TOKENIZER` is read by `OLMo-core/.edullm/train_on_corpus.py` and by nothing
+# else in any of them, and none of the five resolves a model factory either, read on 2026-08-07.
+schema_version: 1
+images:
+  # READ FROM SOURCE AND NOT FROM THE IMAGE, WHICH IS THE WEAKER OF THE TWO AND SAYS SO.
+  # `tools/probe_image_contents.py --image-reference ...` takes the strong reading and needs a
+  # Docker daemon and a registry login, so it runs on a build runner or on a maintainer's laptop
+  # with a session. This one was taken with `--repository-root` against the checkout at
+  # OLMO_CORE_CHECKOUT on 2026-08-07, at the commit named below, which is where `origin/main`
+  # pointed and the commit the three resume runs of 2026-08-06 were built from. The local
+  # checkout was on an unmerged branch at the time and both files were read at `origin/main`
+  # rather than at its HEAD, because an image is built from what merged.
+  #
+  # What the weaker reading cannot rule out is a build that did not put these files in the
+  # image: a COPY that misses one, an entrypoint pinning an older checkout, or a cache hit
+  # reusing the layer. Re-taking it as an `image_probe` costs one `docker pull` and is the thing
+  # to do next; it is recorded honestly in the meantime rather than dressed up.
+  - repository: OLMo-core
+    commit_sha: 08df5aa0142465c80b4ea48e84faa46117275d61
+    read_by: source_at_commit
+    read_at: 2026-08-07T21:00:00Z
+    vocabularies:
+      # EVERY PUBLIC CLASSMETHOD ON `TransformerConfig`, WHICH IS WIDER THAN THE FACTORIES
+      # ANYBODY WOULD CALL AND IS THE RIGHT DIRECTION TO ERR IN. The container does
+      # `getattr(TransformerConfig, name)` and calls the result with `vocab_size=`, so a name
+      # here that is not really a model factory fails inside the call and still exits 70 -- the
+      # platform simply declines to predict that one. A name *missing* from here is refused at
+      # submission, so the cost of being narrow is refusing a command that works and the cost of
+      # being generous is not catching one that does not. Generous, therefore.
+      - kind: model_factories
+        read_from: src/olmo_core/nn/transformer/config.py
+        names:
+          - gemma3_12B
+          - gemma3_1B
+          - gemma3_27B
+          - gemma3_4B
+          - gemma3_like
+          - llama2_13B
+          - llama2_1B
+          - llama2_26B
+          - llama2_271M
+          - llama2_70B
+          - llama2_7B
+          - llama3_1B
+          - llama3_405B
+          - llama3_70B
+          - llama3_8B
+          - llama_like
+          - llama_like_moe
+          - ngpt_1B
+          - ngpt_271M
+          - ngpt_like
+          - olmo2_100M
+          - olmo2_13B
+          - olmo2_14M
+          - olmo2_190M
+          - olmo2_1B
+          - olmo2_1B_v2
+          - olmo2_1M
+          - olmo2_30M
+          - olmo2_32B
+          - olmo2_370M
+          - olmo2_3B
+          - olmo2_600M
+          - olmo2_60M
+          - olmo2_760M
+          - olmo2_7B
+          - olmo3_100M
+          - olmo3_13B
+          - olmo3_14M
+          - olmo3_190M
+          - olmo3_1B
+          - olmo3_1M
+          - olmo3_30M
+          - olmo3_32B
+          - olmo3_370M
+          - olmo3_3B
+          - olmo3_600M
+          - olmo3_60M
+          - olmo3_760M
+          - olmo3_7B
+          - olmoe_1B_7B
+          - qwen3_0_6B
+          - qwen3_14B
+          - qwen3_1_7B
+          - qwen3_32B
+          - qwen3_4B
+          - qwen3_5_0_8B
+          - qwen3_5_27B
+          - qwen3_5_4B
+          - qwen3_5_9B
+          - qwen3_5_like
+          - qwen3_8B
+          - small_hybrid_moe
+          - smallmoe
+      # THREE, AND THE PLATFORM'S MAP HOLDS FIVE. `tokenizer/smollm2-bpe` and
+      # `tokenizer/qwen25-vendored` are the two it holds and this does not, and both are in
+      # `TOKENIZERS` legitimately -- each names an exact OLMo-core equivalent that was called for
+      # real before the line was written. What never happened is the other half of the ordering
+      # that module's docstring insists on: the matching lines have not landed in OLMo-core, so
+      # every image refuses them.
+      - kind: tokenizers
+        read_from: .edullm/train_on_corpus.py
+        names:
+          - tokenizer/dolma2-bpe
+          - tokenizer/gigatoken-bpe
+          - tokenizer/gigatoken-superbpe

@@ -7,12 +7,22 @@ classifies routine, spends an approval, allocates the machine, and reaches a con
 cannot construct a tokenizer for the tokens it just resolved. Until this verb the only way to
 find that out was to submit one and pay for it.
 
-That verdict is computed on every printing out of ``config/datasets.yaml`` and
-:data:`~edullm_platform.tokenizers.TOKENIZERS`. Both are on the release trigger, so a change
-to either cuts a release; nothing about it is stored, so there is no stale copy to go wrong.
-The cases below hold it against the very functions the submission path uses, in both
-directions, so the verb cannot say a corpus runs while ``edullm check`` refuses it, and
-cannot say one is refused while nothing refuses it.
+That verdict is computed on every printing out of ``config/datasets.yaml``,
+:data:`~edullm_platform.tokenizers.TOKENIZERS` and ``config/image-contents.yaml``. All
+three are on the release trigger, so a change to any of them cuts a release; nothing about it
+is stored, so there is no stale copy to go wrong. The cases below hold it against the very
+functions the submission path uses, in both directions, so the verb cannot say a corpus runs
+while ``edullm check`` refuses it, and cannot say one is refused while nothing refuses it.
+
+**THE THIRD OF THOSE THREE IS NEW AND ITS ABSENCE IS WHY THIS FILE'S CLAIM WAS FALSE.** The
+tokenizer map is what this platform can express and the image record is what an image can
+build, and the verdict was reading the first as though it were the second. Two entries were
+added to the map ahead of the matching lines in OLMo-core -- the ordering ``tokenizers.py``
+sets out in capitals and nothing enforced -- so ``fineweb-edu-750m-v2``, ``fineweb-edu-1b-v6``
+and ``formal-proof-premises-500m-v3`` were verdicted ``runs``, and ``run_019fdd88-3ac4``
+named the first, was admitted, allocated a GPU and exited 69. Every case below that names a
+count or a set now counts three more, and that is the defect being visible rather than the
+suite weakening.
 
 **THE PART THAT CAN GO STALE IS THE MEASUREMENT, AND WHAT FAILS WHEN IT DRIFTS IS HERE.**
 ``config/reports/corpora.json`` carries the facts that live in somebody else's bucket -- train
@@ -36,6 +46,7 @@ import pytest
 
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
+from edullm_platform.contracts.image_contents import ImageContentsRecord, VocabularyName
 from edullm_platform.corpora import (
     CORPORA_FILENAME,
     NO_SNAPSHOT_PACKAGED,
@@ -59,6 +70,16 @@ CONFIG = PROJECT_ROOT / "config"
 
 def registry() -> DatasetRegistry:
     return load_yaml(CONFIG / "datasets.yaml", DatasetRegistry)
+
+
+def images() -> ImageContentsRecord:
+    """The reviewed reading of what the published images hold, as the verb loads it.
+
+    The committed file rather than a fixture, in every case below that asks what the verb
+    answers. A fixture here would make this module a test of the join and no longer a test of
+    what a researcher is told, and what a researcher is told is the thing that was wrong.
+    """
+    return load_yaml(CONFIG / "image-contents.yaml", ImageContentsRecord)
 
 
 def snapshot() -> CorporaSnapshot:
@@ -88,7 +109,7 @@ def test_the_verb_and_the_submission_path_agree_about_what_is_refused() -> None:
     refuses is the verb hiding a real option. A corpus the verb says will run and something
     refuses is the verb sending somebody to a refusal.
     """
-    for row in corpora(registry()):
+    for row in corpora(registry(), images=images()):
         refusals = refusals_for(row.reference_id)
         if row.runnability.verdict == "refused":
             assert refusals, (
@@ -112,14 +133,29 @@ def test_the_corpora_that_exit_69_are_the_ones_nothing_refuses_and_no_tokenizer_
     ``THIS_IMAGE_HAS_NO_CONFIG_FOR_THAT_TOKENIZER``. A boolean column would have collapsed
     the expensive case into the harmless one.
 
-    Derived rather than listed, so it shrinks on its own: add the missing tokenizer to
-    ``TOKENIZERS`` and the corpus moves into the runnable table with nobody editing this.
+    Derived rather than listed, so it shrinks on its own: record an image carrying the
+    missing tokenizer and the corpus moves into the runnable table with nobody editing this.
     The names are asserted anyway, beside the derivation, because a set that quietly went
     empty would read as the gap having closed rather than as the derivation having broken.
+
+    **IT HELD FIVE AND HOLDS EIGHT, AND THE THREE THAT JOINED WERE ALWAYS IN THIS STATE.**
+    They were not caught because the derivation asked the wrong map. ``fineweb-edu-750m-v2``,
+    ``fineweb-edu-1b-v6`` and ``formal-proof-premises-500m-v3`` depend on
+    ``tokenizer/smollm2-bpe`` and ``tokenizer/qwen25-vendored``, both of which this platform
+    can express and neither of which any published image carries -- so all three compiled
+    clean, reached the form, and cost exactly what this set exists to enumerate.
+    ``run_019fdd88-3ac4`` proved it on the first of them.
     """
-    caught = {row.reference_id for row in corpora(registry()) if row.runnability.costs_a_machine}
+    caught = {
+        row.reference_id
+        for row in corpora(registry(), images=images())
+        if row.runnability.costs_a_machine
+    }
 
     assert caught == {
+        "fineweb-edu-1b-v6",
+        "fineweb-edu-750m-v2",
+        "formal-proof-premises-500m-v3",
         "frontload-cl-chat-sft-v1",
         "lean4-mathlib-bytes-v3",
         "math-memory-full-v1",
@@ -127,9 +163,9 @@ def test_the_corpora_that_exit_69_are_the_ones_nothing_refuses_and_no_tokenizer_
         "pedagogy70-normal30-v1",
     }, (
         "the set of registered corpora that nothing refuses and no image can build a "
-        "tokenizer for has moved. If it shrank, either a tokenizer landed in "
-        "edullm_platform.tokenizers or a refusal was built, and both are progress. If it "
-        "grew, a corpus was registered that this platform admits and cannot run."
+        "tokenizer for has moved. If it shrank, either an image was recorded carrying the "
+        "tokenizer or a refusal was built, and both are progress. If it grew, a corpus was "
+        "registered that this platform admits and cannot run."
     )
     for reference_id in caught:
         assert refusals_for(reference_id) == (), (
@@ -143,21 +179,31 @@ def test_the_corpora_that_exit_69_are_the_ones_nothing_refuses_and_no_tokenizer_
         ("lean4-mathlib-bytes-v3", "tokenizer/bytes-utf8"),
         ("math-memory-full-v1", "tokenizer/bytes-utf8"),
         ("pedagogy70-normal30-v1", "declares no tokenizer"),
+        ("fineweb-edu-750m-v2", "no published image carries one"),
+        ("fineweb-edu-1b-v6", "no published image carries one"),
+        ("formal-proof-premises-500m-v3", "no published image carries one"),
     ],
 )
-def test_the_verb_says_which_of_the_two_reasons_a_corpus_will_not_run(
+def test_the_verb_says_which_of_the_three_reasons_a_corpus_will_not_run(
     reference_id: str, why: str
 ) -> None:
-    """Mutation: one sentence for all five, since all five meet the same exit code.
+    """Mutation: one sentence for all eight, since all eight meet the same exit code.
 
-    The remedies are opposite. A corpus on ``tokenizer/bytes-utf8`` is waiting on an upstream
-    feature and resolves itself the day OLMo-core grows one, so the thing to do is ask
-    upstream. A corpus declaring no tokenizer is not waiting on anything at all: its payload
-    is pre-tokenization conversation text and the run's tokenizer comes from the model, so
-    what it needs is a workload that reads it that way. Telling somebody who picked the tutor
-    corpus to go and ask for a byte tokenizer spends their week on the wrong question.
+    The remedies are opposite, which is the whole reason ``said`` is prose beside a closed
+    verdict. A corpus on ``tokenizer/bytes-utf8`` is waiting on an upstream feature and
+    resolves itself the day OLMo-core grows one, so the thing to do is ask upstream. A corpus
+    declaring no tokenizer is not waiting on anything at all: its payload is pre-tokenization
+    conversation text and the run's tokenizer comes from the model, so what it needs is a
+    workload that reads it that way. Telling somebody who picked the tutor corpus to go and
+    ask for a byte tokenizer spends their week on the wrong question.
+
+    **THE THIRD REASON IS THE ONE THIS CHANGE ADDS AND IT IS THE CHEAPEST TO FIX.** The
+    tokenizer is one this platform already knows how to build a config for; what is missing
+    is a line in a research repository's own map and a re-reading of that image. Reported as
+    "no OLMo-core TokenizerConfig builds it" -- the sentence the other five get -- it would
+    send somebody to write a config that already exists.
     """
-    row = one_corpus(reference_id, registry())
+    row = one_corpus(reference_id, registry(), images=images())
 
     assert row.runnability.costs_a_machine
     assert why in row.runnability.said
@@ -167,14 +213,59 @@ def test_the_verb_says_which_of_the_two_reasons_a_corpus_will_not_run(
     )
 
 
+def test_a_tokenizer_this_platform_can_build_and_no_image_carries_names_the_images_asked() -> (
+    None
+):
+    """**THE DEFECT, HELD AT THE SENTENCE A RESEARCHER READS.** Mutation: report these three
+    as runnable, which is what shipped, or refuse them without saying which images were asked.
+
+    ``run_019fdd88-3ac4`` named ``fineweb-edu-750m-v2``, was admitted, allocated a GPU and
+    exited 69. The verb had said it would run, because the verdict read this platform's
+    tokenizer map -- which is a statement about what can be expressed -- and presented it as
+    a statement about what an image can build.
+
+    Naming the images is the second half and is not decoration. "No image carries it" sends a
+    reader to look at every image there is; naming them and what each holds sends them to the
+    one map that has to gain a line, which is the same argument
+    ``unreviewed_blocking_findings`` makes for listing findings rather than counting them.
+    """
+    row = one_corpus("fineweb-edu-750m-v2", registry(), images=images())
+    recorded = images()
+
+    assert row.runnability.verdict == "exits_69"
+    assert not row.runnability.will_run
+    assert "tokenizer/smollm2-bpe" in row.runnability.said
+    for reading in recorded.images:
+        assert reading.repository in row.runnability.said, (
+            f"{reading.repository} was asked and is not named, so a reader cannot tell which "
+            "image has to gain the line"
+        )
+    # And the distinction from the other reason survives: this one must not send somebody to
+    # write a TokenizerConfig that this platform already has.
+    assert "no OLMo-core TokenizerConfig builds" not in row.runnability.said
+
+
 def test_the_runnable_set_is_the_one_the_submission_form_offers() -> None:
     """Mutation: let the verb and the dropdown answer differently.
 
     Two surfaces promising "everything in this list works" have to promise it about the same
     list, or the verb is a second menu and the day they part company nobody finds out from
     either of them.
+
+    **BOTH CONDITIONS, BECAUSE ONE OF THEM ALONE IS THE DEFECT.** A corpus is runnable when
+    this platform can express its tokenizer *and* a published image carries it. Asking only
+    the first is what put three corpora on both surfaces that no image can train; asking only
+    the second would offer a corpus an image can build and this platform cannot describe to
+    it. The join is restated here rather than imported, deliberately -- an equality against
+    the function under test is not an equality -- and that restatement is what makes this
+    fail when either condition is dropped from ``_runnability``.
     """
-    runnable = {row.reference_id for row in corpora(registry()) if row.runnability.will_run}
+    runnable = {
+        row.reference_id
+        for row in corpora(registry(), images=images())
+        if row.runnability.will_run
+    }
+    carried = images().names_some_image_carries(VocabularyName.TOKENIZERS)
     offered = {
         entry["reference_id"]
         for entry in json.loads(json.dumps(_published()))
@@ -182,6 +273,7 @@ def test_the_runnable_set_is_the_one_the_submission_form_offers() -> None:
         and entry["payload_profile"] in {"pretrain-tokens/v1", "sft-conversations/v1"}
         and not entry.get("retired", False)
         and entry["tokenizer"] in TOKENIZERS
+        and entry["tokenizer"] in carried
     }
 
     assert runnable == offered
@@ -257,7 +349,7 @@ def test_the_measurement_and_the_registry_never_describe_two_different_corpora()
     catches a row that is present and describes something else, by holding the one fact both
     files carry about the same corpus.
     """
-    for row in corpora(registry(), snapshot=snapshot()):
+    for row in corpora(registry(), images=images(), snapshot=snapshot()):
         assert row.measurement is not None
         assert row.measurement.reference_id == row.reference_id
         if row.reference.tokenizer is None:
@@ -295,7 +387,7 @@ def test_a_rounded_token_count_is_marked_as_one_rather_than_printed_as_a_fact() 
         )
     said = {
         row.reference_id: row.train_tokens_said
-        for row in corpora(registry(), snapshot=snapshot())
+        for row in corpora(registry(), images=images(), snapshot=snapshot())
     }
     for entry in rounded:
         assert said[entry.reference_id].startswith("~"), (
@@ -314,7 +406,7 @@ def test_the_licence_column_says_share_alike_where_the_licence_field_does_not() 
     share-alike is not that kind of unknown: it is a condition on redistributing a model,
     which somebody sorting by size has no other way to learn.
     """
-    row = one_corpus("reservoir-dolma2-v1", registry(), snapshot=snapshot())
+    row = one_corpus("reservoir-dolma2-v1", registry(), images=images(), snapshot=snapshot())
 
     assert row.measurement is not None
     assert row.measurement.licence is None, (
@@ -413,7 +505,7 @@ def test_the_list_is_sorted_by_size_and_the_unmeasured_sort_last() -> None:
     multilingual corpus above a 100M maths one for no reason a reader can use. An unmeasured
     corpus sorts last rather than first, because a row with no figure is not a small one.
     """
-    rows = corpora(registry(), snapshot=snapshot())
+    rows = corpora(registry(), images=images(), snapshot=snapshot())
     measured = [row for row in rows if row.measurement and row.measurement.train_tokens]
     counted = [row.measurement.train_tokens for row in measured if row.measurement]
 
@@ -426,7 +518,7 @@ def test_the_list_is_sorted_by_size_and_the_unmeasured_sort_last() -> None:
 def test_a_name_the_registry_does_not_carry_is_a_refusal_rather_than_an_empty_table() -> None:
     for missing in ("regmix-10b", "no-such-corpus-v9"):
         with pytest.raises(CorpusUnknownError):
-            one_corpus(missing, registry())
+            one_corpus(missing, registry(), images=images())
 
 
 @pytest.mark.parametrize(

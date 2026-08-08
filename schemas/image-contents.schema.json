@@ -1,0 +1,130 @@
+{
+  "$defs": {
+    "ImageContentsReading": {
+      "additionalProperties": false,
+      "description": "One published image, and every vocabulary it was seen to hold.\n\n``vocabularies`` carries at least one entry. A reading that established nothing is not a\nreading, and recording one would put a repository in this file whose presence says \"asked\nand answered\" while holding no answer -- which is exactly the ambiguity between absent and\nempty that the module header is about.",
+      "properties": {
+        "commit_sha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Commit Sha",
+          "type": "string"
+        },
+        "image_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image Digest"
+        },
+        "read_at": {
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$",
+          "title": "Read At",
+          "type": "string"
+        },
+        "read_by": {
+          "$ref": "#/$defs/ReadingMethod"
+        },
+        "repository": {
+          "minLength": 1,
+          "pattern": ".*\\S.*",
+          "title": "Repository",
+          "type": "string"
+        },
+        "vocabularies": {
+          "items": {
+            "$ref": "#/$defs/ImageVocabulary"
+          },
+          "minItems": 1,
+          "title": "Vocabularies",
+          "type": "array"
+        }
+      },
+      "required": [
+        "repository",
+        "commit_sha",
+        "read_by",
+        "read_at",
+        "vocabularies"
+      ],
+      "title": "ImageContentsReading",
+      "type": "object"
+    },
+    "ImageVocabulary": {
+      "additionalProperties": false,
+      "description": "One set of names an image was seen to hold, and the file it was read out of.\n\n``names`` may be empty and an empty list is a finding rather than a gap: a repository whose\ntrainer holds a map with nothing in it has been read, and what that means for a caller is\nthe same as a map without the name in question. It is *recorded* emptiness, which is what\nseparates it from a vocabulary this reading does not carry at all.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/VocabularyName"
+        },
+        "names": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Names",
+          "type": "array"
+        },
+        "read_from": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Read From",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "read_from"
+      ],
+      "title": "ImageVocabulary",
+      "type": "object"
+    },
+    "ReadingMethod": {
+      "description": "How a reading was taken, because the two are not equally strong.\n\n``tools/verify_image_accelerator.py`` makes this argument at length for a different fact\nabout an image and every word of it applies here: an assertion about a repository's source\nprotects exactly what that source produces, and an image is not that. A ``COPY`` that\nmisses the file, a Dockerfile whose entrypoint pins an older checkout, a BuildKit cache\nhit that reuses the layer without re-running the step -- each leaves an image whose\ncontents are not the tree's contents. Only a probe of the assembled image rules those out.\n\nBoth are recorded rather than only the strong one, because the weak one is available today\nand refusing to write it down would leave the verdict deriving from a hand-kept list,\nwhich is worse than deriving from a source reading that says it is one.",
+      "enum": [
+        "image_probe",
+        "source_at_commit"
+      ],
+      "title": "ReadingMethod",
+      "type": "string"
+    },
+    "VocabularyName": {
+      "description": "The kinds of name a container resolves at startup and refuses on a miss.\n\n**THE TEST FOR MEMBERSHIP IS NOT \"IS THIS A FACT ABOUT THE IMAGE\" BUT \"DOES THE PLATFORM\nASSERT IT\".** Plenty is true of an image that nothing here claims, and recording those\nwould be a manifest nobody reads. What belongs here is a set of names the image holds,\nwhich some file on this side offers a researcher, and whose absence is a refusal after the\nmachine has been paid for. ``tests/test_image_contents.py`` holds each member to the file\nthat offers it, in both directions.\n\nTwo members and both are that: exit 69 is a tokenizer id the image cannot build a config\nfor, exit 70 is a factory name the image's ``TransformerConfig`` does not have.\n``config/accelerators.yaml`` covers the third of the three known cases, exit 73, and stays\nwhere it is -- it is a reading of the *account's hardware*, not of an image, and folding a\nfact about silicon in here would make this file about two subjects.",
+      "enum": [
+        "tokenizers",
+        "model_factories"
+      ],
+      "title": "VocabularyName",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "What every published training image was last seen to contain.\n\nOne reading per repository rather than per digest, and that is a deliberate loss of\nprecision worth naming. A per-digest record would be exact and would also go stale on every\nrebuild, so a caller would get \"no reading for this image\" for the ordinary case of somebody\npublishing a commit this morning. What is being asked is whether a corpus is trainable and\nwhether a factory exists at all, and neither moves when somebody rebuilds -- they move when\nsomebody edits. So the useful unit is the repository, with the commit recorded so a reader\ncan see how far behind the reading is.",
+  "properties": {
+    "images": {
+      "items": {
+        "$ref": "#/$defs/ImageContentsReading"
+      },
+      "minItems": 1,
+      "title": "Images",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "images"
+  ],
+  "title": "ImageContentsRecord",
+  "type": "object"
+}
