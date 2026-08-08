@@ -455,3 +455,46 @@ def literal_assignment(source: str, name: str) -> object:
         ):
             return ast.literal_eval(node.value)
     raise AssertionError(f"missing literal assignment: {name}")
+
+
+def region_between(text: str, *, after: str = "", before: str = "") -> str:
+    """The slice of ``text`` between two markers, refusing text that lacks one.
+
+    ``text.split(marker)[0]`` IS THE SHAPE THIS EXISTS TO REPLACE, AND IT PASSES LOUDEST
+    WHEN IT IS TESTING NOTHING. ``str.split`` on a marker that is not there returns the
+    whole string in one piece, so the slice silently widens to the entire document and the
+    assertion after it becomes "is this sentence anywhere in this file" -- which, for the
+    file it was written about, it always is. The same is true of ``rsplit(marker, 1)[-1]``.
+    Both are green on the day the anchor is renamed, which is the day the narrowing they
+    exist for stops happening.
+
+    That is the same defect as a pipeline whose exit status came from the last stage rather
+    than from the program: a check that reports success because it never actually ran.
+
+    So an absent marker is an :class:`AssertionError` naming the marker. Widening the region
+    is the one failure mode a text assertion cannot survive, and it is the only one the
+    naive spelling has.
+
+    Both markers are optional and default to the ends of the text, so this covers the two
+    shapes the suite uses -- everything ahead of a marker, and everything between a pair.
+    ``after`` is matched last-first, because the region wanted is the one nearest the
+    ``before`` marker rather than the first of several earlier ones.
+    """
+    region = text
+    if before:
+        if before not in region:
+            raise AssertionError(
+                f"{before!r} is not in this text, so a region ending at it would be the "
+                "whole document and the assertion over it would test nothing"
+            )
+        region = region.split(before, 1)[0]
+    if after:
+        if after not in region:
+            raise AssertionError(
+                f"{after!r} is not in this text"
+                + (f" ahead of {before!r}" if before else "")
+                + ", so a region starting at it would be the whole document and the "
+                "assertion over it would test nothing"
+            )
+        region = region.rsplit(after, 1)[-1]
+    return region
