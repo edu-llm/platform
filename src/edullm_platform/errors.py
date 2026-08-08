@@ -283,3 +283,16 @@ class ModelFactoryNotInTheImageError(SubmissionRefusedError):
     """
 
     reason_code: ClassVar[str] = "model_factory_not_in_the_image"
+
+
+class ExitStatusIsNotTheProgramsError(SubmissionRefusedError):
+    """One code over the three ways a shell hands back somebody else's status.
+
+    ``require_the_program_to_report_its_own_failure`` refuses a pipeline with no
+    ``pipefail``, a ``|| true`` and a trailing command after a ``;``, and its docstring says
+    the three are one rule: the last thing the shell runs decides what Batch is told, and on
+    every one of them that is not the program. Splitting them would offer a reader three
+    codes for one repair and would let a fix for one read as a fix for the family.
+    """
+
+    reason_code: ClassVar[str] = "exit_status_is_not_the_programs"

@@ -18,6 +18,7 @@ does vLLM read the size the command names    ``launchers.require_a_tensor_parall
 does it save where a retry will look         ``checkpoint_commands.require_a_save_folder_a_retry_can_find``
 can the card run the dtype it asks for       ``precision.require_bfloat16_only_where_the_hardware_has_it``
 does the image have the factory it names     ``model_factory.require_a_model_factory_the_image_has``
+is a failure of the program a failure here   ``exit_status.require_the_program_to_report_its_own_failure``
 is the command startable and still quoted    ``contracts.manifest.RunManifest``
 what does it cost, and who releases it       ``manifest_helpers`` and ``contracts.policy``
 what have runs like this one taken           ``run_history.history_for``
@@ -121,6 +122,7 @@ from edullm_platform.errors import (
     UnregisteredWorkloadProfileError,
     WorkloadProfileRepositoryMismatchError,
 )
+from edullm_platform.exit_status import require_the_program_to_report_its_own_failure
 from edullm_platform.launchers import (
     require_a_process_for_every_device,
     require_a_tensor_parallel_flag_vllm_reads,
@@ -1431,6 +1433,15 @@ def _check_command(
             repository=manifest.repository,
             images=configuration.image_contents,
         )
+    except SubmissionRefusedError as exc:
+        refusals.append(Refusal(code=type(exc).reason_code, detail=str(exc)))
+    # The one rule here that needs neither the profile nor the catalog, because whether a
+    # shell hands back its program's status is a property of the text alone. Asked on the
+    # laptop for the reason the four above are, with one difference worth stating: the
+    # others clear a submission that then costs money, and this one clears a submission
+    # that costs money and is written down as having worked. The record is write-once.
+    try:
+        require_the_program_to_report_its_own_failure(manifest.command)
     except SubmissionRefusedError as exc:
         refusals.append(Refusal(code=type(exc).reason_code, detail=str(exc)))
     return refusals
