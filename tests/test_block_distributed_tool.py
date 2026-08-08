@@ -528,7 +528,52 @@ def test_the_prelude_quotes_every_value_it_writes() -> None:
 
     assert "EDULLM_DIST_RUN='a b'" in written
     assert "rm -rf" in written
-    assert written.splitlines()[1].startswith("EDULLM_DIST_WHO='")
+    assert written.splitlines()[2].startswith("EDULLM_DIST_WHO='")
+
+
+def test_the_payload_asks_for_bash_on_its_first_line() -> None:
+    """THE ONE THAT MADE EVERY NODE FAIL IDENTICALLY BEFORE A CLAIM WAS EVEN REWRITTEN.
+
+    Systems Manager writes an ``AWS-RunShellScript`` payload to a file and executes it. It
+    honours a ``#!`` on line one and uses ``/bin/sh`` -- ``dash`` on this AMI family -- when
+    there is not one. ``infra/block-distributed-launch.sh`` has its own shebang and it is not
+    on line one of what is sent, because the settings go in front of it, so without this the
+    whole launch reaches ``dash`` and dies on ``set -o pipefail`` at the script's thirty-second
+    line. Every node answers ``Illegal option -o pipefail`` and nothing else, and the flagship
+    run of the window does not start.
+
+    Mutation: drop the line, or move it below the settings, where it is a comment.
+    """
+    written = block_run_distributed.prelude({"EDULLM_DIST_RUN": "a-run"})
+
+    assert written.splitlines()[0] == "#!/bin/bash"
+
+
+@pytest.mark.slow
+def test_the_launch_payload_runs_under_the_shell_it_asks_for(
+    monkeypatch: pytest.MonkeyPatch, four_idle_nodes: dict[str, dict[int, dict[str, Any]]]
+) -> None:
+    """The whole payload, parsed by the interpreter its first line names.
+
+    ``bash -n`` over the launch script on its own already passes and always did; what broke was
+    the composition, where the shebang ends up in the middle. This checks the string that
+    actually reaches a node, and it reads the interpreter out of that string rather than
+    naming one, so a payload that asks for something it is not is caught here.
+    """
+    cli = FakeCli(fleet=[1, 2, 3, 4], phases=four_idle_nodes)
+    monkeypatch.setattr(block_run_distributed, "aws_json", cli)
+
+    block_run_distributed.launch(arguments("--node-count", "4"))
+    payload = json.loads(cli.commands["start"])["commands"][0]
+    written = Path(tempfile.mkdtemp()) / "start.sh"
+    written.write_text(payload, encoding="utf-8")
+    interpreter = payload.splitlines()[0].removeprefix("#!")
+
+    checked = subprocess.run(
+        [*interpreter.split(), "-n", str(written)], check=False, capture_output=True, text=True
+    )
+
+    assert checked.returncode == 0, checked.stderr
 
 
 def test_the_claim_the_launch_script_writes_has_the_fields_the_helper_writes() -> None:
@@ -557,7 +602,14 @@ def test_the_claim_the_launch_script_writes_has_the_fields_the_helper_writes() -
 def test_the_rollback_command_parses_as_bash(monkeypatch: pytest.MonkeyPatch) -> None:
     """It is the one command in this tool assembled in Python rather than read off a file, and
     it is also the one that runs when something has already gone wrong. A quoting mistake in it
-    would present as a rollback that reported success and released nothing."""
+    would present as a rollback that reported success and released nothing.
+
+    **IT IS CHECKED AGAINST ``sh`` AS WELL, WHICH IS THE SHELL IT ACTUALLY GETS.** This one
+    carries no shebang -- it is three statements rather than a script -- so Systems Manager
+    runs it under ``/bin/sh``, and that is ``dash``. It is POSIX today. A bashism added to it
+    would pass ``bash -n``, reach the nodes at the moment a launch has already failed, and take
+    the rollback down with it, which is the failure this whole path exists to prevent.
+    """
     cli = FakeCli(
         fleet=[1, 2],
         phases={
@@ -573,11 +625,12 @@ def test_the_rollback_command_parses_as_bash(monkeypatch: pytest.MonkeyPatch) ->
     written = Path(tempfile.mkdtemp()) / "rollback.sh"
     written.write_text(json.loads(cli.commands["rollback"])["commands"][0] + "\n", "utf-8")
 
-    checked = subprocess.run(
-        ["bash", "-n", str(written)], check=False, capture_output=True, text=True
-    )
+    for shell in ("bash", "sh"):
+        checked = subprocess.run(
+            [shell, "-n", str(written)], check=False, capture_output=True, text=True
+        )
 
-    assert checked.returncode == 0, checked.stderr
+        assert checked.returncode == 0, f"{shell}: {checked.stderr}"
 
 
 def test_the_fabric_each_node_chose_is_read_out_of_what_it_printed() -> None:

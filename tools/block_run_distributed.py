@@ -252,8 +252,25 @@ def prelude(settings: Mapping[str, str]) -> str:
     ``shlex.quote`` on every value rather than on the ones that look dangerous. What goes
     through here already includes a base64 blob and a branch name, and quoting all of them is
     what makes the next value somebody adds safe without them having to think about it.
+
+    **THE FIRST LINE IS A SHEBANG AND WITHOUT IT NONE OF THE REST RUNS.** Systems Manager
+    writes an ``AWS-RunShellScript`` payload to a file and executes it, honouring a ``#!`` on
+    line one and falling back to ``/bin/sh`` -- which is ``dash`` on this AMI family -- when
+    there is not one. ``infra/block-distributed-launch.sh`` carries its own shebang, and that
+    shebang is not on line one of what is sent: the settings below go in front of it, exactly
+    as ``.github/workflows/block-launch-fleet.yml`` puts them in front of the bootstrap. So
+    the payload arrives at ``dash``, and ``dash`` refuses ``set -o pipefail`` on the script's
+    thirty-second line, before a claim is rewritten or anything is cloned. Every node fails
+    identically with ``Illegal option -o pipefail`` and no other output. The workflow prints
+    ``#!/bin/bash`` ahead of the bootstrap's settings for this reason; this is the same line
+    for the same reason.
     """
-    return "\n".join(f"{name}={shlex.quote(value)}" for name, value in sorted(settings.items()))
+    return "\n".join(
+        (
+            "#!/bin/bash",
+            *(f"{name}={shlex.quote(value)}" for name, value in sorted(settings.items())),
+        )
+    )
 
 
 def node_settings(
