@@ -1,0 +1,530 @@
+name: "Block: start a run on a node"
+
+# THE DOOR EVERY RESEARCHER USES THIS WEEKEND, AND THE REASON IT IS A WORKFLOW.
+#
+# Roughly fifteen of the thirty-five people on this team hold no AWS role at all. They cannot
+# assume anything, cannot open a Systems Manager session, cannot read the outputs bucket and
+# cannot see the fleet. A shell script would serve the twenty who can and lock out the fifteen
+# who cannot, which is the wrong half of the team to lock out of a window that was bought for
+# all of them. This workflow holds the credential; a researcher holds a browser.
+#
+# So this file is deliberately not guarded by the admin list `block-launch-fleet.yml` carries.
+# Anybody with write on this repository can start a run. What they cannot do is start one on a
+# node somebody else is on, which is the control that actually matters here.
+#
+# THE CLAIM FILE ON THE NODE IS THE LOCK. THE SHEET IS THE MINUTES.
+#
+# A shared sheet records who intends to use which machine, and it is genuinely useful -- it is
+# how eight people plan a weekend. It is not a lock. It cannot stop two people dispatching
+# ninety seconds apart, and on eight cards that collision does not queue: both runs start, both
+# allocate, and both die out of memory some minutes later having each cost the other a slot in
+# a window nobody can extend. The refusal below reads the node itself, so it is the same
+# refusal whether the second person arrived through this workflow or through a shell.
+#
+# THE BRANCH IS CLONED AT RUN TIME AND NO IMAGE IS BUILT, WHICH IS A DEPARTURE.
+#
+# Everywhere else on this platform a run is pinned to an image digest built from a commit, and
+# the argument for that is reproducibility: the thing that ran can be rebuilt exactly. It is a
+# good argument and it does not reach this lane. Nothing here is on the platform -- no
+# admission record, no lineage entry, no approval, no citable run -- so there is no record for
+# an image digest to make trustworthy. What there is instead is seventy-two hours in which
+# eight people will iterate hourly, and a build-and-publish cycle per commit would spend a
+# large fraction of the window watching a registry. The container is pre-pulled at boot, the
+# branch is cloned into it, and the commit that was actually cloned is printed and recorded on
+# the node.
+#
+# The cost is real and is worth naming: two dispatches of the same branch minutes apart can run
+# different code, and the only record of which is the commit printed below and the claim file
+# on the machine. Anything that has to be reproducible later goes through `edullm submit` on
+# the platform, in us-east-1, after the window.
+
+on:
+  workflow_dispatch:
+    inputs:
+      node:
+        description: "Which node, 1 through 8. Take one nobody is on -- the workflow refuses otherwise and tells you who has it."
+        required: true
+        type: string
+      branch:
+        description: "The branch to clone and run. It is resolved before the node is touched, so a typo costs nothing."
+        required: true
+        type: string
+      run_name:
+        description: "Names the scratch directory, the container, the S3 prefix and the W&B run. Letters, digits, dot, dash and underscore."
+        required: true
+        type: string
+      repository:
+        description: "The GitHub repository holding the branch. It must be public: the node clones it with no credential."
+        required: true
+        default: edu-llm/OLMo-core
+        type: string
+      command:
+        description: "Optional. Left empty, the command is read from .edullm/run.yaml on the branch, which is where it belongs."
+        required: false
+        default: ""
+        type: string
+      wandb_project:
+        description: "Which Weights and Biases project the charts appear in."
+        required: true
+        default: capacity-block
+        type: string
+      reservation_id:
+        description: "Optional. Only needed if two blocks are live at once, because node numbers repeat across fleets."
+        required: false
+        default: ""
+        type: string
+      region:
+        description: "Where the fleet is."
+        required: true
+        default: us-east-2
+        type: string
+      take_the_node_anyway:
+        description: "Start even though somebody else holds this node. Their run keeps its cards and yours will fight it for memory. Ask them first."
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+# Per node rather than for the lane, which is the opposite of what `block-launch-fleet.yml`
+# does and is right for the opposite reason. Eight people starting runs on eight different
+# nodes at once is the intended Saturday; serialising them behind one group would make the
+# fleet feel like a queue, which is the thing this lane exists not to be. Two dispatches for
+# the *same* node still queue, and the second one then meets the claim the first one wrote.
+concurrency:
+  group: capacity-block-node-${{ inputs.node }}
+  cancel-in-progress: false
+
+jobs:
+  start:
+    name: Start a run on one capacity block node
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      NODE: ${{ inputs.node }}
+      BRANCH: ${{ inputs.branch }}
+      RUN_NAME: ${{ inputs.run_name }}
+      REPOSITORY: ${{ inputs.repository }}
+      COMMAND_OVERRIDE: ${{ inputs.command }}
+      WANDB_PROJECT: ${{ inputs.wandb_project }}
+      RESERVATION_INPUT: ${{ inputs.reservation_id }}
+      BLOCK_REGION: ${{ inputs.region }}
+      TAKE_ANYWAY: ${{ inputs.take_the_node_anyway }}
+      DISPATCHED_BY: ${{ github.actor }}
+      WANDB_ENTITY: eduLLM
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install the platform library
+        run: |
+          set -euo pipefail
+          uv sync --locked
+
+      # BEFORE THE CREDENTIALS AND BEFORE THE NODE, BECAUSE THESE TWO REFUSALS ARE FREE.
+      #
+      # A run name that is not a legal directory, container name and S3 key segment at once
+      # produces a failure halfway through a clone on a machine somebody is paying for. A
+      # branch that does not exist produces one at exactly the same point. Both are answerable
+      # from a runner with no AWS access and no node involved, so both are answered here.
+      - name: Refuse a run name or a branch that would fail on the machine
+        run: |
+          set -euo pipefail
+          uv run python - <<'PY'
+          import os
+          import re
+          import sys
+
+          name = os.environ["RUN_NAME"]
+          if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", name) is None:
+              sys.exit(
+                  f"run_name_is_not_usable:{name!r}. It becomes a directory under /scratch, a "
+                  "docker container name and a segment of an S3 key, so it is letters, digits, "
+                  "dot, dash and underscore, up to 64 characters, starting with a letter or a "
+                  "digit."
+              )
+          if re.fullmatch(r"[0-9]{1,3}", os.environ["NODE"]) is None:
+              sys.exit(f"node_is_not_a_number:{os.environ['NODE']!r}")
+          PY
+
+          # `ls-remote` rather than a clone. It is one round trip, it needs no checkout, and
+          # what it answers is the question that matters: does this ref exist on that
+          # repository right now. The commit it reports is the tip the node will clone, and the
+          # authoritative one is still the node reading of its own working tree afterwards --
+          # somebody can push between these two moments and on a Saturday somebody will.
+          git ls-remote --exit-code --heads "https://github.com/${REPOSITORY}.git" "${BRANCH}" \
+            > "${RUNNER_TEMP}/branch-tip.txt"
+          cat "${RUNNER_TEMP}/branch-tip.txt"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_BLOCK_FLEET_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+          role-duration-seconds: 3600
+          mask-aws-account-id: true
+
+      # THE NODE TAG IS THE ADDRESS, AND EXACTLY ONE INSTANCE MUST ANSWER TO IT.
+      #
+      # Two instances carrying `edullm:node=3` is a real state -- a re-launch that raced a
+      # terminate, or two live blocks whose node numbers overlap -- and picking the first one
+      # would start a run on whichever the API happened to return. The optional reservation
+      # input is the disambiguator; without it, ambiguity is a refusal naming both.
+      - name: Find the node and read what it is doing
+        run: |
+          set -euo pipefail
+          instances_json="${RUNNER_TEMP}/node.json"
+          probe_params="${RUNNER_TEMP}/probe-parameters.json"
+          probe_command="${RUNNER_TEMP}/probe-command-id.txt"
+          probe_status="${RUNNER_TEMP}/probe-status.txt"
+          probe_json="${RUNNER_TEMP}/probe.json"
+
+          if [ -n "${RESERVATION_INPUT}" ]; then
+            aws ec2 describe-instances \
+              --region "${BLOCK_REGION}" \
+              --filters "Name=tag:edullm:node,Values=${NODE}" "Name=tag:edullm:block,Values=${RESERVATION_INPUT}" "Name=instance-state-name,Values=running" \
+              --output json > "${instances_json}"
+          else
+            aws ec2 describe-instances \
+              --region "${BLOCK_REGION}" \
+              --filters "Name=tag:edullm:node,Values=${NODE}" "Name=instance-state-name,Values=running" \
+              --output json > "${instances_json}"
+          fi
+
+          uv run python - "${instances_json}" "${RUNNER_TEMP}/instance-id.txt" "${probe_params}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          from edullm_platform.block_fleet import REMOTE_READING_SCRIPT, read_fleet
+
+          fleet = read_fleet(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")))
+          if len(fleet) != 1:
+              raise SystemExit(
+                  f"node_is_not_one_machine:{len(fleet)} running instances carry that node tag "
+                  f"({', '.join(node.instance_id for node in fleet) or 'none'}). Pass "
+                  "reservation_id if two blocks are live, or check the fleet came up."
+              )
+          Path(sys.argv[2]).write_text(fleet[0].instance_id + "\n", encoding="utf-8")
+          Path(sys.argv[3]).write_text(
+              json.dumps({"commands": [REMOTE_READING_SCRIPT]}), encoding="utf-8"
+          )
+          print(f"node resolves to {fleet[0].instance_id} in {fleet[0].state}")
+          PY
+
+          read -r instance_id < "${RUNNER_TEMP}/instance-id.txt"
+
+          aws ssm send-command \
+            --region "${BLOCK_REGION}" \
+            --document-name AWS-RunShellScript \
+            --comment "edullm block claim probe" \
+            --instance-ids "${instance_id}" \
+            --parameters "file://${probe_params}" \
+            --query Command.CommandId \
+            --output text > "${probe_command}"
+          read -r probe_id < "${probe_command}"
+
+          for _attempt in $(seq 1 24); do
+            sleep 5
+            aws ssm get-command-invocation \
+              --region "${BLOCK_REGION}" \
+              --command-id "${probe_id}" \
+              --instance-id "${instance_id}" \
+              --query Status \
+              --output text > "${probe_status}"
+            read -r probe_state < "${probe_status}"
+            case "${probe_state}" in
+              Success | Failed | Cancelled | TimedOut) break ;;
+            esac
+          done
+
+          aws ssm get-command-invocation \
+            --region "${BLOCK_REGION}" \
+            --command-id "${probe_id}" \
+            --instance-id "${instance_id}" \
+            --output json > "${probe_json}"
+
+          uv run python - "${probe_json}" <<'PY'
+          import json
+          import os
+          import sys
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          from edullm_platform.block_fleet import elapsed_as, parse_reading
+
+          invocation = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          reading = parse_reading(
+              node=int(os.environ["NODE"]),
+              instance_id=str(invocation.get("InstanceId", "")),
+              status=str(invocation.get("Status", "")),
+              output=str(invocation.get("StandardOutputContent", "")),
+          )
+          taking = os.environ["TAKE_ANYWAY"] == "true"
+          wanted = os.environ["RUN_NAME"]
+
+          if not reading.reachable:
+              raise SystemExit(
+                  f"node_did_not_answer:{reading.detail}. Systems Manager could not run a "
+                  "command there, so nothing can say whether it is busy. Check the fleet."
+              )
+
+          held = reading.run
+          since = (
+              elapsed_as(reading.started_at, now=datetime.now(tz=UTC))
+              if reading.started_at is not None
+              else "an unknown time"
+          )
+          print(f"node {reading.node}: {reading.gpus_busy}/{reading.gpus_total} cards in use")
+          if held is not None:
+              print(f"claimed by {reading.who} for {held}, running {since}")
+
+          if held is not None and held != wanted and not taking:
+              raise SystemExit(
+                  f"node_is_busy:{reading.who} has held node {reading.node} for {since}, "
+                  f"running {held}. Take another node, or talk to them and dispatch again with "
+                  "take_the_node_anyway."
+              )
+          # BUSY CARDS WITH NO CLAIM IS ITS OWN REFUSAL AND NOT A ROUNDING ERROR. It is what a
+          # run started from a shell looks like, and what a claim released while a container
+          # was still training looks like. Both are somebody using this machine, and neither is
+          # visible to the sheet.
+          if held is None and reading.gpus_busy > 0 and not taking:
+              raise SystemExit(
+                  f"node_has_unclaimed_work:{reading.gpus_busy} cards are in use on node "
+                  f"{reading.node} with nothing claiming them. Somebody started that outside "
+                  "the workflow. Find them before you take the machine."
+              )
+          PY
+
+      # THE HELPER ON THE NODE DOES THE WORK, AND THAT IS DELIBERATE RATHER THAN THIN.
+      #
+      # Everything from here -- taking the claim, cloning, reading `.edullm/run.yaml`, fetching
+      # the key, starting the container -- happens in `edullm-node run`, which is installed by
+      # `infra/block-node-bootstrap.sh`. Two things follow from putting it there rather than in
+      # a Systems Manager script assembled here. A person sitting in a shell on the machine
+      # runs exactly what this workflow runs, so the two paths cannot drift into disagreeing
+      # about what a claim means. And the command sent from here is short enough to read whole
+      # in a CloudTrail record, which a hundred-line inline script would not be.
+      - name: Take the node and start the run
+        run: |
+          set -euo pipefail
+          read -r instance_id < "${RUNNER_TEMP}/instance-id.txt"
+          run_params="${RUNNER_TEMP}/run-parameters.json"
+          run_command="${RUNNER_TEMP}/run-command-id.txt"
+          run_status="${RUNNER_TEMP}/run-status.txt"
+          run_json="${RUNNER_TEMP}/run-invocation.json"
+
+          # Assembled through shlex so that a free-form command override carrying quotes, a
+          # dollar sign or a pipe arrives on the machine as the researcher wrote it. Building
+          # this line by string concatenation is how an override with a space in it becomes two
+          # arguments and a training run starts with half a flag.
+          uv run python - "${run_params}" <<'PY'
+          import json
+          import os
+          import shlex
+          import sys
+          from pathlib import Path
+
+          argv = [
+              "edullm-node",
+              "run",
+              "--name",
+              os.environ["RUN_NAME"],
+              "--repository",
+              os.environ["REPOSITORY"],
+              "--branch",
+              os.environ["BRANCH"],
+              "--who",
+              os.environ["DISPATCHED_BY"],
+              "--wandb-project",
+              os.environ["WANDB_PROJECT"],
+          ]
+          if os.environ["COMMAND_OVERRIDE"]:
+              argv += ["--command", os.environ["COMMAND_OVERRIDE"]]
+          if os.environ["TAKE_ANYWAY"] == "true":
+              argv.append("--force")
+          Path(sys.argv[1]).write_text(
+              json.dumps({"commands": [shlex.join(argv)]}), encoding="utf-8"
+          )
+          PY
+
+          aws ssm send-command \
+            --region "${BLOCK_REGION}" \
+            --document-name AWS-RunShellScript \
+            --comment "edullm block run ${RUN_NAME}" \
+            --instance-ids "${instance_id}" \
+            --timeout-seconds 600 \
+            --parameters "file://${run_params}" \
+            --query Command.CommandId \
+            --output text > "${run_command}"
+          read -r command_id < "${run_command}"
+
+          # Ten minutes of polling against a ten-minute command timeout. The slow part is the
+          # clone, not the container: `docker run --detach` returns as soon as the container is
+          # started, which is the whole reason a training run can be launched from a workflow
+          # that finishes in under a minute.
+          for _attempt in $(seq 1 120); do
+            sleep 5
+            aws ssm get-command-invocation \
+              --region "${BLOCK_REGION}" \
+              --command-id "${command_id}" \
+              --instance-id "${instance_id}" \
+              --query Status \
+              --output text > "${run_status}"
+            read -r state < "${run_status}"
+            case "${state}" in
+              Success | Failed | Cancelled | TimedOut) break ;;
+            esac
+          done
+
+          aws ssm get-command-invocation \
+            --region "${BLOCK_REGION}" \
+            --command-id "${command_id}" \
+            --instance-id "${instance_id}" \
+            --output json > "${run_json}"
+
+          uv run python - "${run_json}" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          invocation = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          out = str(invocation.get("StandardOutputContent", ""))
+          err = str(invocation.get("StandardErrorContent", ""))
+          print(out)
+          if err.strip():
+              print(err, file=sys.stderr)
+
+          # The helper prints `commit <sha>`. Recorded from its output rather than from the
+          # `ls-remote` earlier, because the machine is the thing that actually cloned and a
+          # push between the two moments makes them different answers to the same question.
+          commit = ""
+          for line in out.splitlines():
+              head, _, tail = line.partition(" ")
+              if head == "commit":
+                  commit = tail.strip()
+          Path(os.environ["RUNNER_TEMP"], "commit.txt").write_text(
+              commit + "\n", encoding="utf-8"
+          )
+
+          if invocation.get("Status") != "Success":
+              raise SystemExit(
+                  f"run_did_not_start:{invocation.get('Status')}. The claim may still be held "
+                  "on the node; `edullm-node release` there, or dispatch again."
+              )
+          PY
+
+      # WHAT SOMEBODY WITH NO AWS ACCESS CAN ACTUALLY DO NEXT, WHICH IS THE WHOLE OF WHY THIS
+      # STEP IS SEPARATE AND RUNS EVEN WHEN THE ONE ABOVE FAILED.
+      #
+      # Be honest about what each line is worth to whom. The Weights and Biases URL works for
+      # everybody and is the surface a researcher should be watching. The Systems Manager line
+      # works only for the twenty people who hold a role and have the session plugin installed.
+      # The S3 URI is the durable copy of the log and reading it also needs a credential -- it
+      # is printed because it is where the log *is*, not because everybody can fetch it.
+      - name: Say where the run is and how to watch it
+        if: always()
+        run: |
+          set -euo pipefail
+          uv run python - <<'PY' | tee -a "${GITHUB_STEP_SUMMARY}"
+          import os
+          from pathlib import Path
+
+          temporary = Path(os.environ["RUNNER_TEMP"])
+
+          def read(name: str) -> str:
+              path = temporary / name
+              return path.read_text(encoding="utf-8").strip() if path.is_file() else "unknown"
+
+          run = os.environ["RUN_NAME"]
+          node = os.environ["NODE"]
+          instance = read("instance-id.txt")
+          commit = read("commit.txt") or "unknown"
+          region = os.environ["BLOCK_REGION"]
+          project = os.environ["WANDB_PROJECT"]
+          entity = os.environ["WANDB_ENTITY"]
+
+          print(f"### `{run}` on node {node}")
+          print("")
+          print(f"| node | {node} |")
+          print("| --- | --- |")
+          print(f"| instance | `{instance}` |")
+          print(f"| commit | `{commit}` |")
+          print(f"| branch | `{os.environ['REPOSITORY']}@{os.environ['BRANCH']}` |")
+          print(f"| W&B | https://wandb.ai/{entity}/{project}/runs/{run} |")
+          print("")
+          print("Logs are synced to S3 once a minute; reading them needs an AWS credential, so")
+          print("W&B above is the surface to watch if you do not hold one.")
+          print("")
+          print("```")
+          print(f"s3://<outputs bucket>/block/<reservation>/node-{node}/{run}/log/train.log")
+          print("```")
+          print("")
+          print("With a role and the Session Manager plugin, attach to the container directly:")
+          print("")
+          session = '{"command":["sudo docker logs -f edullm-' + run + '"]}'
+          print("```bash")
+          print(f"aws ssm start-session --target {instance} --region {region} \\")
+          print("  --document-name AWS-StartInteractiveCommand \\")
+          print(f"  --parameters '{session}'")
+          print("```")
+          PY
+
+      # A BEST EFFORT AND NOT A GATE, WHICH IS WHY IT SWALLOWS ITS OWN FAILURES. The question it
+      # answers is the one asked within thirty seconds of every dispatch: did the thing start,
+      # or did it die on an import. Reading the first lines back here means the answer arrives
+      # in the same page as the dispatch, for a person who cannot read the log any other way.
+      - name: Show the first lines the run printed
+        if: always()
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          read -r instance_id < "${RUNNER_TEMP}/instance-id.txt"
+          tail_params="${RUNNER_TEMP}/tail-parameters.json"
+          tail_command="${RUNNER_TEMP}/tail-command-id.txt"
+
+          sleep 45
+
+          uv run python - "${tail_params}" <<'PY'
+          import json
+          import os
+          import shlex
+          import sys
+          from pathlib import Path
+
+          log = f"/scratch/{os.environ['RUN_NAME']}/log/train.log"
+          Path(sys.argv[1]).write_text(
+              json.dumps({"commands": [f"tail -n 40 {shlex.quote(log)} 2>&1 || true"]}),
+              encoding="utf-8",
+          )
+          PY
+
+          aws ssm send-command \
+            --region "${BLOCK_REGION}" \
+            --document-name AWS-RunShellScript \
+            --comment "edullm block first lines" \
+            --instance-ids "${instance_id}" \
+            --parameters "file://${tail_params}" \
+            --query Command.CommandId \
+            --output text > "${tail_command}"
+          read -r tail_id < "${tail_command}"
+          sleep 10
+
+          aws ssm get-command-invocation \
+            --region "${BLOCK_REGION}" \
+            --command-id "${tail_id}" \
+            --instance-id "${instance_id}" \
+            --query StandardOutputContent \
+            --output text

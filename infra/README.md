@@ -2275,3 +2275,62 @@ role, and the profile name must be the one `run_instances_argv` passes as
 `--iam-instance-profile Name=`; a mismatch there fails a launch after a machine has been priced.
 Any bucket other than `edullm-scratch` in the inline policy means the machine reaches past the
 working tier and the role should be narrowed rather than left.
+
+## The block fleet stack, for a block that is not going through Batch at all
+
+| # | Stack | Template | Roles or resources | Applied from |
+| --- | --- | --- | --- | --- |
+| 1 | `sbsandbox-intern-edullm-block-fleet-iam` | `infra/iam/block-fleet-roles.yaml` | `…-block-fleet`, `…-block-node` and its instance profile | laptop |
+
+**This is a different lane from the four stacks above and the two must not be confused.** Those
+put a purchased block behind a Batch queue, which is the right shape when the platform is
+scheduling work onto it. This one is for the case where it is not: a block bought into a region
+that carries no platform infrastructure at all, held for the length of its window as eight
+long-lived machines, with a human coordinating who is on which. There is no compute environment,
+no queue and no job definition, so nothing here is a `batch-capacity-block.yaml` deployment and
+`config/execution-targets.yaml` gains no row.
+
+**Nothing in this repository can apply it, and the order matters.** The deployer role holds no
+`iam:CreateRole`, so this is a laptop deploy like every other IAM stack. What is different is that
+two workflow files depend on it existing *and* on themselves being on `main`: the trust condition
+in the template pins `job_workflow_ref` to
+`.github/workflows/block-launch-fleet.yml` and `.github/workflows/block-run.yml` at
+`refs/heads/main`, and the `sub` claim pins the ref too. Merge first, apply second, dispatch third.
+A dispatch from a branch is refused at `AssumeRole` with a message about a subject that does not
+match, which reads as a broken workflow rather than as a branch somebody is standing on.
+
+```bash
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-block-fleet-iam \
+  --template-file infra/iam/block-fleet-roles.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --profile sbsandbox \
+  --region us-east-1
+```
+
+`CAPABILITY_NAMED_IAM` rather than `CAPABILITY_IAM`, because both roles and the instance profile
+are named. The region is `us-east-1` and the fleet is in `us-east-2`; IAM is global, so the stack
+holding it can sit in either and sitting beside every other IAM stack is worth more than sitting
+beside the machines.
+
+Then read back the one output that has to be copied by hand, and set it as the repository variable
+`AWS_BLOCK_FLEET_ROLE_ARN`:
+
+```bash
+aws cloudformation describe-stacks \
+  --stack-name sbsandbox-intern-edullm-block-fleet-iam \
+  --query "Stacks[0].Outputs" \
+  --profile sbsandbox --region us-east-1
+```
+
+Both workflows name that variable and nothing else resolves it, so a variable that is unset or
+wrong by a character fails at `configure-aws-credentials` — before the launch workflow has read
+anything at all about the reservation, which is the good place for it to fail.
+
+**What this role deliberately does not stop.** It does not prevent an on-demand launch beside the
+paid block. That refusal would have to be an IAM condition on the instance market type, and a
+`Deny` written on a condition key that turns out to be absent from the request evaluates true and
+refuses the *correct* launch as well — at 11:35 UTC on a Saturday, against a reservation that is
+already billing and cannot be refunded. The control that stands there instead reads
+`describe-instances` back after every launch and terminates the fleet if any instance reports a
+null `CapacityReservationId`. The template says the same at greater length.
