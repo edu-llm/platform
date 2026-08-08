@@ -251,7 +251,8 @@ def check_registration(
     EVERY ANSWERABLE CLAIM IS ANSWERED RATHER THAN THE FIRST FAILURE RETURNED, because the
     caller that refuses a registration is a person waiting on a dispatch and one refusal per
     attempt is three dispatches to learn three things. ``tools/register_repository.py``
-    prints all of them at once for the reason ``AGENTS.md`` gives about ``edullm check``.
+    prints all of them at once for the reason ``skills/edullm-platform/SKILL.md`` gives about
+    ``edullm check``.
 
     The three file reads are independent and are all made. The two above them are not: a
     repository that does not resolve has no branch to ask about, and a branch that is not

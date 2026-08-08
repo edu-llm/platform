@@ -319,7 +319,7 @@ def test_a_request_larger_than_anything_buyable_is_refused_with_the_largest(
 )
 def test_an_unpurchasable_request_exits_two_before_reading_anything(argv: list[str]) -> None:
     """Two rather than one, because the tool could not be driven rather than refusing on the
-    merits -- the distinction ``AGENTS.md`` draws for every exit code on this platform."""
+    merits -- the distinction ``MAINTAINING.md`` draws for every exit code on this platform."""
     assert main(argv) == EXIT_UNUSABLE
 
 

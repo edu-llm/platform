@@ -223,9 +223,10 @@ shared_readings:
   - stage: under_test
     rows: [registration-skill, skills-three-hosts]
     why: >
-      The agent layer is two skills and the three host files that carry them, and the test that
-      proves either proves it by reading the same set of files. Two test files here would
-      duplicate the fixtures rather than assert anything new.
+      The agent layer is one shipped skill and the page that installs it into three hosts, and
+      registration is a section of that skill rather than a document of its own, so the test that
+      proves either proves it by reading the same file. Two test files here would duplicate the
+      fixtures rather than assert anything new.
   - stage: under_test
     rows: [datasets-yaml, model-family]
     why: >
@@ -1140,20 +1141,37 @@ slices:
 
   - name: The agent layer
     surfaces:
+      # BOTH ROWS USED TO POINT AT A FILE UNDER `.cursor/`, AND BOTH WERE MEASURING THE WRONG
+      # COPY. Those two skills were the platform protocol addressed to an agent working in this
+      # checkout, which is a maintainer's -- so the layer read as built and deployed while what
+      # reached a researcher was a third file neither row named. The `.cursor/` pair is deleted.
+      # What ships is `skills/edullm-platform/SKILL.md`, and `deployed` is whether it is on
+      # `main`, because the raw URL in `skills/README.md` is the whole of how it reaches anybody.
       - id: skills-three-hosts
-        name: The skills, in three hosts
+        name: The skill, in three hosts
         designed: {reached: overview draws it}
         planned: {task: the-agent-layer/7}
-        built: {exists: [.cursor/skills/submitting-a-run/SKILL.md, AGENTS.md]}
-        deployed: {on_main: AGENTS.md}
+        built: {exists: [skills/edullm-platform/SKILL.md, skills/README.md]}
+        # THE THIRD HOST IS WHAT THIS ROW IS ABOUT, SO IT IS WHAT THE CELL LOOKS FOR. A bare
+        # `on_main` over the skill would be true the moment the file is pushed and would say
+        # nothing about whether anybody can install it, and it would be the same reading as the
+        # row below, leaving neither able to go red alone. Codex's line is the one that goes
+        # first, being the only one of the three outside the repository being worked in.
+        deployed: {grep_on_main: [skills/README.md, "\\.codex/skills"]}
         under_test: {tests: [tests/test_agent_layer.py]}
 
       - id: registration-skill
-        name: The registration skill
+        name: The registration procedure the skill carries
         designed: {reached: overview draws it}
         planned: {task: the-agent-layer/8}
-        built: {exists: .cursor/skills/registering-a-repository/SKILL.md}
-        deployed: {on_main: .cursor/skills/registering-a-repository/SKILL.md}
+        # A SECTION OF THE FILE ABOVE RATHER THAN A FILE, WHICH IS WHY BOTH CELLS GREP. The
+        # procedure had a skill of its own under `.cursor/` until the layer was cut down to the
+        # one document that leaves this repository; pointed at that document with `exists` and
+        # `on_main`, this row would read green off the other row's artifact and could never
+        # report the procedure being deleted out from under it. `edullm add repository` is the
+        # verb the whole procedure exists to reach and appears nowhere else in the file.
+        built: {grep: [skills/edullm-platform/SKILL.md, "edullm add repository"]}
+        deployed: {grep_on_main: [skills/edullm-platform/SKILL.md, "edullm add repository"]}
         under_test: {tests: [tests/test_agent_layer.py]}
 
   - name: Owned by no slice

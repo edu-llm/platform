@@ -1,22 +1,40 @@
 ---
 name: edullm-platform
 description: >-
-  Runs work on the eduLLM platform through `edullm`, the command line tool that is the only
-  supported way to reach the cluster from a laptop. Use when somebody asks to train,
-  evaluate, tokenize, sweep, benchmark or queue anything on the cluster, on AWS Batch or on
-  a GPU, when a submission was refused and they want to know why, when a run is in flight
-  and they want its state, or when the platform does not yet carry this codebase.
+  Runs work on the eduLLM platform through `edullm`, the command line tool that reaches the
+  cluster from a laptop. Use when somebody asks to train, evaluate, tokenize, sweep,
+  benchmark or queue anything on the cluster, on AWS Batch or on a GPU, when a submission
+  was refused and they want to know why, when a run is in flight and they want its state,
+  or when the platform does not yet carry this codebase.
 ---
 
 # Running work on the eduLLM platform
 
-`edullm` submits and follows runs on the eduLLM platform. It drives `git` and `gh` and
-nothing else. Every AWS credential lives in a workflow whose trust policy pins it to one
-file on `main`, so nothing on a laptop can obtain one.
+`edullm` submits and follows runs on the eduLLM platform. It drives `git` and `gh`, and it is
+the whole of what a laptop can reach: every AWS credential lives in a workflow whose trust
+policy pins it to one file on `main`, so there is none for a script here to borrow. Where
+somebody does hold an AWS role of their own, a script using it starts a machine that no
+lineage record names, and going through the tool is what turns a run into a citable result.
 
-**Never write a script that calls AWS.** No `boto3`, no `aws` CLI, no HTTP at an AWS
-endpoint. For the people who hold no AWS role that fails, and for the people who do it
-works and leaves no record of the run, which is the worse outcome of the two.
+## The verbs
+
+| Verb | What it does |
+| --- | --- |
+| `edullm check` | Prices a submission from this working tree and lists every refusal. Reaches no network. Writes a first `.edullm/run.yaml` where a registered repository has none |
+| `edullm submit` | Makes those same checks and then dispatches the submission workflow |
+| `edullm status` | Your recent submissions, or one run described |
+| `edullm logs` | The last lines one run printed |
+| `edullm cancel` | Stops one admitted run, with a reason that goes on the record |
+| `edullm data` | The registered corpora, and which of them a run can actually start |
+| `edullm add` | Teaches the platform about a repository. Produces a configuration pull request |
+| `edullm ask` | Files an ask for something you need. Produces an issue somebody answers |
+| `edullm run` | Ships this working tree to a machine of your own and streams back the output of the command after a bare `--` |
+| `edullm shell` | A terminal on that same machine, or a notebook on it with `--notebook` |
+| `edullm stop` | Ends the machine those two started, and says what it ran up and where your files are |
+| `edullm studio` | Opens the Studio space for one `--project` in your browser. Bare, it lists your spaces; `--stop` ends compute and keeps the disk |
+| `edullm console` | Opens the AWS console in your browser, signed in as you |
+
+`edullm <verb> --help` prints what each verb takes; this file covers what the help cannot.
 
 ## Install it with this line and no other
 
@@ -27,7 +45,7 @@ edullm --version
 
 `uv` is the installer and it is the only one that works here. Where the shell answers
 `command not found: uv`, install uv first with `curl -LsSf https://astral.sh/uv/install.sh | sh`
-and run the line above again. Do not reach for `pip` or `pipx` instead.
+and run the line above again. `pip` and `pipx` do not reach this.
 
 Two near misses that both look like they ought to work.
 
@@ -35,35 +53,27 @@ Two near misses that both look like they ought to work.
   the executable are both called `edullm` now, but neither this project nor anything else at
   that name is published to an index, so there is nothing to resolve. The line above
   installs from git.
-- `uv tool upgrade` does something different depending on how the tool was installed, which
-  is why it is not the instruction here. `uv tool upgrade edullm` follows the git ref the
-  install named: from the bare URL above it re-resolves the default branch and does upgrade,
-  but from a release note's line, which pins that release's tag, it prints `Nothing to
-  upgrade` and exits 0 however far behind the install is. **Re-running the install line
-  above is the upgrade for either, so run that rather than working out which install this
-  is.**
+- `uv tool upgrade edullm` follows the git ref the install named, so what it does depends on
+  how the tool got there: from the bare URL above it re-resolves the default branch and does
+  upgrade, but from a release note's line, which pins that release's tag, it prints `Nothing
+  to upgrade` and exits 0 however far behind the install is. **Re-running the install line
+  above is the upgrade for either**, which is why it is the instruction here.
 
-**One-time, and only for an install made before v4.2.2.** Until then the distribution was
-called `edullm-platform` while the command was `edullm`, so `uv tool list` named something
-nobody types and `uv tool uninstall edullm` answered `not installed` to somebody holding the
-binary. An install of `edullm` does not replace an `edullm-platform` one, so clear the old
-name **before** installing:
+**One-time, and only for an install made before v4.2.2**, when the distribution was called
+`edullm-platform` while the command was `edullm`. Clear the old name **before** installing,
+in that order: both entries own the same `edullm` executable and uv deletes that file along
+with the entry, so uninstalling afterwards leaves `uv tool list` reporting a healthy `edullm`
+and nothing on the path. Re-run the install line where that has already happened. On a
+machine that never had the old name the uninstall exits 2 saying so, which costs nothing.
 
 ```bash
 uv tool uninstall edullm-platform
 uv tool install --force git+https://github.com/edu-llm/platform
 ```
 
-That order and not the other one. Both entries own the same `edullm` executable and uv
-deletes the file with the entry, so uninstalling afterwards leaves `uv tool list` reporting a
-healthy `edullm` and nothing on the path. Re-run the install line if that has already
-happened. Where the old name was never installed the uninstall exits 2 with ``error:
-`edullm-platform` is not installed``, which is the expected answer.
-
 Re-install before you trust an answer that matters. The tool carries its own copy of the
-reviewed configuration, frozen at the release it was built from, and prices against that
-copy rather than against the platform as it stands now. `config_directory` in the output
-below names the copy this install is reading.
+reviewed configuration, frozen at the release it was built from, and prices against that copy
+rather than the platform as it stands now. `config_directory` names the copy it is reading.
 
 ## What it needs from the machine it runs on
 
@@ -87,13 +97,12 @@ command: >-
   bash -lc 'python .edullm/time_attention.py "$EDULLM_RUN_ID"'
 ```
 
-`edullm check` writes a first one where a registered repository has none, and it names the
-workload profiles that repository has in a comment at the top. To change what runs, edit this
-file, commit it and push it. `--compute` and `--workload` override its last two for one
-submission without editing anything.
-
-The container is given `$EDULLM_RUN_ID`, `$EDULLM_CHECKPOINT_DIR` and several more, and the
-command is exec'd as typed. Wrap it in `bash -lc` where you want a variable to expand.
+`edullm check` writes a first one where a registered repository has none, naming that
+repository's workload profiles in a comment at the top. To change what runs, edit this file,
+commit it and push it; `--compute` and `--workload` override its last two for one submission
+without editing anything. The container is given `$EDULLM_RUN_ID`, `$EDULLM_CHECKPOINT_DIR`
+and several more, and the command is exec'd as typed, so wrap it in `bash -lc` where you want
+a variable to expand.
 
 ## The loop, and the order is the whole of it
 
@@ -109,9 +118,6 @@ command is exec'd as typed. Wrap it in `bash -lc` where you want a variable to e
 every refusal at once rather than one per attempt, so the loop is edit, check, edit, check.
 `submit` spends a queue slot and, for most runs, a person's attention. Submitting to find
 out what is wrong is a trade you cannot take back.
-
-`edullm <verb> --help` prints what each verb takes. Read it rather than guessing a flag.
-This file covers what the help cannot say.
 
 ## 1. Check, and read the document rather than the paragraphs
 
@@ -155,11 +161,10 @@ these as well.
 | `history` | what runs of this shape have taken, with `said` as the sentence to quote |
 | `config_directory` | the reviewed configuration this install carries |
 
-**Do not read `retries.resume_required` as a promise that a retry resumes.** It is the
-workload profile's declaration, and nothing on the platform checks it against the codebase
-that would have to honour it. Measured on 2026-08-06, two of the six registered repositories
-declare it, pass every check here, and restart from step 0. Quote `said` rather than the
-flag.
+**`retries.resume_required` is a declaration rather than a promise.** It is what the workload
+profile says, and nothing on the platform checks it against the codebase that would have to
+honour it. Measured on 2026-08-06, two of the six registered repositories declare it, pass
+every check here, and restart from step 0. Quote `said` rather than the flag.
 
 ## 2. Fix every refusal
 
@@ -177,7 +182,7 @@ The `detail` names the field and usually the file. These are the ones you will m
 | `unregistered_repository` | The platform does not carry this codebase. Go to **When the platform does not carry this codebase** below |
 | `unregistered_workload_profile` | The `detail` lists the registered ones. Pass `--workload` with one of those |
 | `workload_profile_repository_mismatch` | That workload belongs to another repository. The `detail` lists the ones this repository has |
-| `unregistered_dataset` | Run `edullm data` and pick one off it. Never invent a release id |
+| `unregistered_dataset` | Run `edullm data` and pick one off it. A release id that was guessed at will not be one |
 | `retired_dataset_release` | The corpus is registered and withdrawn. The `detail` names the version its owner calls current |
 | `dataset_is_not_a_corpus` | This resolves to a tokenizer or another input rather than to something a run trains on |
 | `unprovisioned_compute_profile` | The shape is priced and has no compute environment behind it, so no job on it can start. Pick another `--compute` |
@@ -189,8 +194,9 @@ The `detail` names the field and usually the file. These are the ones you will m
 Anything else, read the `detail`. It was written to be acted on and it usually names the
 file to change.
 
-**Never pass `--force` to get past a refusal.** Every refusal it skips is one admission
-makes again from inside AWS, so it buys a queue wait rather than an outcome.
+`submit --force` dispatches with refusals outstanding, and what it buys is a queue wait
+rather than an outcome: every refusal it skips is one admission makes again from inside AWS,
+where the same answer costs a runner and arrives later.
 
 ### Picking the corpus, which has its own verb
 
@@ -211,7 +217,9 @@ then the container cannot build a tokenizer for the tokens it just resolved and 
 `--json` puts that under `verdict` per entry, as `runs`, `refused` or `exits_69`. Branch on
 it before you submit.
 
-Never find the corpora by naming a bad one and reading the refusal. That list is names only.
+This verb is the only complete answer to what a run may name. The `unregistered_dataset`
+refusal lists names and nothing else, so a corpus picked off one may still be among those
+that exit 69, and a table in a guide is a table somebody typed on a day that has passed.
 
 A corpus nothing registers is a person's job rather than a command: the entry pins a manifest
 digest and a payload profile read off the sealed bucket, which needs an AWS role this binary
@@ -224,11 +232,11 @@ A clean `check` is worth a great deal and it is not a clean bill of health. Thes
 gaps, in the order they cost the most.
 
 **The dtype the code sets, rather than the dtype the command names.** The bfloat16 guard
-reads the text of the command. A trainer that fixes its precision in code carries no
-bfloat16 token in argv, so the guard sees nothing and a Turing card refuses the first kernel
-that needs the format, after the run has been priced, released, admitted and given a
-machine. OLMo-core's training entry points are exactly this case. **Write the dtype into the
-command so the check can see it**, which turns a dead machine into a free refusal.
+reads the text of the command, so a trainer that fixes its precision in code carries no
+bfloat16 token in argv, the guard sees nothing, and a Turing card refuses the first kernel
+needing the format — after the run has been priced, released, admitted and given a machine.
+OLMo-core's training entry points are exactly this case. **Write the dtype into the command
+so the check can see it**, which turns a dead machine into a free refusal.
 
 ```bash
 # The guard reads this and refuses on a card without bfloat16.
@@ -269,14 +277,11 @@ maximum_compute_cost_usd = hourly_rate_usd x nodes x maximum_runtime_hours x max
 ```
 
 **Report `maximum_compute_cost_usd`.** A fan-out multiplies, and `cells` is where it
-multiplies. `--fanout-size` with `--fanout-index-parameter` turns one submission into that
-many machines running at once, and quoting the hourly rate, or the cost of a single cell, to
-somebody who is about to approve the lot is misleading them about the size of what they are
-approving.
-
-Never quote a price, a runtime bound or a ceiling from memory or from a document, this one
-included. Those numbers live in reviewed configuration files and move without anybody being
-told. Read them out of `cost` on every check.
+multiplies: `--fanout-size` with `--fanout-index-parameter` turns one submission into that
+many machines at once, so the hourly rate, or one cell, understates what an approver is being
+asked to approve. Read every one of those numbers out of `cost` on the check in front of you
+rather than from memory or from this file — they live in reviewed configuration files and
+move without anybody being told.
 
 ## 5. Say who has to release it
 
@@ -289,8 +294,9 @@ told. Read them out of `cost` on every check.
 | `exception` | a platform admin |
 
 Two things send a run to a person however cheap it is. **A fan-out always does, whatever its
-size.** So does anything the reviewed configuration prices above its automatic bound. Do not
-work out which from a figure you remember. Read `approval_class`.
+size.** So does anything the reviewed configuration prices above its automatic bound. Which
+way a given run lands is a question for `approval_class` rather than for a figure you
+remember, since the bound behind it moves.
 
 Tell the user, before you submit, what the total is and whether a person has to tap. A
 submission left waiting at a gate overnight looks queued from the outside, and the person
@@ -360,63 +366,59 @@ edullm check --json --compute <profile> --hours <hours-bought-minus-0.5> \
 **Submit before the window opens rather than on the day.** Batch accepts a job against a
 block that is not yet active and places it the moment the machines appear, so admission, the
 image resolution and the approval all happen on your own time instead of on paid time. The
-approval is the reason this matters, because approval is a person. **Every block-backed shape
-classifies as `exception` and needs a platform admin, whatever the run costs and however
-short it is** — the shape decides this and not the price, so shrinking the run does not move
-it, and the set of people who can release it is smaller than a team's leads. **The block
-bills from the moment it starts whether or not anybody has approved anything**, so a
-submission left at a gate until an approver wakes up spends paid-for minutes at the full
-block rate to produce nothing. Read `approval_class` out of `edullm check --json` rather than
-assuming which way it lands.
+approval is why this matters, because approval is a person. **Every block-backed shape
+classifies as `exception` and needs a platform admin**, whatever the run costs and however
+short it is — the shape decides that and not the price, so shrinking the run does not move
+it. **The block bills from the moment it starts whether or not anybody has approved
+anything**, so a submission left at a gate until an approver wakes up spends paid-for minutes
+at the full block rate to produce nothing.
 
 **Three things about your own code usually have to change, and two of them need a commit and
-an image build.** The batch size and the parallel degrees have to be re-sized for a card with
+an image build.** The batch size and parallel degrees have to be re-sized for a card with
 different memory and a different device count; the container gets materially less host memory
-than the instance advertises, so a buffer sized to the spec sheet will not place and the
-figure to size against is the one `edullm check --json` prints for the profile rather than
-anything AWS publishes about the machine; and the two Blackwell shapes need
-CUDA 12.8 and driver R570, which a repository pinning a `torch` or `flash-attn` wheel built
-for Hopper does not satisfy. The image is built from a commit, so any of that which touches
-your repository has to be merged and built **before** the start date.
+than the instance advertises, so size against the figure `edullm check --json` prints for the
+profile rather than the spec sheet; and the Blackwell shapes need a CUDA and driver pairing
+that a repository pinning a `torch` or `flash-attn` wheel built for Hopper does not satisfy.
+The image is built from a commit, so any of that has to be merged and built **before** the
+start date, and `edullm check` catches none of it except `process_per_device`.
 [Capacity blocks](https://github.com/edu-llm/platform/blob/main/guides/capacity-blocks.md)
-carries the per-shape figures and the order to do them in. `edullm check` catches none of
-this except `process_per_device`.
+carries the per-shape figures and the order to do them in.
 
 **A job submitted outside the window sits in `RUNNABLE` and looks exactly like one that is
-merely queued.** This is the trap, and it is the part of this section worth remembering.
-There is no error against the job, nothing in any log and no field on it that says the
-window has not opened yet or closed yesterday, so what you get is a healthy-looking wait
-that never ends. `edullm status --json` answers and distinguishes nothing, and `edullm logs`
-prints nothing because a job that never started has printed nothing. **What tells the two
-apart is the calendar rather than the job.** Get the block's start and end from whoever
-bought it and check that now is between them, before spending an evening debugging a run
-that is only early.
+merely queued.** This is the trap and it is the part worth remembering. There is no error
+against the job, nothing in any log and no field saying the window has not opened yet or
+closed yesterday, so what you get is a healthy-looking wait that never ends;
+`edullm status --json` distinguishes nothing and `edullm logs` prints nothing, because a job
+that never started has printed nothing. **What tells the two apart is the calendar rather
+than the job.** Get the start and end from whoever bought the block and check that now is
+between them, before spending an evening debugging a run that is only early.
 
 **Checkpointing is mandatory here rather than advisable, and it is the resume that has to
 have been tested.** A block does not pause while a bug is fixed, cannot be extended and
-cannot be cancelled. A crash partway through costs either the work since the last checkpoint
-or the whole remaining window, and which of the two it costs is decided entirely by whether
-the run comes back up where it left off. Writing a checkpoint and resuming from one are
-different features, and only one of them is exercised by writing one:
-`checkpoint_path_not_in_command` reads whether the command
-expands `$EDULLM_CHECKPOINT_DIR`, which is the write, and says nothing at all about the
-read. Kill a run on a cheap shape, restart it from what it wrote and watch it pick up rather
-than begin again. Do that before the window, because inside it the experiment costs the
-block.
+cannot be cancelled, so a crash partway through costs either the work since the last
+checkpoint or the whole remaining window, decided entirely by whether the run comes back up
+where it left off. Writing a checkpoint and resuming from one are different features and
+only the first is exercised by writing one: `checkpoint_path_not_in_command` reads whether
+the command expands `$EDULLM_CHECKPOINT_DIR`, which is the write, and says nothing about the
+read. Kill a run on a cheap shape, restart it from what it wrote, and watch it pick up rather
+than begin again — before the window, because inside it that experiment costs the block.
 
 ## The exploration lane is not the submission path
 
 `edullm run` ships this working tree to a machine of your own and streams back the output of
 the command after a bare `--`. `edullm shell` gives you a terminal on that same machine, and
-`edullm shell --notebook` forwards a Jupyter to the laptop.
+`edullm shell --notebook` forwards a Jupyter to the laptop. `edullm stop` ends that machine,
+and it terminates rather than stopping, so its own disk goes with it while the scratch prefix
+survives for the next one.
 
 Nothing on that route is checked against the registry, priced, approved or written to a
 lineage record. What comes off it is a thing somebody saw rather than a result anybody can
 cite. That is the point of it, and it makes the lane the wrong answer to a refused
 submission. Reach for `check` and `submit` for anything meant to count.
 
-The lane also needs an AWS session on the laptop, which most researchers do not have. Its
-refusal names AWS rather than the tool, so do not read it as the platform being broken.
+Those two also need an AWS session on the laptop, which most researchers do not have, and the
+refusal names AWS rather than the tool. `edullm studio` needs no such session and is the
+easier route to the same instance types, with a disk that survives, one space per `--project`.
 
 ## When the platform does not carry this codebase
 
@@ -425,17 +427,36 @@ submission can name. Registration is two halves and the repository half comes fi
 a configuration change that points at a Dockerfile nobody wrote is a change that cannot be
 reviewed.
 
-Write three files in the research repository.
+**First, resolve the base image against the ones already approved.** This is the one question
+a reviewer has to answer, so answer it before asking: read `config/repositories.yaml` in the
+platform repository, list the base images existing registrations carry, and resolve this
+codebase's dependency set against them. Where one of them satisfies it, say which, and say
+that it is already reviewed. Where none does, name the single pin that forces a new base — a
+new base is a second thing to review, scan and re-pin, so the reason for one is that pin. The
+base the project's own Dockerfile happens to use is not by itself a reviewed answer.
 
-- `.edullm/Dockerfile`. It installs the dependency set and does nothing at runtime, since
-  the command a run executes comes from the submission. Keep it small, because every layer
-  is rebuilt on every push to an `edullm/**` branch.
+Then write three files in the research repository.
+
+- `.edullm/Dockerfile`. It builds from the base you resolved, installs the dependency set and
+  does nothing at runtime, since the command a run executes comes from the submission. Keep
+  it small, because every layer is rebuilt on every push to an `edullm/**` branch.
 - A workflow that calls the platform's reusable build. **Check what it fires on.** A caller
   that fires only on `edullm/**` pushes never fires for a branch named anything else, which
   is how a registered repository ends up with no image while looking correct.
 - A first `.edullm/run.yaml`, holding the command, the workload profile and a suggested
   machine. `edullm check` writes this itself once the repository is registered, so this copy
   is a placeholder, and it is what makes the change reviewable.
+
+**Then set `AWS_ECR_PUBLISHER_ROLE_ARN` as a repository variable on the repository being
+registered**, which the workflow you just wrote reads and which nothing gives you.
+`gh variable set AWS_ECR_PUBLISHER_ROLE_ARN --repo edu-llm/<name> --body <the ARN>` does it,
+with the ARN `infra/README.md` records for `sbsandbox-intern-edullm-ecr-publisher`. **It is
+set per repository by hand and there is no organization variable behind it**, so the
+repositories that already have one say nothing about this one and registering does not create
+it. Nothing here can check it for you — a token scoped to `edu-llm/platform` is refused by
+every other repository's variables endpoint — so the reusable build's first step refuses an
+empty value with `publisher_role_arn_is_empty`. Seeing that names this as the step that was
+missed, which is what left `edullm-p1` reading as registered and publishing nothing for days.
 
 Then commit, push to a branch named `edullm/<something>`, and open the configuration pull
 request.
@@ -447,6 +468,11 @@ edullm add repository --reason "<why this needs a repository of its own>"
 `--reason` has no default and it is the only part a reviewer cannot derive for themselves.
 Answer why this needs a repository rather than a workload profile in one already registered.
 
+The verb prepares the pull request and does not open it, because this organization forbids
+Actions from creating one. It prints the workflow run page and the compare URL to open it at,
+and the run's job summary prints a body too long for a URL to carry, to copy into the
+description.
+
 **Say plainly that nothing is registered yet.** The pull request has to be merged and then
 deployed, and `edullm check` goes on refusing this repository until both have happened. A
 merged configuration change does nothing in the account on its own.
@@ -455,15 +481,18 @@ The other kinds of `add`, which are a dataset, a model, a person or a shape, are
 self-service. `edullm add <kind>` refuses with the route it goes by instead, which is
 `edullm ask`. File it and say what you want rather than how it should be built.
 
-## Never
+## What is easy to get wrong
 
-- Never call AWS. The tool is the interface and the workflows hold the credentials.
-- Never pass `--force` to `submit`.
-- Never quote a price, a bound, a ceiling or a count of approvers from memory or from this
-  file. Run `edullm check --json` and read it out of the output.
-- Never parse the paragraphs where the verb has a `--json`.
-- Never edit `.edullm/run.yaml` to make a refusal go away without reading what the refusal
-  says.
-- Never commit a secret, a credential or a token into a research repository. The image is
-  built from the commit.
-- Never report the cost of one cell of a fan-out as the cost of the submission.
+All of this is somewhere above, collected because it is what has cost people machines.
+
+- **Prices, bounds, ceilings and counts of approvers move.** Read them out of
+  `edullm check --json` on the run in hand rather than from memory or from this file.
+- **One cell of a fan-out is not the cost of the submission.** Report
+  `maximum_compute_cost_usd`.
+- **`refusals[].detail` is prose and gets reworded.** Match on `code`.
+- **`edullm data` is the only thing that says a corpus will actually start.** Registered is
+  not the same as runnable.
+- **A refusal usually names the field and the file.** Editing `.edullm/run.yaml` until the
+  message goes away produces a run priced wrong rather than a run that is fixed.
+- **The image is built from the commit**, so a secret, credential or token committed to a
+  research repository is a secret in the image.

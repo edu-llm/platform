@@ -1,215 +1,141 @@
-# Working with the eduLLM platform
+# Working in the platform repository
 
-Read this before you write a script that talks to AWS. There is a binary, it is the only
-supported way in, and it holds no cloud credential of its own.
+This is the eduLLM control plane, and this checkout is a maintainer's. Everybody who works
+here can change what the platform enforces, deploy it, and read the account it runs in.
+Nothing in this file withholds anything; it is here so that a session starts knowing what
+this tree is and which of its habits have already cost somebody an afternoon.
 
-## What `edullm` is
+[`MAINTAINING.md`](MAINTAINING.md) is the long form and carries the measurements. This is the
+orientation.
 
-`edullm` submits and follows runs on the eduLLM platform so that nobody has to open the
-GitHub Actions UI. It drives `git` and `gh` and nothing else. Every AWS credential lives in a
-workflow whose trust policy pins it to one file on `main`, so a laptop cannot obtain one and
-should not try. A script that reaches past this binary either fails, for the people who hold
-no AWS role, or succeeds and leaves no record, for the people who do. Both outcomes are worse
-than the refusal you were trying to get around.
+## What is in here
 
-Install and version.
+| Path | Contents |
+| --- | --- |
+| `src/edullm_platform/` | The validation library and the `edullm` CLI. One implementation, shared by the submission workflow, the admission validator inside AWS and the tests |
+| `config/` | Reviewed bindings — roster, approval policy, repository registry, workload and compute catalog, capacity verdicts |
+| `infra/` | CloudFormation for everything this platform deploys, plus the runbook for procedures that need a laptop |
+| `.github/workflows/` | Publishing a research image, submitting a run for admission, and the daily audit |
+| `tools/` | Maintainer scripts, run by hand. Most of them hold an AWS session and read the account |
+| `fixtures/` | Representative manifests, sanitized captures of what the account did, and recorded digests of both |
+| `tests/` | The suite that keeps all of the above honest |
+| `guides/`, `skills/` | The researcher-facing surface, which is written for somebody else |
+
+## Two audiences, and only one of them is here
+
+The distinction is worth holding onto, because most of the prose in this tree is addressed to
+a reader who will never see it.
+
+**A researcher never has this checkout.** They work in OLMo-core or a codebase of their own,
+install `edullm` as a tool, and reach the platform through it because that is the only route
+a laptop has: every AWS credential lives in a workflow whose trust policy pins it to one file
+on `main`. What their agent loads is [`skills/edullm-platform/SKILL.md`](skills/edullm-platform/SKILL.md),
+copied into their own repository by the lines in [`skills/README.md`](skills/README.md).
+Editing that file is editing somebody else's always-on context, so it is held to the binary by
+`tests/test_agent_layer.py` and it has a length budget.
+
+**A maintainer is the only reader of this file.** The constraints that shape the researcher
+skill are not constraints on the work here. `tools/` is full of boto3, capturing evidence and
+verifying deployed stacks needs real credentials, and `infra/` is deployed from a laptop.
+
+## Running the checks
+
+Requires [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv tool uninstall edullm-platform
-uv tool install --force git+https://github.com/edu-llm/platform
-edullm --version
+uv sync --locked
+uv run pytest -q -n4 --dist loadgroup
+uv run ruff check .
+uv run mypy
 ```
 
-Unpinned on purpose. That line is true after every release and re-running it is the upgrade,
-where a tag written here would be a version this file has to be edited for.
+`--dist loadgroup` is doing real work. Without the groups `tests/conftest.py` assigns, xdist
+distributes individual tests, rebuilds every module's session fixtures on every worker, and
+gives most of the parallelism back. `.github/workflows/ci.yml` runs exactly that line.
 
-The first line is a one-time repair for an install made before v4.2.2, and only for that. The
-distribution used to be called `edullm-platform` while the command was `edullm`, so `uv tool
-list` printed a word nobody types and `uv tool uninstall edullm` answered `not installed` to
-somebody holding the binary. It is `edullm` now, and the two names agree. **Run it before the
-install and not after.** Both entries own the same `edullm` executable, and uv deletes that
-file when it removes the old entry without noticing the new install still needs it, so the
-wrong order leaves `uv tool list` reporting a healthy `edullm` and nothing on the path. If you
-have already done it that way round, re-run the install line. On a machine that never had the
-old name it prints ``error: `edullm-platform` is not installed`` and exits 2, which is the
-expected answer and costs nothing.
+`-m "not slow"` looks like the fast path and is not one; a full parallel run beats it, and
+`MAINTAINING.md` carries the measurements. The `slow` marker means *starts a subprocess*,
+which is a real category and not a proxy for expensive.
 
-`uv tool upgrade` follows the ref the install named, so what it does depends on how the tool got
-here. From the bare URL above it re-resolves the default branch and upgrades. From a release
-note's line, which pins that release's tag, it answers `Nothing to upgrade` and exits 0 however
-far behind the install is. Re-install with `--force`, which is the upgrade for both.
+## Five things that will bite
 
-## The verbs
+**`ruff format` rewrites most of this tree.** Nothing in CI runs it, `ruff check .` is the
+whole of what lint means here, and no configuration makes the formatter a no-op — `line-length
+= 100` already disagrees least. Reformatting is the right end state and the reason to defer it
+is timing: it conflicts with every branch open at the time, so it wants a day when the branch
+list is short, one commit that does nothing else, and `ruff format --check .` added to
+`ci.yml` in that same commit.
 
-| Verb | What it does |
-| --- | --- |
-| `edullm check` | Prices a submission from this working tree and lists every refusal. Reaches no network. Writes a first `.edullm/run.yaml` where a registered repository has none. |
-| `edullm submit` | Runs those checks and then dispatches the submission workflow. |
-| `edullm status` | Names your recent submissions, or describes one run. |
-| `edullm logs` | The last lines one run printed. |
-| `edullm cancel` | Stops one admitted run, with a reason that goes on the record. |
-| `edullm data` | The registered corpora, with size, tokenizer, shard dtype and licence, and which of them a run can actually start. Reaches no network. Name one for the detail. |
-| `edullm add` | Teaches the platform about a repository, dataset, shape, model or person. Produces a configuration pull request. |
-| `edullm ask` | Files one ask for something you need yourself. Produces an issue somebody answers. |
-| `edullm run` | Ships this working tree to a machine of your own and streams the output of the command after a bare `--` back. Ungated, and no run anybody can cite. |
-| `edullm shell` | A terminal on that same machine, or a notebook on it with `--notebook`. |
-| `edullm stop` | Ends the machine those two started, and says what it ran up and where your files are. |
-| `edullm studio` | Opens the Studio space for one `--project` in your browser. Bare, it lists the spaces you have; `--stop` ends compute and keeps the disk. |
-| `edullm console` | Opens the AWS console in your browser, signed in as you. Name a place -- `studio`, `work`, `outputs`, `logs`, `batch` -- to land somewhere other than the front door. |
+**`ruff check .` respects `.gitignore`, and `mypy` does not.** A work-in-progress file listed
+there is never linted by the standard command. Lint it by explicit path while working on it,
+and before the `.gitignore` line comes out rather than after.
 
-Every verb in `BUILT_TODAY` is here and all of them are built. A bare `edullm` prints the list,
-and `edullm <verb> --help` prints what that verb takes.
+**A stale `.mypy_cache` outlives `.venv`.** It records where each module resolved from, so a
+virtualenv built once on the wrong interpreter goes on producing that interpreter's answers.
+It shows up as `boto3` being reported installed-but-untyped. Delete the cache before believing
+a local mypy failure CI does not have. `uv venv --python 3.13 --managed-python` avoids causing
+it.
 
-The last five are the exploration route and they are not the submission path. Nothing they do
-is checked against the registry, priced, approved or written to a lineage record, so what
-comes off them is a thing you saw rather than a result anybody can cite. Reach for `check` and
-`submit` for anything that is meant to count.
+**Contracts and their published schemas travel together.** `uv run python tools/export_schemas.py`
+after changing any contract; the output is byte-reproducible, so a second run should be a
+no-op.
 
-**Studio is where exploration goes, and `edullm run` is what the lane still wins.** The two
-overlapped and Studio won most of the argument: it uses the same instance types, it clones a
-repository, its disk survives, it needs no Session Manager plugin and a notebook on it reads as
-a document. Reproducibility never argued for the lane here, because nobody re-runs a prototype
-and the run somebody cites goes through `submit`. What has no Studio equivalent is `edullm
-run` -- ship a working tree to a GPU, run one command, stream it back, discard the machine --
-and `edullm shell` onto the exact shape you are about to submit to.
+**Recorded digests are a person's decision.** `tools/record_goldens.py` refuses to overwrite a
+drifted digest and `--force` re-records. Read what moved first: a drift that was not intended
+is a regression, and re-recording is the wrong repair. Review the digest diff in the same
+commit as the change that caused it.
 
-**`--project` names the Studio space, so a person has as many spaces as they have projects.**
-The same project resumes the same disk with the files as they were left; a new one makes a new
-space. `edullm studio` with no project lists what you have, because the project name is the only
-way back to a disk and forgetting it would otherwise be permanent. Nothing deletes a space.
+## Reaching AWS from here
 
-**Both browser verbs open the browser themselves, and neither prints a URL unless you ask.**
-`edullm studio` used to print a sign-in URL of several thousand characters and ask somebody to
-carry it into a browser before it expired. That is not a thing that works, and the expiry is a
-ceiling AWS enforces rather than a setting anybody here can raise, so the fix was to make the
-process that mints the credential the process that spends it. Pass `--print-url` for the URL
-instead, which is what a script or a machine with no browser wants; over SSH it happens without
-being asked.
+The `edullm` CLI holds no AWS credential, by design, and that is a fact about the tool rather
+than a rule about this repository. The maintainer scripts are the other half: `tools/` reads
+the account directly, and several checks in the suite depend on what those scripts captured.
 
-**`edullm console` is the only way into the AWS console, because nobody here has a password.**
-The broker issues CLI credentials and nothing else, so federation is the only route that exists.
-It signs in as the caller with exactly their own permissions, grants nobody anything, and its
-session outlives a Studio URL by a wide margin. Use it for looking at a bucket, a log group or a
-bill. It does not replace `edullm studio`: a presigned URL lands inside JupyterLab with the
-person's files open, and the console lands on a page about spaces.
+Captures under `fixtures/evidence/` expire after thirty days so a stale reading cannot pass as
+current, and when they lapse the tests that read them go red on the pull-request path. Nothing
+renews on its own — the remedy is re-running the capture tool with credentials, which for the
+run records costs a read of the account rather than another publish.
 
-**The domain stops an idle app on its own, and `edullm studio --stop` is what stops paying for
-it now.** The idle timeout is a domain setting somebody can change, so the verb reads it and
-prints what it read rather than restating a number; an unattended GPU app already ran here for
-three nights before that setting existed. Do not quote a Studio rate or a timeout from memory or
-from a document, because `edullm studio` reads both and they move.
-
-**`edullm stop` terminates rather than stopping, and that is worth knowing before you type it.**
-The machine's own disk goes with it. The scratch prefix survives, `edullm run` syncs that prefix
-down before your command and back up after it, and a new machine for the same project picks up
-where the old one left off. Stopping instead would leave a machine no verb here can find and
-nothing reclaims, billing its volume for ever. It reaches only a machine tagged with your own
-source identity, and there is deliberately no flag that names an instance id.
-
-## Never pick a corpus off a refusal
-
-`edullm data` is the list. Every other route to it is worse and two of them are actively
-misleading. The `unregistered_dataset` refusal prints names and nothing else, so it cannot
-tell you that some of the names in it reach a container which exits 69 after the machine has
-been paid for. The dropdown on the submission form is names only and needs the Actions UI.
-And a table in a guide is a table somebody typed.
-
-Registered is not runnable, and the gap is not small. A corpus whose tokenizer this platform
-can resolve and the training image cannot build is refused by nothing here: it compiles,
-classifies routine, spends an approval and allocates the machine. `edullm data` is the only
-thing that says so before the money is spent, and `edullm data --json` puts it under
-`verdict` for a script to branch on.
-
-Registering a corpus that does not exist yet is a person's job rather than a command.
-`edullm add dataset` refuses, because the entry pins facts out of the sealed bucket that need
-an AWS role this binary does not hold. File it with `edullm ask --kind dataset-request`.
-
-## Start with `check`, always
-
-`edullm check` reaches no network, queues nothing and costs a fraction of a second. It lists
-every refusal at once rather than one per attempt, so the loop is edit, check, edit, check,
-and only then submit. Submitting to find out what is wrong spends a queue wait and somebody's
-approval to learn what `check` would have said for free.
-
-Two checks are deferred to submit time and `check` names both. They need the container
-registry, which needs a credential this binary does not hold. A clean `check` is not a
-promise that a submission will go through.
-
-## Read the machine-readable form
-
-`edullm check --json` and `edullm status --json` print one JSON document on stdout whatever
-the outcome. Use them. Do not parse the paragraphs, which are written for a person and get
-reworded.
-
-```bash
-edullm check --json --experiment context-length-sweep --dataset regmix-10b-v1
-edullm status --json
-edullm status --json run_019fcf3c-9878
-```
-
-Every document carries `format_version`, `edullm_version` and `verb`. A refusal is a list
-under `refusals`, and every entry is a `code` and a `detail`. **Match on the code.** The
-detail is prose and will change.
-
-`edullm status --json` answers from GitHub and dispatches nothing, so it costs no runner and
-you may call it in a loop. Where the answer has moved into AWS the document says
-`needs_a_dispatch`, and the same verb without `--json` is what pays for that answer.
-
-The other three verbs have no `--json` and are not getting one. What they print is a section
-of a workflow job log, and there is no structure under it.
-
-## Exit codes
-
-Branch on these before you read anything.
-
-| Code | Meaning |
-| --- | --- |
-| 0 | it stands |
-| 1 | refused on the merits, and the refusal codes say why |
-| 2 | the tool could not be driven, by input or by installation |
-| 3 | the platform could not be asked |
-| 130 | interrupted |
-
-3 is the only one worth retrying. 1 means something has to change and retrying it unchanged
-reaches the same place. 2 means the command itself was wrong.
+`tools/verify_the_gate.py` is the one worth knowing by name. It reads the live approval
+environments anonymously and is what stands between this repository being made private and the
+approval gate silently ceasing to exist. `MAINTAINING.md` opens with why.
 
 ## Push a branch when its first commit exists
 
 Not when the work is finished. `git push -u origin HEAD` on a branch nobody has reviewed
-changes nothing on `main`, costs nothing, and is the only artifact another session can find.
-A branch that exists only in a worktree is invisible to everybody, including whoever picks the
+changes nothing on `main`, costs nothing, and is the only artifact another session can find. A
+branch that exists only in a worktree is invisible to everybody, including whoever picks the
 work up tomorrow, which is usually you with none of the context.
 
 The evening of 2026-08-05 produced two cases and both had already cost the time they were
 going to cost by the time anybody noticed. The repository registration tool was reworked,
 finished, left unpushed, and then reworked from scratch hours later by a different session;
 driving both implementations over the same templates produced byte-identical output, and the
-second author had no way to know the first existed. A guard against module rebinding, 524
-lines, sat on one laptop and no remote until it was rebased over eighty-one commits, whereupon
-it went red immediately on a loader written days after the branch was cut, by somebody who had
-read neither the incident nor the file describing it, because that file was in a worktree
-nobody could see.
+second author had no way to know the first existed. A guard against module rebinding sat on one
+laptop and no remote until it was rebased over eighty-one commits, whereupon it went red
+immediately on a loader written days after the branch was cut, by somebody who had read neither
+the incident nor the file describing it, because that file was in a worktree nobody could see.
 
 Push first, keep pushing, and let the branch be the record. A draft pull request is better
 still where the work is going to become one.
 
-## Never do these
+## Numbers live in configuration, not in prose
 
-- Do not call AWS. No `boto3`, no `aws` CLI, no `curl` at an AWS endpoint. The binary is the
-  interface and the workflows hold the credentials.
-- Do not pass `--force` to `submit` to get past a refusal. Every refusal it skips is one
-  admission makes again from inside AWS, so it buys a queue wait rather than an outcome.
-- Do not quote a price, a runtime bound, a cost ceiling or a count of approvers from memory or
-  from a document. Run `edullm check --json` and read it from the output. Those numbers live
-  in reviewed configuration files and change without anybody telling you.
-- Do not edit `.edullm/run.yaml` to make a refusal go away without reading what the refusal
-  says. It usually names the field and the file to change.
-- Do not commit a secret, a credential or a token into a research repository. The image is
-  built from the commit.
+Every ceiling, rate, bound and count that reaches a terminal is interpolated from the loaded
+configuration at the point of printing, and `tests/test_cli_no_hardcoded_bounds.py` fails the
+build when one is written out. The rule is structural because the alternative has already
+failed: the routine runtime bound disagreed between the documents and `config/policy.yaml`
+three separate times, every one of them a second copy that was correct on the day it was
+typed. The same rule reaches the documents an agent reads, through `tests/test_agent_layer.py`.
+
+`uv run edullm check --json` in a research checkout prints those numbers from the loaded
+configuration, which is what a document should point at instead of quoting.
 
 ## Where to go next
 
-- `edullm check --help` for the fields one submission takes.
-- `.cursor/skills/submitting-a-run/` when somebody asks you to run something.
-- `.cursor/skills/registering-a-repository/` when the platform does not carry this codebase.
-- `guides/the-platform.md` for how a person does all of this by hand.
+- [`MAINTAINING.md`](MAINTAINING.md) — the checks, what each one claims, and the evidence.
+- `infra/README.md` — deployed stacks, roles, and the procedures that need a laptop.
+- `src/edullm_platform/cli/main.py` — the verb tables, the exit codes, and why each is what it is.
+- [`skills/edullm-platform/SKILL.md`](skills/edullm-platform/SKILL.md) — what a researcher's
+  agent is told, which is the document to change when the CLI's surface moves.
+- `docs-frank/` — local-only working notes. Gitignored, and it stays that way.

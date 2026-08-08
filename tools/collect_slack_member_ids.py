@@ -68,7 +68,7 @@ something running unattended, it goes in Secrets Manager beside the webhook and 
 repository secret, which ``tests/test_secrets.py`` forbids by name because any branch can read
 one.
 
-Exit codes follow the table in ``AGENTS.md``. 0 it ran, 1 something is ambiguous and no
+Exit codes follow the table in ``MAINTAINING.md``. 0 it ran, 1 something is ambiguous and no
 mapping is emitted, 2 the tool could not be driven, 3 Slack could not be asked.
 """
 

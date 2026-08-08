@@ -1253,9 +1253,9 @@ def test_every_falsified_claim_is_reported_rather_than_the_first(
 ) -> None:
     """One refusal per dispatch is three dispatches to learn three things.
 
-    The caller is a person waiting on a workflow run, and the argument `AGENTS.md` makes
-    about `edullm check` -- list every refusal at once rather than one per attempt -- applies
-    to the tool that opens the pull request too.
+    The caller is a person waiting on a workflow run, and the argument
+    `skills/edullm-platform/SKILL.md` makes about `edullm check` -- list every refusal at once
+    rather than one per attempt -- applies to the tool that opens the pull request too.
     """
     monkeypatch.setattr(
         register_repository,
@@ -1466,13 +1466,18 @@ def test_the_runbook_and_the_skill_both_name_the_variable_nothing_can_read() -> 
 
     Read from both documents in both directions: the step exists, and it says the thing that
     makes it a step rather than a default, which is that nothing inherits it.
+
+    The skill read here is the shipped one. There was a second, local copy under `.cursor/`
+    saying the same thing to an agent working in this checkout, who is a maintainer and never
+    registers anybody else's repository from here; it was deleted, and this now reads the file
+    that actually reaches the person doing the registering.
     """
     runbook = " ".join(
         f"{item.summary} {item.detail}" for item in register_repository.FOLLOW_UPS
     )
     skill = " ".join(
         (
-            PROJECT_ROOT / ".cursor/skills/registering-a-repository/SKILL.md"
+            PROJECT_ROOT / "skills/edullm-platform/SKILL.md"
         ).read_text(encoding="utf-8").split()
     )
 

@@ -861,8 +861,9 @@ def test_the_json_listing_carries_every_space_and_which_are_running(
 ) -> None:
     """Mutation: publish the prose and leave a program to parse it.
 
-    ``AGENTS.md`` tells every agent to read the machine-readable form and match on codes, so a
-    listing that existed only as paragraphs would be one an agent has to scrape.
+    ``skills/edullm-platform/SKILL.md`` tells every agent to read the machine-readable form
+    and match on codes, so a listing that existed only as paragraphs would be one an agent has
+    to scrape.
     """
     runner = a_studio(
         tmp_path,

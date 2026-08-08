@@ -280,7 +280,7 @@ def test_the_two_zone_shaped_codes_are_read_off_what_the_aws_cli_actually_prints
 
     Both strings below were copied off this account on 2026-08-06. The prose after the colon is
     AWS's and gets reworded; the code in the parentheses is the contract, which is the same
-    rule ``AGENTS.md`` puts on this repository's own ``--json``.
+    rule ``skills/edullm-platform/SKILL.md`` puts on this repository's own ``--json``.
     """
     no_capacity = (
         "An error occurred (InsufficientInstanceCapacity) when calling the RunInstances "

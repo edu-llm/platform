@@ -371,7 +371,7 @@ def test_the_denominator_of_every_stage_is_the_same_whatever_the_run_could_reach
     blind = Sources(tree=PROJECT_ROOT)
     seeing = Sources(
         tree=PROJECT_ROOT,
-        on_main=frozenset({"AGENTS.md"}),
+        on_main=frozenset({"skills/edullm-platform/SKILL.md"}),
         collected_tests=frozenset({"tests/test_stages.py"}),
         healthy_stacks=frozenset({"sbsandbox-intern-edullm-phase3-batch"}),
         buckets=frozenset({"edullm-landing"}),

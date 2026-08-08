@@ -1,4 +1,4 @@
-"""The three documents an agent reads, held to the tree they describe.
+"""The documents an agent reads, held to the tree they describe.
 
 **WHY A TEST AT ALL, WHEN THESE ARE PROSE.** system-overview.md's agent layer states the rule
 they are all built on: a skill restating a threshold in prose is wrong within a month and
@@ -11,6 +11,15 @@ transcript in docs-frank/working/terminal-mockups/ types. A document naming a fl
 does not take is `edullm shell --notebook` on a page whose options list held two flags and not
 that one. A document writing out a bound is "any of the nine approvers can release it", which
 was right at one gate by coincidence and wrong by seven at the other.
+
+**THE LAYER IS ONE SKILL NOW, AND THE AUDIENCE IS WHY.** There were three: two under
+`.cursor/` and one shipped. The two local ones were the platform protocol addressed to
+somebody working in this checkout, and nobody working in this checkout is a researcher --
+this repository is the maintainers', who deploy the infrastructure, hold AWS sessions and run
+the boto3 tools that those documents told their reader never to reach for. So they said the
+opposite of what was true here while duplicating, for an audience of nobody, a file that
+already existed for the audience it was written for. They were deleted rather than corrected,
+and every case that was pointed at one now reads the shipped skill.
 """
 
 from __future__ import annotations
@@ -39,35 +48,29 @@ from tests.test_cli_no_hardcoded_bounds import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+#: The always-on rule for this checkout, which is a maintainer's. It describes the tree, the
+#: checks and the habits that have cost somebody an afternoon, and it is held below only to
+#: the binary's vocabulary -- a verb it names has to exist, a flag it names has to be taken,
+#: and a bound the configuration owns may not be written into it.
 AGENTS = PROJECT_ROOT / "AGENTS.md"
-SKILLS = PROJECT_ROOT / ".cursor" / "skills"
 
-SUBMITTING = SKILLS / "submitting-a-run" / "SKILL.md"
-REGISTERING = SKILLS / "registering-a-repository" / "SKILL.md"
-
-#: THE ONE DOCUMENT IN THIS LAYER THAT LEAVES THE REPOSITORY, AND THE DIFFERENCE DECIDES
-#: WHERE IT LIVES. The two above sit under ``.cursor/`` and are loaded by an agent working
-#: on this platform, which is not who the layer was asked for. A researcher's agent works in
-#: OLMo-core or in a codebase of its own, never has this checkout, and so reads neither
-#: ``AGENTS.md`` nor anything under ``.cursor/``. This one is copied into their tree instead,
-#: which is why it is committed outside both and why it may lean on nothing else.
+#: THE ONE DOCUMENT IN THIS LAYER THAT LEAVES THE REPOSITORY, AND THAT IS WHAT IT IS HELD
+#: HARDEST TO. A researcher's agent works in OLMo-core or in a codebase of its own, never has
+#: this checkout, and so reads nothing else here. This is copied into their tree instead,
+#: which is why it is committed outside ``.cursor/`` and why it may lean on nothing else.
 RESEARCHER_SKILL = PROJECT_ROOT / "skills" / "edullm-platform" / "SKILL.md"
 SKILLS_README = PROJECT_ROOT / "skills" / "README.md"
 
 #: Every document in this layer. The shared properties below are parametrized over it, so a
 #: skill added later cannot arrive unheld.
-AGENT_DOCUMENTS: tuple[Path, ...] = (
-    AGENTS,
-    SUBMITTING,
-    REGISTERING,
-    RESEARCHER_SKILL,
-    SKILLS_README,
-)
+AGENT_DOCUMENTS: tuple[Path, ...] = (AGENTS, RESEARCHER_SKILL, SKILLS_README)
 
 #: Every skill in this layer, which is AGENT_DOCUMENTS minus the always-on rule and the page
 #: that says where to put one. Held apart because the frontmatter and the length budget are
-#: properties of a skill and not of a rule.
-SKILL_DOCUMENTS: tuple[Path, ...] = (SUBMITTING, REGISTERING, RESEARCHER_SKILL)
+#: properties of a skill and not of a rule. A tuple of one, and a tuple rather than a bare
+#: path so that a second shipped skill arrives already held.
+SKILL_DOCUMENTS: tuple[Path, ...] = (RESEARCHER_SKILL,)
 
 #: What a SKILL.md body is allowed to run to. The context window is shared with the
 #: conversation, the other skills and the request, so a long skill costs every turn rather
@@ -85,6 +88,12 @@ VERB_MENTION = re.compile(r"(?<![.\w-])edullm\s+([a-z][a-z-]*)")
 
 #: A long flag wherever one of these documents writes it.
 FLAG_MENTION = re.compile(r"(?<![\w-])--[a-z][a-z0-9-]*")
+
+#: A span a reader would copy and run: one inline code span, or one line inside a fence.
+INLINE_SPAN = re.compile(r"`([^`\n]+)`")
+
+#: Where one shell command ends and the next begins inside such a span.
+BETWEEN_COMMANDS = re.compile(r"\|\||&&|[|;]")
 
 #: A sentence claiming something is not built. Every wording the tree has actually used is in
 #: here, which is the only reason to trust it: a pattern written from imagination matches the
@@ -124,6 +133,57 @@ def flags_the_parser_takes() -> set[str]:
     return found
 
 
+def fenced_lines(text: str) -> list[str]:
+    """Every line inside a fenced block, which is what a reader copies rather than reads."""
+    lines: list[str] = []
+    inside = False
+    for line in text.splitlines():
+        if line.startswith("```"):
+            inside = not inside
+            continue
+        if inside:
+            lines.append(line)
+    return lines
+
+
+def flags_of_other_programs(text: str) -> set[str]:
+    """Long options that belong to some command other than the one this layer documents.
+
+    **THESE DOCUMENTS TELL PEOPLE TO RUN THINGS THAT ARE NOT ``edullm``, AND UNTIL AGENTS.md
+    WAS REWRITTEN FOR ITS ACTUAL AUDIENCE THEY BARELY DID.** The shipped skill installs with
+    ``uv`` and sets a variable with ``gh``; the maintainer rule runs ``uv sync --locked``,
+    ``pytest --dist loadgroup`` and ``ruff format --check``. Every one of those is a real
+    instruction a reader follows, and none of them is argparse's to answer for. The case
+    below asks whether a flag written against *this* binary exists, so somebody else's has to
+    come out first or the file's only options are to be wrong or to be useless.
+
+    Subtracted by reading who the command is addressed to rather than by listing the tools,
+    which would be a list that rots the first time a document mentions a fourth one. A span
+    naming ``edullm`` anywhere is kept, so ``uv run edullm check --json`` goes on being
+    checked -- the program is ``uv`` and the flag is this binary's.
+
+    A bare flag in prose -- "Pass ``--experiment``" -- names no program and is kept, which is
+    the half worth stating: it is most of the flags these documents write, and scoping this
+    to fenced blocks or to sentences mentioning the binary would have quietly stopped
+    checking the refusal table, where a stale flag costs the most.
+
+    THE CEILING, SO THAT NOBODY READS THIS AS MORE THAN IT IS: what comes back is a set of
+    names, so a flag excused once in a document is excused everywhere in that document. A
+    document writing ``gh pr create --draft`` and then an invented ``edullm submit --draft``
+    would get away with the second. That is narrow enough to accept and too quiet to leave
+    unwritten.
+    """
+    found: set[str] = set()
+    spans = [*fenced_lines(text), *INLINE_SPAN.findall(text)]
+    for span in spans:
+        for segment in BETWEEN_COMMANDS.split(span):
+            words = segment.split()
+            if not words or words[0].startswith("-") or "edullm" in segment:
+                continue
+            found.update(FLAG_MENTION.findall(segment))
+    return found
+
+
 @pytest.mark.parametrize("document", AGENT_DOCUMENTS, ids=lambda path: path.name)
 def test_the_document_exists_and_is_not_empty(document: Path) -> None:
     """Guards every case below: a missing file makes them all vacuously pass."""
@@ -158,11 +218,39 @@ def test_every_flag_the_document_names_is_a_flag_some_verb_takes(document: Path)
     no flags at all because they live on the subparsers. An agent that reads one out of an
     always-on rule spends a turn discovering that.
     """
-    taken = flags_the_parser_takes()
-    named = set(FLAG_MENTION.findall(document.read_text(encoding="utf-8")))
-    unknown = sorted(named - taken)
+    text = document.read_text(encoding="utf-8")
+    named = set(FLAG_MENTION.findall(text))
+    unknown = sorted(named - flags_the_parser_takes() - flags_of_other_programs(text))
 
     assert not unknown, f"{document.name} names flags no verb takes: {', '.join(unknown)}"
+
+
+def test_another_programs_flag_is_excused_and_this_binarys_invented_one_is_not() -> None:
+    """Guards the subtraction above, which is the half of that case that can rot silently.
+
+    Mutation: excuse every flag inside any code span, rather than only those in a command
+    addressed elsewhere. `edullm check --dry-run` is written in a fence in every transcript
+    in docs-frank/working/terminal-mockups/, so the widest plausible version of this rule is
+    also the one that stops catching the exact mistake the layer has actually made.
+
+    Four spans, and each is a shape that appears in a document above: somebody else's command
+    with its own flag, that same command with this binary's name inside it, a bare flag in
+    prose with no program at all, and an invented flag on this binary.
+    """
+    document = (
+        "Run `uv run pytest -q --dist loadgroup`, then `uv run edullm check --json`.\n"
+        "Pass `--experiment` with a slug, and never `--dry-run`.\n"
+    )
+
+    excused = flags_of_other_programs(document)
+    named = set(FLAG_MENTION.findall(document))
+
+    assert "--dist" in excused, "pytest's own flag is being held against this binary"
+    assert "--json" not in excused, "a span naming edullm is not this binary's to answer for"
+    assert "--experiment" not in excused, "a bare flag in prose names no other program"
+    assert sorted(named - flags_the_parser_takes() - excused) == ["--dry-run"], (
+        "the subtraction no longer leaves an invented flag on this binary visible"
+    )
 
 
 def sentences(text: str) -> list[str]:
@@ -320,8 +408,9 @@ def test_the_document_writes_no_count_the_tree_owns(document: Path) -> None:
     A configuration owns a threshold and the tree owns a count, so `edullm check --json` is
     the wrong place to send a reader for how many verbs there are. What it is right about is
     the shape of the mistake: the document is a copy, the copy is what goes stale, and
-    nothing compares them. AGENTS.md counts the verbs today and is correct today, which is
-    exactly the state every claim in the 2026-08-06 sweep was in when it was written.
+    nothing compares them. The shipped skill tables every verb the binary has and is correct
+    today, which is exactly the state every claim in the 2026-08-06 sweep was in when it was
+    written -- a sentence counting those rows would be the next one.
     """
     text = " ".join(document.read_text(encoding="utf-8").split())
     written = [
@@ -332,45 +421,54 @@ def test_the_document_writes_no_count_the_tree_owns(document: Path) -> None:
     assert not written, point_it_at_the_tree(written, where=document.name)
 
 
-def test_the_rule_names_every_exit_code_the_binary_can_return() -> None:
+def test_the_shipped_skill_names_every_exit_code_the_binary_can_return() -> None:
     """Mutation: document 0, 1 and 2 and leave 3 and 130 out.
 
     An agent branches on the exit code before it reads anything, and 3 is the only one of the
-    five worth retrying. A rule that documented 2 and not 3 would produce exactly the script
+    five worth retrying. A skill that documented 2 and not 3 would produce exactly the script
     main.py's own header says was impossible before 3 existed: retry a typo forever, or never
     retry anything.
     """
-    text = AGENTS.read_text(encoding="utf-8")
+    text = RESEARCHER_SKILL.read_text(encoding="utf-8")
 
     for code in (EXIT_OK, EXIT_REFUSED, EXIT_UNUSABLE, EXIT_UNREACHABLE, EXIT_INTERRUPTED):
         assert re.search(rf"(?<!\d){code}(?!\d)", text), (
-            f"AGENTS.md documents no exit {code}, and every path out of the binary is one "
+            f"the skill documents no exit {code}, and every path out of the binary is one "
             "of the five"
         )
 
 
-def test_the_rule_names_every_built_verb() -> None:
-    """Mutation: describe check and submit and leave the read-only three out.
+def test_the_shipped_skill_names_every_built_verb() -> None:
+    """Mutation: describe check and submit and leave the read-only ones out.
 
-    The rule's whole job is that an agent knows the binary exists and when to reach for it.
+    The skill's whole job is that an agent knows the binary exists and when to reach for it.
     A verb it does not name is a verb an agent writes a shell script for instead, which is
     the sixteen-against-nineteen problem the overview's agent layer describes.
+
+    **THIS MOVED OFF AGENTS.md AND THE MOVE IS THE CORRECTION.** It was asserted against the
+    always-on rule of a repository no researcher has a copy of, so the one document that
+    reached the readers it was written for was the one nothing held. `stop`, `studio` and
+    `console` were in AGENTS.md and in no shipped file, which is how somebody's `edullm run`
+    machine goes unterminated: the verb that ends it was named only where they could not see.
     """
-    text = AGENTS.read_text(encoding="utf-8")
+    text = RESEARCHER_SKILL.read_text(encoding="utf-8")
     missing = sorted(verb for verb in BUILT_TODAY if f"edullm {verb}" not in text)
 
-    assert not missing, f"AGENTS.md names no {', '.join(missing)}"
+    assert not missing, f"the skill names no {', '.join(missing)}"
 
 
-def test_the_rule_says_the_binary_holds_no_aws_credential() -> None:
+def test_the_shipped_skill_says_the_binary_holds_no_aws_credential() -> None:
     """Mutation: drop the sentence, on the grounds that it is not actionable.
 
     It is the most actionable sentence in the file. An agent that does not know this reaches
     for boto3 or the aws CLI the moment edullm refuses something, and for the sixteen who
     hold no AWS role that produces a confusing failure, while for the nineteen who do it
     produces an unrecorded run. Covering that is the whole point of the layer.
+
+    Read against the shipped skill and not against ``AGENTS.md``, which describes a checkout
+    where holding an AWS session is the ordinary case rather than the thing being explained.
     """
-    text = AGENTS.read_text(encoding="utf-8").lower()
+    text = RESEARCHER_SKILL.read_text(encoding="utf-8").lower()
 
     assert "aws" in text
     assert "gh" in text
@@ -570,7 +668,26 @@ def test_some_skill_actually_tabulates_a_code() -> None:
     assert any(codes_the_skill_tabulates(skill) for skill in SKILL_DOCUMENTS)
 
 
-def test_the_registration_skill_writes_the_three_files_the_verb_does_not() -> None:
+def registration_section() -> str:
+    """The part of the shipped skill that registers a repository, and none of the rest.
+
+    Scoped rather than read whole, which is the correction that made the base-image case a
+    check at all. Written as ``"repositories.yaml" in text`` it passed against a document
+    whose procedure had been replaced with "use whatever base the project's own Dockerfile
+    names", because a closing list elsewhere still said the words; the mutation it names was
+    run and did not kill it. An agent follows the steps, so the steps are what has to carry
+    the answer.
+    """
+    text = RESEARCHER_SKILL.read_text(encoding="utf-8")
+    heading = "\n## When the platform does not carry this codebase\n"
+
+    assert heading in text, "the shipped skill no longer tells anybody how to register"
+    section = text.split(heading, 1)[1].split("\n## ", 1)[0]
+    assert section.strip(), "the registration section is empty"
+    return section
+
+
+def test_the_registration_procedure_writes_the_three_files_the_verb_does_not() -> None:
     """Mutation: describe `edullm add repository` and stop there.
 
     THE SPLIT IS THE WHOLE DESIGN AND IT IS EASY TO MISS. tools/register_repository.py edits
@@ -587,18 +704,18 @@ def test_the_registration_skill_writes_the_three_files_the_verb_does_not() -> No
     describable without an instance, and whether any repository is currently in it is a
     question tools/verify_registered_dockerfiles.py answers every morning.
     """
-    text = REGISTERING.read_text(encoding="utf-8")
+    section = registration_section()
 
     for artifact in (".edullm/Dockerfile", ".edullm/run.yaml"):
-        assert artifact in text, f"the registration skill never writes {artifact}"
-    assert "workflow" in text
+        assert artifact in section, f"the registration procedure never writes {artifact}"
+    assert "workflow" in section
     # The fourth thing, added 2026-08-06. It is not a file, which is why it was missed by a
     # list of files and why a repository could satisfy every assertion above and still publish
     # nothing.
-    assert "AWS_ECR_PUBLISHER_ROLE_ARN" in text
+    assert "AWS_ECR_PUBLISHER_ROLE_ARN" in section
 
 
-def test_the_registration_skill_resolves_against_the_approved_base_images() -> None:
+def test_the_registration_procedure_resolves_against_the_approved_base_images() -> None:
     """Mutation: tell the agent to write whatever base image the project happens to use.
 
     system-overview.md's agent layer states the one question a reviewer answers: the skill
@@ -606,22 +723,14 @@ def test_the_registration_skill_resolves_against_the_approved_base_images() -> N
     either picks the closest or names the pin forcing a new one. A second base is a second
     thing to review, scan and re-pin, and the skill choosing one silently is how that
     happens without anybody deciding it.
-
-    **READ OF THE PROCEDURE AND NOT OF THE WHOLE FILE, WHICH IS THE CORRECTION THAT MADE THIS
-    A CHECK AT ALL.** Written as `"repositories.yaml" in text` it passed against a skill whose
-    step 2 had been replaced with "use whatever base the project's own Dockerfile names",
-    because the closing Never list still said the words. The mutation it names was run and did
-    not kill it. An agent follows the steps, so the steps are what has to carry the answer.
     """
-    text = REGISTERING.read_text(encoding="utf-8")
-    procedure = text.split("\n## Never", 1)[0]
+    section = registration_section()
 
-    assert procedure != text, "the skill has no Never section, so this is reading the lot"
-    assert "repositories.yaml" in procedure, (
+    assert "repositories.yaml" in section, (
         "the step that resolves the base image does not send the reader to the registry of "
-        "approved ones, so a Never list saying it does is the only thing left saying it"
+        "approved ones"
     )
-    assert "base image" in procedure.lower()
+    assert "base image" in section.lower()
 
 
 # ---------------------------------------------------------------------------------------
@@ -638,19 +747,6 @@ def test_the_registration_skill_resolves_against_the_approved_base_images() -> N
 
 def researcher_skill() -> str:
     return RESEARCHER_SKILL.read_text(encoding="utf-8")
-
-
-def fenced_lines(text: str) -> list[str]:
-    """Every line inside a fenced block, which is what a reader copies rather than reads."""
-    lines: list[str] = []
-    inside = False
-    for line in text.splitlines():
-        if line.startswith("```"):
-            inside = not inside
-            continue
-        if inside:
-            lines.append(line)
-    return lines
 
 
 def first_column_under(header: str, *, text: str) -> set[str]:
