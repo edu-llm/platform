@@ -172,6 +172,24 @@ def test_a_name_that_matches_nothing_says_what_is_actually_there() -> None:
     assert "shared-experts-a" in refused.value.reason
 
 
+def test_a_run_spanning_the_fleet_is_named_once_in_that_list() -> None:
+    """A distributed run has a log on every node it used, so an unfiltered search finds one
+    candidate per machine. Listing them all makes a single 64-rank run read as eight different
+    runs that happen to share a name -- to the one reader who is here because they cannot list
+    the bucket themselves."""
+    found = read_candidates(
+        [
+            candidate(node, "final-model", modified=f"2026-08-09T09:0{node}:00Z")
+            for node in (1, 2, 3)
+        ]
+    )
+
+    with pytest.raises(AmbiguousRunError) as refused:
+        choose_run(found, run="fnal-model")
+
+    assert "are final-model." in refused.value.reason
+
+
 def test_a_prefix_with_no_runs_under_it_refuses_rather_than_returning_nothing() -> None:
     with pytest.raises(AmbiguousRunError) as refused:
         choose_run(())

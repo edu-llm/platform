@@ -209,9 +209,13 @@ def choose_run(candidates: Sequence[RunLog], *, run: str | None = None) -> RunLo
         return candidates[0]
     matching = [found for found in candidates if found.run == run]
     if not matching:
+        # Distinct names rather than one per candidate. A search that spans the fleet has one
+        # candidate per node, so a run on two machines is listed twice -- and a reader looking
+        # for their typo reads that as two different runs sharing a name, which is the thing
+        # the refusal below this one exists to tell them about and is not what happened.
         raise AmbiguousRunError(
             f"no_such_run:{run}. The runs with a log here are "
-            f"{', '.join(sorted(found.run for found in candidates))}."
+            f"{', '.join(sorted({found.run for found in candidates}))}."
         )
     if len(matching) > 1:
         # In node order rather than in the newest-first order the candidates arrive in, because
