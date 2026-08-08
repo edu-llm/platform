@@ -1,0 +1,974 @@
+name: "Block: launch the fleet"
+
+# The one dispatch that spends a capacity block, run once by whoever bought it, on the morning
+# the window opens.
+#
+# WHY THERE IS NO AWS BATCH ANYWHERE IN THIS FILE. Everything else this repository does with a
+# capacity block goes through `infra/batch-capacity-block.yaml`: a launch template, a
+# single-zone compute environment and a queue. That shape is right when the platform is
+# scheduling work onto the block. It is the wrong shape for this one. The block is eight
+# machines in a region that carries no platform infrastructure at all -- no compute
+# environment, no queue, no job definition, no ECR repository, no admission validator -- and
+# what is being coordinated is eight people on a shared sheet rather than a work queue. A
+# scheduler over eight statically allocated nodes adds a component that can fail, inside a
+# window that cannot be extended, to solve an allocation problem the sheet already solves.
+#
+# So the fleet comes up once, stays up for the whole window, and a researcher is given a node.
+#
+# THE ONE FAILURE THIS FILE EXISTS TO CATCH, AND IT IS SILENT IN EVERY DIRECTION.
+#
+# A capacity block is a *targeted* reservation. Nothing draws from it unless the launch names
+# it: `--instance-market-options MarketType=capacity-block` and a `CapacityReservationTarget`
+# carrying the reservation id. A `run-instances` missing either of them does not fail. It
+# succeeds, and what it starts is an ordinary on-demand `p5.48xlarge` at roughly $55 an hour,
+# running beside a block that has already been paid for in full and is sitting idle. There is
+# no refusal, no warning and no field anywhere that reads differently -- until the bill, weeks
+# later, by which time the block has expired and the money is gone twice.
+#
+# That is why the verification step below is not a formality. Every instance is read back out
+# of `describe-instances` and asked which reservation it says it is drawing from, and if any
+# one of them answers anything other than the expected id the *whole fleet* is terminated. Not
+# the wrong ones: all of them. An instance that came up right beside seven that came up wrong
+# is evidence that the launch path is broken rather than evidence that it works, and
+# terminating a correctly reserved instance costs nothing -- the capacity returns to the
+# reservation and can be launched into again a minute later.
+#
+# NO CLUSTER PLACEMENT GROUP, AND THIS IS THE INSTRUCTION MOST LIKELY TO BE "CORRECTED".
+# Every piece of AWS guidance about multi-node GPU training says to put the instances in a
+# cluster placement group, and for on-demand capacity that is right. Capacity block instances
+# are already delivered into an UltraCluster with the network locality a placement group is
+# asking for, and adding one on top makes the launch a request EC2 has to satisfy inside a
+# group it did not reserve against -- which comes back as `InsufficientInstanceCapacity`
+# against a reservation already paid for and being looked straight at. There is no placement
+# group argument below and there must not be one.
+#
+# THE ROLE THIS ASSUMES DOES NOT EXIST UNTIL SOMEBODY APPLIES IT FROM A LAPTOP, AND THIS FILE
+# HAS TO BE ON `main` FIRST. `infra/iam/block-fleet-roles.yaml` pins `job_workflow_ref` to this
+# path at `refs/heads/main`, which is what every OIDC role in this account does. Merge, apply,
+# then dispatch. A dispatch from a branch is refused at AssumeRole and the message talks about
+# a subject claim rather than about the branch somebody is standing on.
+
+on:
+  workflow_dispatch:
+    inputs:
+      reservation_id:
+        description: "The cr- id of the purchased block, read off the EC2 console row whose reservation type is capacity-block."
+        required: true
+        type: string
+      instance_type:
+        description: "The instance type the block was purchased for, exactly as the reservation spells it."
+        required: true
+        default: p5.48xlarge
+        type: string
+      availability_zone:
+        description: "The single zone the block was delivered into. A block lives in one zone and there is no multi-zone one."
+        required: true
+        default: us-east-2a
+        type: string
+      instance_count:
+        description: "The size of the fleet. Re-running launches only the shortfall, so this is not the number to add."
+        required: true
+        default: "8"
+        type: string
+      image_tag:
+        description: "The tag of the OLMo-core image in the us-east-1 registry that every node pre-pulls. Checked before anything launches."
+        required: true
+        type: string
+      subnet_id:
+        description: "Optional. Left empty, the default subnet for the block zone is resolved and the launch refuses if that is ambiguous."
+        required: false
+        default: ""
+        type: string
+      ami_id:
+        description: "Optional. Left empty, the current Deep Learning Base OSS NVIDIA driver AMI is resolved from Amazon's own SSM parameter."
+        required: false
+        default: ""
+        type: string
+      efa_interfaces:
+        description: "Optional. Left empty, every EFA interface the instance type reports. Set 0 only to fall back to one ordinary interface and no fabric, which is the escape hatch if the launch below is refused."
+        required: false
+        default: ""
+        type: string
+      region:
+        description: "Where the block was bought. This lane exists because it is not the region the platform lives in."
+        required: true
+        default: us-east-2
+        type: string
+      outputs_bucket:
+        description: "Checkpoints and synced logs. Must match the OutputsBucket the block fleet IAM stack was applied with."
+        required: true
+        default: edullm-block-outputs-us-east-2
+        type: string
+      data_bucket:
+        description: "The corpus mirror the nodes read."
+        required: true
+        default: edullm-data-us-east-2
+        type: string
+
+permissions:
+  contents: read
+
+# One group for the whole lane, shared with `block-run.yml`, and not cancel-in-progress. Two
+# launches racing would each read the other half-built fleet as the shortfall and bring up
+# sixteen machines against a reservation for eight; and a launch cancelled midway leaves
+# instances nothing has verified, which is the state this file exists never to be in.
+concurrency:
+  group: capacity-block-fleet
+  cancel-in-progress: false
+
+jobs:
+  launch:
+    name: Launch the fleet and prove it is drawing from the block
+    runs-on: ubuntu-latest
+    # Generous, and it is the image pull that spends it. Every node pulls the training image
+    # once at boot so that no researcher pays for it later, and a cold cross-region pull of a
+    # CUDA image is minutes rather than seconds.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RESERVATION_ID: ${{ inputs.reservation_id }}
+      INSTANCE_TYPE: ${{ inputs.instance_type }}
+      AVAILABILITY_ZONE: ${{ inputs.availability_zone }}
+      INSTANCE_COUNT: ${{ inputs.instance_count }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      SUBNET_INPUT: ${{ inputs.subnet_id }}
+      AMI_INPUT: ${{ inputs.ami_id }}
+      EFA_INPUT: ${{ inputs.efa_interfaces }}
+      BLOCK_REGION: ${{ inputs.region }}
+      OUTPUTS_BUCKET: ${{ inputs.outputs_bucket }}
+      DATA_BUCKET: ${{ inputs.data_bucket }}
+      # The registry is in the region the platform lives in and the fleet is not. ECR
+      # authorisation is per-region, so this is a real parameter rather than a second spelling
+      # of BLOCK_REGION, and getting it wrong presents as "no basic auth credentials" against a
+      # repository that plainly exists.
+      IMAGE_REGION: us-east-1
+      IMAGE_REPOSITORY: sbsandbox-intern-edullm-olmo-core
+      INSTANCE_PROFILE: sbsandbox-intern-edullm-block-node
+      WANDB_SECRET_ID: sbsandbox-intern-edullm-wandb-api-key
+      LOG_SYNC_SECONDS: "60"
+      # 500 GiB against the AMI default of 75. `infra/batch-compute-gpu-shapes.yaml` measured
+      # what a small root costs on a P-family host: a corpus that did not fit and three jobs
+      # that inherited each other's leftovers. Here the training image lands on it as well.
+      ROOT_VOLUME_GIB: "500"
+    steps:
+      # WHO MAY SPEND A CAPACITY BLOCK, ENUMERATED RATHER THAN MATCHED. The same control the
+      # three deploy workflows carry and the reasoning is theirs, with one difference worth
+      # stating: those guard a stack reconciliation, and this guards eight machines at four
+      # figures a day against a purchase that cannot be refunded.
+      #
+      # It fails rather than skipping, for their reason: a job-level `if` that evaluates false
+      # reports as skipped, which renders beside a tick and tells the person who pressed the
+      # button nothing at all.
+      #
+      # `block-run.yml` deliberately carries no such guard. Roughly fifteen of the thirty-five
+      # people here hold no AWS role, and that workflow existing for them is the whole reason
+      # this lane is workflow-shaped.
+      - name: Refuse a hand-started launch from somebody who may not make one
+        env:
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          case "${ACTOR}" in
+            philote-dev|BritishAmericqn) ;;
+            *)
+              echo "block_launch_not_authorized:${ACTOR}" >&2
+              echo "Starting a capacity block fleet is limited to the repository admins." >&2
+              echo "Ask in the channel: the block is one purchase and the fleet comes up once." >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # THE PACKAGE IS INSTALLED BECAUSE THE VERIFICATION BELOW IMPORTS IT, AND THAT IS THE
+      # POINT. `edullm_platform.block_fleet` decides whether every instance is drawing from the
+      # reservation, and that decision is held by `tests/test_block_fleet.py` rather than by a
+      # reviewer reading twenty lines of inline Python once. The mutation that matters --
+      # accepting any non-null reservation id rather than the expected one -- reads as correct
+      # in a diff and fails a test.
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install the platform library
+        run: |
+          set -euo pipefail
+          uv sync --locked
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_BLOCK_FLEET_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+          role-duration-seconds: 3600
+          # The registry host in the user-data below carries the account id, so without this
+          # every node bootstrap printed into a public log would carry it too.
+          mask-aws-account-id: true
+
+      # EVERY REFUSAL THAT CAN HAPPEN BEFORE A MACHINE STARTS, HAPPENS HERE.
+      #
+      # The reservation has to be `active` rather than `scheduled` or `payment-pending`.
+      # Launching into a block that has not opened does not draw from it -- the capacity is not
+      # yours yet -- so what comes up is either nothing or, worse, an on-demand machine.
+      # `payment-failed` means the block was released and the id names something that will
+      # never exist.
+      #
+      # The type, the zone and the count are checked against the reservation rather than taken
+      # from the dispatch form, because all four fields are typed by a person reading a console
+      # at six in the morning, and a disagreement between the form and the purchase is the one
+      # class of mistake that is free to catch here and expensive everywhere else.
+      - name: Refuse a reservation that is not open for business
+        run: |
+          set -euo pipefail
+          reservation_json="${RUNNER_TEMP}/reservation.json"
+
+          aws ec2 describe-capacity-reservations \
+            --capacity-reservation-ids "${RESERVATION_ID}" \
+            --region "${BLOCK_REGION}" \
+            --output json > "${reservation_json}"
+
+          uv run python - "${reservation_json}" <<'PY'
+          import json
+          import os
+          import sys
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          from edullm_platform.block_drain import DRAIN_FROM_MINUTES, RECLAIM_MARGIN_MINUTES
+
+          temporary = Path(os.environ["RUNNER_TEMP"])
+          reservation = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          rows = reservation.get("CapacityReservations") or []
+          if len(rows) != 1:
+              raise SystemExit(f"the reservation id matched {len(rows)} reservations")
+          row = rows[0]
+          wanted = int(os.environ["INSTANCE_COUNT"])
+
+          print(json.dumps({
+              "reservation": row.get("CapacityReservationId"),
+              "state": row.get("State"),
+              "instance_type": row.get("InstanceType"),
+              "zone": row.get("AvailabilityZone"),
+              "total": row.get("TotalInstanceCount"),
+              "available": row.get("AvailableInstanceCount"),
+              "ends_at": str(row.get("EndDate")),
+          }, indent=2, sort_keys=True))
+
+          refusals = []
+          if row.get("ReservationType") != "capacity-block":
+              refusals.append(
+                  f"reservation_is_not_a_capacity_block:{row.get('ReservationType')!r}. An "
+                  "ordinary on-demand capacity reservation bills by the hour it is held, and "
+                  "this whole lane is written for the prepaid kind."
+              )
+          if row.get("State") != "active":
+              refusals.append(
+                  f"reservation_is_not_active:{row.get('State')!r}. Launching into a block "
+                  "that has not opened does not draw from it, and what comes up instead is an "
+                  "on-demand machine at full rate beside a block already paid for."
+              )
+          if row.get("InstanceType") != os.environ["INSTANCE_TYPE"]:
+              refusals.append(
+                  f"instance_type_disagrees:{row.get('InstanceType')!r} on the reservation "
+                  f"against {os.environ['INSTANCE_TYPE']!r} on the form"
+              )
+          if row.get("AvailabilityZone") != os.environ["AVAILABILITY_ZONE"]:
+              refusals.append(
+                  f"zone_disagrees:{row.get('AvailabilityZone')!r} on the reservation against "
+                  f"{os.environ['AVAILABILITY_ZONE']!r} on the form"
+              )
+          # The total rather than the available count, so that a re-run after a partial launch
+          # is not refused for the instances it has already started. A form asking for more
+          # machines than were ever bought is a typo rather than a fleet half way up.
+          if int(row.get("TotalInstanceCount", 0)) < wanted:
+              refusals.append(
+                  f"block_is_smaller_than_the_fleet:{row.get('TotalInstanceCount')} bought "
+                  f"against {wanted} asked for"
+              )
+
+          if refusals:
+              raise SystemExit("\n".join(refusals))
+
+          # THE DEADLINE, READ OFF THE PURCHASE AND CARRIED ONTO EVERY NODE.
+          #
+          # `infra/block-node-bootstrap.sh` installs a timer that flushes /scratch to S3 before
+          # AWS reclaims the machine, and the one thing that timer cannot work out for itself
+          # is when that is. Reading it here means no node holds a grant to ask, no date is
+          # written into a file that a second block would inherit, and a fleet relaunched into
+          # a different reservation gets that reservation's deadline rather than this one's.
+          #
+          # Refused rather than defaulted when it is absent, because a capacity block always
+          # carries one -- an EndDate that is not there means this is not the kind of
+          # reservation the whole lane is written for, and a drain with a guessed deadline is
+          # worse than no drain, since it reads as protection.
+          ends_at = row.get("EndDate")
+          if not ends_at:
+              raise SystemExit(
+                  "reservation_carries_no_end_date. A capacity block has one, and the nodes "
+                  "flush themselves against it. Without it nothing on /scratch is saved."
+              )
+          moment = datetime.fromisoformat(str(ends_at)).astimezone(UTC)
+          (temporary / "ends-at.txt").write_text(
+              moment.strftime("%Y-%m-%dT%H:%M:%SZ") + "\n", encoding="utf-8"
+          )
+          # Written out of the library rather than typed here, so that the reclaim margin and
+          # the point the drain starts are decided in one file that a test reads and are only
+          # ever transcribed onto the machines.
+          (temporary / "reclaim-minutes.txt").write_text(
+              f"{RECLAIM_MARGIN_MINUTES}\n", encoding="utf-8"
+          )
+          (temporary / "drain-from-minutes.txt").write_text(
+              f"{DRAIN_FROM_MINUTES}\n", encoding="utf-8"
+          )
+          print("RESERVATION_IS_ACTIVE_AND_MATCHES_THE_FORM")
+          PY
+
+      # THE FACTS THE LAUNCH NEEDS AND NOBODY SHOULD HAVE TO TYPE.
+      #
+      # The AMI moves -- Amazon republishes the parameter -- so resolving it keeps a fleet on a
+      # current driver without anybody editing a file. The card count comes from the instance
+      # type rather than from a literal eight, so the bootstrap refuses on the right number for
+      # whatever shape a later block is bought on. The root device name comes from the image,
+      # because a block device mapping naming a device the image does not use adds a second
+      # volume and leaves the root at its default 75 GiB.
+      #
+      # AND THE NETWORK INTERFACES, WHICH ARE NEW AND ARE WHY THIS STEP ALSO READS A SECURITY
+      # GROUP. The launch below names its interfaces so that each node gets EFA devices, and an
+      # EFA device is worth nothing without a group admitting all traffic to and from itself:
+      # the devices attach, the plugin loads, the packets are dropped and NCCL falls back to
+      # sockets with nothing anywhere reporting a problem. That group used to attach implicitly,
+      # because a launch naming no group at all gets the VPC default; naming interfaces means
+      # naming the group on each one, so it is resolved here and refused on here.
+      - name: Resolve the image, the subnet, the security group, the cards and the root device
+        run: |
+          set -euo pipefail
+          ami_file="${RUNNER_TEMP}/ami-id.txt"
+          image_json="${RUNNER_TEMP}/ami.json"
+          subnet_json="${RUNNER_TEMP}/subnet.json"
+          type_json="${RUNNER_TEMP}/instance-type.json"
+          groups_json="${RUNNER_TEMP}/security-groups.json"
+
+          aws sts get-caller-identity \
+            --query Account \
+            --output text > "${RUNNER_TEMP}/account-id.txt"
+
+          if [ -n "${AMI_INPUT}" ]; then
+            printf '%s\n' "${AMI_INPUT}" > "${ami_file}"
+          else
+            aws ssm get-parameter \
+              --name /aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id \
+              --region "${BLOCK_REGION}" \
+              --query Parameter.Value \
+              --output text > "${ami_file}"
+          fi
+          read -r resolved_ami < "${ami_file}"
+
+          aws ec2 describe-images \
+            --image-ids "${resolved_ami}" \
+            --region "${BLOCK_REGION}" \
+            --output json > "${image_json}"
+
+          if [ -n "${SUBNET_INPUT}" ]; then
+            aws ec2 describe-subnets \
+              --subnet-ids "${SUBNET_INPUT}" \
+              --region "${BLOCK_REGION}" \
+              --output json > "${subnet_json}"
+          else
+            aws ec2 describe-subnets \
+              --filters "Name=availability-zone,Values=${AVAILABILITY_ZONE}" "Name=default-for-az,Values=true" \
+              --region "${BLOCK_REGION}" \
+              --output json > "${subnet_json}"
+          fi
+
+          aws ec2 describe-instance-types \
+            --instance-types "${INSTANCE_TYPE}" \
+            --region "${BLOCK_REGION}" \
+            --output json > "${type_json}"
+
+          # Every default group in the region rather than the one in the VPC of the subnet,
+          # because that VPC id is inside the JSON above and reading it out here would mean a
+          # second parser in shell. The Python below picks the row whose VPC matches.
+          aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=default" \
+            --region "${BLOCK_REGION}" \
+            --output json > "${groups_json}"
+
+          # THE IMAGE IS CHECKED BEFORE ANYTHING LAUNCHES AND THAT ORDER IS THE POINT. A tag
+          # that is not in the registry is otherwise discovered by eight machines at once, ten
+          # minutes into a boot, as a failed pull in a log nobody is watching. Here it is a
+          # refusal that costs nothing.
+          aws ecr describe-images \
+            --repository-name "${IMAGE_REPOSITORY}" \
+            --image-ids "imageTag=${IMAGE_TAG}" \
+            --region "${IMAGE_REGION}" \
+            --output json > "${RUNNER_TEMP}/training-image.json"
+
+          uv run python - "${image_json}" "${subnet_json}" "${type_json}" "${groups_json}" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          from edullm_platform.block_fleet import admits_its_own_members, interface_plan
+
+          temporary = Path(os.environ["RUNNER_TEMP"])
+          image, subnets, types, groups = (
+              json.loads(Path(argument).read_text(encoding="utf-8")) for argument in sys.argv[1:]
+          )
+
+          found = image.get("Images") or []
+          if len(found) != 1 or found[0].get("State") != "available":
+              raise SystemExit("the AMI is not one available image")
+          root_device = found[0].get("RootDeviceName")
+          if not root_device:
+              raise SystemExit("the AMI reports no root device name")
+
+          rows = subnets.get("Subnets") or []
+          if len(rows) != 1:
+              raise SystemExit(
+                  f"{len(rows)} subnets matched. Pass subnet_id rather than leaving it empty: "
+                  "a block is one zone and this must not pick between candidates."
+              )
+          subnet = rows[0]
+          if subnet.get("AvailabilityZone") != os.environ["AVAILABILITY_ZONE"]:
+              raise SystemExit(
+                  f"the subnet is in {subnet.get('AvailabilityZone')} and the block is in "
+                  f"{os.environ['AVAILABILITY_ZONE']}. A targeted reservation is confined to "
+                  "its own zone, so this launch would be refused rather than misplaced."
+              )
+          # REFUSED RATHER THAN WARNED, BECAUSE OF WHAT IT PRODUCES. Nothing reaches these
+          # machines except Systems Manager, and the agent gets out through the instance's own
+          # outbound connection. A subnet that assigns no public address, in a VPC with no
+          # interface endpoints, is eight machines that boot, bill for the window and never
+          # answer a command -- and there is no way from here to tell that VPC from one that
+          # has the endpoints. If a private subnet is genuinely wanted, the endpoints go in
+          # first and this check comes out in the same change.
+          if not subnet.get("MapPublicIpOnLaunch"):
+              raise SystemExit(
+                  f"{subnet['SubnetId']} assigns no public address on launch, so the Systems "
+                  "Manager agent has no route out and nothing can reach these nodes."
+              )
+
+          shapes = types.get("InstanceTypes") or []
+          if len(shapes) != 1:
+              raise SystemExit("the instance type matched no shape")
+          devices = (shapes[0].get("GpuInfo") or {}).get("Gpus") or []
+          cards = sum(int(device.get("Count", 0)) for device in devices)
+          if cards < 1:
+              raise SystemExit(
+                  f"EC2 reports no GPUs on {shapes[0].get('InstanceType')}, which is not a "
+                  "shape this lane has anything to do with"
+              )
+
+          # THE GROUP EFA TRAFFIC IS MATCHED ON, AND IT IS REFUSED ON RATHER THAN CREATED.
+          #
+          # Creating one would be this workflow's first mutating call that is not a machine, on
+          # a path that runs once and is not rehearsed, and it would need a grant this role does
+          # not hold. A default group missing the self-referencing rule is also not a normal
+          # state -- AWS ships every default VPC group with it -- so its absence says somebody
+          # narrowed the group deliberately, and quietly widening it again from a workflow is
+          # the wrong answer to that.
+          default_group = next(
+              (
+                  group
+                  for group in groups.get("SecurityGroups") or []
+                  if group.get("VpcId") == subnet.get("VpcId")
+              ),
+              None,
+          )
+          if default_group is None:
+              raise SystemExit(
+                  f"no default security group in {subnet.get('VpcId')}, and the launch has to "
+                  "name a group on every interface it asks for"
+              )
+          group_id = default_group["GroupId"]
+          if not admits_its_own_members(groups, group_id=group_id):
+              raise SystemExit(
+                  f"{group_id} does not allow all traffic to and from itself, which is what EFA "
+                  "requires. Attached anyway, every device would come up and every packet "
+                  "between nodes would be dropped -- NCCL falls back to sockets and reports "
+                  "nothing. Add the self-referencing all-traffic rule, or dispatch with "
+                  "efa_interfaces=0 to launch without the fabric."
+              )
+
+          # BUILT FROM WHAT EC2 SAID ABOUT THE SHAPE, NEVER FROM A NUMBER TYPED HERE. See
+          # `edullm_platform.block_fleet.interface_plan`: a p5.48xlarge carries thirty-two
+          # network cards and one EFA on each, a p6-b200 carries eight, and an interface list
+          # that disagrees with the shape is a launch EC2 refuses on the morning of the window.
+          wanted = int(os.environ["EFA_INPUT"]) if os.environ["EFA_INPUT"].strip() else None
+          plan = interface_plan(
+              types, subnet_id=subnet["SubnetId"], security_group_id=group_id, efa_wanted=wanted
+          )
+
+          (temporary / "subnet-id.txt").write_text(subnet["SubnetId"] + "\n", encoding="utf-8")
+          (temporary / "root-device.txt").write_text(root_device + "\n", encoding="utf-8")
+          (temporary / "gpu-count.txt").write_text(f"{cards}\n", encoding="utf-8")
+          (temporary / "efa-expected.txt").write_text(f"{plan.efa}\n", encoding="utf-8")
+          (temporary / "network-interfaces.txt").write_text(
+              "".join(f"{argument}\n" for argument in plan.arguments), encoding="utf-8"
+          )
+          print(json.dumps({
+              "subnet": subnet["SubnetId"],
+              "zone": subnet["AvailabilityZone"],
+              "root_device": root_device,
+              "gpus_per_node": cards,
+              "security_group": group_id,
+              "network_interfaces": len(plan.arguments),
+              "efa_interfaces": plan.efa,
+          }, indent=2, sort_keys=True))
+          # Printed in full rather than summarised. This is the argument nobody can check after
+          # the fact and the one a reader will want in front of them when a launch is refused.
+          print("")
+          print("\n".join(plan.arguments))
+          PY
+
+      # THE LAUNCH, ONE CALL PER NODE AND ONLY FOR THE NODES THAT ARE MISSING.
+      #
+      # WHY THE SHORTFALL RATHER THAN THE WHOLE FLEET. This is the one dispatch of the weekend
+      # anybody would re-run, and every reason to re-run it is partial: a launch that failed on
+      # the sixth machine, a node terminated because it came up wrong, a bootstrap somebody
+      # wants to redo. Reading what is already tagged and launching the gaps makes all of those
+      # one button rather than an argument about what state the account is in.
+      #
+      # WHY ONE `run-instances` PER NODE RATHER THAN `--count 8`. The node number is in the tags
+      # and in the user-data, and both have to be right per machine. `--count 8` gives one tag
+      # block and one user-data blob for all of them, so the numbering would have to be a second
+      # pass over instances that are already booting -- a window in which a node is up,
+      # unnumbered, and invisible to `block-run.yml`. Eight calls also fail individually, which
+      # is what makes the shortfall re-run above mean anything.
+      - name: Launch the nodes that are not already up
+        run: |
+          set -euo pipefail
+          read -r ami < "${RUNNER_TEMP}/ami-id.txt"
+          read -r root_device < "${RUNNER_TEMP}/root-device.txt"
+          read -r gpus < "${RUNNER_TEMP}/gpu-count.txt"
+          read -r account < "${RUNNER_TEMP}/account-id.txt"
+          read -r ends_at < "${RUNNER_TEMP}/ends-at.txt"
+          read -r reclaim_minutes < "${RUNNER_TEMP}/reclaim-minutes.txt"
+          read -r drain_from_minutes < "${RUNNER_TEMP}/drain-from-minutes.txt"
+          registry="${account}.dkr.ecr.${IMAGE_REGION}.amazonaws.com"
+
+          # An array rather than thirty-three arguments inlined, because on this shape that is a
+          # line no reviewer would read. What is in it is printed in full by the step above.
+          #
+          # Word splitting rather than mapfile, for the reason `cancel-run.yml` records against
+          # the same choice: mapfile wants bash 4.2 and the bash macOS ships is 3.2, so a body
+          # using it is one the test suite cannot execute -- and this is the body least worth
+          # leaving unexecuted. No interface argument carries whitespace, so the split is exact
+          # rather than merely convenient.
+          # shellcheck disable=SC2207
+          interfaces=($(cat "${RUNNER_TEMP}/network-interfaces.txt"))
+
+          aws ec2 describe-instances \
+            --region "${BLOCK_REGION}" \
+            --filters "Name=tag:edullm:block,Values=${RESERVATION_ID}" "Name=instance-state-name,Values=pending,running" \
+            --output json > "${RUNNER_TEMP}/existing.json"
+
+          uv run python - "${RUNNER_TEMP}/existing.json" "${RUNNER_TEMP}/missing-nodes.txt" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          from edullm_platform.block_fleet import read_fleet
+
+          fleet = read_fleet(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")))
+          held = {node.node for node in fleet if node.node is not None}
+          missing = [
+              number
+              for number in range(1, int(os.environ["INSTANCE_COUNT"]) + 1)
+              if number not in held
+          ]
+          Path(sys.argv[2]).write_text(
+              "".join(f"{number}\n" for number in missing), encoding="utf-8"
+          )
+          print(f"already up: {sorted(held) or 'none'}")
+          print(f"to launch:  {missing or 'none'}")
+          PY
+
+          while read -r node; do
+            user_data="${RUNNER_TEMP}/user-data-${node}.sh"
+            # The settings the bootstrap reads, printed above it, and then the file itself
+            # concatenated after them -- which is what keeps `infra/block-node-bootstrap.sh` a
+            # script a reader and `bash -n` can each take on their own. Its own shebang halfway
+            # down the result is a comment.
+            {
+              printf '#!/bin/bash\n'
+              printf 'EDULLM_BLOCK_RESERVATION=%s\n' "${RESERVATION_ID}"
+              printf 'EDULLM_BLOCK_NODE=%s\n' "${node}"
+              printf 'EDULLM_BLOCK_OUTPUTS_BUCKET=%s\n' "${OUTPUTS_BUCKET}"
+              printf 'EDULLM_BLOCK_DATA_BUCKET=%s\n' "${DATA_BUCKET}"
+              printf 'EDULLM_BLOCK_IMAGE=%s\n' "${registry}/${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+              printf 'EDULLM_BLOCK_IMAGE_REGION=%s\n' "${IMAGE_REGION}"
+              printf 'EDULLM_BLOCK_REGION=%s\n' "${BLOCK_REGION}"
+              printf 'EDULLM_BLOCK_EXPECTED_GPUS=%s\n' "${gpus}"
+              printf 'EDULLM_BLOCK_WANDB_SECRET_ID=%s\n' "${WANDB_SECRET_ID}"
+              printf 'EDULLM_BLOCK_LOG_SYNC_SECONDS=%s\n' "${LOG_SYNC_SECONDS}"
+              printf 'EDULLM_BLOCK_ENDS_AT=%s\n' "${ends_at}"
+              printf 'EDULLM_BLOCK_RECLAIM_MINUTES=%s\n' "${reclaim_minutes}"
+              printf 'EDULLM_BLOCK_DRAIN_FROM_MINUTES=%s\n' "${drain_from_minutes}"
+              cat infra/block-node-bootstrap.sh
+            } > "${user_data}"
+
+            # GZIPPED, AND THAT IS NOT AN OPTIMISATION. EC2 refuses user-data over 16,384
+            # bytes in raw form, and the bootstrap plus its prelude is roughly 25 KB -- most
+            # of it the comments, which are the reason that file is worth having. Uncompressed
+            # this launch fails with `InvalidParameterValue: User data is limited to 16384
+            # bytes`, on the first `run-instances`, at 11:31 UTC on the Saturday.
+            #
+            # cloud-init detects the gzip magic bytes and decompresses before executing, which
+            # is a documented and long-standing behaviour rather than a trick. `fileb://`
+            # rather than `file://` because the payload is now binary and the CLI has to read
+            # it as bytes before base64-encoding it.
+            #
+            # The bound is checked here rather than trusted, because the failure it prevents is
+            # discovered at the worst possible moment and the check costs one `wc`.
+            # tests/test_block_workflows.py measures the same thing against the committed file,
+            # so a comment that trebles the length of the bootstrap fails on a pull request.
+            gzip -9 --stdout "${user_data}" > "${user_data}.gz"
+            user_data_bytes="$(wc -c < "${user_data}.gz" | tr -d '[:space:]')"
+            if [ "${user_data_bytes}" -gt 16384 ]; then
+              echo "user_data_over_the_ec2_limit:${user_data_bytes}" >&2
+              echo "EC2 refuses user-data above 16384 bytes even compressed. The bootstrap has" >&2
+              echo "outgrown the launch path: move it to S3 and fetch it from a short stub." >&2
+              exit 1
+            fi
+            echo "node ${node} user-data is ${user_data_bytes} compressed bytes"
+
+            # THE TWO ARGUMENTS THE HEADER IS ABOUT ARE THE MARKET OPTION AND THE RESERVATION
+            # TARGET. Removing either leaves a launch that succeeds and bills separately from
+            # the block.
+            #
+            # HttpPutResponseHopLimit=2 IS NOT PADDING EITHER. The training command runs in a
+            # Docker container on the default bridge network, which is one hop further from the
+            # metadata service than the host is. At the default limit of 1 the container gets
+            # no credentials at all, and what that looks like is a run that trains for hours
+            # and then cannot write its checkpoints.
+            #
+            # AND `--network-interfaces` REPLACES `--subnet-id`, WHICH IS NOT A REFACTOR. The
+            # two are mutually exclusive, and the subnet form is the one that produces a
+            # `p5.48xlarge` with no EFA device at all -- three thousand two hundred gigabits of
+            # advertised fabric, a driver, a plugin and no `/dev/infiniband`. NCCL falls back to
+            # TCP between machines and reports nothing, so a 64-rank job runs correctly at a
+            # fraction of the speed the block was bought for. The subnet is now named on each
+            # interface instead, and the whole list is built and printed by the step above.
+            aws ec2 run-instances \
+              --region "${BLOCK_REGION}" \
+              --image-id "${ami}" \
+              --instance-type "${INSTANCE_TYPE}" \
+              --count 1 \
+              --network-interfaces "${interfaces[@]}" \
+              --instance-market-options MarketType=capacity-block \
+              --capacity-reservation-specification "CapacityReservationTarget={CapacityReservationId=${RESERVATION_ID}}" \
+              --iam-instance-profile "Name=${INSTANCE_PROFILE}" \
+              --metadata-options "HttpEndpoint=enabled,HttpTokens=required,HttpPutResponseHopLimit=2" \
+              --block-device-mappings "DeviceName=${root_device},Ebs={VolumeSize=${ROOT_VOLUME_GIB},VolumeType=gp3,Throughput=250,DeleteOnTermination=true}" \
+              --user-data "fileb://${user_data}.gz" \
+              --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=edullm-block-node-${node}},{Key=edullm:node,Value=${node}},{Key=edullm:block,Value=${RESERVATION_ID}},{Key=Project,Value=edullm}]" "ResourceType=volume,Tags=[{Key=edullm:block,Value=${RESERVATION_ID}},{Key=Project,Value=edullm}]" \
+              --output json > "${RUNNER_TEMP}/launch-${node}.json"
+            echo "launched node ${node}"
+          done < "${RUNNER_TEMP}/missing-nodes.txt"
+
+      # THE STEP THIS WHOLE FILE IS FOR.
+      #
+      # `CapacityReservationId` on a described instance is the only field anywhere that says
+      # whether the money being spent is money already spent. It is null on an on-demand
+      # machine, and an on-demand p5.48xlarge is indistinguishable from a reserved one in every
+      # other respect: same type, same zone, same tags, same state, same everything a console
+      # listing shows.
+      #
+      # The whole fleet goes if any one of them is wrong. See the header.
+      - name: Verify every instance is drawing from the block, or terminate all of them
+        run: |
+          set -euo pipefail
+          fleet_json="${RUNNER_TEMP}/fleet.json"
+          condemned="${RUNNER_TEMP}/condemned.txt"
+
+          aws ec2 describe-instances \
+            --region "${BLOCK_REGION}" \
+            --filters "Name=tag:edullm:block,Values=${RESERVATION_ID}" "Name=instance-state-name,Values=pending,running" \
+            --output json > "${fleet_json}"
+
+          uv run python - "${fleet_json}" "${condemned}" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          from edullm_platform.block_fleet import fleet_table, read_fleet, unreserved
+
+          fleet = read_fleet(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")))
+          expected = os.environ["RESERVATION_ID"]
+          wrong = unreserved(fleet, reservation_id=expected)
+          print(fleet_table(fleet))
+
+          # Written whole rather than filtered. One instance drawing from nowhere is evidence
+          # about the launch path and not about that instance, so the fleet is the unit.
+          Path(sys.argv[2]).write_text(
+              "".join(f"{node.instance_id}\n" for node in fleet) if wrong else "",
+              encoding="utf-8",
+          )
+          if not fleet:
+              raise SystemExit("nothing carries this block tag, so there is nothing to verify")
+          if wrong:
+              print("")
+              print("THESE INSTANCES ARE NOT DRAWING FROM THE BLOCK:")
+              for node in wrong:
+                  print(f"  node {node.node} {node.instance_id} reports {node.capacity_reservation_id!r}")
+              print("")
+              print(
+                  "An on-demand instance of this shape is roughly $55 an hour and the block "
+                  "beside it is already paid for. Every instance in this fleet is being "
+                  "terminated, including the ones that came up correctly."
+              )
+          else:
+              print("")
+              print(f"EVERY INSTANCE REPORTS {expected}")
+          PY
+
+          # The refusal is outside the Python on purpose: a non-zero exit in there would end
+          # the step before the termination below, which is the one thing that has to happen.
+          if [ -s "${condemned}" ]; then
+            mapfile -t doomed < "${condemned}"
+            aws ec2 terminate-instances \
+              --region "${BLOCK_REGION}" \
+              --instance-ids "${doomed[@]}" \
+              --output json > "${RUNNER_TEMP}/terminated.json"
+            echo "block_launch_was_not_reserved:${RESERVATION_ID}" >&2
+            exit 1
+          fi
+
+      # THE SECOND THING A LAUNCH CAN GET WRONG WITHOUT SAYING SO, AND IT IS THE REASON THE
+      # LAUNCH ABOVE NAMES ITS INTERFACES.
+      #
+      # An EFA that did not attach leaves a machine identical to a correct one in every field
+      # anybody looks at: same type, same zone, same tags, same reservation, same 3,200 Gbps on
+      # the spec sheet. The only place the difference is visible is the interface list on the
+      # described instance, and the only time anybody would otherwise notice is a step time
+      # several times what it should be, days later, with the window spent.
+      #
+      # A PUBLIC ADDRESS IS CHECKED IN THE SAME BREATH BECAUSE THE INTERFACE CHANGE IS WHAT PUT
+      # IT IN DOUBT. `AssociatePublicIpAddress` may not be given in a request carrying more than
+      # one interface, and EFA-only interfaces count towards that -- so on the fabric layout the
+      # address comes from the subnet's auto-assign setting or from nowhere. The resolve step
+      # refuses a subnet without it, which is necessary and is no longer sufficient. Without an
+      # address the Systems Manager agent has no route out and nothing reaches these nodes.
+      #
+      # NOTHING IS TERMINATED HERE, AND THAT IS THE DIFFERENCE FROM THE STEP ABOVE. That one
+      # kills the fleet because leaving it up costs $55 an hour per machine. These machines are
+      # on the reservation, the window is paid for either way, and terminating on the word of a
+      # check that has never run against a real launch is a larger risk than the fault it would
+      # be reacting to. It refuses loudly and leaves eight machines somebody can look at.
+      - name: Verify every node came up with the fabric and an address, or refuse the fleet
+        run: |
+          set -euo pipefail
+          fabric_json="${RUNNER_TEMP}/fabric.json"
+          read -r efa_expected < "${RUNNER_TEMP}/efa-expected.txt"
+
+          aws ec2 describe-instances \
+            --region "${BLOCK_REGION}" \
+            --filters "Name=tag:edullm:block,Values=${RESERVATION_ID}" "Name=instance-state-name,Values=pending,running" \
+            --output json > "${fabric_json}"
+
+          uv run python - "${fabric_json}" "${efa_expected}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          from edullm_platform.block_fleet import (
+              fleet_table,
+              read_fleet,
+              unaddressable,
+              without_the_fabric,
+          )
+
+          fleet = read_fleet(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")))
+          expected = int(sys.argv[2])
+          print(fleet_table(fleet))
+
+          if not fleet:
+              raise SystemExit("nothing carries this block tag, so there is nothing to verify")
+
+          refusals = []
+          for node in without_the_fabric(fleet, expected=expected):
+              refusals.append(
+                  f"node {node.node} {node.instance_id} came up with {node.efa_interfaces} EFA "
+                  f"interfaces and the launch asked for {expected}"
+              )
+          for node in unaddressable(fleet):
+              refusals.append(
+                  f"node {node.node} {node.instance_id} has no public address, so the Systems "
+                  "Manager agent has no route out and nothing can reach it"
+              )
+
+          if refusals:
+              print("")
+              print("\n".join(refusals))
+              print("")
+              raise SystemExit(
+                  "block_fleet_came_up_without_the_fabric. Nothing is being terminated: these "
+                  "machines are on the reservation and the window is paid for either way. "
+                  "Terminate them and re-run this workflow to try the launch again, or re-run "
+                  "with efa_interfaces=0 for a fleet that reaches the nodes and runs "
+                  "multi-node jobs over TCP."
+              )
+          print("")
+          print(f"EVERY INSTANCE CARRIES {expected} EFA INTERFACES AND A PUBLIC ADDRESS")
+          PY
+
+      # THE AGENT FIRST AND THE SENTINEL SECOND, WHICH ARE DIFFERENT QUESTIONS. An instance
+      # passes its EC2 status checks a minute or two before the Systems Manager agent
+      # registers, so a readiness command sent on the EC2 reading comes back "target not
+      # connected" -- which names neither the wait nor the cause. `edullm shell` learned the
+      # same thing and `src/edullm_platform/cli/lane.py` records it.
+      - name: Wait for every node to finish its own bootstrap
+        run: |
+          set -euo pipefail
+          checker="${RUNNER_TEMP}/readiness_check.py"
+          online_file="${RUNNER_TEMP}/online-count.txt"
+          command_file="${RUNNER_TEMP}/readiness-command-id.txt"
+          invocations_json="${RUNNER_TEMP}/readiness.json"
+          readiness_params="${RUNNER_TEMP}/readiness-parameters.json"
+
+          # Built as a JSON file rather than passed through the shorthand form. The command
+          # carries redirections and a fallback chain, and shorthand splits a list value on
+          # commas -- so the day somebody adds one to this line it becomes two commands and
+          # every node reports as still booting.
+          uv run python - "${readiness_params}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          from edullm_platform.block_fleet import READY_SENTINEL
+
+          Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "commands": [
+                          f"cat {READY_SENTINEL} 2>/dev/null "
+                          "|| cat /var/lib/edullm/bootstrap-failed.json 2>/dev/null "
+                          "|| echo still-booting"
+                      ]
+                  }
+              ),
+              encoding="utf-8",
+          )
+          PY
+
+          cat > "${checker}" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          from edullm_platform.block_fleet import readiness
+
+          answered = readiness(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")))
+          wanted = int(os.environ["INSTANCE_COUNT"])
+          for record in answered:
+              print(f"  {record.instance_id}  {'ready' if record.ready else record.detail}")
+          Path(sys.argv[2]).write_text(
+              "".join(f"{record.instance_id}\n" for record in answered if not record.ready),
+              encoding="utf-8",
+          )
+          sys.exit(0 if sum(1 for record in answered if record.ready) >= wanted else 1)
+          PY
+
+          for _attempt in $(seq 1 40); do
+            aws ssm describe-instance-information \
+              --region "${BLOCK_REGION}" \
+              --filters "Key=tag:edullm:block,Values=${RESERVATION_ID}" \
+              --query 'length(InstanceInformationList[?PingStatus==`Online`])' \
+              --output text > "${online_file}"
+            read -r online < "${online_file}"
+            echo "systems manager reports ${online} of ${INSTANCE_COUNT} nodes online"
+            if [ "${online}" -ge "${INSTANCE_COUNT}" ]; then
+              break
+            fi
+            sleep 20
+          done
+
+          # One command to every node in the fleet. Systems Manager fans a tag target out
+          # itself, so this is one call rather than eight, and the answer is the sentinel the
+          # bootstrap writes last -- or the failure record it writes instead.
+          ready=no
+          for _attempt in $(seq 1 40); do
+            aws ssm send-command \
+              --region "${BLOCK_REGION}" \
+              --document-name AWS-RunShellScript \
+              --comment "edullm block readiness" \
+              --targets "Key=tag:edullm:block,Values=${RESERVATION_ID}" \
+              --parameters "file://${readiness_params}" \
+              --query Command.CommandId \
+              --output text > "${command_file}"
+            read -r command_id < "${command_file}"
+            sleep 15
+            aws ssm list-command-invocations \
+              --region "${BLOCK_REGION}" \
+              --command-id "${command_id}" \
+              --details \
+              --output json > "${invocations_json}"
+            if uv run python "${checker}" "${invocations_json}" "${RUNNER_TEMP}/not-ready.txt"; then
+              ready=yes
+              break
+            fi
+            sleep 20
+          done
+
+          # THE VERDICT IS A FILE AND NOT THE EMPTINESS OF ANOTHER FILE, WHICH IS WHERE THIS
+          # STEP WAS WRONG. `not-ready.txt` holds the nodes that answered and were not ready.
+          # Nodes that never answered at all -- an agent that never registered, a fleet that
+          # never launched -- produce no invocation and therefore no line, so an empty file
+          # means either every node is ready or nothing is there, and the gate below cannot
+          # tell those apart. This says which.
+          printf '%s\n' "${ready}" > "${RUNNER_TEMP}/fleet-ready.txt"
+          echo "every node ready: ${ready}"
+
+      # PRINTED WHATEVER HAPPENED ABOVE, BECAUSE THE TABLE IS WHAT SOMEBODY ACTS ON. A launch
+      # that verified cleanly and then had one node fail its bootstrap is seven usable machines
+      # and one to look at, and a step that only ran on success would hide all eight.
+      - name: Print the fleet
+        if: always()
+        run: |
+          set -euo pipefail
+          final_json="${RUNNER_TEMP}/final.json"
+
+          aws ec2 describe-instances \
+            --region "${BLOCK_REGION}" \
+            --filters "Name=tag:edullm:block,Values=${RESERVATION_ID}" "Name=instance-state-name,Values=pending,running" \
+            --output json > "${final_json}"
+
+          uv run python - "${final_json}" <<'PY' | tee -a "${GITHUB_STEP_SUMMARY}"
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          from edullm_platform.block_fleet import fleet_table, read_fleet
+
+          fleet = read_fleet(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")))
+          record = Path(os.environ["RUNNER_TEMP"]) / "not-ready.txt"
+          unready = set(record.read_text(encoding="utf-8").split()) if record.is_file() else set()
+
+          print("```")
+          print(fleet_table(fleet, unready=unready))
+          print("```")
+          PY
+
+          verdict=missing
+          if [ -f "${RUNNER_TEMP}/fleet-ready.txt" ]; then
+            read -r verdict < "${RUNNER_TEMP}/fleet-ready.txt"
+          fi
+          if [ "${verdict}" != "yes" ]; then
+            echo "block_nodes_never_became_ready:${RESERVATION_ID}" >&2
+            echo "Nothing is being terminated. These machines are on the reservation, the" >&2
+            echo "window is paid for either way, and a machine to debug is worth more than a" >&2
+            echo "tidy account. Read /var/lib/edullm/bootstrap.log on each one, and re-running" >&2
+            echo "this workflow launches only the nodes that are missing." >&2
+            exit 1
+          fi

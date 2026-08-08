@@ -192,6 +192,13 @@ STACK_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
         "sbsandbox-intern-edullm-notifier-publisher-iam",
         "infra/iam/notifier-publisher-role.yaml",
     ),
+    # The two identities the off-platform capacity block lane needs: the one
+    # .github/workflows/block-launch-fleet.yml and block-run.yml assume, and the one the nodes
+    # carry. Neither of the other block artifacts is a stack -- the fleet is eight instances
+    # started by a workflow rather than a compute environment -- so this is the whole of what
+    # that lane declares here, and it stays declared after a window closes because a role
+    # outliving its fleet costs nothing and re-applying it during the next one costs a laptop.
+    ("sbsandbox-intern-edullm-block-fleet-iam", "infra/iam/block-fleet-roles.yaml"),
 )
 
 

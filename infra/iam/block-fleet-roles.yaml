@@ -1,0 +1,414 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: The two identities the capacity block lane needs -- the one the block workflows assume, and the one the nodes carry.
+
+# WHY THIS TEMPLATE EXISTS AT ALL, WHICH IS THE FIRST THING TO CHECK BEFORE SATURDAY.
+#
+# Every OIDC role in this account pins `job_workflow_ref` with `StringEquals` to the exact
+# workflow file allowed to assume it. That is deliberate and `infra/iam/audit-reader-role.yaml`
+# argues it at length: it is what makes a role blast radius readable off the one file that can
+# wear it. The consequence is the thing that bites here. A token minted for
+# `block-launch-fleet.yml` matches none of the existing roles, so without this template the
+# four block workflows have no AWS identity whatsoever -- not a narrow one, none -- and the
+# launch fails at `configure-aws-credentials` before it has read a single thing about the
+# reservation.
+#
+# THE SAME IS TRUE OF EACH FILE SEPARATELY, WHICH IS WHY ADDING ONE MEANS APPLYING THIS AGAIN.
+# `block-drain.yml`, `block-logs.yml` and `block-run-distributed.yml` were each written after
+# this stack was first drafted, and until it is applied with them in the list they hold nothing:
+# the drain report is red every quarter of an hour, the log reader refuses everybody it was
+# written for, and the multi-node launch -- which is the run this window was bought for --
+# cannot reach a single machine.
+#
+# THIS IS APPLIED FROM A LAPTOP AND MUST BE APPLIED BEFORE THE WINDOW OPENS. `infra/README.md`,
+# "Why IAM is laptop-only": the deployer role holds no `iam:CreateRole`, on purpose, so no
+# workflow in this repository can apply an IAM stack. The stack is
+# `sbsandbox-intern-edullm-block-fleet-iam`.
+#
+# AND THE WORKFLOW FILES HAVE TO BE ON `main` FIRST. The trust condition below names them at
+# `refs/heads/main`, and the `sub` claim pins the ref as well, so a dispatch from a branch is
+# refused at AssumeRole with a message about a subject that does not match -- which reads to
+# whoever is holding the reservation as a broken workflow rather than as a branch they are
+# standing on. Merge, then apply this, then dispatch. A wildcard ref here would remove that
+# ordering and hand every open branch the ability to launch eight `p5.48xlarge`, which is the
+# trade `infra/iam/infra-deployer-role.yaml` already refused for a stack deploy and is worse
+# here: this role can start machines directly.
+#
+# WHAT IAM IS NOT DOING HERE, SAID PLAINLY BECAUSE THE OMISSION LOOKS LIKE AN OVERSIGHT.
+# Nothing in this file prevents an on-demand launch beside the paid block. That is the
+# catastrophic failure of this whole lane -- a `RunInstances` missing the market option and the
+# reservation target does not error, it succeeds at roughly $55 an hour -- and the obvious
+# instinct is to deny it here with a condition on the market type. It is not done, for a reason
+# worth more than the control would be: a `Deny` written on a condition key that turns out to be
+# absent from the request evaluates true and refuses every launch, including the correct one,
+# at 11:35 UTC on a Saturday against a reservation that cannot be refunded and is already
+# billing. An untested IAM condition on this path is a bigger risk than the thing it guards.
+#
+# The control that actually stands there is in `.github/workflows/block-launch-fleet.yml`: it
+# reads `describe-instances` back after every launch, checks that each instance reports the
+# reservation id it was told to use, and terminates the whole fleet if any of them reports
+# null. That is a check that can be read, and it fails loudly rather than quietly.
+
+Parameters:
+  # The two buckets the fleet reads and writes. Parameters rather than literals only because
+  # the workflows take them as dispatch inputs with the same defaults, and a literal here would
+  # be the copy that is wrong on the day somebody points a block at a different bucket. The
+  # defaults are the buckets that exist in us-east-2 today.
+  OutputsBucket:
+    Type: String
+    Default: edullm-block-outputs-us-east-2
+    Description: Where checkpoints and synced logs land. Must match the launch workflow input of the same name.
+    AllowedPattern: '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
+
+  DataBucket:
+    Type: String
+    Default: edullm-data-us-east-2
+    Description: The corpus mirror the nodes read. Must match the launch workflow input of the same name.
+    AllowedPattern: '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
+
+  # The registry the training image is pulled from, which is in the other region. ECR
+  # authorisation is per-region, so the pull is a cross-region call and the grant has to name
+  # the region the repository is in rather than the one the instance is in.
+  ImageRegion:
+    Type: String
+    Default: us-east-1
+    Description: The region holding the ECR repository. The platform registry is in us-east-1 and the fleet is not.
+
+  TrainingRepository:
+    Type: String
+    Default: sbsandbox-intern-edullm-olmo-core
+    Description: The ECR repository the nodes pull once at boot.
+
+Resources:
+  # -------------------------------------------------------------------------------------
+  # THE WORKFLOW IDENTITY. One role for every file in the lane, and that is a decision rather
+  # than laziness.
+  #
+  # `block-launch-fleet.yml` starts the fleet, `block-run.yml` puts work on one node,
+  # `block-run-distributed.yml` puts one job on all of them, `block-drain.yml` reads what has
+  # not reached S3 yet and `block-logs.yml` reads a log back out of it. A trust policy cannot
+  # distinguish jobs within a workflow anyway -- `infra/iam/image-resolver-role.yaml` records
+  # that. Separate roles would have been the tidier diff and would have bought nothing real:
+  # most of them need `ssm:SendCommand` on the nodes, and anybody holding that on a machine
+  # with an instance profile can already do whatever the machine can do. Splitting them would
+  # suggest a boundary that does not exist.
+  #
+  # The one boundary that does exist is the one drawn below rather than in the trust: this
+  # role reads the outputs bucket and cannot write to it, where the node role writes it. That
+  # is a real asymmetry between the machines that produce a window's output and the two
+  # workflows that report on it, and it survives all four files sharing an identity.
+  #
+  # What is worth saying is which of them is guarded and which are not.
+  # `block-launch-fleet.yml` carries an admin-only dispatch guard because it spends money. The
+  # others deliberately do not: roughly fifteen of the thirty-five people on this team
+  # hold no AWS role at all, and those workflows existing for them is the entire reason this
+  # lane is workflow-shaped instead of a shell script.
+  # -------------------------------------------------------------------------------------
+  BlockFleetRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-block-fleet
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated:
+                Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                # An array under one key is an OR across its elements, so this accepts any of
+                # these files. The other four condition keys are separate keys and are
+                # therefore ANDed, which is what keeps this from being assumable by a fork.
+                #
+                # THE LIST HAS GROWN SINCE THIS STACK WAS LAST APPLIED, AND THAT MEANS APPLYING
+                # IT AGAIN. A workflow whose path is not in here has no AWS identity whatsoever
+                # -- not a narrow one, none -- and fails at `configure-aws-credentials` with a
+                # message about a subject claim. `tests/test_block_workflows.py` holds the tree
+                # against this list in both directions, so a file reaching for the role variable
+                # without being named here is red on a pull request rather than at the moment
+                # somebody dispatches it.
+                token.actions.githubusercontent.com:job_workflow_ref:
+                  - edu-llm/platform/.github/workflows/block-launch-fleet.yml@refs/heads/main
+                  - edu-llm/platform/.github/workflows/block-run.yml@refs/heads/main
+                  - edu-llm/platform/.github/workflows/block-drain.yml@refs/heads/main
+                  - edu-llm/platform/.github/workflows/block-logs.yml@refs/heads/main
+                  - edu-llm/platform/.github/workflows/block-run-distributed.yml@refs/heads/main
+                token.actions.githubusercontent.com:repository_owner_id: "306859726"
+                token.actions.githubusercontent.com:repository_id: "1311508598"
+                token.actions.githubusercontent.com:sub: repo:edu-llm@306859726/platform@1311508598:ref:refs/heads/main
+      Policies:
+        - PolicyName: run-the-block-fleet
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # THE READS. Every one of these is something the launch workflow refuses on
+              # rather than proceeds past: whether the reservation is `active`, whether the
+              # subnet is in the block zone, how many cards the instance type has, and --
+              # the one that matters -- what reservation each launched instance says it is
+              # drawing from.
+              #
+              # `DescribeSecurityGroups` IS THE NEWEST OF THEM AND THE ONE THAT WILL BE MISSING.
+              # The launch names a security group on every network interface it asks for, and
+              # refuses unless that group admits all traffic to and from itself -- which is what
+              # EFA is matched on, and without which every fabric device attaches and every
+              # packet between nodes is dropped. Denied, the launch stops at the resolve step
+              # with an access denial rather than starting anything, which is the safe direction
+              # and is still a stack that has to be applied from a laptop before the window.
+              - Sid: ReadWhatTheLaunchRefusesOn
+                Effect: Allow
+                Action:
+                  - ec2:DescribeCapacityReservations
+                  - ec2:DescribeInstances
+                  - ec2:DescribeInstanceTypes
+                  - ec2:DescribeImages
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeTags
+                Resource: "*"
+
+              # No resource type accepts an ARN for any of these, which is why they are
+              # starred rather than scoped. Describe calls on EC2 are account-wide by
+              # construction.
+              - Sid: ResolveTheImageParameter
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ssm:*::parameter/aws/service/deeplearning/*
+
+              # THE LAUNCH, BOUNDED BY REGION AND BY NOTHING ELSE.
+              #
+              # A `Deny` on the instance type was written here and then removed, and the
+              # removal is the part worth recording. It would have refused anything outside the
+              # P family, which sounds free and is not: it rests on `ec2:InstanceType` being
+              # present in the request context for the instance resource, and a `StringNotLike`
+              # on a condition key that turns out to be absent evaluates true and denies the
+              # *correct* launch -- at 11:35 UTC on a Saturday, against a reservation that is
+              # already billing and cannot be refunded.
+              #
+              # What it would have bought is nothing that is not bought earlier and better. The
+              # launch workflow reads the reservation first and refuses any instance type that
+              # disagrees with what was purchased, by name, before a machine starts. A second
+              # copy of that rule in IAM adds a way to fail and no way to catch anything.
+              - Sid: LaunchOnlyInTheBlockRegion
+                Effect: Allow
+                Action: ec2:RunInstances
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: us-east-2
+
+              - Sid: TagWhatItLaunches
+                Effect: Allow
+                Action: ec2:CreateTags
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    ec2:CreateAction: RunInstances
+
+              # THE EMERGENCY STOP, AND IT IS DELIBERATELY NOT CONDITIONED ON A TAG.
+              #
+              # The obvious scoping is `ec2:ResourceTag/edullm:block`, and the launch does tag
+              # atomically, so in every ordinary case the condition would hold. It is left off
+              # because of what this action is for: it is the one call that kills a fleet
+              # discovered to be running on demand beside a paid reservation, and a denial
+              # there costs $55 an hour per machine for as long as it takes somebody to find a
+              # laptop. A scoping that is right 99% of the time is the wrong trade on a
+              # control that only ever runs in the 1%.
+              #
+              # What bounds it instead is the region and the trust policy: two workflow files
+              # on `main`, and this account holds no other P-family instances in us-east-2.
+              - Sid: TerminateAFleetThatCameUpWrong
+                Effect: Allow
+                Action: ec2:TerminateInstances
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: us-east-2
+
+              # SYSTEMS MANAGER RATHER THAN SSH, WHICH IS THE SAME CHOICE `edullm shell` MADE.
+              # No key pair to distribute to thirty-five people, no ingress rule on the
+              # security group, and every command is a CloudTrail record naming the workflow
+              # run that sent it.
+              - Sid: ReachTheNodesThroughSystemsManager
+                Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                  - ssm:ListCommands
+                  - ssm:ListCommandInvocations
+                  - ssm:GetCommandInvocation
+                  - ssm:DescribeInstanceInformation
+                Resource: "*"
+
+              # READ-ONLY ON THE OUTPUTS BUCKET, AND THE ASYMMETRY AGAINST THE NODE ROLE IS
+              # THE POINT. A node writes its checkpoints and its logs; the two workflows that
+              # read them write nothing at all. `block-logs.yml` fetches the tail of a
+              # `train.log` so that the fifteen people here with no AWS role can read it in a
+              # job summary, and `block-drain.yml` lists a run's checkpoint prefix to tell a
+              # complete save from the wreckage of one that was interrupted. Neither has any
+              # business putting an object into the bucket the window's whole output is in,
+              # and a report is exactly the kind of thing that acquires a write by accident.
+              #
+              # `ListBucket` on the bucket ARN and the object actions on the object ARNs, for
+              # the reason the node role gives: S3 authorises a list against the bucket and a
+              # get against the object, and one resource covering both is what makes a listing
+              # answer "empty" where it should answer "denied".
+              - Sid: ReadWhatTheFleetWrote
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:s3:::${OutputsBucket}
+                  - Fn::Sub: arn:${AWS::Partition}:s3:::${OutputsBucket}/*
+
+              # PASSING THE NODE ROLE IS ITS OWN GRANT AND ITS OWN RISK. Without a resource
+              # bound here, this role could attach any instance profile in the account to a
+              # machine it starts, which is the ordinary privilege escalation through
+              # `iam:PassRole`. One ARN, named.
+              #
+              # Written as a plain `Fn::Sub` rather than `Fn::GetAtt: BlockNodeRole.Arn`, which
+              # is the same ARN and is the spelling CloudFormation would prefer.
+              # `src/edullm_platform/role_drift.py` compares a committed policy against the one
+              # deployed in the account, and it refuses any intrinsic whose result is not
+              # knowable from the document alone -- a `GetAtt` resolves against a stack that
+              # module cannot see, so the whole role becomes uncomparable and the nightly drift
+              # check goes quiet on it rather than red.
+              - Sid: PassOnlyTheNodeRole
+                Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-block-node
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: ec2.amazonaws.com
+
+  # -------------------------------------------------------------------------------------
+  # THE NODE IDENTITY. Anything this role can do, any process on a node can do, including
+  # one that arrived with a package somebody pip-installed at two in the morning. That is
+  # the same argument `infra/iam/lane-instance-role.yaml` makes and it applies harder here,
+  # because eight people share the fleet and nothing about what they run is reviewed.
+  # -------------------------------------------------------------------------------------
+  BlockNodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-block-node
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      # The AWS managed policy rather than a hand-written copy, for the reason
+      # `infra/iam/lane-instance-role.yaml` gives: AWS maintains it against whatever the agent
+      # starts calling next, and the failure mode of a stale hand-written copy is a node that
+      # boots, bills, and never answers a command. Attaching an AWS-owned ARN creates no
+      # customer-managed policy, so `infra/README.md`'s rule about those is not in play.
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: what-a-block-node-does
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Read and write on the outputs bucket, read on the corpus mirror. The
+              # asymmetry is the point: a training run writes checkpoints and logs, and
+              # nothing on these machines should be able to rewrite the corpus every run
+              # in the window is reading from.
+              #
+              # `ListBucket` sits on the bucket ARN and the object actions on the object
+              # ARNs, because S3 authorises a list against the bucket and a get against the
+              # object. One resource covering both is the mistake that makes a sync report an
+              # empty prefix instead of a denial.
+              - Sid: WriteCheckpointsAndLogs
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:AbortMultipartUpload
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:s3:::${OutputsBucket}
+                  - Fn::Sub: arn:${AWS::Partition}:s3:::${OutputsBucket}/*
+              - Sid: ReadTheCorpusMirror
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:s3:::${DataBucket}
+                  - Fn::Sub: arn:${AWS::Partition}:s3:::${DataBucket}/*
+
+              # `GetAuthorizationToken` takes no resource and never has; the token it returns
+              # is what the three scoped actions below are then checked against, so the pair
+              # is a wildcard and a narrow grant rather than a wildcard on its own.
+              - Sid: AuthenticateToTheRegistry
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: PullTheTrainingImageAcrossRegions
+                Effect: Allow
+                Action:
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchCheckLayerAvailability
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ecr:${ImageRegion}:${AWS::AccountId}:repository/${TrainingRepository}
+
+              - Sid: WriteTheNodeLogGroup
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:logs:*:${AWS::AccountId}:log-group:/aws/edullm/block*
+
+              # THE ONE SECRET A NODE HOLDS, AND IT IS THE SAME ONE EVERY BATCH RUN ALREADY
+              # GETS. `infra/batch-capacity-block.yaml` injects it through the job definition
+              # because Batch can; there is no Batch here, so the helper reads it at run time
+              # and passes it into the container. The suffix is Secrets Manager's own and is
+              # part of the ARN rather than decoration -- a grant without it matches nothing.
+              - Sid: ReadTheSharedWeightsAndBiasesKey
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:secretsmanager:${ImageRegion}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-fnwEVp
+
+  BlockNodeInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      # The name the launch workflow passes as `--iam-instance-profile Name=`. A rename on
+      # either side is a launch that fails after the reservation has already started billing.
+      InstanceProfileName: sbsandbox-intern-edullm-block-node
+      Roles:
+        - Ref: BlockNodeRole
+
+Outputs:
+  # Pasted into the repository variable `AWS_BLOCK_FLEET_ROLE_ARN`, which is how both
+  # workflows name it. Printed here rather than assembled by hand, because the two workflows
+  # fail at the credentials step with an unhelpful message if it is wrong by a character.
+  BlockFleetRoleArn:
+    Description: Set this as the repository variable AWS_BLOCK_FLEET_ROLE_ARN before dispatching either block workflow.
+    Value:
+      Fn::GetAtt: BlockFleetRole.Arn
+  BlockNodeInstanceProfileName:
+    Value:
+      Ref: BlockNodeInstanceProfile
+  BlockNodeRoleArn:
+    Value:
+      Fn::GetAtt: BlockNodeRole.Arn

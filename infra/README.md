@@ -2363,3 +2363,114 @@ The mistake worth checking for explicitly is the one that costs twice. A capacit
 launch template's `InstanceMarketOptions` or `CapacityReservationSpecification` does not reach the
 compute environment, Batch does not fail — it launches ordinary on-demand instances beside a block
 that has already been paid for.
+
+## The block fleet stack, for a block that is not going through Batch at all
+
+| # | Stack | Template | Roles or resources | Applied from |
+| --- | --- | --- | --- | --- |
+| 1 | `sbsandbox-intern-edullm-block-fleet-iam` | `infra/iam/block-fleet-roles.yaml` | `…-block-fleet`, `…-block-node` and its instance profile | laptop |
+
+**This is a different lane from the four stacks above and the two must not be confused.** Those
+put a purchased block behind a Batch queue, which is the right shape when the platform is
+scheduling work onto it. This one is for the case where it is not: a block bought into a region
+that carries no platform infrastructure at all, held for the length of its window as eight
+long-lived machines, with a human coordinating who is on which. There is no compute environment,
+no queue and no job definition, so nothing here is a `batch-capacity-block.yaml` deployment and
+`config/execution-targets.yaml` gains no row.
+
+**Nothing in this repository can apply it, and the order matters.** The deployer role holds no
+`iam:CreateRole`, so this is a laptop deploy like every other IAM stack. What is different is that
+the workflow files depend on it existing *and* on themselves being on `main`: the trust condition
+in the template pins `job_workflow_ref` to `.github/workflows/block-launch-fleet.yml`,
+`.github/workflows/block-run.yml`, `.github/workflows/block-run-distributed.yml`,
+`.github/workflows/block-drain.yml` and
+`.github/workflows/block-logs.yml` at `refs/heads/main`, and the `sub` claim pins the ref too.
+Merge first, apply second, dispatch third. A dispatch from a branch is refused at `AssumeRole`
+with a message about a subject that does not match, which reads as a broken workflow rather than
+as a branch somebody is standing on.
+
+**A stack applied before the drain or the multi-node launch landed has to be applied again.** The
+trust list is an enumeration, so a workflow whose path is not in the deployed copy holds no
+identity at all until this template is re-applied. What that looks like if it is missed is
+`block-drain.yml` failing at the credentials step every quarter of an hour, `block-logs.yml`
+refusing everybody it was written for, and `block-run-distributed.yml` — the only thing that can
+start the run this window was bought for — unable to reach a single machine. All loudly, which is
+the good half, and all only discovered by dispatching, which is not.
+
+**The multi-node launch needs no new permission, only the trust entry.** It reads
+`ec2:DescribeInstances` and makes the same four Systems Manager calls the other three already do,
+so re-applying this stack widens the trust and changes nothing about what the role can do.
+`tests/test_block_distributed_workflow.py` holds that claim from the other side.
+
+```bash
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-block-fleet-iam \
+  --template-file infra/iam/block-fleet-roles.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --profile sbsandbox \
+  --region us-east-1
+```
+
+`CAPABILITY_NAMED_IAM` rather than `CAPABILITY_IAM`, because both roles and the instance profile
+are named. The region is `us-east-1` and the fleet is in `us-east-2`; IAM is global, so the stack
+holding it can sit in either and sitting beside every other IAM stack is worth more than sitting
+beside the machines.
+
+Then read back the one output that has to be copied by hand, and set it as the repository variable
+`AWS_BLOCK_FLEET_ROLE_ARN`:
+
+```bash
+aws cloudformation describe-stacks \
+  --stack-name sbsandbox-intern-edullm-block-fleet-iam \
+  --query "Stacks[0].Outputs" \
+  --profile sbsandbox --region us-east-1
+```
+
+Every workflow in the lane names that variable and nothing else resolves it, so a variable that is
+unset or wrong by a character fails at `configure-aws-credentials` — before the launch workflow has
+read anything at all about the reservation, which is the good place for it to fail.
+
+### The end of the window, which is a deadline and not a wind-down
+
+AWS begins terminating a capacity block's instances half an hour before the window's own end
+time. On a block ending 11:30 UTC that is 11:00 UTC, and everything on `/scratch` at that moment
+is destroyed with the machine — instance store does not survive a stop, let alone a terminate.
+Checkpoints written by an OLMo-core run are already in S3 because the save folder is an `s3://`
+URI, and the log sync carries `train.log` up every minute. Everything else on the disk is not.
+
+The flush runs **on the nodes**, on a systemd timer that `infra/block-node-bootstrap.sh` lays
+down, and that is a deliberate choice against putting it in a scheduled workflow: a scheduled
+GitHub Actions run is delivered minutes late under load with no committed bound, and the deadline
+here is enforced by AWS against a wall clock. The timer needs nothing from GitHub, nothing from
+Systems Manager and nobody awake. It flushes hourly through the window and on every five-minute
+tick once the reclaim is inside two and a half hours, so the copy that has to finish in the last
+minutes is small.
+
+`.github/workflows/block-drain.yml` is the report rather than the flush. It reads every node at
+once and prints, into a job summary anybody with repository access can read, which machines still
+hold something and who is on each. `tools/block_drain.py` is the same reading from a laptop, for
+the morning GitHub is the thing that is broken:
+
+```bash
+uv run python tools/block_drain.py --profile sbsandbox
+```
+
+**Nothing stops a training run unless somebody says so.** `--stop-runs`, and the `stop_runs`
+input on the workflow, asks the trainer inside each container to shut down so that OLMo-core
+writes its final checkpoint whole through `post_train` rather than being cut off mid-write. It
+ends people's runs early. It is not on any schedule, and it is the last thing to do before the
+reclaim rather than a routine part of the drain.
+
+**Turn the schedule off when the window closes.** Nothing here expires.
+
+```bash
+gh workflow disable block-drain.yml
+```
+
+**What this role deliberately does not stop.** It does not prevent an on-demand launch beside the
+paid block. That refusal would have to be an IAM condition on the instance market type, and a
+`Deny` written on a condition key that turns out to be absent from the request evaluates true and
+refuses the *correct* launch as well — at 11:35 UTC on a Saturday, against a reservation that is
+already billing and cannot be refunded. The control that stands there instead reads
+`describe-instances` back after every launch and terminates the fleet if any instance reports a
+null `CapacityReservationId`. The template says the same at greater length.
