@@ -42,6 +42,7 @@ import yaml
 from workflow_support import (
     GitHubActionsLoader,
     load_workflow,
+    region_between,
     run_step_script,
     step,
     unreal_context_references,
@@ -371,8 +372,12 @@ def test_the_comment_above_the_entry_carries_the_reason_that_was_given(
     assert "olmo-mixer:" in comment
     assert "fused kernels" in comment
     # Wrapped without breaking on hyphens, so a repository name stays greppable in the
-    # comment that identifies it.
-    assert "OLMo-core" in text.split("- repository: olmo-mixer")[0].rsplit("olmo-mixer:", 1)[-1]
+    # comment that identifies it. Read through `region_between`, which refuses a marker it
+    # cannot find: with a plain `split`, either anchor going missing widens the region to
+    # the whole registry, and `OLMo-core` is in that whatever the comment wraps like.
+    assert "OLMo-core" in region_between(
+        text, after="olmo-mixer:", before="- repository: olmo-mixer"
+    )
 
 
 def test_the_registration_is_submittable_and_not_merely_publishable(
@@ -528,7 +533,14 @@ def test_a_dropdown_option_lands_in_sorted_position_rather_than_at_the_end(
 
     # The one comment on this list belongs to the list rather than to its first option, so
     # it stays above the whole thing however far forward an option sorts.
-    heading = text.split("- edullm-alt-cl\n")[0]
+    #
+    # `region_between` rather than a plain `split`, and that is the whole of what this
+    # assertion is worth. `- edullm-alt-cl` is the first option only while it sorts first;
+    # rename that repository, or register one sorting ahead of it, and the marker is gone --
+    # whereupon `split(...)[0]` hands back the entire workflow file, `Sorted
+    # case-insensitively` is certainly somewhere in it, and this passes while checking
+    # nothing about where the comment sits.
+    heading = region_between(text, before="- edullm-alt-cl\n")
     assert "Sorted case-insensitively" in heading
 
 
@@ -561,7 +573,10 @@ def test_a_comment_above_a_displaced_option_moves_with_the_option_it_describes()
         form, "repository", "beta", key=str
     )
 
-    displaced = inserted.split("- gamma")[0].rsplit("- beta", 1)[-1]
+    # `- beta` is what the tool under test was asked to write, so an insertion that wrote
+    # nothing at all would leave a plain `rsplit` returning everything ahead of `- gamma` --
+    # comment included -- and this assertion green over a tool that did not run.
+    displaced = region_between(inserted, after="- beta", before="- gamma")
     assert "What gamma is" in displaced, (
         "beta was inserted between gamma and the comment explaining what gamma is, so the "
         "sentence now introduces the wrong option"
