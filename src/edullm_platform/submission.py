@@ -87,6 +87,10 @@ from edullm_platform.errors import (
     UnregisteredWorkloadProfileError,
     WorkloadProfileRepositoryMismatchError,
 )
+from edullm_platform.exit_status import (
+    require_the_program_to_report_its_own_failure,
+    waived_exit_status_note,
+)
 from edullm_platform.image_resolution import PublishedImage, ResolvedImage, resolve_image
 from edullm_platform.launchers import (
     require_a_process_for_every_device,
@@ -622,6 +626,24 @@ def compile_submission(
         catalog=catalog,
     )
 
+    # AND THE ONE WHOSE COST LANDS IN THE RECORD RATHER THAN ON THE DEVICE, WHICH IS THE
+    # OTHER END OF THE SAME SHELF. The four above refuse a command that would waste a
+    # machine, lose its state, mean something it does not, or not run at all. This refuses
+    # one that would run, fail, and be written down as having worked -- because a shell
+    # exits with the status of the last thing it ran, and nothing between the form and Batch
+    # required that to be the program.
+    #
+    # Last of the five, and it is the only one that takes the command and nothing else. It
+    # needs no compute profile, no catalog and no contract: whether a status survives a
+    # pipeline is a property of the text a shell is handed. That is why it could have gone
+    # in contracts/validation.py beside the two rules about a command's shape, and did not
+    # -- the argument recorded in launchers.py applies unchanged. It would move
+    # RunManifest's structural digest, which fixtures/goldens/contract-models.json records,
+    # and a rule that retroactively refuses a recorded manifest is a rule that cannot be
+    # added to a hashed contract. Checked against all seventeen commands in fixtures/: none
+    # is refused, so nothing recorded moves either way.
+    require_the_program_to_report_its_own_failure(manifest.command)
+
     try:
         cost = compute_manifest_cost_inputs(manifest, catalog)
     except ValueError as exc:
@@ -752,9 +774,14 @@ def _waiver_lines(manifest: RunManifest) -> tuple[str, ...]:
     nobody. Rows that said "not waived" on every run are the version of this that gets
     skipped.
 
-    Both waivers can be on one command and each is stated separately, because they answer
-    different questions: one says a process count is deliberate and the other says a
-    checkpoint path is, and a run that waived one has said nothing about the other.
+    All three waivers can be on one command and each is stated separately, because they
+    answer different questions: one says a process count is deliberate, one says a
+    checkpoint path is, and one says that this command's exit status is deliberately not
+    the program's -- and a run that waived one has said nothing about the other two.
+
+    The third is the one worth reading twice. The other two describe a run that will cost
+    more than it should or save where nobody will look; this one describes a run that will
+    be recorded as a success whatever it does, in a store nothing can correct afterwards.
     """
     notes = (
         waived_launch_check_note(
@@ -766,6 +793,7 @@ def _waiver_lines(manifest: RunManifest) -> tuple[str, ...]:
             workload_profile=manifest.workload_profile,
             checkpoint=manifest.checkpoint,
         ),
+        waived_exit_status_note(manifest.command),
     )
     return tuple(line for note in notes if note is not None for line in (note, ""))
 
