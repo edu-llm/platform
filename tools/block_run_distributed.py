@@ -612,7 +612,9 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help=(
             "the training entrypoint and its arguments, with no launcher. The rendezvous flags "
-            "are decided here because they depend on which nodes were claimed"
+            "are decided here because they depend on which nodes were claimed. The first word "
+            "is exec'd, so it names a program -- `python <script>` rather than `<script>`, and "
+            "no VAR=value in front of it"
         ),
     )
     parser.add_argument("--repository", default="edu-llm/OLMo-core")

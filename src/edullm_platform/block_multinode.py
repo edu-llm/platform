@@ -29,10 +29,19 @@ ignored once a rendezvous backend is set, so a command carrying both looks like 
 ranks and does not, and what comes out is a job that rendezvouses into an order nobody chose.
 :func:`torchrun_command` builds the rendezvous form only, and the same string goes to every
 node -- which is also what makes the launch one Systems Manager call rather than one per node.
+
+**AND THE POSITIONAL AFTER THOSE FLAGS IS A PROGRAM RATHER THAN A SCRIPT, WHICH IS WHAT
+``--no-python`` BUYS.** torchrun's positional is a script path and torchrun supplies the
+interpreter itself, so a command line appended to the flags unchanged becomes ``python -u
+python .edullm/train_on_corpus.py --flags`` and every rank opens a file named ``python``. What
+this lane carries is a command line -- ``.edullm/run.yaml`` holds one and ``edullm-node run``
+hands the identical string to ``bash -lc`` -- so the positional is made a program instead.
+:func:`command_refusals` refuses the two shapes that are not one.
 """
 
 from __future__ import annotations
 
+import shlex
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
@@ -62,6 +71,7 @@ __all__ = [
     "plan_launch",
     "refused",
     "rendezvous_for",
+    "run_name_refusals",
     "torchrun_command",
     "with_mesh_flags",
 ]
@@ -467,10 +477,18 @@ def command_refusals(command: str) -> tuple[str, ...]:
     -- because the rendezvous flags depend on which machines were claimed and cannot be written
     into a branch days earlier. A command that already names a launcher is about to be launched
     twice: eight agents per node, each starting eight workers that each start eight more.
+
+    **THE REST OF THESE ARE THE SHAPES ``--no-python`` CANNOT EXEC, AND EACH OF THEM IS QUIET
+    EVERYWHERE ELSE.** :func:`torchrun_command` passes that flag, so torchrun execs the first
+    word instead of handing it to an interpreter and the first word has to name a program.
+    Both of the spellings that do not are things somebody would reasonably write, both are
+    accepted by the workflow form, by ``yaml.safe_load`` and by every check upstream of here,
+    and both arrive as sixty-four identical failures a minute after the containers are up. The
+    refusal costs a second at dispatch; the alternative costs what is left of the window.
     """
     refusals: list[str] = []
     if not command.strip():
-        refusals.append("the command resolved to nothing")
+        return ("the command resolved to nothing",)
     for launcher in _LAUNCHERS:
         if launcher in command:
             refusals.append(
@@ -478,7 +496,78 @@ def command_refusals(command: str) -> tuple[str, ...]:
                 "Pass the entrypoint and its arguments only; the rendezvous flags are decided "
                 "here because they depend on which nodes were claimed."
             )
+    try:
+        words = shlex.split(command)
+    except ValueError as error:
+        # There is nothing to read the first word off, so the two checks below are skipped
+        # rather than guessed at. The quote itself is worth refusing on its own account: the
+        # composed line is re-split by the container's own `bash -lc`, so a quote that never
+        # closes swallows the redirection and the log pipe written after the command.
+        return (
+            *refusals,
+            (
+                f"the command does not parse as a shell line: {error}. The launch line is "
+                "re-split by the shell inside the container, so an unclosed quote takes the "
+                "redirection and the `tee` that follow it into the argument it opened."
+            ),
+        )
+    first = words[0]
+    if first.endswith(".py"):
+        refusals.append(
+            f"the command starts with {first!r}, which is a script rather than a program. "
+            "torchrun is given --no-python here and execs the first word itself, so a `.py` "
+            "path has to carry an executable bit and a shebang -- and what a fresh `git "
+            "clone` gives it is neither. Name the interpreter: `python <script> <flags>`."
+        )
+    if "=" in first:
+        refusals.append(
+            f"the command starts with {first!r}, which is an environment assignment rather "
+            "than a program. A shell would set it and run what follows; torchrun execs the "
+            "first word, and there is no file whose name has an equals sign in it. Whatever "
+            "the variable was reaching for belongs in the entrypoint, which is where "
+            "`.edullm/train_on_corpus.py` puts its own clone on `sys.path`."
+        )
     return tuple(refusals)
+
+
+def run_name_refusals(run: str) -> tuple[str, ...]:
+    """Whether the run name survives being written into a line that is split on whitespace.
+
+    **IT IS THE ONLY VALUE IN THE COMPOSED LINE THAT IS NEITHER A NUMBER NOR READ BACK OUT OF
+    EC2, AND NOTHING QUOTES IT.** :func:`torchrun_command` joins its parts with a space and the
+    run name goes in as ``--rdzv-id=<name>``, so a name carrying whitespace is not one flag
+    with an odd value -- it is two words. What torchrun does with the second is not an error.
+    It takes it as the positional and everything after it as arguments to it, which means
+    ``--rdzv-backend`` is consumed rather than read: driven through
+    ``torch.distributed.run.parse_args``, ``--rdzv-id=final model a`` gives ``rdzv_id='final'``,
+    ``rdzv_backend='static'`` and an empty endpoint. The rendezvous form this whole module is
+    built to guarantee silently becomes the static form with no ranks assigned.
+
+    ``.github/workflows/block-run-distributed.yml`` refuses a name outside
+    ``[A-Za-z0-9][A-Za-z0-9._-]{0,63}`` before it reaches the tool, and that is the form. It is
+    not the tool, which a maintainer runs from a laptop when GitHub is the thing that is
+    broken, with ``--run`` taking whatever was typed and nobody else reading it.
+    """
+    if not run.strip():
+        return (
+            (
+                "the run name is empty, and it names the rendezvous, the claim on every node, "
+                "the container and the S3 prefix"
+            ),
+        )
+    hostile = sorted({found for found in run if found.isspace() or found in "'\""})
+    if hostile:
+        return (
+            (
+                f"the run name {run!r} carries {hostile}, and it is written into the launch "
+                "line as --rdzv-id=<name> with nothing quoting it. torchrun reads everything "
+                "past the space as arguments to a positional it took from the middle of the "
+                "name, so --rdzv-backend is never read and the job forms in the static form "
+                "with no ranks assigned. Letters, digits, dot, dash and underscore, which is "
+                "what the workflow form already asks for."
+            ),
+        )
+    return ()
 
 
 def with_mesh_flags(command: str, *, mesh: ExpertMesh) -> tuple[str, tuple[str, ...]]:
@@ -564,6 +653,38 @@ def torchrun_command(
     some machines than others. Its cost when something is genuinely wrong is that the healthy
     nodes wait this long before saying so, which is the right trade against a job that gives up
     because one machine was slow to clone.
+
+    **``--no-python`` IS WHAT MAKES THE POSITIONAL A PROGRAM, AND THE LINE STARTS NOTHING
+    WITHOUT IT.** torchrun's positional is a *script path*: ``config_from_args`` in
+    ``torch/distributed/run.py`` builds the child argv as ``[sys.executable, "-u",
+    training_script, *args]``, so it supplies the interpreter itself. What arrives here is a
+    command line rather than a script path, and that is the contract every other surface in
+    this lane already has -- ``.edullm/run.yaml`` carries ``python .edullm/train_on_corpus.py
+    --flags`` and ``edullm-node run`` feeds that same string to ``bash -lc``. Appended to the
+    flags unchanged it becomes ``python -u python .edullm/train_on_corpus.py --flags``, which
+    is Python being asked to open a file called ``python``, on all sixty-four ranks, seconds
+    after the containers come up and after the window has been paid for.
+
+    **STRIPPING A LEADING ``python`` WAS THE OTHER CANDIDATE AND IT ASSUMES THE ONE THING
+    NOTHING PROMISES.** It keeps torchrun's own ``-u`` and it is correct for today's command.
+    It is wrong for any command whose first word is not an interpreter, and it is wrong
+    silently: ``bash -lc '...'`` matches no spelling of ``python``, so nothing is stripped and
+    torchrun runs ``python -u bash -lc '...'`` -- the same start-up failure on the same
+    sixty-four ranks, with a different filename in it. A rule that has to recognise every way
+    of writing "an interpreter" in order to leave a command intact is a rule that corrupts the
+    spelling nobody thought of, and the two paths that produce a command here are a free-text
+    workflow input and a YAML file on somebody else's branch. ``--no-python`` recognises
+    nothing, so it has nothing to get wrong; what it cannot exec is refused by
+    :func:`command_refusals` at dispatch instead.
+
+    **WHAT IT COSTS IS TORCHRUN'S ``-u``, AND THAT IS PAID FOR IN THE CONTAINER.** With an
+    interpreter prepended torchrun asked for unbuffered output; exec'ing the program directly
+    cannot. Sixty-four ranks block-buffering stdout into the pipe feeding ``tee`` is a loss
+    exactly when it is least affordable: a process that dies takes whatever had not yet filled
+    its buffer with it, and on a rank that died during start-up that is the whole of what it
+    had to say. ``infra/block-distributed-launch.sh`` sets ``PYTHONUNBUFFERED=1`` on the
+    container for that reason, and ``tests/test_block_distributed_tool.py`` holds the flag and
+    the variable against each other so neither can be removed alone.
     """
     return " ".join(
         (
@@ -575,6 +696,7 @@ def torchrun_command(
             "--rdzv-backend=c10d",
             f"--rdzv-endpoint={rendezvous.endpoint}",
             f"--rdzv-conf=join_timeout={join_timeout_seconds}",
+            "--no-python",
             command,
         )
     )
@@ -666,6 +788,7 @@ def plan_launch(
     )
     refusals.extend(choice.refusals)
     refusals.extend(command_refusals(command))
+    refusals.extend(run_name_refusals(run))
 
     cards, card_refusals = (
         cards_per_node(choice.chosen, readings) if choice.chosen else (0, ())

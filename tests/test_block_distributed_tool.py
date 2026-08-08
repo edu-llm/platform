@@ -18,8 +18,10 @@ answers rather than the machines finds every answer successful.
 
 from __future__ import annotations
 
+import base64
 import json
 import re
+import shlex
 import subprocess
 import tempfile
 from collections.abc import Sequence
@@ -29,6 +31,7 @@ from typing import Any
 import pytest
 
 from edullm_platform.block_fleet import NODE_TAG, RESERVATION_TAG
+from tests.torchrun_argv import INTERPRETER, child_argv
 from tools import block_run_distributed
 
 BLOCK = "cr-0afc33f3a1af417a7"
@@ -486,6 +489,59 @@ def test_the_launch_command_reaching_the_nodes_is_one_string_for_all_of_them(
     assert "EDULLM_DIST_RENDEZVOUS_HOST=172.31.0.1:29400" in sent[0]
     assert "EDULLM_DIST_OUTPUT_NODE=1" in sent[0]
     assert LAUNCH_SCRIPT.read_text(encoding="utf-8") in sent[0]
+
+
+def test_the_argv_the_payload_finally_runs_is_the_training_command(
+    monkeypatch: pytest.MonkeyPatch, four_idle_nodes: dict[str, dict[int, dict[str, Any]]]
+) -> None:
+    """THE WHOLE CHAIN, READ AT THE FAR END OF IT, WHICH IS THE ONLY PLACE THE BUG WAS VISIBLE.
+
+    The launch line is composed in ``block_multinode``, base64'd into a shell prelude, JSON'd
+    into a Systems Manager parameter, decoded on the node and handed to ``bash -lc`` inside the
+    container. Every step of that reads correctly if the line merely *ends with* the training
+    command, and for one commit every step of it did while the workers ran
+    ``python -u python .edullm/train_on_corpus.py``. This decodes what a node would decode and
+    asks what torchrun would exec.
+
+    Mutation: drop ``--no-python`` from ``torchrun_command``. Nothing else in this file moves.
+    """
+    cli = FakeCli(fleet=[1, 2, 3, 4], phases=four_idle_nodes)
+    monkeypatch.setattr(block_run_distributed, "aws_json", cli)
+
+    block_run_distributed.launch(arguments("--node-count", "4"))
+    payload = json.loads(cli.commands["start"])["commands"][0]
+    # Read back through `shlex` rather than off a quote character, because `prelude` quotes with
+    # `shlex.quote` and that leaves a value needing no quotes exactly as it found it.
+    encoded = re.search(r"^EDULLM_DIST_LAUNCH_BASE64=(.+)$", payload, re.MULTILINE)
+
+    assert encoded is not None, "the prelude carries no launch line"
+    line = base64.b64decode(shlex.split(encoded.group(1))[0]).decode("utf-8")
+    argv = child_argv(line)
+
+    assert argv[:2] == ("python", ".edullm/train_on_corpus.py")
+    assert INTERPRETER not in argv
+    assert argv[-4:] == ("--moe-shard-degree", "8", "--moe-num-replicas", "4")
+
+
+def test_the_container_replaces_the_unbuffering_that_no_python_gives_up() -> None:
+    """THE TWO HALVES OF ONE DECISION, HELD TOGETHER BECAUSE THEY LIVE IN DIFFERENT FILES.
+
+    ``--no-python`` is what makes torchrun exec the command rather than run it under an
+    interpreter it prepends, and the interpreter it stops prepending was the one carrying
+    ``-u``. So the launch line and the container's environment are one choice written in two
+    places, and the failure mode of them drifting apart is not a crash: it is sixty-four ranks
+    block-buffering into a pipe, and a start-up failure whose explanation died in a buffer.
+
+    Mutation: remove ``--env PYTHONUNBUFFERED=1`` from the launch script, or add ``-u`` back by
+    dropping ``--no-python``. Either one leaves the pair inconsistent and this says so.
+    """
+    composed = _usable_plan().launch_command
+    script = LAUNCH_SCRIPT.read_text(encoding="utf-8")
+
+    assert "--no-python" in composed, "the interpreter is prepended again, so -u is back"
+    assert "--env PYTHONUNBUFFERED=1" in script, (
+        "torchrun no longer supplies -u and nothing else asks for unbuffered output"
+    )
 
 
 # ---------------------------------------------------------------------------------------

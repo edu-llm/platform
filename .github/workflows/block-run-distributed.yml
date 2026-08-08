@@ -45,7 +45,7 @@ on:
         required: true
         type: string
       command:
-        description: "The training entrypoint and its arguments, with NO launcher. Example: python .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4 --dataset-id=... The torchrun flags and the MoE mesh flags are added here."
+        description: "The training entrypoint and its arguments, with NO launcher. Example: python .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4 --dataset-id=... The torchrun flags and the MoE mesh flags are added here. The first word is exec'd rather than read by a shell, so it names a program: write `python <script>` and not `<script>`, and put no VAR=value in front of it."
         required: true
         default: ""
         type: string

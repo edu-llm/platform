@@ -237,6 +237,14 @@ wandb_key="$(aws secretsmanager get-secret-value \
 # across the fleet produces one chart rather than eight, and it is the id the launch report
 # prints a link to. `WANDB_RUN_GROUP` is set as well so that a fleet where somebody has turned
 # per-rank logging on still collapses into one group instead of eight unrelated runs.
+#
+# `PYTHONUNBUFFERED=1` IS THE HALF OF `--no-python` THAT HAS TO BE PAID FOR HERE, AND IT IS NOT
+# A PREFERENCE ABOUT LOGS. `torchrun_command` passes `--no-python` so that the positional is
+# exec'd as a program rather than run under an interpreter torchrun prepends -- which is what
+# makes `python <script> <flags>` work at all -- and the interpreter it stops prepending was
+# the one carrying `-u`. Without this, every rank block-buffers stdout into the pipe feeding
+# `tee`, and a rank that dies during start-up takes the contents of its buffer with it. That is
+# the one moment the output is worth anything, and there are sixty-four of them.
 docker run --detach \
   --name "edullm-${RUN_NAME}" \
   --gpus all \
@@ -263,6 +271,7 @@ docker run --detach \
   --env "WANDB_RUN_GROUP=${RUN_NAME}" \
   --env "WANDB_RUN_ID=${RUN_NAME}" \
   --env "WANDB_NAME=${RUN_NAME}" \
+  --env PYTHONUNBUFFERED=1 \
   --env NCCL_DEBUG=INFO \
   --env NCCL_DEBUG_SUBSYS=INIT,NET,ENV \
   --env TORCH_NCCL_ASYNC_ERROR_HANDLING=1 \

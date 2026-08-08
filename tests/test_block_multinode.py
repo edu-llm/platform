@@ -19,6 +19,9 @@ ignored once ``--rdzv-backend`` is set, so a command with both reads as careful 
 
 from __future__ import annotations
 
+import os
+import shlex
+import sys
 from dataclasses import replace
 from typing import Any
 
@@ -42,12 +45,22 @@ from edullm_platform.block_multinode import (
     plan_launch,
     refused,
     rendezvous_for,
+    run_name_refusals,
     torchrun_command,
     with_mesh_flags,
 )
+from tests.torchrun_argv import INTERPRETER, child_argv
 
 RUN = "final-model-a"
 TRAINING = "python .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4"
+#: The argv of one of the sixty-four workers, given :data:`TRAINING`. Written out by hand
+#: rather than derived from it, because an expectation computed the way the thing it checks is
+#: computed agrees with it however wrong both are.
+TRAINING_ARGV = (
+    "python",
+    ".edullm/train_on_corpus.py",
+    "--model-factory=olmoe_7b_32x4",
+)
 
 
 def node(number: int) -> FleetNode:
@@ -259,6 +272,40 @@ def test_a_command_that_already_names_a_launcher_is_refused() -> None:
     assert command_refusals("   ") == ("the command resolved to nothing",)
 
 
+def test_a_command_whose_first_word_is_not_a_program_is_refused_rather_than_exec_ed() -> None:
+    """WHAT ``--no-python`` CANNOT RUN, REFUSED WHERE REFUSING IS FREE.
+
+    torchrun execs the first word, so the first word has to name a program. A bare ``.py`` path
+    is exec'd as one and needs an executable bit and a shebang that a fresh clone does not
+    carry; an environment assignment in front of the command is a filename with an equals sign
+    in it. Both read as perfectly ordinary shell -- ``edullm-node run`` puts the same string
+    through ``bash -lc``, where both work -- and `.edullm/run.yaml` on the model branch spends
+    a paragraph warning against the second, which is a warning nothing enforced until here.
+
+    Mutation: accept them and let the machines find out. Sixty-four ranks, one message each,
+    after the containers are up.
+    """
+    script = command_refusals(".edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4")
+    assignment = command_refusals("PYTHONPATH=/work/src python .edullm/train_on_corpus.py")
+
+    assert len(script) == 1
+    assert "--no-python" in script[0] and "shebang" in script[0]
+    assert len(assignment) == 1
+    assert "environment assignment" in assignment[0]
+    # A `.py` given an interpreter, and an assignment that is not the first word, are both fine.
+    assert command_refusals("python .edullm/train_on_corpus.py --pair=key=value") == ()
+
+
+def test_a_command_with_an_unclosed_quote_is_refused_rather_than_re_split_downstream() -> None:
+    """The launch line is re-parsed by the container's own shell, after a `set -o pipefail` and
+    before a redirection and a `tee`. A quote that never closes takes all three into the
+    argument it opened, and what fails is the log pipeline rather than the command."""
+    refusals = command_refusals('python train.py --note "never closed')
+
+    assert len(refusals) == 1
+    assert "does not parse as a shell line" in refusals[0]
+
+
 # ---------------------------------------------------------------------------------------
 # The claim, which is the part that has to be all or nothing.
 # ---------------------------------------------------------------------------------------
@@ -459,7 +506,50 @@ def test_the_launcher_is_the_rendezvous_form_and_carries_no_rank() -> None:
     assert "--nproc-per-node=8" in line
     assert "--rdzv-backend=c10d" in line
     assert "--rdzv-endpoint=172.31.0.1:29400" in line
-    assert line.endswith(TRAINING)
+
+
+def test_the_workers_run_the_training_command_and_not_python_under_python() -> None:
+    """THE ONE THAT FAILED ON ALL SIXTY-FOUR RANKS, AND THE ASSERTION THAT DID NOT SEE IT.
+
+    torchrun's positional is a script path and torchrun supplies the interpreter, so a command
+    line appended to the flags unchanged becomes ``python -u python .edullm/train_on_corpus.py
+    --flags`` and Python is asked to open a file named ``python``. The line still *ends with*
+    the training command, exactly as written, which is why the assertion that read the tail of
+    the string passed for as long as it did. ``--no-python`` makes the positional a program.
+
+    Mutation: drop ``--no-python``. The composed string is still the training command with the
+    rendezvous flags in front of it, and this is the only thing here that notices.
+    """
+    argv = child_argv(
+        torchrun_command(
+            mesh=mesh_for(nodes=8, gpus_per_node=8),
+            rendezvous=rendezvous_for(candidates(1, 2), run=RUN),
+            command=TRAINING,
+        )
+    )
+
+    assert argv == TRAINING_ARGV
+    assert INTERPRETER not in argv, "torchrun is running the command under an interpreter again"
+    assert argv[:2] != (INTERPRETER, "-u")
+
+
+def test_a_quoted_argument_reaches_the_worker_as_one_argument() -> None:
+    """The join concatenates and the container's shell re-splits, so the quotes have to survive.
+
+    The workflow's ``command`` input is free text and somebody will put a space inside a value.
+    What must not happen is the two halves arriving as two arguments -- which is what a launch
+    line assembled from ``shlex.quote``-ed parts, or split and rejoined anywhere along the way,
+    would produce.
+    """
+    argv = child_argv(
+        torchrun_command(
+            mesh=mesh_for(nodes=2, gpus_per_node=8),
+            rendezvous=rendezvous_for(candidates(1, 2), run=RUN),
+            command='python train.py --note "two words" --pair=key=value',
+        )
+    )
+
+    assert argv == ("python", "train.py", "--note", "two words", "--pair=key=value")
 
 
 def test_the_launcher_gives_up_rather_than_re_forming_the_group() -> None:
@@ -483,6 +573,81 @@ def test_a_rendezvous_needs_a_node() -> None:
         rendezvous_for((), run=RUN)
 
 
+def test_a_run_name_with_a_space_would_turn_the_rendezvous_form_into_the_static_one() -> None:
+    """THE OTHER VALUE THE JOIN MANGLES, AND IT FAILS BY SUCCEEDING AT SOMETHING ELSE.
+
+    The run name is written into the line as ``--rdzv-id=<name>`` with nothing quoting it, so a
+    space makes it two words. torchrun takes the second as its positional and everything after
+    it -- ``--rdzv-backend=c10d`` included -- as arguments to that positional, which means the
+    backend is never read and falls back to ``static`` with an empty endpoint. That is the
+    exact failure the whole of this module's launcher section exists to prevent, reached by a
+    character in a name rather than by anybody choosing a form.
+
+    The workflow form already refuses such a name. The tool run from a laptop does not, and
+    that is the caller with nobody else reading the arguments.
+    """
+    assert run_name_refusals(RUN) == ()
+    assert run_name_refusals("final.model_a-1") == ()
+
+    spaced = run_name_refusals("final model a")
+
+    assert len(spaced) == 1
+    assert "--rdzv-id" in spaced[0] and "static" in spaced[0]
+    assert run_name_refusals('a"b') and run_name_refusals("a'b")
+    assert run_name_refusals("  ") == run_name_refusals("")
+
+
+def test_a_run_name_the_line_cannot_carry_is_refused_before_a_claim_is_taken() -> None:
+    plan = plan_launch(
+        fleet=fleet_of(1, 2),
+        readings=[reading(1), reading(2)],
+        run="final model a",
+        command=TRAINING,
+        node_count=2,
+    )
+
+    assert not plan.usable
+    assert plan.launch_command == ""
+    assert any("--rdzv-id" in refusal for refusal in plan.refusals)
+
+
+def test_the_transcription_of_torchruns_argv_rule_agrees_with_torchrun() -> None:
+    """WHAT KEEPS ``tests/torchrun_argv.py`` A READING OF TORCH RATHER THAN A BELIEF ABOUT IT.
+
+    ``torch`` is not a dependency of this repository, so the rule that says what a worker's
+    argv is had to be transcribed out of ``config_from_args`` in ``torch/distributed/run.py``.
+    A transcription nothing checks is the same class of artifact as the assertion this whole
+    change replaced -- it agrees with itself. Where torch is installed, this drives torchrun's
+    own parser over the composed line and holds the two answers together; where it is not, it
+    skips, and the transcription stands on the source it quotes.
+    """
+    run_module = pytest.importorskip(
+        "torch.distributed.run", reason="torch is not a dependency; install it to cross-check"
+    )
+
+    def torchs_answer(line: str) -> tuple[str, ...]:
+        parsed = run_module.parse_args(shlex.split(line)[1:])
+        _config, program, arguments = run_module.config_from_args(parsed)
+        interpreter = os.getenv("PYTHON_EXEC", sys.executable)
+        return tuple(
+            INTERPRETER if word == interpreter else word for word in (program, *arguments)
+        )
+
+    fixed = torchrun_command(
+        mesh=mesh_for(nodes=8, gpus_per_node=8),
+        rendezvous=rendezvous_for(candidates(1, 2), run=RUN),
+        command='python train.py --note "two words"',
+    )
+    # The line as it was before `--no-python`, so that both branches of the transcribed rule
+    # are checked rather than only the one this lane now takes.
+    broken = fixed.replace(" --no-python ", " ")
+
+    assert torchs_answer(fixed) == child_argv(fixed)
+    assert torchs_answer(fixed) == ("python", "train.py", "--note", "two words")
+    assert torchs_answer(broken) == child_argv(broken)
+    assert torchs_answer(broken)[:3] == (INTERPRETER, "-u", "python")
+
+
 # ---------------------------------------------------------------------------------------
 # The plan, which is every refusal above in one pass.
 # ---------------------------------------------------------------------------------------
@@ -502,8 +667,14 @@ def test_the_whole_plan_is_decided_before_anything_is_claimed() -> None:
     assert plan.mesh.expert_parallel == 8
     assert plan.rendezvous is not None
     assert plan.rendezvous.host.node == 1
-    assert "--moe-shard-degree 8 --moe-num-replicas 8" in plan.launch_command
     assert plan.launch_command.startswith("torchrun --nnodes=8 --nproc-per-node=8")
+    assert child_argv(plan.launch_command) == (
+        *TRAINING_ARGV,
+        "--moe-shard-degree",
+        "8",
+        "--moe-num-replicas",
+        "8",
+    )
 
 
 def test_a_refused_plan_carries_no_rendezvous_and_no_command() -> None:
@@ -537,7 +708,13 @@ def test_the_seven_node_plan_the_downstream_lane_produces_is_usable_as_written()
 
     assert plan.usable
     assert plan.mesh.world_size == 56
-    assert "--moe-shard-degree 8 --moe-num-replicas 7" in plan.launch_command
+    assert child_argv(plan.launch_command) == (
+        *TRAINING_ARGV,
+        "--moe-shard-degree",
+        "8",
+        "--moe-num-replicas",
+        "7",
+    )
 
 
 def test_a_plan_that_would_not_build_a_mesh_never_reaches_the_mesh_flags() -> None:
