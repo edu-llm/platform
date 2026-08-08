@@ -1176,6 +1176,22 @@ def pending_releases() -> tuple[PendingRelease, ...]:
             released="e07efe963ec9cadb79f7345a14d9074c125e359a588e0661f99db687a757e96a",
             recorded_on=date(2026, 8, 6),
         ),
+        PendingRelease(
+            function="validator",
+            reason=(
+                "no behaviour moved and the bytes did. RETRY_ONLY_WHAT_A_RETRY_FIXES gained "
+                "the reasoning for why an attempt stopped at its time bound never reaches "
+                "the retry rules at all, which the validator packages because it imports "
+                "execution.py, so the zip differs by a comment. The rules themselves are "
+                "byte-for-byte what was released, which is the point of the change: an arm "
+                "matching the timeout was proposed twice from two contradictory readings of "
+                "one attempt record, and both would have been dead code."
+            ),
+            cleared_by=f"uv run python {RELEASE_COMMAND} --function validator",
+            builds_to="49b33899168196cc33a7ea508d1ad0bf223df1440d4407cc50c9da9393fbe2ec",
+            released="2cda942e9518cf23b6042a5b5ab35d550557a0784acfc9c3ee2d593844e9064c",
+            recorded_on=date(2026, 8, 7),
+        ),
     )
     return one_record_per_function(releases)
 

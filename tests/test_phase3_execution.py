@@ -478,26 +478,34 @@ def test_a_retry_fires_on_a_lost_host_and_on_nothing_else(attempts: int) -> None
     ]
 
 
-def test_an_attempt_stopped_at_its_time_bound_matches_no_rule_and_is_therefore_retried() -> None:
-    """Mutation: read the three rules as covering every way an attempt can end.
+def test_no_rule_names_the_timeout_because_a_terminated_job_never_reaches_the_rules() -> None:
+    """Mutation: add the timeout arm this rule set looks like it is missing.
 
-    THE FAILURE THAT MATTERS IS THE ONE MATCHING NOTHING, AND THE RULE SET LOOKS EXHAUSTIVE.
-    A reader checks the three entries, sees ``OnExitCode: "*"`` at the bottom, and concludes
-    that everything not a lost host exits. That reading is wrong in the one case that spends
-    money: an attempt Batch stops for outrunning ``attemptDurationSeconds`` carries the
-    status reason ``Job attempt duration exceeded timeout`` and no container exit code at
-    all, so the catch-all has no exit code to catch. Batch documents an unmatched
-    ``EvaluateOnExit`` as retried, on ``AWS::Batch::JobDefinition EvaluateOnExit`` and on the
-    job definition parameters page.
+    THIS TEST USED TO ASSERT THE SAME SHAPE FOR THE OPPOSITE REASON, AND THE REASON WAS
+    MEASURED FALSE. It held that an attempt stopped for outrunning ``attemptDurationSeconds``
+    matches none of the three entries -- no container exit code for the ``*`` rule, no
+    container reason, and a status reason that is not a host fault -- and that Batch retries
+    an attempt matching nothing, so the timeout was the one failure a second attempt was
+    reliably spent on. Every step of that is about which rule fires, and no rule fires.
 
-    Combined with every compute environment being ``Type: EC2`` rather than SPOT -- pinned by
-    ``test_every_compute_environment_buys_on_demand_rather_than_spot`` -- the one second
-    attempt this platform reliably pays for is the one on the run that could not finish in
-    its bound, given the same bound again. That is the arm least likely to be helped by
-    restarting, and it is why ``checkpoint_commands.unverified_resume_note`` exists.
+    ``EvaluateOnExit`` judges an attempt that ended on its own. A timeout does not end an
+    attempt; it terminates the job. Batch's job-timeouts page says so in the sentence this
+    turns on -- "If a job is terminated for exceeding the timeout duration, it isn't retried.
+    If a job attempt fails on its own, then it can retry if retries are enabled, and the
+    timeout countdown is started over for the new attempt" -- and the retry-strategy
+    reference lists a terminated job among the cases jobs are not retried in at all.
 
-    Asserted against the reason string rather than against a comment, so a rule set that grew
-    an entry covering the timeout would make this fail and be read rather than merely land.
+    THE ACCOUNT SAYS THE SAME THING AND CARRIES ITS OWN CONTROL. Two runs submitted on
+    2026-08-07 with two attempts and a bound they could not finish inside,
+    ``run_019fdd90-99d1-70e8-a005-e341452d9458`` and
+    ``run_019fdedc-b4f3-70f1-b1eb-5d99be56ac22``, both reported FAILED at one attempt of two.
+    ``run_019fbe1f`` lost its host, matched the first arm, and ran a second attempt -- so the
+    machinery works and the timeout is not delivered to it.
+
+    WHICH IS WHY THE ASSERTION SURVIVED THE CORRECTION AND ITS MESSAGE DID NOT. A timeout arm
+    added above the catch-all would be dead code, and dead code in a retry strategy is worse
+    than absent: it reads as insurance a submitter has been sold. The five-entry Batch limit
+    is the smaller cost.
     """
     contract = {
         "interval_minutes": 30,
@@ -511,19 +519,21 @@ def test_an_attempt_stopped_at_its_time_bound_matches_no_rule_and_is_therefore_r
     matched = [
         rule
         for rule in rules
-        # No container exit code, so no OnExitCode rule applies whatever it globs; no
-        # container reason either, so no OnReason rule does. Only OnStatusReason can see
-        # this failure at all, and it sees a string that is not a host fault.
+        # Only OnStatusReason could name this failure, so a rule carrying either of the
+        # other two conditions is about something else whatever its status reason says.
         if "OnExitCode" not in rule
         and "OnReason" not in rule
         and BATCH_TIMEOUT_STATUS_REASON.startswith(rule["OnStatusReason"].removesuffix("*"))
     ]
 
     assert matched == [], (
-        f"a rule now matches {BATCH_TIMEOUT_STATUS_REASON!r}. Batch retries an attempt "
-        "matching nothing, and the reasoning in config/policy.yaml and in "
-        "checkpoint_commands.unverified_resume_note turns on the timeout being that case. "
-        f"Read both before landing this: {matched}"
+        f"a rule now names {BATCH_TIMEOUT_STATUS_REASON!r}, and Batch will never consult it: "
+        "a job terminated for exceeding its timeout is not retried whatever the retry "
+        "strategy says, so this arm is dead code that reads as insurance. Buying a retry on "
+        "an overrun means the container exiting on its own before Batch's deadline, which is "
+        "a change to what every container is told rather than an entry here. "
+        f"RETRY_ONLY_WHAT_A_RETRY_FIXES carries the evidence. Read it before landing this: "
+        f"{matched}"
     )
 
 
