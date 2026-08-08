@@ -114,6 +114,7 @@ def test_the_registry_and_the_pilot_list_are_asked_different_questions() -> None
         "edullm-data",
         "edullm-p1",
         "olmo-eval-full",
+        "open-instruct",
         "open-instruct-scored-rewards",
     }
 

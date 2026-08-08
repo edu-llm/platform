@@ -89,3 +89,16 @@ repositories:
     base_image_digest: sha256:ebef3c171eeef0298e4eb2e4be843105edf3b8b0ac45e0b43acee358e8046867
     dockerfile_path: .edullm/Dockerfile
     build_context: .
+  # open-instruct: Post-training and the evaluations after it run open-instruct's own
+  # trainers over vLLM and DeepSpeed, which no registered image carries;
+  # open-instruct-scored-rewards is a different codebase -- a fork whose reward is a
+  # Ridge head on a frozen model's activations -- and its ECR repository holds images
+  # built from its commits rather than these.
+  - repository: open-instruct
+    github_repository_id: 1319413372
+    default_branch: main
+    ecr_repository: sbsandbox-intern-edullm-open-instruct
+    base_image_repository: docker.io/library/python
+    base_image_digest: sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+    dockerfile_path: .edullm/Dockerfile
+    build_context: .

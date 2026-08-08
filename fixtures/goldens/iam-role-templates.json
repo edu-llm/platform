@@ -1,9 +1,9 @@
 {
   "fixtures": [
     {
-      "canonical_json_bytes": 2982,
+      "canonical_json_bytes": 3172,
       "contract": "TemplateRole",
-      "digest": "sha256:030dc2cafc397e36b2cd7aefa0006d03516f216ba6cfa32f9ef0489c937834e6",
+      "digest": "sha256:d1b814378de81da3bf54ad82530198f72ba18b29d3b9536150a9d6819c08c04b",
       "fixture": "sbsandbox-intern-edullm-ecr-publisher",
       "relative_path": "infra/iam/ecr-publisher-role.yaml"
     },
@@ -22,9 +22,9 @@
       "relative_path": "infra/iam/admission-role.yaml"
     },
     {
-      "canonical_json_bytes": 11157,
+      "canonical_json_bytes": 11267,
       "contract": "TemplateRole",
-      "digest": "sha256:e4be4aa6c33bad13491d23ca123562e366569716ba84d5e7fbad6a64f84b3549",
+      "digest": "sha256:2c712623c6511fad791ec1c226ea49e7a2699af28d475be09af9ac9a658c34b9",
       "fixture": "sbsandbox-intern-edullm-admission-states",
       "relative_path": "infra/iam/admission-service-roles.yaml"
     },
@@ -36,9 +36,9 @@
       "relative_path": "infra/iam/admission-service-roles.yaml"
     },
     {
-      "canonical_json_bytes": 2255,
+      "canonical_json_bytes": 2365,
       "contract": "TemplateRole",
-      "digest": "sha256:0238ee3debe2a5cc0a460e88d57909288a522026c06946d737a2dd682679e0be",
+      "digest": "sha256:62aa5467b554dd7504502141d7e75a3014d27932750f552403fe215aaf7d8544",
       "fixture": "sbsandbox-intern-edullm-batch-execution",
       "relative_path": "infra/iam/batch-roles.yaml"
     },
@@ -50,9 +50,9 @@
       "relative_path": "infra/iam/batch-roles.yaml"
     },
     {
-      "canonical_json_bytes": 2481,
+      "canonical_json_bytes": 2591,
       "contract": "TemplateRole",
-      "digest": "sha256:c07f15c5810b97d4035d159ebfa12887f62bb5290e463ebc6e1d6ade757a18d2",
+      "digest": "sha256:63e5b38d0766e1d9b23979f18ff7545c6ae0317c5dca52d740ff31b80018f60c",
       "fixture": "sbsandbox-intern-edullm-batch-instance",
       "relative_path": "infra/iam/batch-roles.yaml"
     },

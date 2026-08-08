@@ -91,6 +91,7 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-alt-cl
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-open-instruct-scored-rewards
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-p1
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-open-instruct
               # The GPU log group and only the GPU log group. Not
               # /aws/batch/sbsandbox-intern-edullm-* -- a prefix here would let a GPU task
               # write into the record of what a CPU job printed, and the two log groups
@@ -417,6 +418,7 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-alt-cl
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-open-instruct-scored-rewards
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-p1
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-open-instruct
               # The ECS agent's own log group, which is not the job's. Scoped to the
               # /aws/ecs/ path so an instance cannot write into the record of what a job
               # printed.

@@ -370,7 +370,138 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
     # nothing here compares the two, so the register cannot tell a run that has not happened
     # from a run that will never contain the stack. Where the role lives in an IAM stack,
     # say the apply and say it is a laptop one.
-    amendments: tuple[PendingAmendment, ...] = ()
+    #
+    # FOUR RECORDS FOR ONE REGISTRATION, WHICH IS THE SHAPE #250 ALREADY DEMONSTRATED AND IS
+    # THE ONLY SHAPE AVAILABLE. `open-instruct` was registered so that post-training has an
+    # image of its own -- OLMo-core's container cannot run it, and the capacity block's
+    # downstream node has to pull a second one. `tools/register_repository.py` writes eight
+    # files and five of them are IAM templates, so the account is behind four captured roles
+    # until somebody applies three stacks from a laptop. That is one sitting, and it is the
+    # same sitting `infra/iam/block-fleet-roles.yaml` already needs before the window opens.
+    #
+    # THE TWO GPU ROLES ARE WIDENED IN THE SAME CHANGE AND CARRY NO RECORD HERE, WHICH IS NOT
+    # AN OMISSION. `infra/iam/batch-gpu-roles.yaml` declares them, nothing captures them, so
+    # nothing ever reports the difference a record would be waiting to stop seeing --
+    # `PendingAmendment.template` refuses a role no registry declares for exactly that
+    # reason. What that means in practice is worth reading rather than inferring: skipping
+    # the GPU stack in the sitting below leaves every CPU submission working and every GPU
+    # one dying at CannotPullContainerError, with nothing anywhere going red about it.
+    #
+    # NONE OF THE FOUR HAS ANYTHING TO DO WITH THE CAPACITY BLOCK LANE, AND THE ORDER OF THE
+    # APPLIES DOES. The block node role lives in `sbsandbox-intern-edullm-block-fleet-iam`,
+    # which no record here names because nothing captures it either, and it is the one that
+    # decides whether node 8 can fetch this image at all. These four decide whether the
+    # ordinary submission path can, after the window.
+    amendments: tuple[PendingAmendment, ...] = (
+        PendingAmendment(
+            role_name="sbsandbox-intern-edullm-ecr-publisher",
+            reason=(
+                "open-instruct was registered so that post-training has an image of its "
+                "own, and until this is applied the registration is inert in the way "
+                "edullm-data's was for a day: the build assumes this role, presents a "
+                "repository id the trust policy does not list, and dies at AssumeRole "
+                "reading like a broken role ARN rather than like a repository nobody "
+                "authorised. The three findings are the two halves of the trust condition "
+                "and the push destination, which move together and cannot move apart -- a "
+                "token that satisfies the id list and not the subject pattern is refused by "
+                "the same call, which is the half-fix tests/test_repository_registry.py "
+                "was written after."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="trust policy statement 1 conditions",
+                    detail=(
+                        "StringEquals token.actions.githubusercontent.com:repository_id does "
+                        "not accept values the template does: 1319413372"
+                    ),
+                ),
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="trust policy statement 1 conditions",
+                    detail=(
+                        "StringLike token.actions.githubusercontent.com:sub does not accept "
+                        "values the template does: "
+                        "repo:edu-llm@306859726/open-instruct@1319413372:ref:refs/heads/*"
+                    ),
+                ),
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'publish-research-images' statement 2 resources",
+                    detail=(
+                        "the template declares resources the deployed role does not: "
+                        "arn:<partition>:ecr:<region>:<account>:repository/"
+                        "sbsandbox-intern-edullm-open-instruct"
+                    ),
+                ),
+            ),
+        ),
+        PendingAmendment(
+            role_name="sbsandbox-intern-edullm-admission-states",
+            reason=(
+                "the admission decision is made from the ECR scan findings this role reads, "
+                "so without the new repository in its scope a submission naming "
+                "open-instruct is refused before it is a job -- upstream of anything that "
+                "would name a policy, and reading as a scan that does not exist."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'run-admission-workflow' statement 7 resources",
+                    detail=(
+                        "the template declares resources the deployed role does not: "
+                        "arn:<partition>:ecr:<region>:<account>:repository/"
+                        "sbsandbox-intern-edullm-open-instruct"
+                    ),
+                ),
+            ),
+        ),
+        PendingAmendment(
+            role_name="sbsandbox-intern-edullm-batch-execution",
+            reason=(
+                "pushing an image and pulling one are different grants held by different "
+                "identities, and this is ECS's while it starts the task. Until it is "
+                "applied, a submission naming open-instruct gets all the way through "
+                "admission, a job definition, a queue and an instance scaling up, and then "
+                "fails with CannotPullContainerError naming a registry path rather than a "
+                "policy."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element=(
+                        "inline policy 'pull-the-image-and-open-the-log-stream' statement 2 "
+                        "resources"
+                    ),
+                    detail=(
+                        "the template declares resources the deployed role does not: "
+                        "arn:<partition>:ecr:<region>:<account>:repository/"
+                        "sbsandbox-intern-edullm-open-instruct"
+                    ),
+                ),
+            ),
+        ),
+        PendingAmendment(
+            role_name="sbsandbox-intern-edullm-batch-instance",
+            reason=(
+                "the other half of the pull, held by the agent on the host rather than by "
+                "ECS, and it is spelled twice more in infra/iam/batch-gpu-roles.yaml where "
+                "no capture reports on it. Both are in the same stack as the execution role "
+                "above, so one apply clears this record and that one together."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'join-the-batch-managed-ecs-cluster' statement 3 resources",
+                    detail=(
+                        "the template declares resources the deployed role does not: "
+                        "arn:<partition>:ecr:<region>:<account>:repository/"
+                        "sbsandbox-intern-edullm-open-instruct"
+                    ),
+                ),
+            ),
+        ),
+    )
     # The role-is-declared check used to be a loop here. It is in ``__post_init__`` now,
     # because the same lookup is the first step of deriving ``cleared_by`` and two places
     # asking the same question is how the answers part company.
@@ -1142,7 +1273,44 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # about the tree they were built on and both are wrong about this one, which is the
     # ordinary arithmetic of integrating two changes that move one artifact and the reason
     # this was rebuilt rather than chosen between.
+    #
+    # AND A REGISTRATION MOVED TWO OF THE THREE AGAIN, WHICH IS THE EIGHTH ENTRY'S FINDING
+    # ARRIVING ON THE MOST ORDINARY EDIT THERE IS. Registering `open-instruct` writes
+    # config/repositories.yaml and config/workload-catalog.yaml, and both are in
+    # ADMISSION_CONFIG while the second is also in NOTIFIER_CONFIG, so a registration is two
+    # releases. That is the same mechanism as "released twice in the space of an hour" above
+    # and the same one #250 hit registering edullm-p1; it is written down again here only
+    # because the notifier's record is extended rather than joined and a reader needs to know
+    # which of its causes is which.
+    #
+    # WHAT THE WINDOW COSTS FOR EACH, AND FOR THE VALIDATOR IT IS NOT NOTHING. The deployed
+    # validator's registry has no open-instruct in it, so a submission naming that repository
+    # is refused as unregistered by the principal inside AWS while `edullm check` on a laptop
+    # compiles it happily. That is the account being the strict side, which the seventeenth
+    # entry argues is the round to prefer -- nothing runs that should not, and what a
+    # submitter meets is a refusal rather than a job. It costs nothing at all today, because
+    # the work this registration exists for runs on the capacity block lane, which reads no
+    # registry, spends no approval and asks this Lambda nothing.
+    #
+    # For the notifier it is bytes and no behaviour: it reads the catalogue to name a machine
+    # in an approval message, and nothing here adds a compute profile.
     releases: tuple[PendingRelease, ...] = (
+        PendingRelease(
+            function="validator",
+            reason=(
+                "open-instruct was registered so that post-training has an image of its "
+                "own, which writes config/repositories.yaml and config/workload-catalog.yaml "
+                "and both are packaged into this zip by ADMISSION_CONFIG. Until it is "
+                "released, admission refuses a submission naming that repository as "
+                "unregistered while a laptop compiles it -- the account being the strict "
+                "side, and costing nothing today because the work this was registered for "
+                "runs on the capacity block lane, which asks this function nothing."
+            ),
+            cleared_by=f"uv run python {RELEASE_COMMAND} --function validator",
+            builds_to="cf47dab28a7ce25a6591b600633153490b2c931fce1d93b6312853d394d66e82",
+            released="2cda942e9518cf23b6042a5b5ab35d550557a0784acfc9c3ee2d593844e9064c",
+            recorded_on=date(2026, 8, 8),
+        ),
         PendingRelease(
             function="notifier",
             reason=(
@@ -1150,10 +1318,14 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "without escaping it, so a run named <!channel> notified the whole workspace "
                 "every time it ended. messages.escaped now converts the three characters "
                 "Slack parses, per field and before the line is assembled so the link the "
-                "approval message builds survives."
+                "approval message builds survives. The digest then moved again for a cause "
+                "with no behaviour behind it: registering open-instruct adds a workload "
+                "profile, config/workload-catalog.yaml is in NOTIFIER_CONFIG, and this "
+                "function reads that file to name a machine in an approval message rather "
+                "than to look a profile up."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function notifier",
-            builds_to="15058807c08d7bddefbfa7413ee737a3ecd910de0955f4e6879cf0b2ddf75d8d",
+            builds_to="a785a831e0daa5776cbace2bbcddecae11ddd1cada6050345d98e9ca3f0991ae",
             released="d78c4a48482558039e7affc51331ec558e5880f8e48876bafb567fe683ee67b9",
             recorded_on=date(2026, 8, 6),
         ),

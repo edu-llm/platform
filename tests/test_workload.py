@@ -357,7 +357,15 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     # host fault. The entry in config/workload-catalog.yaml argues each of them, and
     # test_edullm_p1_train_bounds_a_real_mixlaw_arm below pins the two that decide what a
     # submission costs.
-    assert len(catalog.workloads) == 12
+    #
+    # THIRTEEN SINCE open-instruct-check, WHICH IS SINGLE FOR A THIRD REASON AGAIN. The two
+    # above were single because the pair was already complete and because nobody had measured
+    # it. This one is single because the work it was registered for is not going through
+    # admission at all yet: post-training runs on the capacity block lane, where nothing is
+    # priced and no workload profile is read, and the check is what makes the repository
+    # submittable on the ordinary path once the window is over. A -train entry written now
+    # would carry a runtime and an attempt count read off nothing.
+    assert len(catalog.workloads) == 13
     # The check Phase 3 runs. It names OLMo-core, which was the only registered repository
     # with a published image when this was written; dolma-tokenize is the same shape against
     # a repository that still has neither.
