@@ -212,4 +212,7 @@ still where the work is going to become one.
 - `edullm check --help` for the fields one submission takes.
 - `.cursor/skills/submitting-a-run/` when somebody asks you to run something.
 - `.cursor/skills/registering-a-repository/` when the platform does not carry this codebase.
+- `skills/README.md` for what every registered repository carries, where each host reads it
+  from, and the one line a person runs. It is the only page that says so; anything else
+  telling somebody to install a skill is out of date and should be sent there instead.
 - `guides/the-platform.md` for how a person does all of this by hand.

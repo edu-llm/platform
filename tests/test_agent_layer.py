@@ -54,10 +54,19 @@ REGISTERING = SKILLS / "registering-a-repository" / "SKILL.md"
 RESEARCHER_SKILL = PROJECT_ROOT / "skills" / "edullm-platform" / "SKILL.md"
 SKILLS_README = PROJECT_ROOT / "skills" / "README.md"
 
+#: THE ONE DOCUMENT IN THIS LAYER THAT IS LOADED IN REPOSITORIES THIS TREE DOES NOT CONTAIN.
+#: ``tools/distribute_agent_layer.py`` splices it into every registered repository's
+#: ``AGENTS.md``, so a stale verb or a flag no parser takes reaches every agent session in
+#: those codebases rather than only this one. It is held to the same vocabulary as everything
+#: else here, for a stronger reason than everything else here: nothing in the repository it
+#: lands in can check it, and the person reading it has no reason to doubt it.
+DISTRIBUTED_RULE = PROJECT_ROOT / "skills" / "agents-md-block.md"
+
 #: Every document in this layer. The shared properties below are parametrized over it, so a
 #: skill added later cannot arrive unheld.
 AGENT_DOCUMENTS: tuple[Path, ...] = (
     AGENTS,
+    DISTRIBUTED_RULE,
     SUBMITTING,
     REGISTERING,
     RESEARCHER_SKILL,
@@ -861,18 +870,49 @@ def test_the_page_that_installs_the_skill_points_at_a_file_that_is_here() -> Non
     """Mutation: rename the skill's folder and leave the copy line naming the old one.
 
     Nobody in the organization has this checkout, so the raw URL in that page is the whole
-    of how the file reaches anybody. A dead one is a researcher who runs three commands, gets
-    an empty file or an HTML error page, and concludes the skill does not exist.
+    of how the file reaches anybody. A dead one is a researcher who runs a command, gets an
+    error from ``curl``, and concludes the skill does not exist.
 
-    The branch in the URL is not checked, because nothing here can know what ``main`` holds.
-    What is checked is the path under it, which is the half a rename breaks.
+    **WHETHER THE URL RESOLVES IS NO LONGER ASKED HERE, AND THAT IS A WIDENING RATHER THAN A
+    RELAXATION.** ``tests/test_documented_urls_resolve.py`` asks it of every URL in the tree
+    instead of only this page's. The narrower version was the shape that catches the second
+    mistake and never the first: it held one page correct while a script, a workflow or
+    another page pointed at a path nothing had checked.
+
+    This case stays because it is a different question, and the one that file cannot answer.
+    A page that installs the *wrong* file, correctly, passes every check over there.
     """
     text = SKILLS_README.read_text(encoding="utf-8")
     paths = set(re.findall(r"raw\.githubusercontent\.com/[^/]+/[^/]+/[^/]+/(\S+)", text))
 
     assert paths, "the page carries no copy line at all"
-    missing = sorted(path for path in paths if not (PROJECT_ROOT / path).is_file())
-    assert not missing, f"the page points at files that are not in this tree: {missing}"
 
     expected = RESEARCHER_SKILL.relative_to(PROJECT_ROOT).as_posix()
     assert expected in paths, f"the page never sends anybody at {expected}"
+
+
+def test_the_page_installs_the_skill_and_not_the_rule() -> None:
+    """**Mutation: add an install line for the always-on rule beside the one for the skill.**
+
+    THE RULE IS DISTRIBUTED AND THE SKILL IS INSTALLED, AND OFFERING BOTH IS THE FAILURE THIS
+    WHOLE PAGE IS ONE PAGE TO AVOID. ``tools/distribute_agent_layer.py`` commits the rule into
+    every registered repository, where a pull request reviews it and
+    ``agent-layer-is-distributed`` compares it daily. A second copy in a home directory has
+    none of that, and under Claude Code a personal file outranks a project one -- so the
+    unreviewed, uncompared copy is also the copy that wins.
+
+    Held against the fenced lines because the page has to be able to *name* the rule's source
+    in prose. Saying where it comes from is the argument; fetching it is the mistake.
+    """
+    fenced = fenced_lines(SKILLS_README.read_text(encoding="utf-8"))
+    rule = DISTRIBUTED_RULE.relative_to(PROJECT_ROOT).as_posix()
+
+    fetched = [line for line in fenced if rule in line and "githubusercontent" in line]
+
+    assert not fetched, (
+        "the page fetches the always-on rule into somebody's machine:\n  "
+        + "\n  ".join(fetched)
+        + f"\n{rule} reaches a researcher by being committed to the repository they have "
+        "open, which is reviewed and compared. A copy in a home directory is neither, and "
+        "beats the reviewed one under Claude Code."
+    )
