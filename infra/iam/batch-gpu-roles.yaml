@@ -28,7 +28,9 @@ Description: The three roles a Batch GPU job runs under, and the instance profil
 # config/workload-catalog.yaml offers a workload whose whole job is reading shards and which
 # could not read them. What remains true, and is what this paragraph was always about, is
 # the outputs bucket. See the dataset-library statement below for what the two roles now
-# share and the one bucket they deliberately do not.
+# share and the two buckets they deliberately do not: edullm-landing, which only the
+# validator reads and which is CPU work, and edullm-olmo-370m-ckpts, which only a fine-tune
+# reads and which is not.
 #
 # What is shared, deliberately: the ECR repository, because there is one image; and the
 # outputs bucket, because there is one place results go.
@@ -266,6 +268,76 @@ Resources:
                 Action: s3:ListBucket
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:s3:::edullm-data
+              # READ ON ONE BUCKET OF PRETRAINED WEIGHTS, WHICH IS A NAMED EXCEPTION AND NOT
+              # A SECOND LIBRARY. WITHDRAW IT WHEN THE PROPER ROUTE EXISTS.
+              #
+              # This is a base-checkpoint read for fine-tuning. A fine-tune starts from
+              # weights somebody else trained, and the two things this role could read were
+              # its own run's prefix under the outputs bucket and the sealed corpora in
+              # edullm-data. A checkpoint that predates the run is neither, so every arm of
+              # a fine-tuning sweep died with AccessDenied on its first read -- before a
+              # step, after the queue wait, after the approval and after the machine was
+              # allocated. Five single-GPU arms on the latent-cot-superposition-amy branch
+              # of OLMo-core are the worked case; all five load
+              # s3://edullm-olmo-370m-ckpts/olmo3-370m/run-10b-equal/step12716/.
+              #
+              # THE PROPER ROUTE IS A SEALED ENTRY AND IT DOES NOT EXIST YET, WHICH IS THE
+              # WHOLE REASON THIS STATEMENT IS HERE RATHER THAN NOWHERE. A checkpoint a run
+              # may start from ought to arrive the way a corpus does: written to
+              # edullm-landing, promoted into edullm-data by the validator, registered, and
+              # then readable through the grant two statements up with no template change at
+              # all. The `model/` family has no sealed entry, nothing promotes weights
+              # through that airlock, and the promotion path for anything that is not a
+              # corpus was never built. So the alternative to this statement is not a
+              # narrower grant; it is telling a researcher that fine-tuning is unavailable
+              # until somebody builds a pipeline.
+              #
+              # WITHDRAW THIS WHEN THAT ENTRY LANDS. A sealed `model/` entry makes the read
+              # above cover these weights, at which point this pair is a second way to reach
+              # bytes that already have a first one, and the second way is the one nobody is
+              # holding to a licence, a digest or a retirement date. Deleting both
+              # statements is then the change, and tests/test_workload_dataset_reach.py
+              # names olmo-core-train against this bucket so the withdrawal is a visible
+              # edit rather than a grant nobody revisits.
+              #
+              # UNLIKE edullm-data, THIS BUCKET MAY NOT BE OURS, AND WHOEVER APPLIES THIS
+              # STACK HAS TO CHECK. Every other bucket named in this file is either
+              # sbsandbox-intern-* -- this account's own naming -- or edullm-data, whose
+              # policy was read on 2026-08-01 and is known to deny nothing on the read path.
+              # edullm-olmo-370m-ckpts is neither, and it appears nowhere else in this
+              # repository, so nothing here records which account owns it. If it is in the
+              # same account, this identity grant is the whole of what is needed. If it
+              # belongs to another account, a cross-account read takes the bucket owner's
+              # policy as well, and this statement alone leaves the run failing in exactly
+              # the way it fails today -- with AccessDenied on the first read and a role
+              # diff that says the grant is present. That is the worse of the two outcomes,
+              # because the template then looks like the answer. Confirm the owner before
+              # concluding the deploy fixed anything.
+              #
+              # Scoped to the whole bucket rather than to the one step directory the sweep
+              # names. A prefix grant would have to be edited for the next base checkpoint,
+              # and an exception that is edited per run stops being read; the bucket is a
+              # single-purpose store of published checkpoints, so it is the honest unit.
+              # Read-only, and asymmetric for the same reason the library grant is: a
+              # training container has no business writing into weights it starts from, and
+              # withholding the write means the refusal can be read off a role diff rather
+              # than inferred from somebody else's bucket policy.
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::edullm-olmo-370m-ckpts/*
+              # Both halves or neither, and the listing is not the optional one. A
+              # distributed checkpoint is a directory -- shards per rank, a metadata object,
+              # a config -- and a loader handed a step prefix walks it before it opens
+              # anything, so a role that could GetObject a key it already knew and could not
+              # enumerate would fail at a call that looks unrelated to the checkpoint it was
+              # loading. Unconditioned, for the reason the dataset library's listing is:
+              # this is a published store with no team dimension, and a prefix condition
+              # would only stop a trainer discovering the step directories it may read.
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::edullm-olmo-370m-ckpts
               # s3:DeleteObject UNDER checkpoints/, WHICH THIS FILE REFUSED UNTIL A RUN
               # PROVED THE REFUSAL COSTS THE RUN. THE OLD ARGUMENT IS BELOW IN FULL BECAUSE
               # IT IS HALF RIGHT AND THE HALF THAT IS WRONG IS NARROW.
