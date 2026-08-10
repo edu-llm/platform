@@ -79,6 +79,7 @@ FABRIC_STEP = "Verify every node came up with the fabric, or refuse the fleet"
 AGENT_STEP = "Wait for Systems Manager to reach every node, or refuse the fleet"
 READINESS_STEP = "Wait for every node to finish its own bootstrap"
 GUARD_STEP = "Refuse a hand-started launch from somebody who may not make one"
+REFUSAL_STEP = "Refuse a run name, a branch or a command that would fail on the machine"
 
 #: Every workflow file in this lane. One role serves all of them -- see the template for why
 #: splitting it would suggest a boundary that does not exist -- and this tuple is the thing the
@@ -1089,6 +1090,64 @@ def test_the_run_workflow_clones_rather_than_building_an_image(runner: dict[str,
     assert "docker build" not in body
     assert "edullm-node" in body
     assert "run.yaml" in body
+
+
+def test_a_command_that_cannot_start_is_refused_before_a_node_is_touched(
+    runner: dict[str, Any],
+) -> None:
+    """TWO RUNS DIED ON 2026-08-10 BECAUSE NOTHING ASKED THIS, AND THE PLACE IT IS ASKED MATTERS.
+
+    Nothing on this path prepends a launcher, so the 64-rank command committed on the model
+    branch starts one process on one of the node's eight cards and stops on a message about the
+    parallelism mesh. The refusal belongs with the free ones, before ``configure-aws-credentials``
+    and before any machine is addressed: asked later it would cost a claim, a clone and a
+    container to say the same thing.
+    """
+    job = only_job(runner)
+    names = [item.get("name", "") for item in job["steps"]]
+    body = step(job, REFUSAL_STEP)["run"]
+
+    assert names.index(REFUSAL_STEP) < names.index("Configure AWS credentials")
+    assert "launcher_refusals" in body
+    assert "block_launcher" in body
+
+
+def test_the_launcher_check_reads_the_command_the_node_will_actually_run(
+    runner: dict[str, Any],
+) -> None:
+    """THE MUTATION THAT LEAVES A GUARD LOOKING COVERED AND UNABLE TO FIRE.
+
+    ``command`` on this form defaults to empty, and the form's own description says that is
+    where it should be left -- the command belongs in the branch. A check reading only the
+    override would therefore pass every dispatch that took the default, which is every dispatch
+    that went wrong. So ``.edullm/run.yaml`` is fetched, over https with no credential, which is
+    the access this lane already requires of the repository because the node clones it holding
+    no GitHub token.
+
+    ``refs/heads/`` is not decoration either: raw.githubusercontent's path is owner/repo/ref/path
+    and these branches carry slashes, so ``edullm/final-model/.edullm/run.yaml`` is ambiguous
+    between a ref and a directory without it.
+    """
+    body = step(only_job(runner), REFUSAL_STEP)["run"]
+
+    assert "raw.githubusercontent.com/${REPOSITORY}/refs/heads/${BRANCH}/.edullm/run.yaml" in body
+    assert 'if [ -z "${COMMAND_OVERRIDE}" ]; then' in body
+
+
+def test_a_run_yaml_that_could_not_be_read_is_not_itself_a_refusal(
+    runner: dict[str, Any],
+) -> None:
+    """The direction to fail in, kept as a test because the other one is tempting.
+
+    Every registered repository but OLMo-core carries no ``.edullm/run.yaml``, and the node
+    already refuses that by name with the remedy on it. A rate limit is not the researcher's
+    mistake either. Both leave an empty file and the step says what it could not read rather
+    than turning a fetch into a gate on a shared button.
+    """
+    body = step(only_job(runner), REFUSAL_STEP)["run"]
+
+    assert '> "${spec}" || : > "${spec}"' in body
+    assert "the launcher check did not run" in body
 
 
 def test_every_block_workflow_assumes_the_role_the_template_names_for_it() -> None:

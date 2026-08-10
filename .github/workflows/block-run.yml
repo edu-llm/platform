@@ -144,13 +144,15 @@ jobs:
           set -euo pipefail
           uv sync --locked
 
-      # BEFORE THE CREDENTIALS AND BEFORE THE NODE, BECAUSE THESE TWO REFUSALS ARE FREE.
+      # BEFORE THE CREDENTIALS AND BEFORE THE NODE, BECAUSE THESE REFUSALS ARE FREE.
       #
       # A run name that is not a legal directory, container name and S3 key segment at once
       # produces a failure halfway through a clone on a machine somebody is paying for. A
-      # branch that does not exist produces one at exactly the same point. Both are answerable
-      # from a runner with no AWS access and no node involved, so both are answered here.
-      - name: Refuse a run name or a branch that would fail on the machine
+      # branch that does not exist produces one at exactly the same point. A command that
+      # needs sixty-four ranks and starts one produces a whole node's worth of idle cards and
+      # an error naming the wrong thing. All three are answerable from a runner with no AWS
+      # access and no node involved, so all three are answered here.
+      - name: Refuse a run name, a branch or a command that would fail on the machine
         run: |
           set -euo pipefail
           uv run python - <<'PY'
@@ -178,6 +180,73 @@ jobs:
           git ls-remote --exit-code --heads "https://github.com/${REPOSITORY}.git" "${BRANCH}" \
             > "${RUNNER_TEMP}/branch-tip.txt"
           cat "${RUNNER_TEMP}/branch-tip.txt"
+
+          # THE COMMAND HAS TO BE RESOLVED HERE THE WAY THE NODE RESOLVES IT, OR THE CHECK
+          # BELOW CANNOT FAIL IN THE CASE IT WAS WRITTEN FOR.
+          #
+          # `command` on this form defaults to empty, and empty is the spelling the form's own
+          # description recommends -- the command belongs in the branch. So a guard reading
+          # only the override would pass every dispatch that took the default, which is every
+          # dispatch that went wrong on 2026-08-10. `.edullm/run.yaml` is fetched instead, over
+          # https with no credential, which is the same access the node has: this lane already
+          # requires a public repository because the machine clones it holding no GitHub token.
+          #
+          # `refs/heads/` IS NOT DECORATION. raw.githubusercontent's path is owner/repo/ref/path
+          # and the branches here carry slashes, so `edullm/final-model/.edullm/run.yaml` is
+          # ambiguous between a ref and a directory. The explicit form resolves it.
+          #
+          # A FETCH THAT FAILS IS NOT A REFUSAL, AND THAT DIRECTION IS DELIBERATE. A repository
+          # carrying no `.edullm/run.yaml` is the ordinary state of every registered codebase
+          # but OLMo-core, and the node already refuses that by name with the remedy on it. A
+          # rate limit or a blip is not the researcher's mistake either. Both leave an empty
+          # file, the check below says what it could not read, and the dispatch continues.
+          spec="${RUNNER_TEMP}/run.yaml"
+          : > "${spec}"
+          if [ -z "${COMMAND_OVERRIDE}" ]; then
+            curl --fail --silent --show-error --location --max-time 20 \
+              "https://raw.githubusercontent.com/${REPOSITORY}/refs/heads/${BRANCH}/.edullm/run.yaml" \
+              > "${spec}" || : > "${spec}"
+          fi
+
+          uv run python - "${spec}" <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+
+          import yaml
+
+          from edullm_platform.block_launcher import launcher_refusals
+
+          override = os.environ["COMMAND_OVERRIDE"]
+          spec = Path(sys.argv[1])
+          committed = spec.read_text(encoding="utf-8") if spec.is_file() else ""
+
+          if override:
+              command, source = override, "the command input on this form"
+          elif committed.strip():
+              document = yaml.safe_load(committed)
+              command = str((document or {}).get("command") or "")
+              source = f".edullm/run.yaml on {os.environ['BRANCH']}"
+          else:
+              command, source = "", ""
+
+          if not command.strip():
+              # Said rather than passed over in silence. The whole value of this step is that a
+              # reader knows what was and was not looked at, and "no refusals" over a command
+              # nobody could read is the reading that teaches people to trust it too far.
+              print(
+                  "no command could be read here, so the launcher check did not run. The node "
+                  "reads .edullm/run.yaml itself after the clone and refuses if there is none."
+              )
+              raise SystemExit(0)
+
+          print(f"command from {source}:")
+          print(command)
+          refusals = launcher_refusals(command)
+          if refusals:
+              raise SystemExit("\n\n".join(refusals))
+          print("launcher check: this command starts what it asks for")
+          PY
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
