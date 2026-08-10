@@ -10,9 +10,9 @@ every run it could see, over all time, with no calendar in it. A daily file is g
 diffable and keeps history, which is what makes the day the right key for it and the wrong key
 for a snapshot that changes every thirty seconds.
 
-**THE LARGEST RUN IS WHY THIS EXISTS.** ``docs-frank/reference/system-overview.md`` § "Where
-everything is seen" puts a person, an experiment and a figure on the first line of the morning
-message, because a message opening with a total opens with something nobody is accountable for.
+**THE LARGEST RUN IS WHY THIS EXISTS.** The first line of the morning message carries a person,
+an experiment and a figure, because a message opening with a total opens with something nobody
+is accountable for.
 Everything else here is a count, which is the same rule applied downward: one run is named and
 the rest are numbers.
 

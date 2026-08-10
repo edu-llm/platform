@@ -1,8 +1,8 @@
 """``edullm check``: what it clears, and what it refuses before anything is queued.
 
 Every case here is either the happy path or a mistake somebody actually makes, because a
-test that a constant equals itself is worse than none. The mistakes are taken from the
-transcripts in ``docs-frank/working/terminal-mockups/``, which were written by watching
+test that a constant equals itself is worse than none. The mistakes are taken from terminal
+transcripts that were written by watching
 people use a design rather than by reading it -- a mistyped dataset release, four cards
 picked out of habit with a command that starts one process, a corpus that is registered and
 is not a corpus, a team the roster cannot resolve.

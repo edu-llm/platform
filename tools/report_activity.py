@@ -174,9 +174,9 @@ def render_document(
             "",
             (
                 f"Read at {substrate.collected_at:%Y-%m-%d %H:%M} UTC and written by "
-                "`tools/report_activity.py`. Nothing here can stop a run: "
-                '`docs-frank/reference/system-overview.md` § "How money gets spent, and what '
-                'stops a mistake" records the unwiring as the decision rather than an omission.'
+                "`tools/report_activity.py`. Nothing here can stop a run: leaving this "
+                "unwired from anything that spends money is the decision rather than an "
+                "omission."
             ),
             "",
         ]

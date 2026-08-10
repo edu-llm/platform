@@ -17,8 +17,8 @@ disagree with the server the first time only one of them was corrected, and the 
 it would fail is a submission the CLI cleared and admission refused, with a lead's
 attention already spent on it.
 
-THE VERB NAMES FOLLOW ``docs-frank/reference/decisions.md``, WHICH SETTLED THEM ON
-2026-08-04: ``check`` is the validator and absorbs the scaffolding ``new`` used to do,
+THE VERB NAMES WERE SETTLED ON 2026-08-04 AND THIS IS THE WHOLE SET:
+``check`` is the validator and absorbs the scaffolding ``new`` used to do,
 ``submit``, ``status``, ``logs`` and ``cancel`` are unchanged, ``status`` with no run id
 absorbs ``activity``, and ``notebook`` is a flag on ``shell``.
 

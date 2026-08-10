@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: The working tier. Where the exploration route puts a person's files, and where the platform's data flow starts.
 
 # WHY THIS IS A BUCKET AND NOT A PREFIX, WHICH REVERSES AN EARLIER POSITION.
-# docs-frank/reference/decisions.md records the reversal and its three reasons, each sufficient
+# The reversal was taken deliberately and rests on three reasons, each sufficient
 # alone: runs/* in the outputs bucket is human-writable, so a prefix there would be a naming
 # convention enforced by nobody; a bucket carries its own lifecycle rule, independent of the
 # outputs bucket's thirty-day noncurrent expiry; and a bucket is discoverable by name where a
@@ -94,8 +94,8 @@ Resources:
   # survive any identity policy anybody adds later. This bucket has no such guarantee. The
   # boundary between two people here is on the identity side, in the researcher role's write
   # statement, and it is a fence rather than an authorization: the source identity it keys on is
-  # self-asserted, which docs-frank/reference/aws-spend-controls.md records under "What the lane
-  # does not cover". Reads are open to everybody in the lane, which matches runs/* and is what
+  # self-asserted, which is a gap the lane leaves open knowingly rather than one nobody has
+  # noticed. Reads are open to everybody in the lane, which matches runs/* and is what
   # makes looking at somebody else's working set possible at all.
 
 Outputs:

@@ -9,9 +9,9 @@ at eight times what it costs. That figure is correct for the question it answers
 question everybody actually asks, which is "what is this going to take".
 
 **NOTHING HERE ROUTES ANYTHING, AND NOTHING HERE MAY.** ``classify_request`` reads the worst
-case and nothing else, because the worst case is what is being authorised;
-``docs-frank/reference/decisions.md`` settles the general form of this under jobs running
-coming first and the record following. A measured median is evidence about the past and a
+case and nothing else, because the worst case is what is being authorised. The general form
+of that is settled across this platform: jobs running come first and the record of them
+follows. A measured median is evidence about the past and a
 submission is a claim about the future, and a rule that let last week's fast runs widen this
 week's automatic class would be routing on a number a submitter can move by submitting cheap
 runs. So this module is imported by the two renderers and by nothing that decides.

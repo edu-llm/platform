@@ -23,7 +23,7 @@
 # and long enough that a clean week is silent.
 #
 # Under config/reports/ rather than config/ for the reason config/reports/asks.yaml gives: the
-# nine control-plane files in docs-frank/reference/system-overview.md do not include this, and
+# nine files that make up the control plane do not include this, and
 # .github/workflows/release-tag.yml names seven paths under config/ and no directory, so a
 # number here earns no version. It moves no installed CLI's answer either, though not for that
 # reason: config/ rides in the wheel entire, and what makes this one harmless is that nothing

@@ -2,8 +2,8 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: Service role the expiry janitor runs as while it warns and stops machines the researcher lane launched.
 
 # STOPS, NEVER TERMINATES, AND THAT IS THE WHOLE SHAPE OF THIS ROLE.
-# docs-frank/reference/system-overview.md draws the janitor as stopping a machine at expiry, and
-# docs-frank/reference/decisions.md puts strictness on the irreversible half everywhere it
+# The janitor's job is to stop a machine at expiry, and this platform puts its strictness on the
+# irreversible half of a pair everywhere the choice
 # appears. A stopped instance keeps its root volume and restarts with one command; a terminated
 # one is gone, and the person whose work was on it has no recourse. The expiry exists so a
 # forgotten machine dies, not to punish anybody for forgetting.

@@ -306,7 +306,7 @@ denied_outright:
   # zero exceptions against sixteen reviewed findings, so the review process this was meant
   # to force does not exist and an admin gate did not bring one into being. The remedy the
   # refusal offers is editing a security file, which is not a thing a first-week researcher
-  # can do; docs-frank has the transcript of one trying.
+  # can do, and a first-week researcher trying it is how that was found out.
   #
   # The property this was built for survives, and it is the reader rather than the route.
   # Somebody still has to read the findings before the run starts, and the approver context

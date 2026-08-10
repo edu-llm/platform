@@ -4,42 +4,39 @@ Description: The bounded role a researcher assumes to reach AWS directly, declar
 # WHY THIS ROLE EXISTS, AND IT IS NOT THE OBVIOUS REASON. Nineteen of the thirty-five people on
 # the roster already hold an account-wide administrator role and lose nothing by not assuming
 # this one; for them it improves the resolution of what is seen. The other sixteen hold no AWS
-# role at all, and docs-frank/reference/system-overview.md observes in "Where everything is
-# seen" that they can produce no mismatch at all -- the monitoring covers exactly the
+# role at all, and so can produce no mismatch at all -- the monitoring covers exactly the
 # population for whom the recorded path is a choice. This role is what moves those sixteen from
 # invisible to bounded and visible, and every deny below binds them where it merely advises the
 # nineteen.
 #
-# THE SPECIFICATION IS ELSEWHERE AND THIS TEMPLATE DOES NOT RESTATE IT.
-# docs-frank/reference/system-overview.md, "How money gets spent, and what stops a mistake",
-# draws the properties. docs-frank/reference/aws-spend-controls.md, "The permission policy",
-# is the document these statements were simulated against -- roughly a hundred and twenty
-# simulations, with the one result worth carrying here being that boundary v5 alone answers
+# THESE STATEMENTS WERE SIMULATED BEFORE THEY WERE APPLIED, AND ONE RESULT IS WORTH CARRYING
+# HERE RATHER THAN LEAVING TO BE REDISCOVERED. Roughly a hundred and twenty simulations were
+# run against the permission policy this role implements, and the one worth repeating is that
+# boundary v5 alone answers
 # `allowed` for ec2:PurchaseCapacityBlock and boundary v5 plus this policy answers
 # `explicitDeny`. A permissions boundary is a ceiling and not a floor, so a role's own policy
 # may deny what the boundary permits, which is the whole reason this is buildable without the
 # boundary owner.
 #
-# THE NAME HAS NO sbsandbox-intern-edullm- PREFIX and that is deliberate. Both reference
-# documents name it edullm-researcher, and a person types this name. Two consequences: the
+# THE NAME HAS NO sbsandbox-intern-edullm- PREFIX and that is deliberate. It is
+# edullm-researcher everywhere it is written down, and a person types it. Two consequences: the
 # deployer role's resource scopes key on the long prefix and so cannot touch this role, which
 # is correct because no pipeline may; and InternSandboxBoundary's DenyTamperingWithInternRoles
 # matches role/Intern-* and so does not cover it either.
 #
 # WHAT THIS ROLE DOES NOT DO, stated because the obvious reading is wrong. It is a paved road
-# and not a guardrail: it prevents nothing for anyone who does not assume it, and
-# aws-spend-controls.md, "What the lane does not cover", verified live that the exact shape
+# and not a guardrail: it prevents nothing for anyone who does not assume it, and a live check
+# confirmed that the exact shape
 # behind this account's largest charge is one command away from a raw Intern role right now.
 # Only a boundary deny conditioned on aws:PrincipalArn binds, and that needs the boundary
-# owner; decisions.md, "The airlock is a latch", records that ask being assembled.
+# owner; that ask is being assembled.
 #
 # ALL SEVEN PROPERTIES ARE HERE, AND THE SEVENTH IS WRITTEN AHEAD OF WHAT IT NAMES.
-# system-overview.md draws seven and the seventh is the write into
+# The design draws seven and the seventh is the write into
 # edullm-scratch/<person>/, the working tier the exploration route defaults its output to.
 # The bucket does not exist yet -- it is absent from list-buckets -- and the grant is written
-# now anyway. docs-frank/superpowers/specs/2026-08-04-platform-buildout-design.md, under "The
-# exploration route is a slice, not a non-goal", names the bucket and this statement as two of
-# the three things that slice consists of, and that slice creates the bucket and assumes this
+# now anyway. The exploration route's slice of work consists of three things, two of which are
+# this bucket and this statement, and that slice creates the bucket and assumes this
 # role without amending it. A grant that waited for the bucket would put a second hand-applied
 # IAM deploy inside that work, and a laptop with an SSO session is the scarcest step here.
 #

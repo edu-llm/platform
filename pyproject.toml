@@ -82,8 +82,8 @@ reader = [
 ]
 
 # THE BINARY. One command installs one executable, which is the whole of what a researcher
-# needs on day one -- `docs-frank/reference/system-overview.md` counts twelve of the
-# fourteen surfaces that reach a researcher as this one command:
+# needs on day one -- twelve of the fourteen surfaces that reach a researcher are this one
+# command:
 #
 #   uv tool install --force git+https://github.com/edu-llm/platform@v4.5.0
 #

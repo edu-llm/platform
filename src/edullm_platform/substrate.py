@@ -4,8 +4,8 @@
 activity is a daily aggregation of what is here, unioned with the launch events that carry no
 run id at all. A per-run state snapshot -- what ``edullm status`` needs, and what this module
 deliberately does not build -- is the same records keyed by run id and refreshed on state
-change. ``docs-frank/reference/decisions.md`` settles the split under "The activity and the run
-index are one pipeline and two publications". The expensive half is shared: reading lineage,
+change. That split is settled rather than incidental: the activity and the run index are one
+pipeline and two publications. The expensive half is shared: reading lineage,
 reading Batch, reading CloudTrail, and maintaining the run-id to workflow-run join. Building
 either publication as a direct reader would mean two ingestions that disagree about one run.
 

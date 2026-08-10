@@ -1,6 +1,6 @@
 """Where a lane's files go, and the four numbers the lane reads rather than carries.
 
-The layout is docs-frank/reference/system-overview.md's, under "Where data lives": the working
+The layout is the one the design settled on for where data lives: the working
 tier is a bucket of its own laid out <person>/<project>/, and the lane defaults its output there.
 Every assertion below is about that shape rather than about a string, because the shape is what
 a person navigating the bucket relies on and what the role's write fence is written against.

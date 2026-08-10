@@ -7,8 +7,10 @@ tests/test_researcher_role_template.py compare the template's condition against 
 without rendering anything, and what lets tests/test_expiry_janitor.py decide a sweep with no
 account in the loop.
 
-docs-frank/reference/aws-spend-controls.md is the specification for the role. Read "The
-permission policy" before changing anything here.
+The property to preserve when changing anything here is that the permission policy is an
+allow-list and not a deny-list: an instance type is permitted by being named, and nothing is
+permitted merely by not having been forbidden. A deny-list on a shared account grants every
+shape AWS ships next, which is the failure mode this shape was chosen to avoid.
 """
 
 from __future__ import annotations

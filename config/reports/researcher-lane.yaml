@@ -1,13 +1,12 @@
 # The two clocks the expiry janitor runs on, and the lifetime the lane helper defaults to.
 #
 # UNDER config/reports/ RATHER THAN IN config/, and the placement is an argument rather than
-# tidiness. docs-frank/reference/system-overview.md names the configuration files that are the
-# control plane -- nine of them since config/accelerators.yaml landed in #351 -- and a further
-# one in config/ would contradict a document this plan is required to cite rather than edit.
+# tidiness. Nine configuration files are the control plane -- nine since config/accelerators.yaml
+# landed in #351 -- and a further one in config/ would enlarge a set this plan is required to
+# work within rather than redraw.
 # config/reports/ is where operational limits that are not the control plane already live --
-# config/reports/checkpoint-acknowledgements.yaml is here, and
-# docs-frank/reference/decisions.md, under "The budget is a number and a line in the morning
-# message", records that tools/spend-limits.yaml belongs at config/reports/spend.yaml for the
+# config/reports/checkpoint-acknowledgements.yaml is here, and it is a settled ruling rather
+# than a preference that tools/spend-limits.yaml belongs at config/reports/spend.yaml for the
 # same reason.
 #
 # IT IS NOT A RELEASE PATH, WHICH IS THE SECOND HALF OF THE PLACEMENT ARGUMENT.

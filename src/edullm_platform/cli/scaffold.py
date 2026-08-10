@@ -33,6 +33,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from edullm_platform.cli.configuration import ReviewedConfiguration
+from edullm_platform.cli.release import installed_version
 from edullm_platform.cli.spec import SPEC_PATH, RunSpec, render_spec
 from edullm_platform.contracts.workload import ComputeProfile, WorkloadProfile
 from edullm_platform.execution import CONTAINER_SHAPES
@@ -118,12 +119,23 @@ def _notes(
 
     Comments rather than prose printed once to a terminal, because the file outlives the
     invocation and the person editing it in a fortnight is the one who needs the list.
+
+    **THE VERSION AND NOT THE DIRECTORY, BECAUSE THIS LINE GETS COMMITTED TO SOMEBODY ELSE'S
+    PUBLIC REPOSITORY.** It used to interpolate ``configuration.directory``, which is an
+    absolute path on whichever laptop ran ``check`` -- so every research repository scaffolded
+    by this tool carried one author's home directory in its first line, and one of them is on
+    an open pull request today. The question the line answers is which reviewed configuration
+    decided these fields, and a path is the wrong answer to it anyway: the next reader is on a
+    different machine, where that directory is either absent or somebody else's. A version
+    identifies the packaged configuration and means the same thing everywhere. The terminal
+    still prints the directory, through :func:`presentation.config_source_said`, because there
+    the reader is the person who owns it and it is not written down anywhere.
     """
     offered = ", ".join(workloads_registered_for(configuration, repository))
     return (
         (
-            "# Written by edullm check, from config/workload-catalog.yaml in "
-            f"{configuration.directory}."
+            "# Written by edullm check, from config/workload-catalog.yaml in the reviewed "
+            f"configuration carried by edullm {installed_version().said()}."
         ),
         "# Everything here is a property of the code and travels with it in git.",
         "# The machine, the corpus and the experiment are supplied at submit time,",

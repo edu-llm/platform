@@ -8,9 +8,9 @@ already has with GitHub.
 
 WHY THE LANE IS NOT THE SUBMISSION PATH, SAID HERE BECAUSE HERE IS WHERE SOMEBODY WOULD REACH
 FOR IT. Nothing in this module imports cli/preflight.py's rules, and tests/test_lane_is_ungated.py
-fails if a lane verb ever calls one.
-docs-frank/superpowers/specs/2026-08-04-platform-buildout-design.md, under "The exploration route
-is a slice, not a non-goal", names the reason: check refuses unregistered_repository anywhere
+fails if a lane verb ever calls one. The reason is mechanical rather than stylistic, and it is why
+the separation has to be enforced by a test instead of by intent: check refuses
+unregistered_repository anywhere
 outside the five registered repositories, that lookup sits in run_preflight, and a second verb
 calling run_preflight picks the refusal up for free. The lane is meant to be ungated. You get a
 machine, you do what you like, nothing is checked and nothing is recorded as citable.
@@ -144,8 +144,8 @@ __all__ = [
     "zones_offering_argv",
 ]
 
-#: The working tier. docs-frank/reference/system-overview.md, "Where data lives", draws it as a
-#: bucket of its own rather than a prefix, for three reasons that hold separately: runs/* is
+#: The working tier, which is a bucket of its own rather than a prefix inside the outputs
+#: bucket, for three reasons that hold separately: runs/* is
 #: human-writable so a prefix inside the outputs bucket would be a naming convention and nothing
 #: more, a bucket carries its own lifecycle rule, and a bucket is discoverable by name.
 #:
@@ -246,8 +246,8 @@ def working_prefix(*, person: str) -> str:
 
     **THE PERSON SEGMENT IS NOT ACCESS CONTROL AND THAT IS WORTH READING BEFORE ARGUING WITH
     IT.** The researcher role's seventh statement fences on ``${aws:SourceIdentity}``, which is
-    self-asserted: ``docs-frank/reference/aws-spend-controls.md``, "What the lane does not
-    cover", records that nothing stops somebody passing another person's. What the segment buys
+    self-asserted, and nothing stops somebody passing another person's -- a gap the lane is
+    known to leave open rather than one nobody has noticed. What the segment buys
     is that two people on one project sync into two prefixes rather than one. Sharing a prefix,
     each ``aws s3 sync`` deletes what the other wrote and neither is told. That is a collision
     and not a breach, and somebody who takes it for a security boundary will eventually notice
@@ -256,9 +256,10 @@ def working_prefix(*, person: str) -> str:
     NO TEAM SEGMENT ABOVE IT, WHICH THERE WAS UNTIL 2026-08-05. The fence never enforced one, so
     it was a label; seven people sit on two groups so a lane would have had to resolve a team to
     know where to sync; and ``config/organization.yaml`` defines this tier as the work costed to
-    nobody, which is the one dimension a team segment would organise it by.
-    ``docs-frank/reference/decisions.md`` carries the ruling and says why the outputs bucket
-    keeps its own team segment rather than being tidied to match.
+    nobody, which is the one dimension a team segment would organise it by. The outputs bucket
+    keeps its own team segment rather than being tidied to match, and the asymmetry is deliberate:
+    there the team is what the spend is attributed to, so the segment carries a fact instead of a
+    label.
 
     The trailing separator is what makes this a directory to every tool that lists one, and
     without it a prefix search for one person also finds everybody whose name starts the same
@@ -281,9 +282,9 @@ def person_from_caller_arn(caller_arn: str) -> str | None:
     ``lane-<project>`` and carries no person at all, because ``sts:GetCallerIdentity`` does not
     return the source identity; None rather than a guess, so the verb can say what to do instead.
 
-    Self-asserted either way. ``docs-frank/reference/aws-spend-controls.md``, "What the lane does
-    not cover", records that nothing stops somebody passing another person's source identity, so
-    this is attribution and a fence rather than authentication.
+    Self-asserted either way: nothing stops somebody passing another person's source identity,
+    which the lane leaves open knowingly, so this is attribution and a fence rather than
+    authentication.
     """
     session = caller_arn.rsplit("/", 1)[-1]
     if _ALREADY_IN_THE_LANE.match(session):
@@ -570,9 +571,9 @@ def lane_refusals(
 
     **NOTHING HERE IS A PERMISSION AND THAT IS THE TEST EVERY CANDIDATE HAS TO PASS.** Two of
     the three say a destination is misspelled, and the third says the caller cannot be named. Add
-    a fourth only if the same is true of it, and read
-    ``docs-frank/superpowers/specs/2026-08-04-platform-buildout-design.md`` under "The exploration
-    route is a slice, not a non-goal" first.
+    a fourth only if the same is true of it. The exploration route is ungated by design and not by
+    omission, so a refusal here that withholds a machine rather than correcting an address is a
+    gate arriving by the back door, and it is the shape every candidate has to be checked against.
 
     IT WAS FOUR UNTIL 2026-08-05 AND THE ONE THAT LEFT IS THE ONE TO NOT PUT BACK.
     ``unknown_team`` checked the spelling of a segment the working tier no longer has. With the
@@ -621,10 +622,9 @@ def expires_at(now: datetime, lifetime_hours: int) -> str:
     """The absolute UTC instant the janitor may stop this machine at, ISO-8601 with a Z.
 
     Seconds included and sub-seconds not, because the janitor compares this against a sweep that
-    runs on a minute boundary. Absolute rather than a duration, for the reason
-    ``docs-frank/reference/aws-spend-controls.md`` gives under "The helper" and the researcher
-    role's template repeats: LaunchTime is the wrong clock for a duration, and an extension is one
-    unambiguous write where a duration has to be read, interpreted and summed.
+    runs on a minute boundary. Absolute rather than a duration, for the reason the researcher
+    role's template also carries: LaunchTime is the wrong clock for a duration, and an extension is
+    one unambiguous write where a duration has to be read, interpreted and summed.
     """
     return (now + timedelta(hours=lifetime_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
 

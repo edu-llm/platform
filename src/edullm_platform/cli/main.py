@@ -17,8 +17,8 @@ on and an unreadable configuration is not, and a CLI that collapsed them would s
 somebody to edit a spec that was fine.
 
 EVERY WORD THIS BINARY IS TYPED IS ONE OF THREE THINGS, AND THEY GET THREE ANSWERS.
-``BUILT_TODAY`` is every verb ``docs-frank/reference/decisions.md`` settled on 2026-08-04
-and runs: the governed-submission core of ``check``, ``submit``, ``status``, ``logs`` and
+``BUILT_TODAY`` is every verb the 2026-08-04 naming settled on and this binary
+runs: the governed-submission core of ``check``, ``submit``, ``status``, ``logs`` and
 ``cancel``, the two that file something with ``add`` and ``ask``, and the two ungated ones
 with ``run`` and ``shell``. ``NOT_BUILT_YET`` is empty as of the exploration route and stays
 because the next settled-and-unbuilt name has somewhere to be declared, which is what makes
@@ -34,8 +34,8 @@ carries the argument and ``tests/test_lane_verdicts.py`` fails if either verb ev
 that path. What they refuse instead is a closed set of four, all of them about a destination
 being unspellable rather than a permission being withheld.
 
-WHY THE RETIRED NAMES ARE REFUSED RATHER THAN ALIASED. Every transcript in
-``docs-frank/working/terminal-mockups/`` types ``dry-run`` and ``new``, so accepting them
+WHY THE RETIRED NAMES ARE REFUSED RATHER THAN ALIASED. Every transcript and guide written
+before the rename types ``dry-run`` and ``new``, so accepting them
 is tempting and wrong: an alias makes two names work and settles nothing, the retired one
 survives into the next guide, and the rename never finishes. Fewer names is the direction
 of this whole design -- ``check`` absorbed two verbs and ``status`` absorbed one -- and an
@@ -520,9 +520,9 @@ WHAT_A_VERB_DOES: Final = {
 #: ``RETIRED`` still names ``shell --notebook``, deliberately. That path prints no options
 #: list of its own, so naming the replacement spelling there is the whole of what somebody
 #: typing the old verb needs.
-#: What ``docs-frank/reference/decisions.md`` settled on 2026-08-04 and nothing behind exists for
+#: What the 2026-08-04 naming settled on and nothing behind exists for
 #: yet. Empty as of the exploration route, which is the point rather than an oversight: every verb
-#: that document names is built. It stays because the next settled-and-unbuilt name has somewhere
+#: that naming reached is built. It stays because the next settled-and-unbuilt name has somewhere
 #: to be declared, and because the answer to a name in it is a plan rather than a usage error.
 #: :func:`_no_such_verb` reads it, and reads correctly when it is empty.
 NOT_BUILT_YET: Final[dict[str, str]] = {}
@@ -917,8 +917,9 @@ def _add_json(parser: argparse.ArgumentParser) -> None:
     The agent-facing writing of the last year says emit JSON whenever stdout is not a
     terminal. Doing that would make `edullm check > note.txt` and `edullm check` disagree
     about what was checked, on the one artifact somebody pastes into a message to ask what
-    went wrong. The flag is named in this verb's own help instead, which is the answer
-    ``docs-frank/reference/designing-the-cli.md`` reaches after weighing both.
+    went wrong. The flag is named in this verb's own help instead, which is the answer this
+    CLI reaches after weighing both: discoverable where somebody is already reading, and never
+    a function of where the output happens to be going.
     """
     parser.add_argument(
         "--json",

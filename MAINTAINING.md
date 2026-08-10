@@ -303,8 +303,7 @@ uv run python tools/export_schemas.py
 ## What `edullm` exits with
 
 Four codes and the signal one. The number is the only part of the CLI a script can read
-without parsing prose, so it is a published interface under
-`docs-frank/reference/writing-releases-and-docs.md` and changing one is a major version.
+without parsing prose, so it is a published interface and changing one is a major version.
 `src/edullm_platform/cli/main.py` declares them and `tests/test_cli_exit_codes.py` holds
 every verb to them, deriving the verbs from the parser rather than listing them.
 

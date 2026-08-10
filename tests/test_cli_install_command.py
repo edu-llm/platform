@@ -188,7 +188,7 @@ def readable_files() -> list[Path]:
     ASKED OF GIT RATHER THAN OF THE FILESYSTEM, BECAUSE THE FILESYSTEM ANSWERS A DIFFERENT
     QUESTION ON EVERY MACHINE. This used to be an ``os.walk`` of the checkout with a prune
     list, which reads whatever a working directory happens to contain -- so the rules below
-    matched a gitignored planning document under ``docs-frank/`` that exists on one laptop
+    matched a gitignored planning document that exists on one laptop
     and nowhere else. Three agents in one evening hit that failure, each confirmed it also
     failed on ``main``, each correctly concluded it was not theirs, and none of them owned
     it, which is what a test that cannot fail in CI buys.

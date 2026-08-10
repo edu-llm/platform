@@ -1,4 +1,4 @@
-"""The seven properties system-overview.md draws on edullm-researcher, as policy statements.
+"""The seven properties the design draws on edullm-researcher, as policy statements.
 
 WHAT THIS MODULE IS NOT. It reads a committed CloudFormation template, which is a claim about
 what the account will be asked for rather than a description of what it holds. Every statement
@@ -7,10 +7,8 @@ afterwards. tests/test_researcher_deployed_role.py is the half that closes that 
 neither module replaces the other -- this one catches a template that is wrong, that one
 catches an account that is.
 
-The specification is docs-frank/reference/system-overview.md, "How money gets spent, and what
-stops a mistake", whose diagram names the seven properties, and
-docs-frank/reference/aws-spend-controls.md, "The permission policy", which is the document the
-statements were simulated against.
+Seven properties are what the role has to hold, and the statements below were simulated
+against the permission policy before they were applied rather than reasoned about on paper.
 """
 
 from __future__ import annotations

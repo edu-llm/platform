@@ -1,13 +1,13 @@
 # When a repeated ask stops being a request and starts being a missing feature.
 #
-# docs-frank/reference/system-overview.md, "What you click, and what generates it", says one
-# place makes asks countable "which turns the third identical one into a config change". Three
-# is that sentence, and it is here rather than in tools/report_asks.py so that moving it is a
-# reviewed diff rather than a commit somebody makes while looking at a long list.
+# Collecting asks in one place is what makes them countable, and countable is what turns the
+# third identical one into a config change. Three is that rule, and it is here rather than in
+# tools/report_asks.py so that moving it is a reviewed diff rather than a commit somebody makes
+# while looking at a long list.
 #
 # Under config/reports/ rather than config/ for the reason config/reports/researcher-lane.yaml
-# gives at length: system-overview.md names nine configuration files as the control plane and
-# this is not one of them, and .github/workflows/release-tag.yml names seven paths under config/
+# gives at length: nine configuration files make up the control plane and this is not one of
+# them, and .github/workflows/release-tag.yml names seven paths under config/
 # and no directory, so a number here earns no version.
 #
 # THAT IT MOVES NO INSTALLED CLI'S ANSWER IS A SEPARATE FACT AND DOES NOT FOLLOW FROM THE

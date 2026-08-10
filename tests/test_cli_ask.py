@@ -1,10 +1,10 @@
 """``edullm ask``: one ask, filed where asks are counted, from wherever somebody is standing.
 
-WHAT THIS VERB IS. docs-frank/reference/decisions.md, under "`add` and `ask`, not one
-`request`": asking for something for yourself, such as a credential the platform does not
+WHAT THIS VERB IS, SETTLED AS `add` AND `ask` RATHER THAN ONE `request`. Asking for something
+for yourself, such as a credential the platform does not
 hold, an unusual resource or an escalation for work the platform cannot express, produces a
-time-boxed grant to one person and genuinely needs a human. system-overview.md adds the half
-that decides this module's shape: `edullm ask` files the same form the templates offer, and
+time-boxed grant to one person and genuinely needs a human. The half that decides this
+module's shape is the other rule: `edullm ask` files the same form the templates offer, and
 one place is what makes asks countable, which is what turns the third identical one into a
 config change.
 

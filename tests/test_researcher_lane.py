@@ -1,8 +1,8 @@
 """The allow-list the researcher role is built from, and the settings the janitor reads.
 
 The allow-list is the property most likely to be typed by hand and most expensive when it is.
-docs-frank/reference/aws-spend-controls.md, under "Why an allow-list rather than a deny-list",
-measures both failure directions on the same forty-one instance types: the family form breaks
+An allow-list rather than a deny-list was chosen after measuring both failure directions on
+the same forty-one instance types: the family form breaks
 four provisioned profiles and misses families AWS ships next. So it is read off the catalog,
 and this module is the test that it is still being read off the catalog rather than copied.
 """

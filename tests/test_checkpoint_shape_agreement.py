@@ -28,7 +28,13 @@ from tools.verify_checkpoint_shape_agreement import (
     read_library_shapes,
 )
 
-OLMO_CORE_CHECKOUT = Path("/Users/philote/projects-local/OLMo-core")
+#: The OLMo-core checkout, found beside this repository rather than read off an absolute path.
+#: It was one machine's home directory until this commit, and that cost twice over: a public
+#: repository carried a private local path, and the two checks below could only ever run on
+#: the one laptop that path names -- everywhere else they skipped while reporting the same
+#: sentence they report when the checkout is genuinely absent. A sibling resolves to the same
+#: directory on that laptop and to the honest answer everywhere else.
+OLMO_CORE_CHECKOUT = Path(__file__).resolve().parents[2] / "OLMo-core"
 
 
 def library_source(

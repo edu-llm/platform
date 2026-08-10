@@ -74,9 +74,9 @@ worth not getting wrong.** Two runs of one submission on one dataset are expecte
 different weights, because the order a GPU reduces in is not fixed across two executions. So
 the digest has a named cause and moves no exit code, and nothing anywhere refuses, retries or
 warns because of it. What the platform proves is the code, the data and the machine shape, and
-never the output bytes; the ruling is in ``docs-frank/reference/decisions.md``. The object's
-name and size are a different matter and are required to match, because a checkpoint that lost
-a shard or wrote a shorter one is a truncated write.
+never the output bytes -- a standing ruling about what reproducibility means here, rather than
+a property of this module. The object's name and size are a different matter and are required
+to match, because a checkpoint that lost a shard or wrote a shorter one is a truncated write.
 
 **Absence is split in two, because only one half is a hole.** A record with no payload reading
 at all predates the field, which is every result record written before 2026-08-05, and the
@@ -395,8 +395,9 @@ VARIANCE_CAUSES: Final[tuple[VarianceCause, ...]] = (
             "runs of one submission on one dataset are EXPECTED to differ here: the order a "
             "GPU reduces a sum in is not fixed across two executions, so identical code on "
             "identical data produces different bytes, and the platform proves the code, the "
-            "data and the machine shape rather than the output. That is the ruling in "
-            "docs-frank/reference/decisions.md. Named as a cause so it appears in the table "
+            "data and the machine shape rather than the output. That is a standing ruling "
+            "about what a rerun proves, not a judgement this table makes. Named as a cause "
+            "so it appears in the table "
             "and moves no exit code -- the change adds information and adds no gate. What "
             "is NOT excused by it is the object's name or its size, which are in "
             "REQUIRED_FIELD_FAMILIES: a checkpoint missing a shard or holding a shorter one "

@@ -1,7 +1,7 @@
 """``.edullm/run.yaml``: the half of a submission that is a property of the code.
 
-WHAT IS IN HERE AND WHAT IS NOT IS THE WHOLE DESIGN, and it is
-``docs-frank/reference/system-overview.md``'s under "The submission path": the spec holds
+WHAT IS IN HERE AND WHAT IS NOT IS THE WHOLE DESIGN, and the line is drawn by the
+submission path rather than by this module: the spec holds
 the command, the workload profile, the fan-out parameter and a suggested shape, because
 those are facts about the repository at that commit and travel with it in version control.
 Everything else is supplied at submit time -- the compute profile, which spans a
@@ -13,9 +13,9 @@ The team is absent outright: one commit run by two people belongs to two teams, 
 in a version-controlled file would be wrong for the second person and nothing would notice.
 The machine is present as ``suggested_compute`` and is a default rather than a decision --
 the value always travels to the form explicitly, ``--compute`` overrides it, and ``check``
-prices whichever one wins. The overview says both things in the same paragraph and they are
-not in tension: the suggestion is what the code's author thinks it needs, and the
-submission is what somebody is paying for today.
+prices whichever one wins. Both things are true at once and are not in tension: the
+suggestion is what the code's author thinks it needs, and the submission is what somebody
+is paying for today.
 
 **The command is one string and not a list, which is the form's own shape.** The compile
 job's ``Assemble the submission form`` step POSIX-splits the text box, so a spec holding a

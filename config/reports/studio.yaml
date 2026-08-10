@@ -1,10 +1,10 @@
 # The Studio domain edullm studio reaches, and what a shape on it costs per hour.
 #
 # UNDER config/reports/ RATHER THAN config/, for the reason config/reports/working-tier.yaml
-# writes out at length. The nine files docs-frank/reference/system-overview.md names as the
-# control plane are what a submission is judged against, and nothing here judges a submission:
+# writes out at length. The nine files that make up the control plane are what a submission is
+# judged against, and nothing here judges a submission:
 # Studio is the exploration surface and edullm studio prices it, admits nobody and records no
-# lineage. A tenth file in config/ would either contradict that document or cut a release every
+# lineage. A tenth file in config/ would either contradict that shape or cut a release every
 # time AWS moves a list price.
 #
 # THE CONSEQUENCE IS THE ONE THAT FILE NAMES AND IT IS SHARPER HERE. An installed edullm reads

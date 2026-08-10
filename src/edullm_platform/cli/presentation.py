@@ -1,6 +1,6 @@
 """What the terminal shows, held apart from what the checks decide.
 
-THE LAYOUT IS THE ONE IN ``docs-frank/working/terminal-mockups/``, which is the closest
+THE LAYOUT COMES FROM HAND-WRITTEN TERMINAL TRANSCRIPTS, which are the closest
 thing to a specification this surface has. Four blocks in a fixed order -- what would be
 submitted, what it may cost, who releases it, and what was not checked here -- because a
 reader learning the shape once can then find the number they came for without reading the
@@ -13,10 +13,10 @@ arithmetic prints it, quantized to a cent, where ``adarsh-rajesh-first-run.md`` 
 third decimal -- a CLI that rounded differently from the approver page would have a
 submitter and a lead reading two prices for one run. The automatic runtime bound is read
 from ``config/policy.yaml`` rather than fixed at the figure
-``grant-matherne-scarce-shape-v2.md`` printed, because ``docs-frank/reference/decisions.md``
-records that figure as *not ruled*. And no device memory is printed beside a machine: the
-transcripts showed a per-node total that lives in a prose table in the overview and in no
-file this binary reads, so what is printed is the instance type and the device count, which
+``grant-matherne-scarce-shape-v2.md`` printed, because that figure was never ruled on and a
+transcript is not where a bound gets settled. And no device memory is printed beside a
+machine: the transcripts showed a per-node total that exists only in prose and in no file
+this binary reads, so what is printed is the instance type and the device count, which
 are read.
 
 NO POLICY NUMBER IS WRITTEN ANYWHERE IN THIS PACKAGE, AND ``test_cli_no_hardcoded_bounds.py``
