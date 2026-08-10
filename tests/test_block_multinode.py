@@ -837,8 +837,11 @@ def test_the_report_is_quiet_about_the_fabric_when_every_node_has_one() -> None:
 # `p5.48xlarge` that is one H100 working and seven idle, and nothing reports it: the run starts,
 # the loss falls, and the only symptom is a step time against a baseline nobody has on the first
 # day. It is how the first attempts on this fleet died. The knowledge needed to avoid it -- that
-# this lane's single-node path wants its own `torchrun --standalone --nproc-per-node 8` in front
-# of the command -- was written down nowhere a researcher would look.
+# this lane's single-node path wants its own `torchrun --standalone --nproc-per-node=8
+# --no-python` in front of the command -- was written down nowhere a researcher would look.
+# `--no-python` is part of that spelling and not an embellishment on it: torchrun's positional
+# argument is a script path and torchrun supplies the interpreter, so the form without it opens
+# a file called `python` on every rank.
 #
 # The decision lives here rather than in `block-run.yml` because YAML gets read by a reviewer
 # once and by a test never, and it lives here rather than in the node helper because the

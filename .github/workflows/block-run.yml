@@ -449,9 +449,20 @@ jobs:
       # a `p5.48xlarge` that is one H100 working and seven idle, reported by nothing: the run
       # starts, the loss falls, and the only symptom is a step time against a baseline nobody
       # has on the first day. It is how the first attempts on this fleet died. The knowledge
-      # required to avoid it -- bring your own `torchrun --standalone --nproc-per-node 8` -- was
-      # written down nowhere a researcher would look, and asking them to carry it is asking the
-      # wrong half of the team to know the most surprising thing about the lane.
+      # required to avoid it -- bring your own `torchrun --standalone --nproc-per-node=8
+      # --no-python` -- was written down nowhere a researcher would look, and asking them to
+      # carry it is asking the wrong half of the team to know the most surprising thing about
+      # the lane.
+      #
+      # `--no-python` IS PART OF THAT SPELLING RATHER THAN AN EMBELLISHMENT ON IT, and this
+      # paragraph said the launcher without it for as long as it has existed. torchrun's
+      # positional argument is a script path and torchrun supplies the interpreter, so
+      # `torchrun --standalone --nproc-per-node=8 python train.py` asks Python to open a file
+      # called `python` -- on all eight ranks, seconds after the containers come up, with the
+      # machine already paid for. `single_node_launch` composes the flag every time and always
+      # has; what was loose was the description, and a description of a launcher is the thing
+      # somebody with a role copies into a shell. #443 corrected the researcher guide and this
+      # is the same correction on the two copies a researcher never reads.
       #
       # IT IS DECIDED HERE RATHER THAN ON THE NODE FOR A REASON THAT IS NOT ARCHITECTURAL. The
       # bootstrap is user-data, EC2 refuses user-data above 16,384 bytes even gzipped, and the
