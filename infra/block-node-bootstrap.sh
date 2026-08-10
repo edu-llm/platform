@@ -575,7 +575,7 @@ flush_run() {
   local run="$1"
   local source="${SCRATCH}/${run}"
   local destination="s3://${EDULLM_BLOCK_OUTPUTS_BUCKET}/${EDULLM_BLOCK_S3_PREFIX}/${run}/scratch"
-  local held status=ok expected observed
+  local held status=ok expected observed sync_status
   held="$(claim_field run)"
 
   # Written into the run directory so that it is synced with everything else, which makes the
@@ -594,10 +594,31 @@ flush_run() {
 
   expected="$(find "${source}" -type f -not -path '*/.git/*' 2> /dev/null |
     grep --count . || true)"
+  # EXIT 2 IS "SOME FILES WERE SKIPPED", WHICH IS NOT A FAILED DRAIN AND USED TO BE REPORTED
+  # AS ONE. `aws s3 sync` returns 2 when it skipped at least one file and transferred every
+  # other one, and 1 when a transfer actually failed. Every run that used Weights and Biases
+  # earns a 2: wandb leaves `wandb/latest-run` and a `logs/debug-core.log` behind as dangling
+  # symlinks, the CLI warns `File does not exist` on each and exits 2, and the whole prefix is
+  # in S3 regardless.
+  #
+  # OBSERVED ON NODE 1 AT 18:13 ON 2026-08-10, on three runs at once, each reported
+  # `block_drain_incomplete ... reported failed` in the same job summary that went on to say
+  # `0 of 561 files are not in S3`. A report that contradicts itself on the last morning of a
+  # window is worse than no report, because the thing it teaches is to stop reading it -- which
+  # is the exact reading the header of this section says the count exists to prevent.
+  #
+  # THE COUNT IS STILL THE VERDICT AND THAT IS THE POINT. The paragraph above this function
+  # already argues that `aws s3 sync`'s status cannot be trusted to mean the prefix is whole,
+  # and then trusted it. A skipped file that mattered is a file the listing does not find, so
+  # letting 2 fall through to the comparison loses nothing: it is caught as `short`.
+  sync_status=0
   aws s3 sync "${source}" "${destination}/" \
     --region "${EDULLM_BLOCK_REGION}" \
     --exclude '*/.git/*' \
-    --only-show-errors || status=failed
+    --only-show-errors || sync_status=$?
+  if [ "${sync_status}" -ne 0 ] && [ "${sync_status}" -ne 2 ]; then
+    status=failed
+  fi
   observed="$(aws s3 ls "${destination}/" --recursive --region "${EDULLM_BLOCK_REGION}" \
     2> /dev/null | grep --count . || true)"
   if [ "${status}" = ok ] && [ "${observed:-0}" -lt "${expected:-0}" ]; then
