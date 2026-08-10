@@ -243,8 +243,18 @@ not an error anywhere, and makes every step several times slower.
 
 ### What a refusal looks like, and what it costs
 
-Every dry run on the afternoon of 2026-08-10 was refused, at 1, 2 and 8 nodes, for the same
-reason -- the fleet was one machine and somebody was training on it:
+There are two different refusals here and telling them apart saves you asking the wrong person.
+**The fleet is too small** reads as one line and names nobody:
+
+```
+distributed_launch_refused:the fleet has 1 nodes this run could take and it asked for 2
+```
+
+That is what a two-node dispatch answered at 18:29 UTC on 2026-08-10, with node 1 sitting idle:
+nothing was wrong with the dispatch and nobody was in the way, there was simply one machine.
+Only a fleet launch changes that answer, and a fleet launch is not yours to make.
+
+**Somebody is in the way** adds a line per machine:
 
 ```
 distributed_launch_refused:the fleet has 0 nodes this run could take and it asked for 2
