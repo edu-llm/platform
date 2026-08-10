@@ -188,6 +188,13 @@ def launcher_refusals(
     there fixes this button and gives the eight-node dispatch sixty-four workers over eight
     cards -- the more expensive of the two failures, arriving later, in the window this fleet
     was bought for. So the refusal says where the launcher goes instead.
+
+    **IT IS NOT ASKED AT ALL WHEN THE FORM IS ABOUT TO SUPPLY A LAUNCHER**, and that gate lives
+    at the call site rather than here. ``block-run.yml``'s ``processes`` input composes one
+    against the card count once the node has been read, which is after this runs;
+    :func:`~edullm_platform.block_multinode.composes_a_launcher` is what the workflow asks
+    first, so that ``processes=all`` -- the answer the message below recommends -- is not
+    refused by the check recommending it.
     """
     evidence = multi_rank_evidence(command)
     if not evidence:
@@ -210,8 +217,11 @@ def launcher_refusals(
             "correct rather than an oversight: block-run-distributed.yml prepends the "
             "rendezvous form itself, and a launcher committed in that file would be wrapped "
             "in a second one -- sixty-four workers over eight cards, which is the more "
-            "expensive of the two mistakes. Put the launcher in this form's `command` input "
-            "and leave that file alone. If one process is deliberate, write "
+            "expensive of the two mistakes. The short way out is this form's `processes` "
+            "input: set it to `all` and the launcher is composed for you against the card "
+            "count read off the node, which is a number this check cannot see. Otherwise put "
+            "the launcher in the `command` input and leave that file alone. If one process is "
+            "deliberate, write "
             f"{LAUNCH_CHECK_WAIVER} into the command, which records the decision on the run "
             "rather than leaving it to be guessed at from a log. "
             f"{_remedy(command, processes=processes)}"

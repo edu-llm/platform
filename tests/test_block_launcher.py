@@ -13,6 +13,8 @@ a dispatch that a slightly wider rule would refuse during a window nobody can ex
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from edullm_platform.block_launcher import (
@@ -20,6 +22,13 @@ from edullm_platform.block_launcher import (
     NO_LAUNCHER_CODE,
     launcher_refusals,
     multi_rank_evidence,
+)
+from edullm_platform.block_multinode import (
+    Candidate,
+    mesh_for,
+    rendezvous_for,
+    torchrun_command,
+    with_mesh_flags,
 )
 from edullm_platform.launchers import LAUNCH_CHECK_WAIVER
 
@@ -287,3 +296,80 @@ def test_the_refusal_names_the_waiver_and_the_incident() -> None:
 
     assert LAUNCH_CHECK_WAIVER in found
     assert "2026-08-10" in found
+
+
+def test_this_check_would_refuse_the_distributed_lane_and_must_never_be_asked_there() -> None:
+    """**THE MOST DANGEROUS PROPERTY OF THIS MODULE, PINNED SO THAT IT CANNOT BE STUMBLED INTO.**
+
+    The command ``block-run-distributed.yml`` is *supposed* to be given carries no launcher --
+    the form says so in as many words, because the workflow prepends the rendezvous form itself
+    and a command bringing its own would be wrapped in a second. It also carries
+    ``--model-factory olmoe_7b_32x4``. That is precisely the shape this module refuses, so
+    :func:`launcher_refusals` asked on the distributed path would refuse the eight-node run for
+    being correct.
+
+    Nothing asks it, and the assertion below is that nothing *can*: the only importer in the
+    tree is the single-node workflow. It is one plausible edit away from being otherwise --
+    "the launcher check should run on both lanes" is a reasonable-sounding sentence, and acting
+    on it turns the 64-rank dispatch into a refusal in a window that cannot be extended. This
+    test is here to be the thing that says no.
+
+    The narrowness is the whole reason the module is safe on one lane and lethal on the other,
+    and it is why the check is a call at one site rather than a rule in a shared library.
+    """
+    lane_input = (
+        "python .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4 "
+        "--dataset-id=pretrain/reservoir-dolma2 --steps=11921"
+    )
+
+    assert launcher_refusals(lane_input), (
+        "the distributed lane's own documented command is no longer refused by this module, so "
+        "the hazard this test guards has moved rather than gone. Re-derive it before deleting."
+    )
+
+    root = Path(__file__).resolve().parents[1]
+    importers = {
+        path.relative_to(root).as_posix()
+        for path in [*(root / "src").rglob("*.py"), *(root / "tools").rglob("*.py")]
+        if "block_launcher" in path.read_text(encoding="utf-8")
+        and "import" in path.read_text(encoding="utf-8").split("block_launcher")[0].splitlines()[-1]
+    }
+    workflows = {
+        path.name
+        for path in (root / ".github" / "workflows").glob("*.yml")
+        if "block_launcher" in path.read_text(encoding="utf-8")
+    }
+
+    assert importers == set(), f"a library module now imports block_launcher: {importers}"
+    assert workflows == {"block-run.yml"}, (
+        f"block_launcher is reachable from {sorted(workflows)}. Only the single-node button may "
+        "ask it: block-run-distributed.yml's correct command has no launcher by design, and "
+        "this module refuses exactly that shape."
+    )
+
+
+def test_the_line_the_distributed_lane_composes_is_not_refused_even_if_it_were_asked() -> None:
+    """The second, independent reason the eight-node run is safe, which is worth having because
+    the first is a fact about imports and imports change.
+
+    What reaches a node on that path is the rendezvous form with the entrypoint spliced in
+    after ``--no-python``, so it opens with ``torchrun`` and :func:`read_launch_plan` finds a
+    launcher in command position. Even a future edit that did wire this module into the
+    distributed lane at the wrong point would have to do it *before* the composition to break
+    anything.
+    """
+    mesh = mesh_for(nodes=8, gpus_per_node=8)
+    spliced, refusals = with_mesh_flags(
+        "python .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4 --steps=11921", mesh=mesh
+    )
+    assert not refusals
+    nodes = [
+        Candidate(node=number, instance_id=f"i-{number:017d}", private_ip=f"10.0.0.{number}")
+        for number in range(1, 9)
+    ]
+    line = torchrun_command(
+        mesh=mesh, rendezvous=rendezvous_for(nodes, run="final-model-64"), command=spliced
+    )
+
+    assert line.startswith("torchrun ")
+    assert launcher_refusals(line) == ()

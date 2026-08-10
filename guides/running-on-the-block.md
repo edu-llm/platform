@@ -154,6 +154,15 @@ That refusal happens before the node is touched, so it leaves nothing behind. Tw
 themselves and are not refused: a command that already contains its own `torchrun`, which is left
 exactly as written, and a node with one card.
 
+**On the MoE recipe you will see a different message, and it is the more useful one.** A command
+naming `--model-factory olmoe_7b_32x4` says outright that it wants sixty-four ranks, so it does
+not need a card count to be judged and it is refused earlier -- before the credentials, by a check
+that can also read `.edullm/run.yaml` off your branch when you leave `command` empty. It arrives
+as `command_needs_a_launcher:` and it names the recipe, the incident and the line to paste. Only
+one of the two ever fires on a dispatch. Setting `processes` to a count silences the earlier one
+on purpose: a launcher is about to be composed for you, and refusing you for not having written
+the thing the form is about to write would be the guide arguing with itself.
+
 ### Two nodes
 
 ```bash
@@ -442,9 +451,13 @@ Written down so that nobody spends an afternoon discovering it.
   already up. The atomic claim and the cleared container name apply to fleets launched after they
   merged; the stale-claim reading and the `processes` field are in the workflows and apply
   immediately.
-- **`edullm-node run` typed into a shell still starts one process.** The `processes` decision is
-  made in the workflow, because the node's helper is EC2 user-data with a hard 16,384-byte limit
-  and under a kilobyte of it left. People with a shell keep composing their own `torchrun`.
+- **`edullm-node run` typed into a shell still starts one process, and nothing on the node will
+  stop it.** Both launcher checks are in the workflow. There was a third, on the node, and it was
+  taken out to launch this fleet: the helper is EC2 user-data with a hard 16,384-byte limit, three
+  branches merged for this window came to 523 bytes over it, and over that number no node boots at
+  all. What is left is 191 bytes, so assume the file is full. The button is covered and covered
+  better -- it reads your branch's `.edullm/run.yaml`, which a shell on a node cannot. If you have
+  a role and a terminal, compose your own `torchrun`.
 - **A second image is not available and is not coming this week.** The node's role permits one ECR
   repository and refuses every other pull. See
   [what cannot be fixed](the-capacity-block.md#what-cannot-be-fixed-before-saturday).

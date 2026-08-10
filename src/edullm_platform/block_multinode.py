@@ -62,6 +62,7 @@ __all__ = [
     "cards_per_node",
     "choose_nodes",
     "command_refusals",
+    "composes_a_launcher",
     "exec_refusals",
     "expert_parallel_choices",
     "launch_markdown",
@@ -636,6 +637,35 @@ def single_node_launch(
         f"torchrun --standalone --nproc-per-node={wanted} --no-python {command}",
         (),
     )
+
+
+def composes_a_launcher(*, command: str, processes: str) -> bool:
+    """Whether :func:`single_node_launch` is going to put a launcher in front of this command.
+
+    **THIS EXISTS SO THAT TWO REFUSALS DO NOT FIRE ON ONE DISPATCH, AND IT IS THE JOIN BETWEEN
+    TWO CHANGES THAT WERE WRITTEN WITHOUT EACH OTHER.** ``block-run.yml`` asks
+    :func:`~edullm_platform.block_launcher.launcher_refusals` whether a command says it needs
+    several ranks and starts one. That step runs before the credentials, which is where it
+    belongs -- the refusal is free and nothing has been paid for. But it runs *before* the step
+    that reads the node and composes the launcher, so on its own it would refuse
+    ``processes=all``: the very answer this form added for that problem, and the answer its own
+    message tells people to reach for. The command it judged is not the command that would have
+    run.
+
+    So the early step asks this first. A ``processes`` that resolves to a count means a launcher
+    is coming and the question the later step asks is the right one; ``auto`` and ``1`` mean
+    nothing will be prepended and the early refusal stands.
+
+    **THE CARD COUNT IS NOT KNOWN HERE AND DOES NOT NEED TO BE.** ``processes=8`` against a node
+    that enumerated four is refused by :func:`single_node_launch` seconds later, with the
+    numbers on it. Either way the dispatch stops, and it stops on the message that can name the
+    machine rather than on one guessing at it from a runner.
+    """
+    if not command.strip():
+        return False
+    if names_a_launcher(command) is not None:
+        return False
+    return processes not in {"auto", "1"}
 
 
 def run_name_refusals(run: str) -> tuple[str, ...]:

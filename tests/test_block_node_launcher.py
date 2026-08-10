@@ -1,27 +1,35 @@
-"""``edullm-node run`` refusing a command that cannot start, run rather than read.
+"""``edullm-node run`` and the launcher check that is deliberately not on the node.
 
-The workflow's copy of this guard is the one that protects the button, and it is the one that
-reaches the fleet in a live window -- ``infra/block-node-bootstrap.sh`` is user-data, it runs
-once at launch, and nothing re-runs it, so what is written here reaches machines built after it
-merges and no machine that is already up. What this copy is for is the other door: somebody
-sitting in a shell on a node, typing the verb directly, with no workflow between them and the
-eight cards.
+**THERE WAS A COPY OF THE GUARD HERE AND IT WAS TAKEN OUT TO LAUNCH THE FLEET.** It cost 747
+bytes of a user-data budget with 224 left once the three branches merged for the 2026-08-10
+window were put together, and EC2 refuses user-data above 16,384 bytes compressed. Over that
+number no node boots at all, so the choice was between one duplicated check and the eight-node
+launch. ``test_block_workflows.py`` measures the file on every pull request and the numbers are
+in the pull request that made this change.
 
-**IT IS DELIBERATELY NARROWER THAN ``edullm_platform.block_launcher`` AND THE REASON IS A BYTE
-BUDGET RATHER THAN AN OVERSIGHT.** EC2 refuses user-data above 16,384 bytes compressed, and
-this file was already at 14,903 of that before the guard -- ``block-launch-fleet.yml`` carries
-its own refusal for the same limit, and the remedy its message names is moving the bootstrap to
-S3, which is a change this is not. So the node checks the model factory and nothing else: no
-mesh flags, no shell-wrapper parsing, no spliced correction. The tests below hold that line
-explicitly rather than leaving somebody to infer it from what is missing.
+**WHAT WAS LOST IS SMALLER THAN IT LOOKS, AND NAMING IT IS THE POINT OF THIS FILE.**
+``block-run.yml`` refuses the same command before the credentials and before any node is
+addressed, and :mod:`edullm_platform.block_launcher` holds the full reading and the remedy --
+so the button that fifteen of thirty-five people use is covered, and covered better, because
+the workflow can read ``.edullm/run.yaml`` off the branch and this verb only ever sees what it
+was handed. Three things follow from the node copy being gone, and all three are asserted
+below rather than left to be discovered:
+
+*  ``edullm-node run`` typed in a shell on a node will start a 64-rank command as one process.
+   That door belongs to the twenty people who hold an AWS role, which is the population that
+   already knows, and it is the door the workflow was always in front of.
+*  A node-side guard reaches no machine that is already running, because nothing re-runs
+   user-data. The fleet this window was bought for was already up when the guard was written,
+   so its value during that window was zero whichever way the merge went.
+*  A workflow refusal takes effect the moment it is on ``main``. That asymmetry is the whole
+   argument, and it is why the workflow copy is the one that survived.
 
 **THESE TESTS RUN THE HELPER RATHER THAN READING IT**, which is the argument
 ``tests/test_block_node_claim.py`` makes at length about the same file. The bootstrap installs
 several hundred lines of shell through a quoted heredoc, where ``bash -n`` over the outer file
-sees literal text and an assertion that the word ``olmoe_7b_32x4`` appears would pass against a
-guard that fires on the wrong branch, prints the wrong number, or takes the machine down with
-it. So the helper is extracted, pointed at a settings file and a PATH of stubs, and asked what
-it does when it is handed the command that killed two runs on 2026-08-10.
+sees literal text -- so an assertion about what the node does or does not refuse is only worth
+having if something executes it. The helper is extracted, pointed at a settings file and a PATH
+of stubs, and asked what it does with the command that killed two runs on 2026-08-10.
 """
 
 from __future__ import annotations
@@ -32,6 +40,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
+from edullm_platform.block_launcher import launcher_refusals
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BOOTSTRAP_PATH = PROJECT_ROOT / "infra" / "block-node-bootstrap.sh"
@@ -195,39 +205,72 @@ def start(node: dict[str, Path], command: str) -> subprocess.CompletedProcess[st
     )
 
 
-def test_the_command_that_killed_two_runs_never_reaches_docker(node: dict[str, Path]) -> None:
-    """Mutation: run whatever arrives, which is what this verb did until now.
+def test_the_node_starts_the_command_that_killed_two_runs_and_that_is_the_exposure(
+    node: dict[str, Path],
+) -> None:
+    """THE COST OF THE BYTE BUDGET, WRITTEN AS A PASSING TEST SO THAT IT CANNOT BE FORGOTTEN.
 
-    One process of a 64-rank recipe on a machine with eight cards holds one of them, bills for
-    all of them, and stops on a message about the parallelism mesh -- which is a mesh that could
-    not be built out of one rank rather than a mesh anybody got wrong.
+    This is not an assertion that the behaviour is right. It is an assertion about what this
+    surface does, so that the residual exposure has a name and a location instead of living in
+    a pull request nobody reads again: typed in a shell, this verb will start a 64-rank recipe
+    as one process on eight cards and nothing here will stop it.
+
+    Restoring the guard is a legitimate thing to want. It is not free, and the sibling test
+    below holds the number it costs. The order to try things in is in the pull request: shrink
+    the file, move the bootstrap to S3 and fetch it from a stub -- which is what
+    ``test_block_workflows.py`` has recommended in its own refusal message all along -- and only
+    then spend the bytes here.
     """
     done = start(node, COMMITTED)
 
-    assert done.returncode != 0
-    assert "command_needs_a_launcher:olmoe_7b_32x4" in done.stderr
-    assert "parallelism mesh rather than about the launcher" in done.stderr
-    assert not node["marker"].exists(), "the refusal still started a container"
+    assert done.returncode == 0, done.stderr
+    assert node["marker"].exists(), "the node refused a command the workflow is what refuses"
+    assert "command_needs_a_launcher" not in done.stderr
 
 
-def test_a_refused_command_gives_the_node_back(node: dict[str, Path]) -> None:
-    """THE HALF OF THIS THAT IS ABOUT THE FLEET RATHER THAN ABOUT THE RUN.
+def test_the_bootstrap_carries_no_launcher_check_and_says_where_it_went(
+    node: dict[str, Path],
+) -> None:
+    """Mutation: put the guard back without reading what it costs.
 
-    The claim is written before the clone, so every refusal after that point has to release it
-    or the node reads as busy to ``block-run.yml``, to the status tool and to everybody looking
-    at the sheet -- for a run that does not exist, until somebody who has heard of ``release``
-    finds it. A guard that costs a machine out of eight is worse than the defect it prevents.
+    A reader who finds the note in ``do_run`` and deletes it, or who writes a fresh check beside
+    it, gets a fleet that does not launch -- ``block-launch-fleet.yml`` refuses over the limit
+    and ``run-instances`` refuses under it. Failing here instead is several hours earlier and
+    several thousand dollars cheaper, and the note is what sends them to the reasoning.
     """
-    done = start(node, COMMITTED)
+    bootstrap = BOOTSTRAP_PATH.read_text(encoding="utf-8")
 
-    assert done.returncode != 0
-    assert not node["claim"].exists()
+    assert "command_needs_a_launcher" not in bootstrap
+    assert "olmoe_7b_32x4" not in bootstrap
+    assert "NO LAUNCHER CHECK HERE, DELIBERATELY" in bootstrap
+    assert Path(__file__).name in bootstrap, "the note points at no reasoning"
+
+
+def test_the_workflow_refuses_what_the_node_no_longer_does() -> None:
+    """THE CHECK THAT SURVIVED, ASSERTED FROM THE FILE THAT LOST ITS COPY.
+
+    The two are one decision and reading either alone gets it wrong, so the test for the half
+    that was dropped is the test that pins the half that was kept. If somebody removes the
+    workflow refusal, the argument in this file's header stops being true and this fails --
+    which is the failure that matters, because at that point nothing anywhere refuses it.
+    """
+    workflow = (
+        PROJECT_ROOT / ".github" / "workflows" / "block-run.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "from edullm_platform.block_launcher import launcher_refusals" in workflow
+    assert "launcher_refusals(command)" in workflow
+    assert launcher_refusals(COMMITTED), "the module the workflow calls refuses nothing"
 
 
 def test_the_same_command_under_a_launcher_starts(node: dict[str, Path]) -> None:
-    """The other half of the rule. Nothing here judges the rank count -- the container is given
-    every card and this verb has no shape to compare against -- so a launcher is the whole of
-    what it asks for."""
+    """THE SHAPE THE DISTRIBUTED LANE SENDS, WHICH IS THE ONE THAT MUST NEVER BE REFUSED HERE.
+
+    ``block-run-distributed.yml`` prepends the rendezvous form itself and hands the composed
+    line to this verb, so what arrives on a node during the eight-node run already carries a
+    launcher. It kept working when the guard was here, it keeps working now, and
+    ``test_block_launcher.py`` holds the same question against the workflow copy.
+    """
     done = start(
         node,
         COMMITTED.replace(
@@ -261,55 +304,16 @@ def test_ordinary_single_process_work_still_starts(node: dict[str, Path], comman
     assert node["marker"].exists()
 
 
-def test_the_waiver_starts_it_anyway(node: dict[str, Path]) -> None:
-    """Somebody reproducing the failure on purpose, or holding one card of eight deliberately.
-    The token is the one the submission path already uses, so nobody has to learn a second
-    spelling for the same sentence."""
+def test_the_waiver_is_carried_through_rather_than_read_here(node: dict[str, Path]) -> None:
+    """The token the workflow reads, passed down a verb that no longer has an opinion on it.
+
+    ``EDULLM_LAUNCH_CHECK=waived`` is how somebody records that one process was the point, and
+    :mod:`edullm_platform.block_launcher` is what honours it now. What matters here is only that
+    a command carrying it still runs: an environment assignment in front of a command line is a
+    shape ``bash -lc`` accepts, and a node that choked on it would turn the workflow's escape
+    hatch into a second failure.
+    """
     done = start(node, f"EDULLM_LAUNCH_CHECK=waived {COMMITTED}")
-
-    assert done.returncode == 0, done.stderr
-    assert node["marker"].exists()
-
-
-def test_the_refusal_names_the_cards_it_counted_rather_than_a_number_from_memory(
-    node: dict[str, Path],
-) -> None:
-    """THE ONE THING THIS SURFACE KNOWS THAT THE WORKFLOW DOES NOT.
-
-    ``block-run.yml`` refuses before any machine has been addressed and writes torchrun's own
-    ``gpu`` into the remedy for that reason. Here ``nvidia-smi`` has already answered, so the
-    line somebody pastes carries the figure this node actually reports -- and a fleet on a
-    different shape would get a different one without anybody editing this file.
-    """
-    done = start(node, COMMITTED)
-
-    assert "--nproc-per-node=8" in done.stderr
-    assert "--nproc-per-node=gpu" not in done.stderr
-
-
-def test_the_refusal_says_not_to_repair_the_committed_file(node: dict[str, Path]) -> None:
-    """The obvious response to "your command has no launcher" is to put one where the command
-    came from, and ``.edullm/run.yaml`` is read by two paths: this one runs it as written, and
-    ``block-run-distributed.yml`` prepends the rendezvous form. A launcher committed there
-    fixes this verb and gives the eight-node dispatch sixty-four workers over eight cards."""
-    done = start(node, COMMITTED)
-
-    assert "Leave .edullm/run.yaml alone" in done.stderr
-    assert "block-run-distributed.yml" in done.stderr
-    assert "64 workers over 8 cards" in done.stderr
-
-
-def test_the_node_checks_the_factory_and_leaves_the_mesh_flags_to_the_workflow(
-    node: dict[str, Path],
-) -> None:
-    """THE NARROWING, KEPT AS A PASSING TEST SO THAT IT READS AS A DECISION RATHER THAN A GAP.
-
-    A mesh named on the command is evidence to ``block_launcher`` and is not checked here. It
-    could be, and what it would cost is bytes out of a user-data budget with 924 of 16,384 left
-    -- against a signal that catches a line pasted out of the distributed lane, which is the
-    rarer half of the defect and the half the button already refuses.
-    """
-    done = start(node, "python .edullm/train_on_corpus.py --moe-shard-degree 8")
 
     assert done.returncode == 0, done.stderr
     assert node["marker"].exists()

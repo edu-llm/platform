@@ -51,6 +51,8 @@ from workflow_support import (
 )
 
 from edullm_platform.block_drain import DRAIN_FROM_MINUTES, RECLAIM_MARGIN_MINUTES
+from edullm_platform.block_launcher import launcher_refusals
+from edullm_platform.block_multinode import composes_a_launcher
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.inventory import OrganizationInventory
 
@@ -80,6 +82,7 @@ AGENT_STEP = "Wait for Systems Manager to reach every node, or refuse the fleet"
 READINESS_STEP = "Wait for every node to finish its own bootstrap"
 GUARD_STEP = "Refuse a hand-started launch from somebody who may not make one"
 REFUSAL_STEP = "Refuse a run name, a branch or a command that would fail on the machine"
+PROCESSES_STEP = "Decide how many processes the command starts"
 
 #: Every workflow file in this lane. One role serves all of them -- see the template for why
 #: splitting it would suggest a boundary that does not exist -- and this tuple is the thing the
@@ -1150,6 +1153,61 @@ def test_a_run_yaml_that_could_not_be_read_is_not_itself_a_refusal(
     assert "the launcher check did not run" in body
 
 
+def test_the_two_launcher_refusals_do_not_both_fire_on_one_dispatch(
+    runner: dict[str, Any],
+) -> None:
+    """WHERE TWO BRANCHES MET, AND THE CASE THAT WOULD HAVE MADE THEM CONTRADICT EACH OTHER.
+
+    Two changes written without each other put a refusal about launchers into this file. The
+    early one asks whether the command says it needs several ranks and starts one; the later
+    one asks how many processes to start and, at ``processes=all``, composes the launcher
+    itself. They compose everywhere but one place: ``processes=all`` over a command with no
+    launcher, where the early step would refuse the dispatch for missing the very thing the
+    later step was about to add -- and ``all`` is what the early step's own message recommends.
+
+    So the early step asks :func:`~edullm_platform.block_multinode.composes_a_launcher` first.
+    The ordering is what makes this work and it is the ordering both authors wanted anyway: the
+    launcher check stays free and node-less, the process count stays where the card count is
+    known, and a dispatch gets at most one refusal about launchers.
+    """
+    job = only_job(runner)
+    names = [item.get("name", "") for item in job["steps"]]
+    early = step(job, REFUSAL_STEP)["run"]
+
+    assert names.index(REFUSAL_STEP) < names.index(PROCESSES_STEP)
+    assert "composes_a_launcher" in early
+    assert early.index("composes_a_launcher(") < early.index("launcher_refusals(command)")
+
+
+@pytest.mark.parametrize(
+    ("processes", "refused"),
+    [
+        ("auto", True),
+        ("1", True),
+        ("all", False),
+        ("8", False),
+    ],
+)
+def test_which_process_counts_leave_the_launcher_check_something_to_refuse(
+    processes: str, refused: bool
+) -> None:
+    """The gate itself, over the command that killed two runs, one row per value of the field.
+
+    ``auto`` prepends nothing and ``1`` says one process is wanted, so both leave a 64-rank
+    recipe running on one card and both must still be refused. A count composes a launcher, so
+    there is nothing left to refuse -- and refusing anyway would be this file arguing with
+    itself in front of somebody who did exactly what it told them to.
+    """
+    command = (
+        "python .edullm/train_on_corpus.py --model-factory olmoe_7b_32x4 --steps 11921"
+    )
+
+    composes = composes_a_launcher(command=command, processes=processes)
+
+    assert bool(launcher_refusals(command)) is True, "the command under test refuses nothing"
+    assert (not composes) is refused
+
+
 def test_every_block_workflow_assumes_the_role_the_template_names_for_it() -> None:
     """THE SEAM NO SINGLE FILE CAN SEE, AND THE ONE THAT FAILS ON THE SATURDAY.
 
@@ -1259,6 +1317,43 @@ def test_the_user_data_the_launch_builds_fits_inside_what_ec2_accepts() -> None:
     assert "gzip -9" in script, "the launch sends the bootstrap uncompressed and it will not fit"
     assert 'fileb://${user_data}.gz' in script
     assert str(EC2_USER_DATA_LIMIT) in script, "the launch does not check the bound before it"
+
+
+def test_what_is_left_of_the_user_data_budget_is_stated_rather_than_discovered() -> None:
+    """THE MARGIN, ASSERTED ON ITS OWN BECAUSE THREE BRANCHES ALMOST SPENT IT AT ONCE.
+
+    The test above answers yes or no. This one is about how close the yes is, and it exists
+    because on 2026-08-10 three branches cut from ``main`` each measured the headroom against
+    ``main`` and each concluded it had room. Merged, they came to 16,907 bytes against a limit
+    of 16,384 -- 523 over, which is a fleet that does not launch rather than a test that goes
+    red somewhere convenient. The arithmetic that is safe to do per-branch is the delta; the
+    total is only knowable here.
+
+    The launcher guard in ``edullm-node run`` was dropped to get back under, at 747 bytes for a
+    check ``block-run.yml`` already makes -- ``tests/test_block_node_launcher.py`` holds that
+    reasoning and the exposure it leaves. What is left after that is small enough that the next
+    paragraph of prose added to the bootstrap is a real risk, which is the fact this test is for.
+
+    **WHEN THIS FAILS, THE ORDER TO TRY THINGS IN IS: SHRINK, MOVE, THEN DROP.** Shrink what is
+    already there. Move the check to ``block-run.yml``, which is unbounded and where a refusal
+    takes effect on merge rather than at the next launch. Move the bootstrap to S3 and fetch it
+    from a short stub, which is what the message above has recommended all along and which ends
+    this problem instead of deferring it -- it is the right fix and it is not a fix to make with
+    a window running. Only then drop a check, and say so where the people relying on it look.
+    """
+    prelude = "\n".join(
+        f"{name}=value" for name in REQUIRED_SETTING.findall(BOOTSTRAP_PATH.read_text("utf-8"))
+    )
+    composed = f"#!/bin/bash\n{prelude}\n{BOOTSTRAP_PATH.read_text(encoding='utf-8')}"
+    compressed = len(gzip.compress(composed.encode("utf-8"), compresslevel=9))
+    headroom = EC2_USER_DATA_LIMIT - compressed
+
+    print(f"user-data: {compressed} bytes compressed, {headroom} of {EC2_USER_DATA_LIMIT} left")
+
+    assert headroom >= 0, (
+        f"the bootstrap is {-headroom} bytes over what EC2 accepts, so no node in the fleet "
+        "boots. Shrink, move to block-run.yml, move to S3, then drop -- in that order."
+    )
 
 
 def test_the_launch_injects_the_bootstrap_file_rather_than_a_copy_of_it() -> None:

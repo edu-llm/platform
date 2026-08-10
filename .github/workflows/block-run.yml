@@ -216,6 +216,7 @@ jobs:
           import yaml
 
           from edullm_platform.block_launcher import launcher_refusals
+          from edullm_platform.block_multinode import composes_a_launcher
 
           override = os.environ["COMMAND_OVERRIDE"]
           spec = Path(sys.argv[1])
@@ -242,6 +243,20 @@ jobs:
 
           print(f"command from {source}:")
           print(command)
+
+          # ASKED BEFORE THE REFUSAL BECAUSE THE STEP BELOW MAY BE ABOUT TO SUPPLY WHAT IS
+          # MISSING, and refusing here would refuse the remedy. `processes` naming a count
+          # means `Decide how many processes the command starts` prepends a launcher once it
+          # has read the node's cards, so the command that runs is not the one judged here.
+          # `auto` and `1` prepend nothing and the check stands.
+          processes = os.environ["PROCESSES"]
+          if composes_a_launcher(command=command, processes=processes):
+              print(
+                  f"processes={processes} puts a launcher in front of this command further "
+                  "down, so the launcher check has nothing to refuse here."
+              )
+              raise SystemExit(0)
+
           refusals = launcher_refusals(command)
           if refusals:
               raise SystemExit("\n\n".join(refusals))

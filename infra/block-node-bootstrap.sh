@@ -508,25 +508,7 @@ do_run() {
   fi
   [ -n "${command}" ] || die "the command resolved to nothing"
 
-  # A 64-RANK COMMAND STARTED AS ONE PROCESS KILLED TWO RUNS ON 2026-08-10, AND WHAT IT PRINTS
-  # IS ABOUT THE MESH RATHER THAN THE LAUNCHER THAT IS NOT THERE. `block-run.yml` refuses this
-  # before the node is addressed and `edullm_platform.block_launcher` carries the argument and
-  # the exact reading; here it is one `case`, because this file is user-data and EC2 refuses
-  # user-data over 16,384 bytes compressed -- the guard is sized to what is left rather than to
-  # what it could check. So: the factory only, matched as a substring, no mesh flags. It reaches
-  # no node that is already running, since nothing re-runs user-data. Dying gives the claim
-  # back, which `give_the_claim_back` is armed to do.
-  local cards
-  case "${command}" in
-    *torchrun* | *torch.distributed.run* | *torch.distributed.launch* | *EDULLM_LAUNCH_CHECK=waived*) ;;
-    *"--model-factory olmoe_7b_32x4"* | *--model-factory=olmoe_7b_32x4*)
-      # The count this machine reports, so the line somebody pastes carries a real number --
-      # `block-run.yml` writes torchrun's own `gpu` because it has addressed no node. Anything
-      # that is not a count of at least two falls back to that rather than saying zero.
-      cards="$(total_gpus)"
-      if ! [ "${cards:-0}" -ge 2 ] 2> /dev/null; then cards=gpu; fi
-      die "command_needs_a_launcher:olmoe_7b_32x4 is 7.12B over 32 routed experts and wants 64 ranks, and this starts one process -- so it holds one card, the rest are billed and idle, and it stops on a message about the parallelism mesh rather than about the launcher. Leave .edullm/run.yaml alone: block-run-distributed.yml prepends its own launcher and a second one is 64 workers over 8 cards. Pass --command with python -m torch.distributed.run --nproc-per-node=${cards} --standalone in front of the script, or EDULLM_LAUNCH_CHECK=waived if one process is the point" ;;
-  esac
+  # NO LAUNCHER CHECK HERE, DELIBERATELY. tests/test_block_node_launcher.py says why.
 
   local wandb_key
   wandb_key="$(aws secretsmanager get-secret-value \
