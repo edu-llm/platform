@@ -273,8 +273,14 @@ def read_launch_plan(command: Sequence[str]) -> LaunchPlan:
     return LaunchPlan(launcher=None, processes=1)
 
 
-def corrected_command(command: Sequence[str], *, devices: int) -> str | None:
+def corrected_command(command: Sequence[str], *, devices: int | str) -> str | None:
     """The command a submitter should have typed, or ``None`` when it cannot be built.
+
+    ``devices`` is a count on the submission path, where ``CONTAINER_SHAPES`` has already said
+    what the profile bills for. It is a string for :mod:`edullm_platform.block_launcher`, whose
+    caller runs on a GitHub runner that has addressed no machine and so writes torchrun's own
+    ``gpu`` -- one process per visible device, resolved in the container. Only the splicing is
+    shared, and it does not care which of the two it is putting in the flag.
 
     REBUILT FROM THE ORIGINAL TEXT RATHER THAN FROM ITS WORDS, AND THAT IS THE WHOLE
     DIFFICULTY. Rejoining shlex-split words with :func:`shlex.join` single-quotes every one

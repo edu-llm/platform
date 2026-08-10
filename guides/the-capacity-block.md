@@ -2,6 +2,8 @@
 
 Eight `p5.48xlarge` in `us-east-2a`, sixty-four H100s, from 11:30 UTC on 2026-08-08 until 11:30 UTC on 2026-08-12. One purchase, no extension, no refund. This page is for somebody whose repository is not OLMo-core and who wants to know whether they can have some of it.
 
+**If you have already decided to run and want to know what to type, [running a job on the capacity block](running-on-the-block.md) is the procedure** -- how to see what is free, what to put in each field for one node, two or eight, where the output goes, and what to do when a machine says it is busy and nothing is running. This page is the background it assumes.
+
 **The block is not the platform, and nothing you do on it is a run anybody can cite.** There is no admission record, no approval, no lineage entry and no run id. The platform in `us-east-1` is untouched, keeps working all week, and is where anything that has to be reproducible goes — [using the platform](the-platform.md) is that path and none of what follows replaces it. What the block is for is the work that needs sixty-four cards at once and the work that has to happen while that work is running.
 
 > **Read this before the window opens, not during it.** Three of the decisions below are made once, at launch, by whoever dispatches the fleet, and cannot be revisited without giving a machine back. If your repository needs something the fleet is not going to have, the time to say so is now.

@@ -36,6 +36,7 @@ from edullm_platform.block_multinode import (
     cards_per_node,
     choose_nodes,
     command_refusals,
+    exec_refusals,
     expert_parallel_choices,
     launch_markdown,
     mesh_for,
@@ -46,6 +47,7 @@ from edullm_platform.block_multinode import (
     refused,
     rendezvous_for,
     run_name_refusals,
+    single_node_launch,
     torchrun_command,
     with_mesh_flags,
 )
@@ -825,3 +827,182 @@ def test_the_report_is_quiet_about_the_fabric_when_every_node_has_one() -> None:
 
     assert "NOT USING THE FABRIC" not in page
     assert "the fabric between machines" in page
+
+
+# ---------------------------------------------------------------------------------------
+# ONE NODE, AND HOW MANY PROCESSES ITS COMMAND STARTS.
+# ---------------------------------------------------------------------------------------
+#
+# `edullm-node run` hands its command to `bash -lc`, which starts exactly one process. On a
+# `p5.48xlarge` that is one H100 working and seven idle, and nothing reports it: the run starts,
+# the loss falls, and the only symptom is a step time against a baseline nobody has on the first
+# day. It is how the first attempts on this fleet died. The knowledge needed to avoid it -- that
+# this lane's single-node path wants its own `torchrun --standalone --nproc-per-node 8` in front
+# of the command -- was written down nowhere a researcher would look.
+#
+# The decision lives here rather than in `block-run.yml` because YAML gets read by a reviewer
+# once and by a test never, and it lives here rather than in the node helper because the
+# bootstrap is EC2 user-data with under a kilobyte of headroom left against a hard 16,384-byte
+# limit. `tests/test_block_workflows.py` measures that on every pull request.
+
+
+def test_a_bare_command_on_a_multi_card_node_is_refused_rather_than_guessed_at() -> None:
+    """Mutation: default to one process, or default to all of them.
+
+    Both defaults are wrong often. One process leaves the trap exactly where it was and is the
+    behaviour that cost somebody their first afternoon. All of them starts eight copies of a
+    single-process evaluation, each writing the same output prefix, which is worse. The refusal
+    costs one dispatch and names both cures.
+    """
+    launch, refusals = single_node_launch(
+        command="python .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4",
+        processes="auto",
+        cards=8,
+    )
+
+    assert launch == "python .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4"
+    assert len(refusals) == 1
+    assert "8 cards" in refusals[0]
+    assert "leave 7 idle" in refusals[0]
+    assert "processes=all" in refusals[0]
+    assert "processes=1" in refusals[0]
+
+
+def test_all_becomes_one_process_per_card_under_a_standalone_rendezvous() -> None:
+    """`--standalone` rather than a rendezvous endpoint written out.
+
+    It is torchrun's own single-node form and binds the store on an ephemeral port, so two runs
+    forced onto one machine cannot collide over 29400 the way a fixed port would.
+    """
+    launch, refusals = single_node_launch(
+        command="python .edullm/train_on_corpus.py --dataset-id=regmix-10b-v1",
+        processes="all",
+        cards=8,
+    )
+
+    assert refusals == ()
+    assert launch == (
+        "torchrun --standalone --nproc-per-node=8 --no-python "
+        "python .edullm/train_on_corpus.py --dataset-id=regmix-10b-v1"
+    )
+
+
+def test_one_process_runs_the_command_exactly_as_written() -> None:
+    """The tokenisation, the evaluation and the data job, which want one process and no wrapper.
+
+    Nothing is prepended, so a command that would work under `bash -lc` today goes on working.
+    """
+    launch, refusals = single_node_launch(
+        command="python -m olmo_eval --checkpoint s3://somewhere/step1000",
+        processes="1",
+        cards=8,
+    )
+
+    assert refusals == ()
+    assert launch == "python -m olmo_eval --checkpoint s3://somewhere/step1000"
+
+
+def test_a_single_card_node_needs_no_decision_and_is_not_asked_for_one() -> None:
+    """`auto` answers wherever there is only one answer, and one card is one of those.
+
+    A refusal here would be a form asking a question with a single possible response, which is
+    the kind of thing people learn to click through without reading.
+    """
+    launch, refusals = single_node_launch(command="python train.py", processes="auto", cards=1)
+
+    assert (launch, refusals) == ("python train.py", ())
+
+
+def test_a_command_that_brought_its_own_launcher_is_left_exactly_alone() -> None:
+    """Mutation: wrap it anyway.
+
+    Wrapping starts one agent per card, each of which starts one worker per card, and the first
+    evidence is sixty-four workers fighting over eight devices.
+    """
+    written = "torchrun --standalone --nproc-per-node 4 --no-python python train.py"
+
+    launch, refusals = single_node_launch(command=written, processes="auto", cards=8)
+
+    assert (launch, refusals) == (written, ())
+
+
+def test_asking_for_a_process_count_beside_a_launcher_is_a_contradiction() -> None:
+    """Mutation: let the outer count win, or let the inner one win silently.
+
+    Two numbers describe the shape and only one of them can take effect. Which one is not
+    something a person filling in a form should have to know, so neither is chosen.
+    """
+    launch, refusals = single_node_launch(
+        command="torchrun --nproc-per-node 4 --no-python python train.py",
+        processes="all",
+        cards=8,
+    )
+
+    assert launch.startswith("torchrun")
+    assert len(refusals) == 1
+    assert "second launcher" in refusals[0]
+
+
+def test_more_processes_than_cards_is_refused_before_the_node_is_touched() -> None:
+    """They would fight each other for memory, and the failure is minutes of allocation first."""
+    _, refusals = single_node_launch(command="python train.py", processes="8", cards=4)
+
+    assert len(refusals) == 1
+    assert "8 against 4 cards" in refusals[0]
+
+
+def test_a_node_reporting_no_cards_at_all_cannot_be_asked_for_all_of_them() -> None:
+    """A driver that enumerated nothing is a real state, and it reads as zero here.
+
+    Wrapping it would produce `--nproc-per-node=0`, which torchrun accepts on some versions and
+    turns into a job with no workers that waits for a rendezvous nobody joins.
+    """
+    _, refusals = single_node_launch(command="python train.py", processes="all", cards=0)
+
+    assert len(refusals) == 1
+    assert "resolves to 0" in refusals[0]
+
+
+def test_the_two_shapes_no_python_cannot_exec_are_refused_before_the_wrap() -> None:
+    """The same rule the distributed lane applies, applied by the same function.
+
+    `--no-python` makes torchrun exec the first word, so a `.py` path needs an executable bit
+    and a shebang that a fresh clone does not give it, and an assignment names no file at all.
+    Both are accepted by every check upstream and both fail identically on every rank.
+    """
+    _, script = single_node_launch(
+        command=".edullm/train.py --flags", processes="all", cards=8
+    )
+    _, assignment = single_node_launch(
+        command="PYTHONPATH=/work/src python train.py", processes="all", cards=8
+    )
+
+    assert any("script rather than a program" in refusal for refusal in script)
+    assert any("environment assignment" in refusal for refusal in assignment)
+
+
+def test_an_unwrapped_command_may_still_carry_an_assignment_the_shell_understands() -> None:
+    """The refusals above belong to the wrap and not to the lane.
+
+    `PYTHONPATH=/work/src python train.py` is what `guides/the-capacity-block.md` tells a fork
+    to write, and it works because `bash -lc` sets the variable and runs what follows. Only
+    torchrun's exec cannot, so only the wrapped path refuses it.
+    """
+    launch, refusals = single_node_launch(
+        command="PYTHONPATH=/work/src python train.py", processes="1", cards=8
+    )
+
+    assert (launch, refusals) == ("PYTHONPATH=/work/src python train.py", ())
+
+
+def test_the_shared_refusals_are_one_definition_rather_than_two() -> None:
+    """Mutation: give the single-node path its own copy of the first-word rules.
+
+    Two copies drift, and the one that drifts is the one no incident has visited recently.
+    `command_refusals` is the distributed lane's whole check and is built out of the same
+    `exec_refusals` the single-node wrap uses.
+    """
+    both = command_refusals(".edullm/train.py --flags")
+    one = exec_refusals(".edullm/train.py --flags")
+
+    assert one and set(one) <= set(both)

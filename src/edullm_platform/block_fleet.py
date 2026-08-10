@@ -172,6 +172,33 @@ class NodeReading:
     who: str | None
     run: str | None
     started_at: datetime | None
+    #: ``running``, ``gone``, or ``None`` where the node said nothing about it -- which is what
+    #: an unclaimed node answers and also what a node running an older bootstrap answers, since
+    #: the reading script gained this line after some fleets had already booted. Defaulted for
+    #: that second reason as much as for the callers that build a reading by hand: absent has to
+    #: mean "not known" rather than "gone", or a fleet launched yesterday reads as entirely
+    #: stale to a laptop updated today.
+    container: str | None = None
+
+    @property
+    def claim_is_stale(self) -> bool:
+        """A claim naming a run whose container is gone and whose cards are idle.
+
+        **ALL FOUR CLAUSES ARE LOAD-BEARING AND THE LAST ONE IS THE ONE THAT LOOKS REDUNDANT.**
+        The container being gone is the evidence; zero cards in use is what makes *releasing*
+        the right advice rather than dangerous advice. A node whose claimed container has
+        exited while eight cards are still busy is not an abandoned machine -- it is a machine
+        with something on it that this lane did not start -- and it falls through to the
+        ordinary busy line, which reports the cards and tells nobody to clear anything.
+
+        Zero cards on its own is never enough; see :data:`REMOTE_READING_SCRIPT`.
+        """
+        return (
+            self.reachable
+            and self.run is not None
+            and self.container == "gone"
+            and self.gpus_busy == 0
+        )
 
 
 def interface_plan(
@@ -600,6 +627,22 @@ def readiness(invocations: Mapping[str, Any]) -> tuple[Readiness, ...]:
 #: Tab-separated key and value rather than JSON, because emitting JSON from shell means either
 #: quoting by hand or depending on ``jq``, and ``jq`` is not on every image this AMI family has
 #: ever shipped. A missing key is an absent fact; there are no optional values to get wrong.
+#:
+#: **THE ``container`` LINE IS WHAT SEPARATES A LOCK FROM A LEFTOVER, AND WITHOUT IT THE FLEET
+#: CANNOT TELL THEM APART.** A claim file is written before the clone and removed by nothing
+#: when a container dies, so a node whose run exited an hour ago answers this reading with a
+#: claim, a name, a person and zero cards in use -- and every reader above turns that into
+#: ``node_is_busy``, naming a colleague who went home. Measured on this fleet: ``node_is_busy``
+#: printed beside ``0/8 cards in use``. Asking ``docker ps`` for the claimed name is the one
+#: extra fact that makes the difference legible, and it is asked here rather than through
+#: ``edullm-node status`` for the reason the rest of this script is: the node most worth asking
+#: about is the one whose bootstrap never installed the helper.
+#:
+#: It cannot be inferred from ``gpus_busy`` and must not be. A run that is cloning, importing
+#: torch, sharding a dataset or between steps holds zero cards while being entirely alive, and
+#: a reader that called that stale would hand a machine to a second job during the first one's
+#: start-up -- which is the collision the claim exists to prevent, reintroduced by the code
+#: meant to police it.
 REMOTE_READING_SCRIPT: Final = r"""
 total=$(nvidia-smi --query-gpu=uuid --format=csv,noheader 2>/dev/null | grep -c . || true)
 busy=$(nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader 2>/dev/null | sort -u | grep -c . || true)
@@ -609,6 +652,14 @@ if [ -f /var/lib/edullm/claim.json ]; then
   sed -n 's/.*"run":"\([^"]*\)".*/run\t\1/p' /var/lib/edullm/claim.json
   sed -n 's/.*"who":"\([^"]*\)".*/who\t\1/p' /var/lib/edullm/claim.json
   sed -n 's/.*"started_at":"\([^"]*\)".*/started_at\t\1/p' /var/lib/edullm/claim.json
+  held=$(sed -n 's/.*"run":"\([^"]*\)".*/\1/p' /var/lib/edullm/claim.json)
+  if [ -n "${held}" ]; then
+    if [ -n "$(docker ps --quiet --filter "name=^edullm-${held}$" 2>/dev/null)" ]; then
+      printf 'container\trunning\n'
+    else
+      printf 'container\tgone\n'
+    fi
+  fi
 fi
 if [ -f /var/lib/edullm/ready.json ]; then printf 'ready\ttrue\n'; fi
 """
@@ -637,6 +688,7 @@ def parse_reading(
             who=None,
             run=None,
             started_at=None,
+            container=None,
         )
 
     fields: dict[str, str] = {}
@@ -663,6 +715,7 @@ def parse_reading(
         who=fields.get("who") or None,
         run=fields.get("run") or None,
         started_at=started,
+        container=fields.get("container") or None,
     )
 
 
@@ -709,6 +762,17 @@ def status_rows(readings: Sequence[NodeReading], *, now: datetime) -> tuple[str,
             continue
         if reading.run is None and reading.gpus_busy == 0:
             lines.append(f"{head}IDLE")
+            continue
+        if reading.claim_is_stale:
+            since = (
+                f" claimed {elapsed_as(reading.started_at, now=now)} ago"
+                if reading.started_at is not None
+                else ""
+            )
+            lines.append(
+                f"{head}STALE CLAIM  "
+                f"{reading.who or '-'} / {reading.run} exited{since}; `edullm-node release`"
+            )
             continue
         held = (
             f"running {elapsed_as(reading.started_at, now=now)}"
