@@ -178,17 +178,25 @@ jobs:
       # in a window nobody can extend, so ending somebody else's leaves a name in two places:
       # the Systems Manager comment, which is the CloudTrail record and outlives this page, and
       # the report below, which is the copy a researcher can actually read.
+      # THE TWO REQUIRED FLAGS ARE ON THE INVOCATION LINE AND NOT IN THE ARRAY, WHICH IS NOT A
+      # STYLE CHOICE. `tests/test_workflow_tool_arguments.py` reads the arguments a workflow
+      # hands a tool off this line and compares them against what the tool's parser demands,
+      # and it exists because a required argument added to a tool once reached a dispatch as
+      # argparse's usage message inside a job that had already assumed a role. Flags hidden
+      # inside a bash array are invisible to it. The optional one stays in the array because
+      # it is conditional, and a flag that is sometimes absent is not one that check can hold.
       - name: Hand the nodes back and say what came free
         run: |
           set -euo pipefail
           arguments=(
             --no-profile
             --region "${BLOCK_REGION}"
-            --nodes "${NODES}"
-            --who "${RELEASED_BY}"
             --summary "${GITHUB_STEP_SUMMARY}"
           )
           if [ -n "${RESERVATION_INPUT}" ]; then
             arguments+=(--reservation "${RESERVATION_INPUT}")
           fi
-          uv run python tools/block_release.py "${arguments[@]}"
+          uv run python tools/block_release.py \
+            --nodes "${NODES}" \
+            --who "${RELEASED_BY}" \
+            "${arguments[@]}"

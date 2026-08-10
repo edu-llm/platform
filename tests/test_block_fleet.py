@@ -455,8 +455,15 @@ def test_the_status_table_names_a_stale_claim_and_the_verb_that_clears_it() -> N
 
     ``block-status.yml`` is the first thing the procedure tells a researcher to dispatch, so it
     is where the difference has to be legible. A row that says a name and a person and nothing
-    else sends them to a colleague; a row that says the container exited and names the verb
+    else sends them to a colleague; a row that says the container exited and names the remedy
     sends them to the cure.
+
+    **THE REMEDY NAMED IS THE WORKFLOW AND NOT THE NODE COMMAND, WHICH IS THE HALF THIS ROW GOT
+    WRONG FOR AS LONG AS IT HAD ONE.** This table is printed into a job summary by
+    ``block-status.yml`` precisely so that the roughly fifteen people here with no AWS role can
+    read it -- and it told them to run ``edullm-node release`` on a machine they cannot open.
+    A cure the reader cannot obtain is worse than none, because the lever they *can* reach from
+    there is ``take_the_node_anyway``.
     """
     rows = status_rows(
         (
@@ -475,7 +482,8 @@ def test_the_status_table_names_a_stale_claim_and_the_verb_that_clears_it() -> N
 
     assert "STALE CLAIM" in rows[0]
     assert "mfu-smoke" in rows[0]
-    assert "edullm-node release" in rows[0]
+    assert "block-release" in rows[0]
+    assert "edullm-node release" not in rows[0]
     assert "2h00m" in rows[0]
 
 
