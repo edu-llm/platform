@@ -527,8 +527,35 @@ def test_the_header_names_the_configuration_the_choices_were_read_from(
     invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
 
     written = (tmp_path / ".edullm" / "run.yaml").read_text(encoding="utf-8")
-    assert str(CONFIG_DIR) in written
+    assert "config/workload-catalog.yaml" in written
     assert "olmo-core-check, olmo-core-train" in written
+
+
+def test_the_header_carries_a_version_and_not_the_path_it_was_run_from(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: interpolate ``configuration.directory`` into the header again.
+
+    THIS FILE IS COMMITTED INTO SOMEBODY ELSE'S PUBLIC REPOSITORY, WHICH IS WHAT MAKES AN
+    ABSOLUTE PATH HERE DIFFERENT FROM ONE PRINTED TO A TERMINAL. The header used to
+    interpolate the directory ``check`` resolved, so every repository this scaffolded carried
+    the home directory of whoever ran it, and one of those is sitting on an open pull request
+    in a public repository today. It is also the wrong answer to its own question: the next
+    person to read the line is on another machine, where that path is absent or is somebody
+    else's.
+
+    Asserted as the absence of the directory rather than the presence of a version, because
+    what has to stay true is that nothing local leaks. A version can be reworded.
+    """
+    runner = FakeRunner(git_answers(tmp_path))
+
+    invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+
+    written = (tmp_path / ".edullm" / "run.yaml").read_text(encoding="utf-8")
+
+    assert str(CONFIG_DIR) not in written
+    assert str(Path.home()) not in written
+    assert "edullm" in written
 
 
 def test_the_shape_a_first_spec_suggests_can_run_a_trainer_that_defaults_to_bfloat16(
