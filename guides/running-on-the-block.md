@@ -413,7 +413,7 @@ reading as held by somebody who has gone home.
 The status table calls it out:
 
 ```
-node 3  i-0abc...  STALE CLAIM  ana / mfu-smoke exited claimed 2h00m ago; `edullm-node release`
+node 3  i-0abc...  STALE CLAIM  ana / mfu-smoke exited claimed 2h00m ago; dispatch block-release
 ```
 
 and a dispatch onto that machine refuses with `node_claim_is_stale` rather than `node_is_busy`,
@@ -422,17 +422,39 @@ which are different situations and used to print the same words.
 What to do, in order of preference:
 
 1. **Take another node** if there is an `IDLE` one. Always the cheapest answer.
-2. **Ask somebody with an AWS role to run `edullm-node release`** on the machine. One command,
-   seconds. Ask in the channel, naming the node number and the run name off the table; if nobody
-   answers, **@philote-dev**. You cannot do this one yourself and there is no point trying --
-   `release` runs on the node and the only way onto the node is a role.
-3. `take_the_node_anyway`, **and only if the refusal you got used the exact words
+2. **Dispatch `Block: give a node back`.** It needs no AWS credential, it is the same
+   `edullm-node release` the machine runs, and it is safe to press: the node refuses while a
+   claimed container is up, so it cannot end a run. The summary says, per node, whether the claim
+   came back and who was holding it.
+
+```bash
+gh workflow run block-release.yml --ref main -R edu-llm/platform -f nodes=3
+```
+
+   Pass a comma-separated list for several, or `all` to sweep the fleet. Then dispatch your run
+   again. A node number that is not in the fleet is named in the summary rather than dropped, so
+   a typo reads as a typo instead of as an empty block.
+
+   **If it dies at `configure-aws-credentials` with a message about a subject claim, that is not
+   your dispatch.** Every workflow here is named individually in an IAM trust policy that is
+   applied by hand from a laptop, and this button is newer than the last time somebody applied
+   it. Say so in the channel; it is one command for whoever holds the deployer role and nothing
+   you can do from a browser.
+
+3. **Ask somebody with an AWS role** if that refused and you think it should not have. Name the
+   node number and the run name off the table in the channel; if nobody answers,
+   **@philote-dev**. A refusal here means the container is still up, which almost always means
+   somebody is running something.
+4. `take_the_node_anyway`, **and only if the refusal you got used the exact words
    `node_claim_is_stale`**. In that one case the reading has established that the container is
    gone and no cards are in use, so there is no other run to fight and what you overwrite is a
-   claim nobody is using. If it said `node_is_busy`, it is busy: go back to 1 or 2.
+   claim nobody is using. If it said `node_is_busy`, it is busy: go back to 1.
 
-Point 3 is a narrow exception to the rule in the next section, and the words are the whole of the
-exception. "It looked stale to me" is how somebody ends a colleague's training run.
+Point 4 was the only self-service route before point 2 existed, and it should now be rare. Prefer
+the release: it reads the machine and refuses what it must not touch, where
+`take_the_node_anyway` reads nothing and overwrites whatever is there. It is a narrow exception to
+the rule in the next section, and the words are the whole of the exception. "It looked stale to
+me" is how somebody ends a colleague's training run.
 
 **Zero cards in use is not on its own evidence that a claim is stale, and you should not treat it
 as such.** A run that is cloning, importing torch, sharding a corpus or simply between steps holds
@@ -476,15 +498,10 @@ meets a refusal naming the container, and the cure is a new name. Put a counter 
 
 Written down so that nobody spends an afternoon discovering it.
 
-- **A researcher with no AWS role cannot clear a stale claim themselves.** They can see it on the
-  status table, and the refusal names the cure, and the cure is `edullm-node release` on a machine
-  they cannot open -- there is no workflow that runs it. So this one is a person: ask in the
-  channel with the node number and the run name, or **@philote-dev**. `take_the_node_anyway` is
-  the only self-service route and it is safe *only* against a refusal that used the exact words
-  `node_claim_is_stale`. A workflow that ran `edullm-node release` and nothing else would close
-  this properly and does not exist yet.
 - **There is no way to stop one run without a role.** `block-drain.yml`'s `stop_runs` is
-  fleet-wide.
+  fleet-wide. Note that this is a genuinely different thing from clearing a stale claim, which
+  `Block: give a node back` does do without a role: releasing a claim ends a *lock* and the node
+  refuses to do even that while a container is up, where stopping a run ends somebody's work.
 - **The node-side fixes are not on the machines that are up now, and will not be until a fleet
   is relaunched.** The helper is written into each machine's user-data while it boots and nothing
   re-runs user-data, so a change to it reaches a machine at launch or never. This fleet launched

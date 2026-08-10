@@ -1,0 +1,211 @@
+name: "Block: give a node back"
+
+# THE REFUSAL THAT NAMED A CURE HALF THE TEAM CANNOT OBTAIN, AND THIS IS THE OTHER HALF OF IT.
+#
+# Nothing on a node removes a claim when a container exits, so a run that finished hours ago
+# leaves the machine reading as held. `block-run.yml` learned to say so by name -- which was a
+# large improvement on `node_is_busy` naming a colleague who had gone home, printed beside `0/8
+# cards in use` -- and the remedy it offered was `edullm-node release` on the machine.
+#
+# Roughly fifteen of the thirty-five people here hold no AWS role at all. They cannot assume
+# anything, cannot open a Systems Manager session and cannot reach a node by any route. For
+# them that refusal names the disease and prescribes a medicine they cannot get, and what they
+# meet instead is a machine that says it is busy while sitting idle. Measured on 2026-08-10:
+# eight nodes carrying claims from an afternoon of agents, a dispatch refused at 20:31:59Z with
+# `node_claim_is_stale:philote-dev`, and no way forward that did not involve somebody with a
+# role. The other lever the refusal offers is `take_the_node_anyway`, and the failure mode of
+# leaving that as the only reachable one is somebody learning to tick it by habit until the day
+# they tick it over a live run.
+#
+# So this workflow holds the credential and a researcher holds a browser, which is the same
+# arrangement `block-run.yml`, `block-status.yml`, `block-logs.yml` and `block-drain.yml` are
+# each in. There is no admin guard here for the reason none of those four has one: an admin
+# guard on the door built for the people with no key hands the door back to the people who
+# already had one.
+#
+# IT CANNOT KILL LIVE WORK, AND THAT IS A PROPERTY OF THE NODE RATHER THAN OF THIS FILE.
+# `do_release` in `infra/block-node-bootstrap.sh` refuses while a container of the claimed run
+# is up, and makes `--force` the sentence somebody has to type when they mean to abandon a
+# claim over a running job. Nothing here passes it and there is no input that would -- so the
+# worst this can do to a busy machine is print the reason it would not touch it, and every
+# claim that does come back was a leftover. `tests/test_block_release.py` holds that, in both
+# directions, because it is the property the whole button rests on.
+#
+# WHAT IT STILL CANNOT SEE IS THE SECONDS BETWEEN A CLAIM AND ITS CONTAINER. The distributed
+# launcher takes its claim through `edullm-node claim` and starts its container after a clone,
+# so for tens of seconds a claim is real and no container answers to it. A release landing in
+# that window ends a lock over a job that is about to start. It is reported rather than guarded
+# against, because guarding means inferring intent from a timestamp: the report prints how long
+# each claim has been held, and a claim seconds old is one to leave alone.
+#
+# A DISPATCH FROM A BRANCH IS REFUSED AT AssumeRole. `infra/iam/block-fleet-roles.yaml` pins
+# `job_workflow_ref` to this path at `refs/heads/main`, as every OIDC role in this account does,
+# and the list is an enumeration rather than a pattern. Merge, re-apply the IAM stack -- it has
+# to learn this file exists -- and only then does a dispatch reach anything at all.
+
+on:
+  workflow_dispatch:
+    inputs:
+      nodes:
+        description: "Which node to hand back: a number, several separated by commas, or all. A claim whose container is still running is refused, so this cannot end anybody's run."
+        required: true
+        type: string
+      reservation_id:
+        description: "Optional. Only needed if two blocks have a fleet up at once, because node numbers repeat across them."
+        required: false
+        default: ""
+        type: string
+      region:
+        description: "Where the fleet is."
+        required: true
+        default: us-east-2
+        type: string
+
+permissions:
+  contents: read
+
+# NAMING ONE NODE JOINS `block-run.yml`'s GROUP FOR THAT NODE, AND THAT IS THE POINT RATHER
+# THAN A COINCIDENCE OF SPELLING. Concurrency groups are repository-wide, so
+# `capacity-block-node-3` here is the same queue as `capacity-block-node-3` there -- which
+# closes the one race between these two files that costs anything. A run taking a claim and
+# then cloning for tens of seconds, overlapped by a release that reads no container yet, leaves
+# a container running on a node with no claim on it: `block-run.yml` calls that
+# `node_has_unclaimed_work` and refuses it, and nobody can tell from the machine how it
+# happened. Serialised, the release either happens before the claim is taken or meets the
+# claim's container.
+#
+# A list or `all` forms a group of its own and does not serialise against the single-node ones.
+# That is a real gap and it is the smaller one: sweeping the fleet is not what somebody does in
+# the same minute as starting a run on a named machine, and a group that tried to cover it
+# would have to be one queue for the whole lane -- which would make eight people clearing eight
+# claims wait in line for each other on a Saturday afternoon.
+#
+# NEITHER SHAPE SERIALISES AGAINST `block-run-distributed.yml`, WHICH IS `capacity-block-fleet`
+# AND IS A DIFFERENT QUEUE. Read the paragraph above on its own and the race looks closed; it is
+# closed against one of the two files that take claims. The multi-node lane is also the one with
+# the longest gap between taking a claim and starting a container, because it clones on every
+# machine first. Joining its group would serialise every release behind every fleet launch, so
+# what covers this instead is the report: a claim that has been held for seconds is one to leave
+# alone, and `release_rows` prints the age of each.
+concurrency:
+  group: capacity-block-node-${{ inputs.nodes }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Hand back the claims that are not holding anything
+    runs-on: ubuntu-latest
+    # The payload reads a file, runs one nvidia-smi query and removes a file. What this bounds
+    # is a Systems Manager call that never returns rather than a node that is slow to answer;
+    # the tool stops waiting on its own well inside it.
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      NODES: ${{ inputs.nodes }}
+      RESERVATION_INPUT: ${{ inputs.reservation_id }}
+      BLOCK_REGION: ${{ inputs.region }}
+      RELEASED_BY: ${{ github.actor }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install the platform library
+        run: |
+          set -euo pipefail
+          uv sync --locked
+
+      # BEFORE THE CREDENTIALS, BECAUSE THESE REFUSALS ARE FREE. A node list that is not one and
+      # a mistyped reservation id are both answerable on a runner with no AWS access at all, and
+      # the alternative for the second one is a reading that matches no instance and reports an
+      # empty fleet -- which says "the block is gone" to somebody who typed one character wrong.
+      #
+      # THE LIST IS PARSED BY THE LIBRARY THE TOOL PARSES IT WITH, rather than by a `case` here.
+      # Two spellings of what counts as a node list is how a form accepts something the tool
+      # then rejects after assuming a role, and `tests/test_block_release.py` can only hold the
+      # rule while there is one of it.
+      - name: Refuse a node list or a reservation id that is not one
+        run: |
+          set -euo pipefail
+          case "${RESERVATION_INPUT}" in
+            "" | cr-[0-9a-f][0-9a-f]*) ;;
+            *)
+              echo "reservation_is_not_a_capacity_reservation_id:${RESERVATION_INPUT}" >&2
+              echo "It is the cr- id off the EC2 console row whose reservation type is" >&2
+              echo "capacity-block. Leave it empty unless two blocks have a fleet up." >&2
+              exit 1
+              ;;
+          esac
+
+          uv run python - <<'PY'
+          import os
+          import sys
+
+          from edullm_platform.block_release import nodes_wanted
+
+          try:
+              wanted = nodes_wanted(os.environ["NODES"])
+          except ValueError as error:
+              sys.exit(str(error))
+
+          if wanted is None:
+              print("every node in the fleet will be asked to give its claim back")
+          else:
+              print(f"asking node {', '.join(str(number) for number in wanted)}")
+          print(
+              "A claim whose container is still up is refused on the machine, so nothing "
+              "running can be disturbed by this."
+          )
+          PY
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_BLOCK_FLEET_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+          role-duration-seconds: 3600
+          mask-aws-account-id: true
+
+      # THE TOOL AND NOT AN INLINE SCRIPT, WHICH IS THE CHOICE `block-status.yml`,
+      # `block-logs.yml` AND `block-drain.yml` EACH MADE FOR THE SAME LANE. Two things follow
+      # from it. A maintainer runs exactly what this runs, from a laptop, with `--profile
+      # sbsandbox` in place of `--no-profile` -- which is the fallback for the morning GitHub is
+      # the thing that is broken. And the distinctions this turns on, which are that a node that
+      # did not answer is never reported as one that came back and that no route through it
+      # reaches `--force`, are held by `tests/test_block_release.py` rather than by a reviewer
+      # reading a heredoc once.
+      #
+      # `--who` is `github.actor` and is not decoration. A claim is a lock on a shared machine
+      # in a window nobody can extend, so ending somebody else's leaves a name in two places:
+      # the Systems Manager comment, which is the CloudTrail record and outlives this page, and
+      # the report below, which is the copy a researcher can actually read.
+      #
+      # THE TWO REQUIRED FLAGS ARE ON THE INVOCATION LINE AND NOT IN THE ARRAY, WHICH IS NOT A
+      # STYLE CHOICE. `tests/test_workflow_tool_arguments.py` reads the arguments a workflow
+      # hands a tool off this line and compares them against what the tool's parser demands,
+      # and it exists because a required argument added to a tool once reached a dispatch as
+      # argparse's usage message inside a job that had already assumed a role. Flags hidden
+      # inside a bash array are invisible to it. The optional one stays in the array because
+      # it is conditional, and a flag that is sometimes absent is not one that check can hold.
+      - name: Hand the nodes back and say what came free
+        run: |
+          set -euo pipefail
+          arguments=(
+            --no-profile
+            --region "${BLOCK_REGION}"
+            --summary "${GITHUB_STEP_SUMMARY}"
+          )
+          if [ -n "${RESERVATION_INPUT}" ]; then
+            arguments+=(--reservation "${RESERVATION_INPUT}")
+          fi
+          uv run python tools/block_release.py \
+            --nodes "${NODES}" \
+            --who "${RELEASED_BY}" \
+            "${arguments[@]}"

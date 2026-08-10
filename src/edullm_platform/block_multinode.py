@@ -567,8 +567,16 @@ def single_node_launch(
     Nothing reports it. The run starts, the loss falls, and the only evidence is a step time
     against a baseline nobody has on the first day. It is how the first attempts on this fleet
     died, and the knowledge needed to avoid it -- that this lane's single-node path wants its
-    own ``torchrun --standalone --nproc-per-node 8`` in front of the command -- was written
-    down nowhere a researcher would look.
+    own ``torchrun --standalone --nproc-per-node=8 --no-python`` in front of the command -- was
+    written down nowhere a researcher would look.
+
+    **``--no-python`` IS PART OF THAT SPELLING RATHER THAN AN EMBELLISHMENT ON IT**, which is why
+    it is written out here and not left implied. torchrun's positional argument is a *script
+    path* and torchrun supplies the interpreter itself, so the shorter-looking ``torchrun
+    --standalone --nproc-per-node=8 python train.py`` asks Python to open a file called
+    ``python`` -- on every rank, seconds after the containers come up, with the machine already
+    paid for. This paragraph described the launcher without the flag while the code below
+    composed it correctly, and a description of a launcher is a thing people copy into a shell.
 
     **``auto`` ANSWERS ONLY WHERE THERE IS ONE ANSWER, AND REFUSES WHERE THERE ARE TWO.** A bare
     command on a multi-card node is either a training run that wants every card or a
