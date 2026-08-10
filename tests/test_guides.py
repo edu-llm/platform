@@ -1660,3 +1660,102 @@ def test_the_reference_names_every_state_edullm_status_can_print() -> None:
         "The page is the reference for this verb, so a state it does not carry is a word a "
         "researcher meets in their terminal with nowhere to look it up"
     )
+
+
+# ---------------------------------------------------------------------------------------
+# THE BLOCK PROCEDURE, HELD AGAINST THE FORMS IT TELLS PEOPLE TO FILL IN.
+# ---------------------------------------------------------------------------------------
+#
+# ``guides/running-on-the-block.md`` is the one page written to be copied from rather than read,
+# and a `gh workflow run` line naming a field that no longer exists fails with `unexpected
+# argument`, at the keyboard of somebody who has just been told this is the supported way in. The
+# fields are read out of the workflows here for the reason the rest of this module reads the
+# catalogue: a rename on either side has to fail on a pull request rather than on a Saturday.
+
+BLOCK_PROCEDURE_PATH = GUIDES_DIR / "running-on-the-block.md"
+WORKFLOWS_DIR = PROJECT_ROOT / ".github" / "workflows"
+
+#: A `gh workflow run <file> ... -f name=value` invocation, taken whole out of a fenced block so
+#: that the fields can be read against the workflow the same line names.
+GH_DISPATCH = re.compile(
+    r"gh workflow run (?P<workflow>[a-z-]+\.yml)(?P<rest>.*?)(?=\n\n|\n```)", re.DOTALL
+)
+
+
+def workflow_inputs(name: str) -> set[str]:
+    loaded = yaml.safe_load((WORKFLOWS_DIR / name).read_text(encoding="utf-8"))
+    return set((loaded[True]["workflow_dispatch"].get("inputs") or {}).keys())
+
+
+@pytest.fixture(scope="module")
+def block_procedure() -> str:
+    return BLOCK_PROCEDURE_PATH.read_text(encoding="utf-8")
+
+
+def test_every_field_the_block_procedure_types_is_a_field_the_form_has(
+    block_procedure: str,
+) -> None:
+    """Mutation: rename an input and leave the guide alone.
+
+    These are copy-pasteable lines and that is the point of them, so the failure they produce
+    when a field is renamed is `unexpected argument` at somebody's keyboard rather than a
+    refusal that explains itself.
+    """
+    dispatches = list(GH_DISPATCH.finditer(block_procedure))
+    assert dispatches, "the procedure no longer carries a dispatch anybody can copy"
+
+    for dispatch in dispatches:
+        workflow = dispatch.group("workflow")
+        available = workflow_inputs(workflow)
+        used = set(re.findall(r"-f (\w+)=", dispatch.group("rest")))
+        assert used <= available, (
+            f"{workflow} has no {sorted(used - available)}, and the procedure tells somebody "
+            "to pass it"
+        )
+
+
+def test_the_block_procedure_dispatches_from_main(block_procedure: str) -> None:
+    """Every one of these roles pins ``job_workflow_ref`` to its own path at ``refs/heads/main``.
+
+    A dispatch from a branch dies at ``configure-aws-credentials`` with a message about a subject
+    claim, which reads as a broken workflow rather than as a wrong ref -- so a copyable line
+    missing ``--ref main`` sends somebody debugging in the wrong place.
+    """
+    for dispatch in GH_DISPATCH.finditer(block_procedure):
+        assert "--ref main" in dispatch.group("rest"), (
+            f"the {dispatch.group('workflow')} example does not pass --ref main"
+        )
+
+
+def test_the_block_procedure_names_the_launcher_field_and_its_refusal(
+    block_procedure: str,
+) -> None:
+    """The field that exists because one process on eight cards looks exactly like eight.
+
+    Both halves are asserted. The field is what a researcher fills in; the refusal code is what
+    they will paste into the channel when they leave it at ``auto``, and a guide that does not
+    contain the string they searched for is a guide they conclude is about something else.
+    """
+    assert "processes" in workflow_inputs("block-run.yml")
+    assert "processes=all" in block_procedure
+    assert "launcher_refused" in block_procedure
+
+
+def test_the_block_procedure_tells_the_stale_claim_apart_from_a_busy_node(
+    block_procedure: str,
+) -> None:
+    """The refusal codes a researcher meets are the two that used to be one.
+
+    ``node_is_busy`` beside ``0/8 cards in use`` was measured on this fleet, and the procedure's
+    whole answer to it rests on the two being separately named.
+    """
+    assert "node_claim_is_stale" in block_procedure
+    assert "STALE CLAIM" in block_procedure
+    assert "edullm-node release" in block_procedure
+
+
+def test_the_capacity_block_guide_sends_people_to_the_procedure() -> None:
+    """A page nothing links to is a page written for the person who already knew it existed."""
+    background = (GUIDES_DIR / "the-capacity-block.md").read_text(encoding="utf-8")
+
+    assert "running-on-the-block.md" in background

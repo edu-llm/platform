@@ -63,6 +63,18 @@ on:
         required: false
         default: ""
         type: string
+      processes:
+        description: "How many processes the command starts on this node. all is one per card and is what a training run wants. 1 runs it exactly as written, for an eval, a tokenisation or anything single-process. auto refuses rather than guess, unless the command brings its own launcher or the node has one card."
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - all
+          - "1"
+          - "2"
+          - "4"
+          - "8"
       wandb_project:
         description: "Which Weights and Biases project the charts appear in."
         required: true
@@ -110,6 +122,7 @@ jobs:
       RUN_NAME: ${{ inputs.run_name }}
       REPOSITORY: ${{ inputs.repository }}
       COMMAND_OVERRIDE: ${{ inputs.command }}
+      PROCESSES: ${{ inputs.processes }}
       WANDB_PROJECT: ${{ inputs.wandb_project }}
       RESERVATION_INPUT: ${{ inputs.reservation_id }}
       BLOCK_REGION: ${{ inputs.region }}
@@ -279,6 +292,13 @@ jobs:
                   "command there, so nothing can say whether it is busy. Check the fleet."
               )
 
+          # Read off the machine and kept, because the step below needs it and the step below
+          # runs after this invocation is gone. A shape is not a substitute: a node whose
+          # driver enumerated seven devices is a real state and the launcher has to know.
+          Path(os.environ["RUNNER_TEMP"], "cards.txt").write_text(
+              f"{reading.gpus_total}\n", encoding="utf-8"
+          )
+
           held = reading.run
           since = (
               elapsed_as(reading.started_at, now=datetime.now(tz=UTC))
@@ -287,7 +307,27 @@ jobs:
           )
           print(f"node {reading.node}: {reading.gpus_busy}/{reading.gpus_total} cards in use")
           if held is not None:
-              print(f"claimed by {reading.who} for {held}, running {since}")
+              print(f"claimed by {reading.who} for {held}, container {reading.container}")
+
+          # A CLAIM WHOSE CONTAINER IS GONE IS ITS OWN REFUSAL, BECAUSE THE OLD ONE SENT PEOPLE
+          # SOMEWHERE THERE WAS NOTHING TO FIND.
+          #
+          # Nothing on a node removes a claim when a container exits, so a run that finished
+          # hours ago leaves the machine reading as held. Until this reading carried the
+          # container state, that was `node_is_busy` naming a colleague who had gone home --
+          # measured on this fleet, printed beside `0/8 cards in use` -- and the only lever a
+          # researcher had was `take_the_node_anyway`, whose description promises a fight for
+          # memory with a run that does not exist. So they either avoid the machine or learn to
+          # tick the dangerous box by habit, and the second is how somebody eventually ticks it
+          # over a live run.
+          if reading.claim_is_stale and not taking:
+              raise SystemExit(
+                  f"node_claim_is_stale:{reading.who} claimed node {reading.node} for "
+                  f"{held} {since} ago and its container is gone, with no cards in use. "
+                  "Nothing is running, so nothing will be disturbed: clear it with "
+                  "`edullm-node release` on the machine, or dispatch again with "
+                  "take_the_node_anyway, which here only overwrites a claim nobody is using."
+              )
 
           if held is not None and held != wanted and not taking:
               raise SystemExit(
@@ -305,6 +345,71 @@ jobs:
                   f"{reading.node} with nothing claiming them. Somebody started that outside "
                   "the workflow. Find them before you take the machine."
               )
+          PY
+
+      # HOW MANY PROCESSES THE COMMAND STARTS, DECIDED HERE AND NOT LEFT TO THE PERSON WHO HAS
+      # NEVER SEEN THIS FILE.
+      #
+      # `edullm-node run` hands its command to `bash -lc`, which starts exactly one process. On
+      # a `p5.48xlarge` that is one H100 working and seven idle, reported by nothing: the run
+      # starts, the loss falls, and the only symptom is a step time against a baseline nobody
+      # has on the first day. It is how the first attempts on this fleet died. The knowledge
+      # required to avoid it -- bring your own `torchrun --standalone --nproc-per-node 8` -- was
+      # written down nowhere a researcher would look, and asking them to carry it is asking the
+      # wrong half of the team to know the most surprising thing about the lane.
+      #
+      # IT IS DECIDED HERE RATHER THAN ON THE NODE FOR A REASON THAT IS NOT ARCHITECTURAL. The
+      # bootstrap is user-data, EC2 refuses user-data above 16,384 bytes even gzipped, and the
+      # committed file is already within a kilobyte of that -- `test_block_workflows.py`
+      # measures it on every pull request. This logic and the paragraphs that justify it do not
+      # fit there. What that costs is real and worth naming: `edullm-node run` typed into a
+      # shell still starts one process, so the twenty people who hold a role keep composing
+      # their own launcher. They are also the population that already knows.
+      #
+      # RUN BEFORE THE CLAIM IS TAKEN, so a refusal here leaves the fleet exactly as it was.
+      - name: Decide how many processes the command starts
+        run: |
+          set -euo pipefail
+          uv run python - <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+
+          from edullm_platform.block_multinode import single_node_launch
+
+          temporary = Path(os.environ["RUNNER_TEMP"])
+          command = os.environ["COMMAND_OVERRIDE"]
+          processes = os.environ["PROCESSES"]
+          cards = int((temporary / "cards.txt").read_text(encoding="utf-8").strip() or 0)
+
+          # AN EMPTY COMMAND IS THE BRANCH'S DECISION AND NOT THIS FORM'S. With no `command`
+          # the node reads `.edullm/run.yaml`, which this runner cannot see and which belongs
+          # to whoever maintains that repository -- so a launcher, if one is wanted, is theirs
+          # to put there. Asking for a process count as well is asking to wrap a command nobody
+          # here has read, which is how a job that already launches itself gets launched twice.
+          if not command:
+              if processes != "auto":
+                  raise SystemExit(
+                      f"processes_needs_a_command:processes={processes} was asked for with no "
+                      "command, so the command comes from .edullm/run.yaml on the branch and "
+                      "this dispatch cannot see it. Leave processes at auto and let the "
+                      "branch's own command say how it launches, or type the command out."
+                  )
+              print("no command given, so .edullm/run.yaml on the branch decides both")
+              (temporary / "command.txt").write_text("", encoding="utf-8")
+              sys.exit(0)
+
+          launch, refusals = single_node_launch(
+              command=command, processes=processes, cards=cards
+          )
+          for refusal in refusals:
+              print(f"launcher_refused:{refusal}", file=sys.stderr)
+          if refusals:
+              raise SystemExit(1)
+
+          (temporary / "command.txt").write_text(launch, encoding="utf-8")
+          print(f"{cards} cards on this node, processes={processes}")
+          print(launch)
           PY
 
       # THE HELPER ON THE NODE DOES THE WORK, AND THAT IS DELIBERATE RATHER THAN THIN.
@@ -350,8 +455,12 @@ jobs:
               "--wandb-project",
               os.environ["WANDB_PROJECT"],
           ]
-          if os.environ["COMMAND_OVERRIDE"]:
-              argv += ["--command", os.environ["COMMAND_OVERRIDE"]]
+          # The resolved line from the step above rather than the raw input, because that is
+          # where the launcher was added. Empty means the branch's `.edullm/run.yaml` decides,
+          # which is the one case where no `--command` is passed at all.
+          resolved = Path(os.environ["RUNNER_TEMP"], "command.txt").read_text(encoding="utf-8")
+          if resolved.strip():
+              argv += ["--command", resolved.strip()]
           if os.environ["TAKE_ANYWAY"] == "true":
               argv.append("--force")
           Path(sys.argv[1]).write_text(

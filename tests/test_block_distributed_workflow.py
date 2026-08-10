@@ -294,3 +294,34 @@ def test_the_launch_script_parses_as_bash() -> None:
     )
 
     assert checked.returncode == 0, checked.stderr
+
+
+def test_the_form_can_turn_off_the_flags_that_belong_to_one_entrypoint(
+    distributed: dict[str, Any],
+) -> None:
+    """Mutation: leave `--no-mesh-flags` reachable only from a laptop.
+
+    `--moe-shard-degree` and `--moe-num-replicas` are arguments to one entrypoint, and the tool
+    appends them to whatever command it is handed. On `edullm/final-model` that is the whole
+    point; on any other repository argparse meets an unrecognised argument and every rank exits
+    seconds after the containers come up -- with the node set already claimed and the machines
+    already paid for.
+
+    The tool has carried `--no-mesh-flags` since it was written and this form had no way to
+    reach it, which meant the multi-node lane worked for one codebase through the workflow and
+    for every codebase through a shell. That is exactly backwards: the workflow is the path for
+    the fifteen people here who hold no AWS role, and the shell is the path for the twenty who
+    could have worked around it anyway.
+    """
+    inputs = distributed["on"]["workflow_dispatch"]["inputs"]
+    assert "mesh_flags" in inputs
+    assert inputs["mesh_flags"]["default"] is True, (
+        "the flagship recipe is what the block was bought for, so the default has to suit it"
+    )
+
+    body = step(only_job(distributed), LAUNCH_STEP)["run"]
+    assert "--no-mesh-flags" in body
+    assert 'if [ "${MESH_FLAGS}" != "true" ]' in body, (
+        "the flag has to be conditional; passed unconditionally it strips the mesh from the "
+        "one run this lane exists for"
+    )

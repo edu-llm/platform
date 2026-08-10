@@ -64,6 +64,11 @@ on:
         required: false
         default: ""
         type: string
+      mesh_flags:
+        description: "Add --moe-shard-degree and --moe-num-replicas to the command. Leave on for the OLMo-core MoE recipe this block was bought for. Turn OFF for any entrypoint that does not take those two flags, which is every other repository: argparse rejects an unrecognised argument and the run dies on all of its ranks."
+        required: false
+        default: true
+        type: boolean
       repository:
         description: "The GitHub repository holding the branch. It must be public: the nodes clone it with no credential."
         required: true
@@ -139,6 +144,7 @@ jobs:
       NODE_COUNT: ${{ inputs.node_count }}
       NODES: ${{ inputs.nodes }}
       EXPERT_PARALLEL: ${{ inputs.expert_parallel }}
+      MESH_FLAGS: ${{ inputs.mesh_flags }}
       REPOSITORY: ${{ inputs.repository }}
       WANDB_PROJECT: ${{ inputs.wandb_project }}
       FABRIC: ${{ inputs.fabric }}
@@ -242,6 +248,17 @@ jobs:
           fi
           if [ -n "${EXPERT_PARALLEL}" ]; then
             optional+=(--expert-parallel "${EXPERT_PARALLEL}")
+          fi
+          # WITHOUT THIS THE LANE IS OLMo-core ONLY, WHICH IS NOT WHAT IT SAYS ON THE FORM.
+          # `--moe-shard-degree` and `--moe-num-replicas` are flags on one entrypoint, and the
+          # tool appends them to whatever command it is given. On `edullm/final-model` that is
+          # the point of them; on anything else argparse meets an unrecognised argument and
+          # every rank exits within seconds of the containers coming up, after the node set was
+          # claimed. The tool has had `--no-mesh-flags` since it was written and this form had
+          # no way to reach it, so the twenty people who can run the tool from a laptop could
+          # bring another repository here and the fifteen this lane exists for could not.
+          if [ "${MESH_FLAGS}" != "true" ]; then
+            optional+=(--no-mesh-flags)
           fi
           if [ -n "${RESERVATION_INPUT}" ]; then
             optional+=(--reservation "${RESERVATION_INPUT}")
