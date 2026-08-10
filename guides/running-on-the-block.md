@@ -51,18 +51,23 @@ Wait about thirty seconds, then read the summary of the run it started. One line
 | `NOT READY` | The machine is up and its bootstrap never finished | It can run nothing. Take another and say so in the channel |
 | `UNREACHABLE` | Systems Manager could not reach it | Nothing can say whether it is busy. A fleet problem rather than yours |
 
-**The fleet is however many nodes somebody launched, and that is not always eight.** This is the
-single most common wrong assumption about the block, and it is wrong in the expensive direction:
-a plan that needs four machines is not a plan the fleet can necessarily serve. The reading above
-is the only thing that knows. On 2026-08-10 at 18:00 UTC it printed exactly one line --
+**Count the rows before you decide how many nodes to ask for.** The fleet is however many
+machines somebody launched, and the reading above is the only thing that knows it. **As this
+page is written there are eight**, numbered 1 to 8, every one a `p5.48xlarge` drawing from the
+block, all launched together at 19:08 UTC on 2026-08-10. A plan that wants the whole fleet can
+be served today.
+
+That was not true earlier the same day, which is why this paragraph is here at all. At 18:00 UTC
+the same table printed exactly one line --
 
 ```
 node 1  i-0237f01429eec77ec  0/8 GPUs busy   philote-dev-throughput  mfu-smoke-1n-c   running 0h19m
 ```
 
--- because the fleet running at that moment was a single node, relaunched thirty-eight minutes
-earlier, and every multi-node dispatch that afternoon was refused for that reason and not for any
-reason to do with the dispatch. Count the rows before you decide how many nodes to ask for.
+-- because the fleet at that moment was a single node, and every multi-node dispatch that
+afternoon was refused for that reason rather than for anything to do with the dispatch. A fleet
+can be relaunched at any size and this page cannot know what has happened since it was last
+edited. The table can, and it costs thirty seconds.
 
 ## 2. How do I claim what I need
 
@@ -135,9 +140,22 @@ gh workflow run block-run.yml --ref main -R edu-llm/platform \
 your command through a shell, and a shell starts one process. One process on a `p5.48xlarge` uses
 one H100 and leaves seven idle, and nothing anywhere says so -- the run starts, the loss falls,
 and the only symptom is a step time you have no baseline for on the first day. It is exactly how
-the first attempts on this fleet died. `processes=all` puts `torchrun --standalone
---nproc-per-node 8` in front of your command for you, with the card count read off the machine
-rather than assumed.
+the first attempts on this fleet died. `processes=all` composes the launcher for you, with the
+card count read off the machine rather than assumed. On an eight-card node the command above is
+dispatched as:
+
+```
+torchrun --standalone --nproc-per-node=8 --no-python python .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4 --dataset-id=regmix-10b-v1
+```
+
+**`--no-python` is the word that makes that line work, and it is the reason not to write the
+launcher yourself from memory.** torchrun's positional is a *script path* and torchrun supplies
+the interpreter, so a bare `torchrun ... python train.py` asks Python to open a file called
+`python` -- on every rank, seconds after the containers come up, with the machine already paid
+for. `--no-python` is what tells torchrun the rest of the line is a command rather than a script.
+If you would rather write a launcher out than use the field, the other correct spelling keeps the
+interpreter first and puts the launcher inside it, which is the form every refusal on this page
+hands you: `python -m torch.distributed.run --nproc-per-node=8 --standalone train.py`.
 
 `auto` is the default and it refuses rather than guessing, because a bare command on an eight-card
 node is either a training run that wants all eight or a tokenisation or an evaluation that wants
@@ -158,8 +176,17 @@ exactly as written, and a node with one card.
 naming `--model-factory olmoe_7b_32x4` says outright that it wants sixty-four ranks, so it does
 not need a card count to be judged and it is refused earlier -- before the credentials, by a check
 that can also read `.edullm/run.yaml` off your branch when you leave `command` empty. It arrives
-as `command_needs_a_launcher:` and it names the recipe, the incident and the line to paste. Only
-one of the two ever fires on a dispatch. Setting `processes` to a count silences the earlier one
+as `command_needs_a_launcher:`, names the recipe and the incident, warns you off the `torchrun
+... python script.py` spelling, and ends with the line to paste:
+
+```
+Run it under a launcher: python -m torch.distributed.run --nproc-per-node=gpu --standalone .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4 --dataset-id=regmix-10b-v1
+```
+
+`gpu` is torchrun's own value for one process per visible device and it resolves on the node --
+the check runs before any machine has been addressed, so it will not write a number it cannot
+see. Put the card count there yourself if you would rather pin it. Only one of the two refusals
+ever fires on a dispatch. Setting `processes` to a count silences the earlier one
 on purpose: a launcher is about to be composed for you, and refusing you for not having written
 the thing the form is about to write would be the guide arguing with itself.
 
@@ -259,9 +286,13 @@ There are two different refusals here and telling them apart saves you asking th
 distributed_launch_refused:the fleet has 1 nodes this run could take and it asked for 2
 ```
 
-That is what a two-node dispatch answered at 18:29 UTC on 2026-08-10, with node 1 sitting idle:
-nothing was wrong with the dispatch and nobody was in the way, there was simply one machine.
-Only a fleet launch changes that answer, and a fleet launch is not yours to make.
+That is what a two-node dispatch answered at 18:29 UTC on 2026-08-10, when the fleet was one
+machine: nothing was wrong with the dispatch and nobody was in the way, there was simply nothing
+to take. **With eight nodes up, that reading has changed meaning**, and it is worth knowing which
+you are looking at. The count in the message is nodes this run *could take*, not nodes that
+exist, so on a full fleet a low number means the others are held rather than absent -- and the
+per-machine lines below say by whom. A number that is genuinely short of the fleet is answered
+only by a fleet launch, and a fleet launch is not yours to make.
 
 **Somebody is in the way** adds a line per machine:
 
@@ -391,7 +422,10 @@ which are different situations and used to print the same words.
 What to do, in order of preference:
 
 1. **Take another node** if there is an `IDLE` one. Always the cheapest answer.
-2. **Ask somebody with a role to run `edullm-node release`** on the machine. One command, seconds.
+2. **Ask somebody with an AWS role to run `edullm-node release`** on the machine. One command,
+   seconds. Ask in the channel, naming the node number and the run name off the table; if nobody
+   answers, **@philote-dev**. You cannot do this one yourself and there is no point trying --
+   `release` runs on the node and the only way onto the node is a role.
 3. `take_the_node_anyway`, **and only if the refusal you got used the exact words
    `node_claim_is_stale`**. In that one case the reading has established that the container is
    gone and no cards are in use, so there is no other run to fight and what you overwrite is a
@@ -431,33 +465,49 @@ so in the channel.
 credential in this lane lives in a workflow. A script that reaches past them either fails, for the
 people who hold no role, or succeeds and leaves no record, for the people who do.
 
-**Do not re-use a run name for a job that is still running.** Two live jobs of one name write into
-one W&B run and one rendezvous id. Re-using a name whose job has *finished* is fine and expected;
-on a fleet launched since this page was written, the exited container that used to block it is
-cleared for you, and on an older one you will meet a refusal naming the container instead.
+**Do not re-use a run name at all on this fleet, finished or not.** Two live jobs of one name
+write into one W&B run and one rendezvous id. Re-using a name whose job has *finished* is meant
+to be fine -- the fix that removes the exited container for you is merged -- but it is not on
+these machines, for the reason in [what this lane still cannot
+do](#what-this-lane-still-cannot-do). So a second run of a name that has already been used here
+meets a refusal naming the container, and the cure is a new name. Put a counter on the end.
 
 ## What this lane still cannot do
 
 Written down so that nobody spends an afternoon discovering it.
 
-- **A researcher with no AWS role cannot clear a stale claim themselves.** They can see it, and
-  the refusal names the cure, and the cure is a command on a machine they cannot open. Asking
-  somebody works and is what the procedure says to do; a workflow that ran `edullm-node release`
-  and nothing else would close this properly.
+- **A researcher with no AWS role cannot clear a stale claim themselves.** They can see it on the
+  status table, and the refusal names the cure, and the cure is `edullm-node release` on a machine
+  they cannot open -- there is no workflow that runs it. So this one is a person: ask in the
+  channel with the node number and the run name, or **@philote-dev**. `take_the_node_anyway` is
+  the only self-service route and it is safe *only* against a refusal that used the exact words
+  `node_claim_is_stale`. A workflow that ran `edullm-node release` and nothing else would close
+  this properly and does not exist yet.
 - **There is no way to stop one run without a role.** `block-drain.yml`'s `stop_runs` is
   fleet-wide.
-- **The node-side fixes only reach a node when a fleet is launched.** The helper is written into
-  each machine's user-data while it boots, so a change to it does nothing to a machine that is
-  already up. The atomic claim and the cleared container name apply to fleets launched after they
-  merged; the stale-claim reading and the `processes` field are in the workflows and apply
-  immediately.
+- **The node-side fixes are not on the machines that are up now, and will not be until a fleet
+  is relaunched.** The helper is written into each machine's user-data while it boots and nothing
+  re-runs user-data, so a change to it reaches a machine at launch or never. This fleet launched
+  at 19:08 UTC on 2026-08-10 from `main` at `82b90a2`, and the three node-side changes merged at
+  20:27 UTC in #441 -- about seventy-eight minutes too late for these eight machines. Concretely,
+  on this fleet: the claim is still read-then-written rather than atomic, so two dispatches in the
+  same second can both believe they took a node; an exited container of a name you have used
+  before is still in the way rather than cleared for you; and a drain of a run that used Weights
+  and Biases still reports `block_drain_incomplete` off a dangling `wandb/latest-run` symlink even
+  when every file reached S3 -- read the file count in the same summary, which is the real
+  verdict. What *is* live, because it is in the workflows and took effect the moment it was on
+  `main`: the `processes` field, both launcher refusals, and the stale-claim reading that the
+  status table and `node_claim_is_stale` rest on.
 - **`edullm-node run` typed into a shell still starts one process, and nothing on the node will
   stop it.** Both launcher checks are in the workflow. There was a third, on the node, and it was
   taken out to launch this fleet: the helper is EC2 user-data with a hard 16,384-byte limit, three
   branches merged for this window came to 523 bytes over it, and over that number no node boots at
   all. What is left is 191 bytes, so assume the file is full. The button is covered and covered
   better -- it reads your branch's `.edullm/run.yaml`, which a shell on a node cannot. If you have
-  a role and a terminal, compose your own `torchrun`.
+  a role and a terminal, compose the launcher yourself and get the spelling right: `torchrun
+  --standalone --nproc-per-node=8 --no-python python train.py`, or `python -m
+  torch.distributed.run --nproc-per-node=8 --standalone train.py`. Without `--no-python` the
+  first form runs a file called `python` on all eight cards.
 - **A second image is not available and is not coming this week.** The node's role permits one ECR
   repository and refuses every other pull. See
   [what cannot be fixed](the-capacity-block.md#what-cannot-be-fixed-before-saturday).
