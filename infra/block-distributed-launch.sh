@@ -148,8 +148,48 @@ if [ "${fabric}" = efa ]; then
     [ -e "${device}" ] || continue
     fabric_arguments+=(--device "${device}")
   done
+  # MOUNTING /opt/amazon IS NECESSARY AND IS NOT SUFFICIENT, WHICH IS WHAT THE PARAGRAPH ABOVE
+  # GOT WRONG. It says the plugin is under /opt/amazon and the libraries there resolve. The
+  # plugin is; the libraries it needs are not. `ldd libnccl-net-ofi.so` inside this image wants
+  # libhwloc.so.15, libefa.so.1 and libibverbs.so.1, and those live in the host's
+  # /usr/lib/x86_64-linux-gnu with libnl-3, libnl-route-3 and libnuma behind them. Measured on
+  # cr-05872979e28a491aa on 2026-08-10: every rank logged
+  #   NET/Plugin: libhwloc.so.15: cannot open shared object file
+  # and then `Using network Socket`, on a fleet with all 32 devices attached and this whole
+  # branch of the file taken.
+  #
+  # AND THE ONE NOBODY WOULD GUESS: aws-ofi-nccl dlopens the UNVERSIONED `libcudart.so`. No
+  # image ships that name -- torch bundles `libcudart.so.12` under site-packages/nvidia and
+  # finds it by rpath -- so with the six libraries fixed the plugin *loads* and then fails CUDA
+  # init, which NCCL reports as four WARN lines and one more silent fall back to sockets.
+  #
+  # Both are staged into a directory of their own rather than by widening the mount:
+  # /usr/lib/x86_64-linux-gnu wholesale puts the host glibc 2.35 in front of the image's 2.41
+  # and even bash stops executing. libcudart comes out of the image itself, so there is no
+  # second CUDA runtime to disagree with the one torch has open.
+  staged=/opt/edullm-fabric-libs
+  rm -rf "${staged}"
+  mkdir -p "${staged}/libibverbs"
+  for library in libefa.so.1 libibverbs.so.1 libhwloc.so.15 libnl-3.so.200 \
+    libnl-route-3.so.200 libnuma.so.1 libudev.so.1 libltdl.so.7; do
+    found="$(find /usr/lib/x86_64-linux-gnu -maxdepth 1 -name "${library}" 2> /dev/null |
+      head -n 1)"
+    [ -n "${found}" ] && cp -L "${found}" "${staged}/"
+  done
+  cp -L /usr/lib/x86_64-linux-gnu/libibverbs/*.so "${staged}/libibverbs/" 2> /dev/null || true
+  docker run --rm --entrypoint bash --volume "${staged}":/out "${EDULLM_BLOCK_IMAGE}" -c '
+    runtime="$(find / -name "libcudart.so.12" -not -path "/proc/*" 2>/dev/null | head -n 1)"
+    [ -n "${runtime}" ] && cp "${runtime}" /out/ && ln -sf libcudart.so.12 /out/libcudart.so
+  ' > /dev/null 2>&1 || true
+  chmod -R 0755 "${staged}"
+
   fabric_arguments+=(--volume /opt/amazon:/opt/amazon:ro)
-  fabric_arguments+=(--env "LD_LIBRARY_PATH=/opt/amazon/efa/lib:/opt/amazon/ofi-nccl/lib")
+  fabric_arguments+=(--volume "${staged}:/opt/fabric-libs:ro")
+  fabric_arguments+=(--volume /etc/libibverbs.d:/etc/libibverbs.d:ro)
+  fabric_arguments+=(--env "IBV_DRIVERS_PATH=/opt/fabric-libs/libibverbs")
+  fabric_arguments+=(
+    --env "LD_LIBRARY_PATH=/opt/amazon/efa/lib:/opt/amazon/ofi-nccl/lib:/opt/fabric-libs"
+  )
   # `efa` by name rather than left to libfabric's own ranking. The provider it picks otherwise
   # depends on what else the image happens to expose, and picking `tcp` there is the failure
   # that presents as the fabric being slow rather than as the fabric being unused.
