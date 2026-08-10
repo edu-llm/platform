@@ -2290,6 +2290,26 @@ long-lived machines, with a human coordinating who is on which. There is no comp
 no queue and no job definition, so nothing here is a `batch-capacity-block.yaml` deployment and
 `config/execution-targets.yaml` gains no row.
 
+**The lane also depends on two network resources that exist in the account and in no template
+here.** A subnet tagged `Name=edullm-block-nodes` in the block zone (`subnet-0b818f37607d3223f`
+in `us-east-2a`), and the NAT gateway its route table sends `0.0.0.0/0` to.
+`block-launch-fleet.yml` resolves the subnet by that tag whenever `subnet_id` is left empty, so
+the tag is the contract and the id is only how to find it in a console.
+
+They are needed because a fabric fleet cannot use a public subnet, which is the opposite of what
+it sounds like. AWS suppresses public-IP auto-assignment on any launch naming more than one
+network interface, and the EFA layout names thirty-three, so a fleet started in the default
+subnet comes up with no public address and no route to anything at all — measured on 2026-08-10,
+at eight `p5.48xlarge` an hour, against a block that cannot be refunded. Through a NAT gateway
+the same fleet reaches the registry, S3 and Systems Manager with no public addressing anywhere in
+it, which is the arrangement the launch is now written for.
+
+`infra/batch-network.yaml` is not this and must not be pointed at it: that template builds the
+public subnets the Batch lane uses. A block bought into a region with no NAT-routed subnet needs
+one made before the window opens. Nothing guesses in the meantime — the launch refuses at the
+resolve step when the tag matches no subnet or more than one, and `subnet_id` on the dispatch
+form is the way past it.
+
 **Nothing in this repository can apply it, and the order matters.** The deployer role holds no
 `iam:CreateRole`, so this is a laptop deploy like every other IAM stack. What is different is that
 two workflow files depend on it existing *and* on themselves being on `main`: the trust condition

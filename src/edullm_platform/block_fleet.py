@@ -36,6 +36,7 @@ from datetime import datetime, timedelta
 from typing import Any, Final
 
 __all__ = [
+    "AGENT_ONLINE",
     "EFA_INTERFACES",
     "EFA_ONLY_INTERFACE",
     "ENA_INTERFACE",
@@ -48,6 +49,7 @@ __all__ = [
     "NodeReading",
     "Readiness",
     "admits_its_own_members",
+    "agents_online",
     "elapsed_as",
     "fleet_table",
     "interface_plan",
@@ -56,8 +58,9 @@ __all__ = [
     "readiness",
     "status_rows",
     "status_table",
-    "unaddressable",
+    "unreachable",
     "unreserved",
+    "why_nothing_reaches",
     "without_the_fabric",
 ]
 
@@ -90,6 +93,13 @@ EFA_ONLY_INTERFACE: Final = "efa-only"
 #: with an ENA and ``efa-only`` is the device alone; NCCL cannot tell them apart, so a reading
 #: that counted only one of them would report a working fabric as absent.
 EFA_INTERFACES: Final = frozenset({"efa", EFA_ONLY_INTERFACE})
+
+#: What Systems Manager calls an agent it is hearing from now. The other two values it publishes
+#: are ``ConnectionLost`` and ``Inactive``, and a node in either of them is one no command
+#: reaches -- so this is compared for equality rather than being taken as "the instance appears
+#: in the answer at all". A machine that registered at boot and then lost its route out is still
+#: listed, and it is precisely the machine a presence test would wave through.
+AGENT_ONLINE: Final = "Online"
 
 
 @dataclass(frozen=True)
@@ -126,10 +136,6 @@ class FleetNode:
     #: of a launch that nothing downstream can recover. Defaulted so that the several callers
     #: constructing a node by hand keep working; the reading below always fills it.
     efa_interfaces: int = 0
-    #: The address Systems Manager reaches this machine over. Only the primary interface can
-    #: hold one, and on the fabric layout it is assigned by the subnet rather than asked for --
-    #: so it is a thing to check rather than a thing to assume.
-    public_ip: str | None = None
 
 
 @dataclass(frozen=True)
@@ -197,9 +203,17 @@ def interface_plan(
     * network cards 1..n, device 0, ``efa-only`` -- one per remaining card.
 
     The alternative layout AWS documents puts an ENA on eight of the cards for 800 Gbps of IP
-    bandwidth, and it says plainly that public IPv4 addresses cannot be auto-assigned with it.
-    This lane reaches every node over Systems Manager and moves its data over the fabric, so the
-    IP bandwidth buys nothing and the lost address would cost the fleet.
+    bandwidth. This lane reaches every node over Systems Manager and moves its data over the
+    fabric, so that bandwidth buys nothing here and the extra addresses cost a subnet.
+
+    **NEITHER LAYOUT GETS A PUBLIC ADDRESS AND THAT IS NOT A PROPERTY OF THE LAYOUT.** AWS
+    suppresses public-IP auto-assignment on any launch carrying more than one network interface,
+    whatever the interfaces are for, and it is the interface *count* that triggers it -- so the
+    thirty-three below are as suppressed as the alternative layout's nine. The subnet's
+    ``MapPublicIpOnLaunch`` does not survive it either. A fleet on the fabric layout therefore
+    reaches the internet through the subnet routing or not at all, which is why the subnet these
+    nodes launch into is routed through a NAT gateway and why nothing downstream reads an address
+    off a node any more.
 
     **EVERY NUMBER BELOW IS READ FROM** ``describe-instance-types``. A literal thirty-two would
     be correct for ``p5.48xlarge`` and silently wrong for the next block bought -- a ``p5en`` has
@@ -264,10 +278,18 @@ def interface_plan(
 
     # ONLY LEGAL WHEN THIS IS THE WHOLE REQUEST, WHICH IS THE ``efa_wanted=0`` PATH. The
     # ``RunInstances`` contract on ``AssociatePublicIpAddress`` is "you cannot specify more than
-    # one network interface in the request", and EFA-only interfaces count towards that. On the
-    # fabric layout the address therefore has to come from the subnet's own auto-assign setting
-    # -- which is why the resolve step refuses a subnet that does not have it, and why the
-    # launch is read back afterwards to see that an address actually arrived.
+    # one network interface in the request", and EFA-only interfaces count towards that.
+    #
+    # Asked for here rather than left to the subnet, and that is the difference that makes the
+    # fallback a fallback. The escape hatch exists to be dispatched into whatever subnet is to
+    # hand when the fabric launch has just been refused, and a subnet that assigns no address on
+    # launch is the common kind; asking explicitly means the single-interface fleet gets out
+    # through an internet gateway even there. On a NAT-routed subnet the address arrives, goes
+    # unused because there is no route to a gateway, and costs nothing.
+    #
+    # Nothing is inferred from its absence on the other path. A launch with thirty-three
+    # interfaces gets no public address at all -- see the docstring -- and the check that reads
+    # a fleet back asks Systems Manager whether it can reach each node instead.
     address = ("AssociatePublicIpAddress=true",) if len(placed) == 1 else ()
 
     return InterfacePlan(
@@ -385,11 +407,6 @@ def read_fleet(described: Mapping[str, Any]) -> tuple[FleetNode, ...]:
                         if isinstance(interface, Mapping)
                         and str(interface.get("InterfaceType") or "") in EFA_INTERFACES
                     ),
-                    public_ip=(
-                        str(instance["PublicIpAddress"])
-                        if instance.get("PublicIpAddress")
-                        else None
-                    ),
                 )
             )
     return tuple(sorted(fleet, key=lambda found: (found.node is None, found.node or 0, found.instance_id)))
@@ -431,17 +448,74 @@ def without_the_fabric(fleet: Iterable[FleetNode], *, expected: int) -> tuple[Fl
     return tuple(node for node in fleet if node.efa_interfaces != expected)
 
 
-def unaddressable(fleet: Iterable[FleetNode]) -> tuple[FleetNode, ...]:
-    """Every instance EC2 gave no public address, and therefore no way out of the VPC.
+def agents_online(described: Mapping[str, Any]) -> frozenset[str]:
+    """Every instance Systems Manager is hearing from, out of ``describe-instance-information``.
 
-    Nothing reaches these machines except Systems Manager, and the agent gets out over the
-    instance's own outbound connection. The resolve step refuses a subnet that assigns no
-    address on launch, which is the check that used to be sufficient -- it stopped being
-    sufficient when the launch started naming its interfaces explicitly, because that is a
-    request shape in which ``AssociatePublicIpAddress`` may not be given and the subnet default
-    is the only thing left assigning one.
+    **THIS REPLACED A PUBLIC-ADDRESS CHECK, AND WHY IT HAD TO IS THE POINT OF THE FUNCTION.**
+    The launch used to read ``PublicIpAddress`` off every instance it had just started and
+    refuse the fleet when it was absent, reasoning that an address is how the Systems Manager
+    agent gets out. That inference is false in both directions and it cost a launch.
+
+    It is false in the direction that refuses a healthy fleet, which is the expensive one. AWS
+    suppresses public-IP auto-assignment on *any* launch carrying more than one network
+    interface, and the fabric layout carries thirty-three of them -- so no correct EFA fleet
+    this lane has ever started has had a public address, and it never will. A subnet routed
+    through a NAT gateway reaches Systems Manager perfectly with no public address anywhere in
+    the fleet, which is what this lane now runs on and is exactly what the old check refused.
+
+    It is false in the direction that passes a broken one as well. An address in a subnet whose
+    route table has lost its default route buys nothing, and neither does one on a machine whose
+    instance profile is missing ``AmazonSSMManagedInstanceCore``.
+
+    So the question is asked of the thing that answers it. Nothing in this lane ever connects
+    *inbound* to a node: every command goes through Systems Manager, and the agent establishes
+    that by an outbound connection it makes itself. An instance listed here as online has a
+    working route to Systems Manager whatever its addressing looks like, and one that is not has
+    no route whatever its addressing looks like. That is the whole of the reachability this lane
+    needs and the only part of it worth measuring.
     """
-    return tuple(node for node in fleet if node.public_ip is None)
+    return frozenset(
+        str(found["InstanceId"])
+        for found in described.get("InstanceInformationList") or []
+        if isinstance(found, Mapping)
+        and found.get("InstanceId")
+        and str(found.get("PingStatus") or "") == AGENT_ONLINE
+    )
+
+
+def unreachable(
+    fleet: Iterable[FleetNode], *, online: Collection[str]
+) -> tuple[FleetNode, ...]:
+    """Every node in the fleet that nothing in this lane can send a command to.
+
+    Reachable here means what ``NodeReading.reachable`` means everywhere else in this module:
+    Systems Manager would deliver. It is deliberately not a statement about IP, about routing,
+    or about whether somebody could ping the machine, none of which this lane does or needs.
+
+    **THE FLEET IS THE DENOMINATOR AND THE AGENT LIST IS NOT**, which is the same lesson the
+    launch records against waiting on instance ids rather than on a tag filter. Counting how
+    many agents answered a tag-filtered ``describe-instance-information`` and comparing that
+    against the size of the fleet passes a fleet of eight in which one node is silent and one
+    stray tagged machine from a previous launch is talking. Membership of the fleet, node by
+    node, is the comparison that cannot be satisfied by the wrong machine.
+    """
+    return tuple(node for node in fleet if node.instance_id not in online)
+
+
+def why_nothing_reaches(node: FleetNode) -> str:
+    """Which of the two reasons a node is not answering Systems Manager, kept apart.
+
+    They call for entirely different things and merging them sends somebody to the wrong place.
+    An instance that has not reached ``running`` has nothing on it yet to register, so the
+    answer is to wait or to read why the launch stalled, and there is no fault to go and look
+    for. An instance that *is* running and has still never registered has one, and it is in a
+    short list of places: the subnet has no default route, the instance profile does not carry
+    ``AmazonSSMManagedInstanceCore``, or the security group forbids egress. None of them is
+    anything to do with a public address, which is where the message this replaced sent people.
+    """
+    if node.state != "running":
+        return f"is {node.state} rather than running, so nothing is up on it to answer yet"
+    return "is running and has never registered with Systems Manager"
 
 
 def fleet_table(fleet: Sequence[FleetNode], *, unready: Collection[str] = ()) -> str:

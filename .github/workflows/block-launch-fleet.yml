@@ -75,7 +75,7 @@ on:
         required: true
         type: string
       subnet_id:
-        description: "Optional. Left empty, the default subnet for the block zone is resolved and the launch refuses if that is ambiguous."
+        description: "Optional. Left empty, the subnet tagged edullm-block-nodes in the block zone is resolved -- the one routed through a NAT gateway, which is what a fabric launch needs because it gets no public address. The launch refuses if that is ambiguous."
         required: false
         default: ""
         type: string
@@ -148,6 +148,37 @@ jobs:
       INSTANCE_PROFILE: sbsandbox-intern-edullm-block-node
       WANDB_SECRET_ID: sbsandbox-intern-edullm-wandb-api-key
       LOG_SYNC_SECONDS: "60"
+      # THE SUBNET AN EFA FLEET BELONGS IN, NAMED RATHER THAN GUESSED, AND RESOLVED BY ITS TAG
+      # RATHER THAN WRITTEN HERE AS AN ID. It is the subnet whose route table sends 0.0.0.0/0 to
+      # a NAT gateway, so a fleet in it reaches the registry, S3 and Systems Manager with no
+      # public address anywhere -- which is the only arrangement that works, because a launch
+      # naming thirty-three network interfaces is a launch AWS assigns no public address to.
+      #
+      # This replaced `default-for-az`, and the replacement is the point. The default subnet for
+      # us-east-2a has MapPublicIpOnLaunch true and routes only to an internet gateway, so it
+      # reads as the safe choice and is the one subnet in the account a fabric fleet cannot work
+      # in: the addresses that route would need are exactly the addresses the launch shape
+      # suppresses. A fleet started there on 2026-08-10 came up with all thirty-two EFA
+      # interfaces, no public address, no route out at all, and died pulling from ECR.
+      #
+      # A tag rather than an id because an id here is a fact about the account that rots
+      # silently, and because a subnet recreated under the same name is still the right answer.
+      # A subnet that is missing or duplicated is a refusal in the resolve step naming this
+      # value, which is the safe direction, and `subnet_id` on the form is the way past it.
+      BLOCK_SUBNET_NAME: edullm-block-nodes
+      # HOW LONG THE SYSTEMS MANAGER AGENT IS GIVEN, AND IT IS THE AGENT ALONE. The step that
+      # spends this runs after `aws ec2 wait instance-running` has already succeeded, so none of
+      # the budget is boot: it is the interval between an instance reaching running and its
+      # agent registering, which is a minute or two on an ordinary shape and longer on one
+      # bringing up thirty-three network interfaces. Ten minutes is what
+      # `config/reports/working-tier.yaml` gives the same wait, for the same agent, on the same
+      # deep-learning AMI family, arrived at against real machines -- and there is no reason
+      # this lane should believe something different about it. It is a bound and not a target:
+      # a healthy fleet clears it in under two minutes and the step returns the moment it does.
+      # Fifteen seconds between polls is forty calls across the bound, often enough that nobody
+      # is waiting on the polling and rare enough that the polling costs nothing.
+      AGENT_WAIT_SECONDS: "600"
+      AGENT_POLL_SECONDS: "15"
       # 500 GiB against the AMI default of 75. `infra/batch-compute-gpu-shapes.yaml` measured
       # what a small root costs on a P-family host: a corpus that did not fit and three jobs
       # that inherited each other's leftovers. Here the training image lands on it as well.
@@ -380,7 +411,7 @@ jobs:
               --output json > "${subnet_json}"
           else
             aws ec2 describe-subnets \
-              --filters "Name=availability-zone,Values=${AVAILABILITY_ZONE}" "Name=default-for-az,Values=true" \
+              --filters "Name=availability-zone,Values=${AVAILABILITY_ZONE}" "Name=tag:Name,Values=${BLOCK_SUBNET_NAME}" \
               --region "${BLOCK_REGION}" \
               --output json > "${subnet_json}"
           fi
@@ -431,8 +462,11 @@ jobs:
           rows = subnets.get("Subnets") or []
           if len(rows) != 1:
               raise SystemExit(
-                  f"{len(rows)} subnets matched. Pass subnet_id rather than leaving it empty: "
-                  "a block is one zone and this must not pick between candidates."
+                  f"{len(rows)} subnets matched. Left empty, subnet_id resolves the one tagged "
+                  f"Name={os.environ['BLOCK_SUBNET_NAME']} in "
+                  f"{os.environ['AVAILABILITY_ZONE']}, which is the NAT-routed subnet a fabric "
+                  "fleet needs. Name a subnet on the form instead: a block is one zone and this "
+                  "must not pick between candidates."
               )
           subnet = rows[0]
           if subnet.get("AvailabilityZone") != os.environ["AVAILABILITY_ZONE"]:
@@ -441,18 +475,30 @@ jobs:
                   f"{os.environ['AVAILABILITY_ZONE']}. A targeted reservation is confined to "
                   "its own zone, so this launch would be refused rather than misplaced."
               )
-          # REFUSED RATHER THAN WARNED, BECAUSE OF WHAT IT PRODUCES. Nothing reaches these
-          # machines except Systems Manager, and the agent gets out through the instance's own
-          # outbound connection. A subnet that assigns no public address, in a VPC with no
-          # interface endpoints, is eight machines that boot, bill for the window and never
-          # answer a command -- and there is no way from here to tell that VPC from one that
-          # has the endpoints. If a private subnet is genuinely wanted, the endpoints go in
-          # first and this check comes out in the same change.
-          if not subnet.get("MapPublicIpOnLaunch"):
-              raise SystemExit(
-                  f"{subnet['SubnetId']} assigns no public address on launch, so the Systems "
-                  "Manager agent has no route out and nothing can reach these nodes."
-              )
+          # THE PUBLIC-ADDRESS REFUSAL THAT WAS HERE IS GONE, AND REMOVING IT IS THE WHOLE POINT
+          # OF THIS CHANGE. It read `MapPublicIpOnLaunch` off the subnet and refused when it was
+          # false, reasoning that an address is how the Systems Manager agent gets out. That is
+          # wrong on both of the shapes this launch has, and being wrong in the refusing
+          # direction cost a fleet.
+          #
+          # On the fabric shape it is wrong because the setting does not survive the request.
+          # AWS suppresses public-IP auto-assignment on any launch naming more than one network
+          # interface and this one names thirty-three, so the subnet setting decides nothing at
+          # all. Measured on 2026-08-10: a fleet started in the default subnet, which has the
+          # setting true, came up with thirty-two EFA interfaces and no public address, had no
+          # route to the internet, and died pulling from ECR. The check passed the subnet that
+          # cannot work and would have refused the NAT-routed one that does.
+          #
+          # On the single-interface escape hatch it is wrong because that request asks for an
+          # address itself, with AssociatePublicIpAddress on its one interface, which overrides
+          # the subnet default in whichever direction it points.
+          #
+          # NOTHING REPLACES IT HERE, BECAUSE NOTHING HERE CAN ANSWER THE QUESTION. No machine
+          # exists yet, so everything readable at this point -- the auto-assign setting, a route
+          # table, the presence of interface endpoints -- is another proxy for whether a node
+          # will be reachable, and the proxy is what went wrong. `Wait for Systems Manager to
+          # reach every node` asks the fleet once it is up, which is the only place the answer
+          # is real. The setting is printed below as a fact and decides nothing.
 
           shapes = types.get("InstanceTypes") or []
           if len(shapes) != 1:
@@ -523,6 +569,7 @@ jobs:
           print(json.dumps({
               "subnet": subnet["SubnetId"],
               "zone": subnet["AvailabilityZone"],
+              "subnet_assigns_a_public_address": bool(subnet.get("MapPublicIpOnLaunch")),
               "root_device": root_device,
               "gpus_per_node": cards,
               "security_group": group_id,
@@ -688,8 +735,9 @@ jobs:
       # The launch loop returns the moment the last `run-instances` is accepted, which is
       # seconds after the eighth machine was asked for and minutes before it exists. A
       # `p5.48xlarge` sits in `pending` for a minute or more, and a described instance in that
-      # state does not carry everything a running one does -- an auto-assigned public address
-      # is routinely absent until the state flips, which is the fabric step's other check.
+      # state does not carry everything a running one does -- the interface list the fabric
+      # check counts is filled in as the machine comes up, so a fleet read too early reads as
+      # a fleet that came up without its EFA devices.
       #
       # Both read-backs below act on what they read and one of them terminates every instance
       # in the fleet. So a field that has not been filled in yet is not a flaky check here, it
@@ -845,19 +893,19 @@ jobs:
       # described instance, and the only time anybody would otherwise notice is a step time
       # several times what it should be, days later, with the window spent.
       #
-      # A PUBLIC ADDRESS IS CHECKED IN THE SAME BREATH BECAUSE THE INTERFACE CHANGE IS WHAT PUT
-      # IT IN DOUBT. `AssociatePublicIpAddress` may not be given in a request carrying more than
-      # one interface, and EFA-only interfaces count towards that -- so on the fabric layout the
-      # address comes from the subnet's auto-assign setting or from nowhere. The resolve step
-      # refuses a subnet without it, which is necessary and is no longer sufficient. Without an
-      # address the Systems Manager agent has no route out and nothing reaches these nodes.
+      # THE FABRIC AND NOTHING ELSE, WHICH IS NARROWER THAN THIS STEP USED TO BE. It also read a
+      # public address off every instance and refused the fleet when one was missing. That check
+      # has been replaced rather than moved: it asked about addressing when what it wanted to
+      # know was whether anything could drive the machine, and the two came apart the moment the
+      # launch started naming interfaces. `Wait for Systems Manager to reach every node` below
+      # asks the question directly, and the resolve step records why the proxy went.
       #
       # NOTHING IS TERMINATED HERE, AND THAT IS THE DIFFERENCE FROM THE STEP ABOVE. That one
       # kills the fleet because leaving it up costs $55 an hour per machine. These machines are
       # on the reservation, the window is paid for either way, and terminating on the word of a
       # check that has never run against a real launch is a larger risk than the fault it would
       # be reacting to. It refuses loudly and leaves eight machines somebody can look at.
-      - name: Verify every node came up with the fabric and an address, or refuse the fleet
+      - name: Verify every node came up with the fabric, or refuse the fleet
         run: |
           set -euo pipefail
           fabric_json="${RUNNER_TEMP}/fabric.json"
@@ -873,12 +921,7 @@ jobs:
           import sys
           from pathlib import Path
 
-          from edullm_platform.block_fleet import (
-              fleet_table,
-              read_fleet,
-              unaddressable,
-              without_the_fabric,
-          )
+          from edullm_platform.block_fleet import fleet_table, read_fleet, without_the_fabric
 
           fleet = read_fleet(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")))
           expected = int(sys.argv[2])
@@ -892,11 +935,6 @@ jobs:
               refusals.append(
                   f"node {node.node} {node.instance_id} came up with {node.efa_interfaces} EFA "
                   f"interfaces and the launch asked for {expected}"
-              )
-          for node in unaddressable(fleet):
-              refusals.append(
-                  f"node {node.node} {node.instance_id} has no public address, so the Systems "
-                  "Manager agent has no route out and nothing can reach it"
               )
 
           if refusals:
@@ -916,19 +954,163 @@ jobs:
                   "whatever the re-run asked for."
               )
           print("")
-          print(f"EVERY INSTANCE CARRIES {expected} EFA INTERFACES AND A PUBLIC ADDRESS")
+          print(f"EVERY INSTANCE CARRIES {expected} EFA INTERFACES")
           PY
 
-      # THE AGENT FIRST AND THE SENTINEL SECOND, WHICH ARE DIFFERENT QUESTIONS. An instance
-      # passes its EC2 status checks a minute or two before the Systems Manager agent
-      # registers, so a readiness command sent on the EC2 reading comes back "target not
-      # connected" -- which names neither the wait nor the cause. `edullm shell` learned the
-      # same thing and `src/edullm_platform/cli/lane.py` records it.
+      # WHETHER ANYTHING CAN DRIVE THESE MACHINES, ASKED OF THE ONE SERVICE THAT KNOWS.
+      #
+      # THIS IS WHAT THE PUBLIC-ADDRESS CHECK BECAME, AND THE DIFFERENCE IS PROXY AGAINST
+      # MEASUREMENT. The old check read `PublicIpAddress` off each instance and refused the
+      # fleet when it was absent. AWS suppresses public-IP auto-assignment on any launch naming
+      # more than one network interface, so a correct EFA fleet never has one and never will,
+      # and the subnet these nodes run in reaches the internet through a NAT gateway with no
+      # public addressing in it whatsoever. That check refused the arrangement that works.
+      #
+      # `describe-instance-information` is not a proxy for anything. It is the same question the
+      # sender of every command in this lane asks, and an agent gets into that answer by making
+      # an outbound connection itself -- so a node listed there has a route out, an instance
+      # profile that permits Systems Manager and a live agent, all three, at once, measured.
+      # Nothing in this lane ever connects inbound to a node, so that is the whole of the
+      # reachability it needs.
+      #
+      # IT IS STILL A REFUSAL, BECAUSE WHAT IT CATCHES IS REAL AND EXPENSIVE. A fleet nothing can
+      # send a command to is eight machines billing a window while answering nothing: no
+      # readiness reading, no run, no drain, and no way to find out what is wrong. Left to be
+      # discovered by the readiness loop below it presents forty minutes later as a bootstrap
+      # that never finished, which is the wrong thing to go and debug.
+      #
+      # A WAIT AND NOT A SINGLE CALL. The agent registers some time after the instance reaches
+      # running -- a minute or two, longer on a shape bringing up thirty-three interfaces -- so
+      # one call here would refuse a healthy fleet for being ordinary. The bound is
+      # AGENT_WAIT_SECONDS and the job env argues it.
+      #
+      # NOTHING IS TERMINATED HERE, for the reason the fabric step gives: these machines are on
+      # the reservation, the window is paid for either way, and a machine somebody can look at
+      # is worth more than a tidy account.
+      - name: Wait for Systems Manager to reach every node, or refuse the fleet
+        run: |
+          set -euo pipefail
+          fleet_json="${RUNNER_TEMP}/reachable-fleet.json"
+          agents_json="${RUNNER_TEMP}/agents.json"
+          diagnosis="${RUNNER_TEMP}/unreachable.txt"
+          checker="${RUNNER_TEMP}/agent_check.py"
+          : > "${diagnosis}"
+
+          aws ec2 describe-instances \
+            --region "${BLOCK_REGION}" \
+            --filters "Name=tag:edullm:block,Values=${RESERVATION_ID}" "Name=instance-state-name,Values=pending,running" \
+            --output json > "${fleet_json}"
+
+          uv run python - "${fleet_json}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          from edullm_platform.block_fleet import fleet_table, read_fleet
+
+          fleet = read_fleet(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")))
+          print(fleet_table(fleet))
+          if not fleet:
+              raise SystemExit("nothing carries this block tag, so there is nothing to wait for")
+          PY
+
+          # THE FLEET IS READ ONCE AND THE AGENTS ARE READ EVERY POLL, WHICH IS THE RIGHT WAY
+          # ROUND. What is being waited for is the agents; re-reading the fleet each time would
+          # let an instance that terminated mid-wait drop out of the denominator, so a fleet
+          # losing a machine would satisfy this check by shrinking. That is the same failure the
+          # running-state waiter above avoids by naming instance ids rather than a tag filter.
+          cat > "${checker}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          from edullm_platform.block_fleet import (
+              agents_online,
+              read_fleet,
+              unreachable,
+              why_nothing_reaches,
+          )
+
+          fleet = read_fleet(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")))
+          online = agents_online(json.loads(Path(sys.argv[2]).read_text(encoding="utf-8")))
+          silent = unreachable(fleet, online=online)
+          print(f"systems manager reaches {len(fleet) - len(silent)} of {len(fleet)} nodes")
+          Path(sys.argv[3]).write_text(
+              "".join(
+                  f"node {node.node} {node.instance_id} {why_nothing_reaches(node)}\n"
+                  for node in silent
+              ),
+              encoding="utf-8",
+          )
+          sys.exit(1 if silent else 0)
+          PY
+
+          # Bounded on the clock rather than on a poll count, so that the bound the job env
+          # argues for is the bound this honours whatever the interval is set to.
+          reached=no
+          deadline=$(( $(date +%s) + AGENT_WAIT_SECONDS ))
+          while true; do
+            aws ssm describe-instance-information \
+              --region "${BLOCK_REGION}" \
+              --filters "Key=tag:edullm:block,Values=${RESERVATION_ID}" \
+              --output json > "${agents_json}"
+            if uv run python "${checker}" "${fleet_json}" "${agents_json}" "${diagnosis}"; then
+              reached=yes
+              break
+            fi
+            if [ "$(date +%s)" -ge "${deadline}" ]; then
+              break
+            fi
+            sleep "${AGENT_POLL_SECONDS}"
+          done
+
+          if [ "${reached}" != yes ]; then
+            echo "" >&2
+            echo "Nothing more answered within ${AGENT_WAIT_SECONDS} seconds:" >&2
+            cat "${diagnosis}" >&2
+            echo "" >&2
+            echo "Systems Manager is how everything in this lane reaches a node, and the agent" >&2
+            echo "registers by connecting outbound. A node that is running and has never" >&2
+            echo "registered has no route out, or no permission to use one. What to check, in" >&2
+            echo "the order these go wrong:" >&2
+            echo "  the subnet needs a default route -- a NAT gateway, or an internet gateway" >&2
+            echo "  with a public address on the primary interface, or Systems Manager" >&2
+            echo "  interface endpoints in the VPC" >&2
+            echo "  the instance profile ${INSTANCE_PROFILE} needs AmazonSSMManagedInstanceCore" >&2
+            echo "  the security group needs egress" >&2
+            echo "" >&2
+            echo "DO NOT GO LOOKING FOR A PUBLIC ADDRESS. A launch naming more than one network" >&2
+            echo "interface never gets one, by AWS design, and this fleet is meant to have none:" >&2
+            echo "it reaches the internet through the NAT gateway its subnet routes to. An" >&2
+            echo "address would tell you nothing either way and hunting for one spends the" >&2
+            echo "window." >&2
+            echo "" >&2
+            echo "Nothing is being terminated. These machines are on the reservation and the" >&2
+            echo "window is paid for either way, and a fleet somebody can look at is worth more" >&2
+            echo "than a tidy account." >&2
+            echo "block_nodes_never_reached_systems_manager:${RESERVATION_ID}" >&2
+            exit 1
+          fi
+          echo "SYSTEMS MANAGER REACHES EVERY NODE IN THIS FLEET"
+
+      # THE SENTINEL, AND ONLY THE SENTINEL. THE AGENT IS THE STEP ABOVE.
+      #
+      # This step used to ask both questions: it counted online agents for up to thirteen
+      # minutes and then sent the readiness command. The counting moved up, where it is a
+      # refusal rather than a shrug, and a second copy of it here would be two bounds for one
+      # wait -- with the copy that never refuses being the one somebody tunes. By the time this
+      # runs, Systems Manager has been shown to reach every node in the fleet, so the first
+      # send-command lands.
+      #
+      # The reason the order is agent-then-sentinel at all: an instance passes its EC2 status
+      # checks a minute or two before the agent registers, so a readiness command sent on the
+      # EC2 reading comes back "target not connected" -- which names neither the wait nor the
+      # cause. `edullm shell` learned the same thing and `src/edullm_platform/cli/lane.py`
+      # records it.
       - name: Wait for every node to finish its own bootstrap
         run: |
           set -euo pipefail
           checker="${RUNNER_TEMP}/readiness_check.py"
-          online_file="${RUNNER_TEMP}/online-count.txt"
           command_file="${RUNNER_TEMP}/readiness-command-id.txt"
           invocations_json="${RUNNER_TEMP}/readiness.json"
           readiness_params="${RUNNER_TEMP}/readiness-parameters.json"
@@ -976,20 +1158,6 @@ jobs:
           )
           sys.exit(0 if sum(1 for record in answered if record.ready) >= wanted else 1)
           PY
-
-          for _attempt in $(seq 1 40); do
-            aws ssm describe-instance-information \
-              --region "${BLOCK_REGION}" \
-              --filters "Key=tag:edullm:block,Values=${RESERVATION_ID}" \
-              --query 'length(InstanceInformationList[?PingStatus==`Online`])' \
-              --output text > "${online_file}"
-            read -r online < "${online_file}"
-            echo "systems manager reports ${online} of ${INSTANCE_COUNT} nodes online"
-            if [ "${online}" -ge "${INSTANCE_COUNT}" ]; then
-              break
-            fi
-            sleep 20
-          done
 
           # One command to every node in the fleet. Systems Manager fans a tag target out
           # itself, so this is one call rather than eight, and the answer is the sentinel the

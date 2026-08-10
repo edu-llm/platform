@@ -24,6 +24,7 @@ from edullm_platform.block_fleet import (
     RESERVATION_TAG,
     FleetNode,
     admits_its_own_members,
+    agents_online,
     elapsed_as,
     fleet_table,
     interface_plan,
@@ -31,8 +32,9 @@ from edullm_platform.block_fleet import (
     read_fleet,
     readiness,
     status_rows,
-    unaddressable,
+    unreachable,
     unreserved,
+    why_nothing_reaches,
     without_the_fabric,
 )
 
@@ -119,9 +121,15 @@ def instance(
     reservation: str | None = BLOCK,
     state: str = "running",
     private_ip: str | None = "172.31.0.10",
-    public_ip: str | None = "3.16.0.10",
     efa: int = P5_EFA,
 ) -> dict[str, Any]:
+    """One instance as EC2 describes a node of the fabric fleet.
+
+    No ``PublicIpAddress``, and that is what the account answers rather than a convenience. A
+    launch naming thirty-three network interfaces is one AWS assigns no public address to
+    whatever the subnet says, so the field is simply absent on every node of a correct fleet --
+    which is why nothing in this module reads it any more.
+    """
     tags = [{"Key": RESERVATION_TAG, "Value": BLOCK}]
     if node is not None:
         tags.append({"Key": NODE_TAG, "Value": str(node)})
@@ -138,14 +146,21 @@ def instance(
         described["CapacityReservationId"] = reservation
     if private_ip is not None:
         described["PrivateIpAddress"] = private_ip
-    if public_ip is not None:
-        described["PublicIpAddress"] = public_ip
     return described
 
 
 def described(*instances: dict[str, Any]) -> dict[str, Any]:
     """One EC2 reservation group per instance, which is what one launch per node produces."""
     return {"Reservations": [{"Instances": [found]} for found in instances]}
+
+
+def agents(*rows: tuple[str, str]) -> dict[str, Any]:
+    """A ``describe-instance-information`` answer, as an instance id and a ping status each."""
+    return {
+        "InstanceInformationList": [
+            {"InstanceId": instance_id, "PingStatus": ping} for instance_id, ping in rows
+        ]
+    }
 
 
 def test_every_instance_is_read_even_though_ec2_nests_them_one_group_per_launch() -> None:
@@ -532,12 +547,15 @@ def test_a_public_address_is_asked_for_only_when_it_is_the_whole_request() -> No
     """THE CONSTRAINT THAT MAKES THE OBVIOUS VERSION OF THIS CHANGE FAIL.
 
     ``RunInstances`` rejects ``AssociatePublicIpAddress`` in a request carrying more than one
-    network interface, and EFA-only interfaces count towards that. So the fabric layout cannot
-    ask for an address and has to take the subnet's auto-assign setting instead -- which is why
-    the workflow refuses a subnet without it and reads the address back afterwards.
+    network interface, and EFA-only interfaces count towards that. AWS also suppresses the
+    subnet's own auto-assign setting on the same requests, so the fabric layout has no route to
+    a public address by either means and a correct fleet never has one. Nothing downstream is
+    allowed to read anything into that: the launch asks Systems Manager whether it can reach
+    each node instead, and the subnet these nodes run in routes to a NAT gateway.
 
     The single-interface fallback is the one shape where asking is legal, and there it is asked
-    for explicitly rather than left to the subnet.
+    for explicitly rather than left to the subnet -- so that the escape hatch gets out of a
+    public subnet even when the subnet assigns nothing on launch.
     """
     fabric = interface_plan(shape(), subnet_id=SUBNET, security_group_id=GROUP)
     alone = interface_plan(shape(), subnet_id=SUBNET, security_group_id=GROUP, efa_wanted=0)
@@ -673,7 +691,6 @@ def test_a_fleet_that_got_every_interface_it_asked_for_is_left_alone() -> None:
     fleet = read_fleet(described(instance(instance_id="i-0001", node=1)))
 
     assert without_the_fabric(fleet, expected=P5_EFA) == ()
-    assert unaddressable(fleet) == ()
 
 
 def test_a_fleet_launched_by_two_dispatches_cannot_be_judged_against_one_number() -> None:
@@ -702,18 +719,117 @@ def test_a_fleet_launched_by_two_dispatches_cannot_be_judged_against_one_number(
     ]
 
 
-def test_a_node_with_no_public_address_is_reported_before_anybody_waits_on_it() -> None:
-    """Only the primary interface can hold a public address, and the fabric layout cannot ask
-    for one -- so it arrives from the subnet or not at all. Without it the Systems Manager agent
-    has no route out, and the symptom is forty minutes of a readiness loop reporting nothing."""
+def test_a_nat_routed_fleet_with_no_public_address_anywhere_is_reachable() -> None:
+    """THE FLEET THE CHECK THIS REPLACED WOULD HAVE REFUSED, AND IT IS THE ONE THAT WORKS.
+
+    Every node here is a fabric node with no ``PublicIpAddress`` at all, because AWS assigns
+    none to a launch naming thirty-three network interfaces. The old reading called that
+    unaddressable and refused eight machines on a paid window. Systems Manager is hearing from
+    all of them, which is the only thing anything in this lane needs of a node: every command
+    goes out over the agent, and the agent reached Systems Manager through the NAT gateway its
+    subnet routes to.
+    """
     fleet = read_fleet(
         described(
             instance(instance_id="i-0001", node=1),
-            instance(instance_id="i-0002", node=2, public_ip=None),
+            instance(instance_id="i-0002", node=2),
+        )
+    )
+    online = agents_online(agents(("i-0001", "Online"), ("i-0002", "Online")))
+
+    assert unreachable(fleet, online=online) == ()
+
+
+def test_a_fleet_whose_agents_never_registered_is_refused_node_by_node() -> None:
+    """The fault the refusal is kept for, and it is worth eight machines an hour to catch.
+
+    A fleet nothing can send a command to answers no readiness probe, runs nothing and drains
+    nothing, and every one of those presents as a different fault further down. This is the
+    reading that names it once, at the top, while the window still has hours in it.
+    """
+    fleet = read_fleet(
+        described(
+            instance(instance_id="i-0001", node=1),
+            instance(instance_id="i-0002", node=2),
+        )
+    )
+    online = agents_online({"InstanceInformationList": []})
+
+    assert [found.instance_id for found in unreachable(fleet, online=online)] == [
+        "i-0001",
+        "i-0002",
+    ]
+
+
+def test_an_agent_that_registered_and_then_went_quiet_is_not_online() -> None:
+    """Mutation: take presence in the answer as the signal and never read ``PingStatus``.
+
+    Systems Manager keeps a machine in ``describe-instance-information`` after it stops
+    answering and marks it ``ConnectionLost``; a stopped one goes ``Inactive``. Both are nodes
+    no command reaches, and both are listed -- so a reading built on presence reports the fleet
+    as driveable at exactly the moment it stopped being.
+    """
+    online = agents_online(
+        agents(
+            ("i-0001", "Online"),
+            ("i-0002", "ConnectionLost"),
+            ("i-0003", "Inactive"),
         )
     )
 
-    assert [found.instance_id for found in unaddressable(fleet)] == ["i-0002"]
+    assert online == frozenset({"i-0001"})
+
+
+def test_a_stray_machine_answering_does_not_stand_in_for_a_silent_node() -> None:
+    """Mutation: compare how many agents answered against how big the fleet is.
+
+    The agent list is tag-filtered, and a tag survives whatever launched it: an instance left
+    over from an earlier fleet on the same reservation is in that answer and is not in this
+    fleet. Counting would then let it cover for a node of this one that is silent, which is the
+    same failure the running-state waiter above avoids by naming instance ids rather than a
+    filter. Membership is checked node by node instead.
+    """
+    fleet = read_fleet(
+        described(
+            instance(instance_id="i-0001", node=1),
+            instance(instance_id="i-0002", node=2),
+        )
+    )
+    online = agents_online(agents(("i-0001", "Online"), ("i-00ff", "Online")))
+
+    assert [found.instance_id for found in unreachable(fleet, online=online)] == ["i-0002"]
+
+
+def test_the_two_reasons_a_node_is_silent_are_told_apart() -> None:
+    """They send a reader to different places, so the refusal must not merge them.
+
+    An instance still in ``pending`` has nothing on it yet to register and there is no fault to
+    go and find. One that is ``running`` and has still never registered has a fault, and it is
+    almost always no route out of the subnet or an instance profile missing
+    ``AmazonSSMManagedInstanceCore`` -- neither of which is anything to do with a public
+    address, which is where the message this replaced sent people.
+    """
+    booting = FleetNode(
+        node=1,
+        instance_id="i-0001",
+        state="pending",
+        private_ip=None,
+        capacity_reservation_id=BLOCK,
+    )
+    silent = FleetNode(
+        node=2,
+        instance_id="i-0002",
+        state="running",
+        private_ip="172.31.0.11",
+        capacity_reservation_id=BLOCK,
+    )
+
+    assert why_nothing_reaches(booting) == (
+        "is pending rather than running, so nothing is up on it to answer yet"
+    )
+    assert why_nothing_reaches(silent) == (
+        "is running and has never registered with Systems Manager"
+    )
 
 
 def test_the_fleet_table_shows_how_much_fabric_each_machine_came_up_with() -> None:
