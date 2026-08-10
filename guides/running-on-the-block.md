@@ -81,11 +81,18 @@ difference between them:
 | Machines | Workflow | What it does with them |
 | --- | --- | --- |
 | One | **Block: start a run on a node** | One job on one machine's cards |
-| Two or more | **Block: start one run across several nodes** | *One* job spanning all of them, with a `torchrun` rendezvous |
+| One or more | **Block: start one run across several nodes** | *One* job spanning all of them, with a `torchrun` rendezvous |
 
 Running the single-node workflow four times gives you four independent jobs, not one job on four
 machines. If your training run needs to see thirty-two cards as one world, you want the second
 one.
+
+**The multi-node workflow accepts `node_count=1`, and that is the recommendation for anything
+that wants every card on a machine.** It is not a special case there -- it builds the same
+rendezvous, elects the single machine as its own host, and starts eight ranks. What it buys you
+is that the button, the fields and the command do not change when you go from one machine to
+eight: you smoke-test on one, change `node_count`, and dispatch the same line. Reach for **Block:
+start a run on a node** when the job is single-process, or when you want the simpler container.
 
 The multi-node workflow takes every machine it needs in one go or takes none. A set that cannot
 be assembled leaves nothing locked, so a refused dispatch costs you a minute and costs the fleet
@@ -158,6 +165,7 @@ gh workflow run block-run-distributed.yml --ref main -R edu-llm/platform \
   -f node_count=2 \
   -f nodes= \
   -f expert_parallel= \
+  -f mesh_flags=true \
   -f wandb_project=capacity-block \
   -f fabric=auto \
   -f dry_run=true \
@@ -165,7 +173,31 @@ gh workflow run block-run-distributed.yml --ref main -R edu-llm/platform \
 ```
 
 `node_count=2` takes the two lowest-numbered free machines. Read the plan, then send the same
-line with `dry_run=false`.
+line with `dry_run=false`. Changing `node_count` to `1` or to `8` is the only edit between the
+three cases on this page.
+
+**Turn `mesh_flags` off unless your entrypoint is the OLMo-core mixture-of-experts recipe.** Left
+on, the dispatch appends `--moe-shard-degree` and `--moe-num-replicas` to your command, computed
+from the machines it claimed. That is the point of it on `edullm/final-model`, whose entrypoint
+takes both. On anything else argparse meets an unrecognised argument and every rank exits within
+seconds of the containers coming up -- after the node set has been claimed and the machines paid
+for. It is on by default because the flagship is what the block was bought for, and it is a
+field rather than a guess because nothing here can read your argument parser.
+
+A one-node dry run on 2026-08-10 printed this, which is what the plan looks like when the fleet
+can serve it:
+
+```
+8 ranks: 1 replicas x 8 expert-parallel, 4 of 32 experts a rank
+rendezvous 172.31.3.137:29400 on node 1
+torchrun --nnodes=1 --nproc-per-node=8 --max-restarts=0 --rdzv-id=procedure-plan-1n
+  --rdzv-backend=c10d --rdzv-endpoint=172.31.3.137:29400 --rdzv-conf=join_timeout=900
+  --no-python python .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4
+  --dataset-id=regmix-10b-v1 --moe-shard-degree 8 --moe-num-replicas 1
+```
+
+Everything from `torchrun` to `--no-python` was added for you, and so were the last two flags.
+Your `command` is the part in the middle.
 
 **There is no `processes` field here and there must not be one.** The launcher is not optional on
 this path and is not yours to write: `--nnodes`, `--nproc-per-node` and the rendezvous endpoint
@@ -185,6 +217,7 @@ gh workflow run block-run-distributed.yml --ref main -R edu-llm/platform \
   -f node_count= \
   -f nodes=1,2,3,4,5,6,7,8 \
   -f expert_parallel= \
+  -f mesh_flags=true \
   -f wandb_project=capacity-block \
   -f fabric=auto \
   -f dry_run=true \
@@ -210,18 +243,26 @@ not an error anywhere, and makes every step several times slower.
 
 ### What a refusal looks like, and what it costs
 
-Every dry run on 2026-08-10 was refused, for the same reason, at 1, 2 and 8 nodes:
+Every dry run on the afternoon of 2026-08-10 was refused, at 1, 2 and 8 nodes, for the same
+reason -- the fleet was one machine and somebody was training on it:
 
 ```
 distributed_launch_refused:the fleet has 0 nodes this run could take and it asked for 2
 distributed_launch_refused:node 1 is held by philote-dev-throughput for mfu-noGmm-1n
 ```
 
-Two things to read off that. The first line is the summary and the second is the reason, one per
-node -- **it names every blocker rather than the first**, so you fix them all and dispatch once
-more rather than discovering them one dispatch at a time. And it was refused because the fleet
-was one machine and somebody was on it, which is a fact about the afternoon rather than about the
-dispatch. A refused launch gives back every claim it took and removes every container it started,
+The named form answers the same way and names each machine:
+
+```
+distributed_launch_refused:node 2 is not a running instance in this fleet
+distributed_launch_refused:node 3 is not a running instance in this fleet
+...
+```
+
+**It names every blocker rather than the first**, so you fix them all and dispatch once more
+rather than discovering them one dispatch at a time. Both of those are facts about the afternoon
+rather than about the dispatch, and both are answered by the status table before you type
+anything. A refused launch gives back every claim it took and removes every container it started,
 so there is never anything to clean up first.
 
 ## 4. What goes in the command, and what must be left out
