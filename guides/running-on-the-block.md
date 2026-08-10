@@ -332,17 +332,24 @@ What to do, in order of preference:
 
 1. **Take another node** if there is an `IDLE` one. Always the cheapest answer.
 2. **Ask somebody with a role to run `edullm-node release`** on the machine. One command, seconds.
-3. `take_the_node_anyway` **only when the refusal you got was `node_claim_is_stale`**. In that one
-   case the reading has established that the container is gone and no cards are in use, so there
-   is no other run to fight -- what you are overwriting is a claim nobody is using.
+3. `take_the_node_anyway`, **and only if the refusal you got used the exact words
+   `node_claim_is_stale`**. In that one case the reading has established that the container is
+   gone and no cards are in use, so there is no other run to fight and what you overwrite is a
+   claim nobody is using. If it said `node_is_busy`, it is busy: go back to 1 or 2.
 
-Point 3 is a narrow exception and the flag is otherwise off limits; see the next section.
+Point 3 is a narrow exception to the rule in the next section, and the words are the whole of the
+exception. "It looked stale to me" is how somebody ends a colleague's training run.
 
 **Zero cards in use is not on its own evidence that a claim is stale, and you should not treat it
 as such.** A run that is cloning, importing torch, sharding a corpus or simply between steps holds
 no cards while being entirely alive, and the claim is taken *before* the clone precisely so that
 two dispatches seconds apart cannot both proceed. The container is what settles it, which is why
 the reading asks about the container and why the refusal names it.
+
+This is not a theoretical distinction. Node 1 read `0/8 GPUs busy` under a claim at 18:00 UTC on
+2026-08-10 and read `8/8 GPUs busy` under the same claim nineteen minutes later: it was one run,
+starting up, and anything that had called it abandoned would have put a second job on a machine
+that was about to use every card on it.
 
 ## 9. What you must not do
 
@@ -364,9 +371,10 @@ so in the channel.
 credential in this lane lives in a workflow. A script that reaches past them either fails, for the
 people who hold no role, or succeeds and leaves no record, for the people who do.
 
-**Do not re-use a run name for a job that is still running.** Re-using one whose job has finished
-is fine and expected -- the exited container that used to block it is cleared for you now -- but
-two live jobs of one name write to one W&B run and one rendezvous id.
+**Do not re-use a run name for a job that is still running.** Two live jobs of one name write into
+one W&B run and one rendezvous id. Re-using a name whose job has *finished* is fine and expected;
+on a fleet launched since this page was written, the exited container that used to block it is
+cleared for you, and on an older one you will meet a refusal naming the container instead.
 
 ## What this lane still cannot do
 
