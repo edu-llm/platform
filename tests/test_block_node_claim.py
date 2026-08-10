@@ -96,8 +96,15 @@ exit 0
 #: container up" is a consequence of a run having happened rather than a fixture setting. The
 #: marker is per container name, because the helper asks the question about one name while
 #: another may be running and the two answers have to differ.
+#:
+#: **IT MODELS THE DISTINCTION THE BUG WAS MADE OF: RUNNING IS NOT THE SAME AS EXISTS.** A
+#: second marker stands for a container that has exited and not been removed, which is what
+#: every finished run on this fleet leaves behind. ``ps`` without ``--all`` cannot see it,
+#: ``ps --all`` can, ``run`` refuses the name the way the daemon refuses it, and ``rm`` clears
+#: it -- but refuses while the running marker is there, which is the property the helper leans
+#: on to make an unconditional removal safe.
 DOCKER_STUB = """
-if [ "${1:-}" = ps ]; then
+name_from_filter() {
   for argument in "$@"; do
     case "${argument}" in
       name=^edullm-*$)
@@ -106,9 +113,29 @@ if [ "${1:-}" = ps ]; then
         ;;
     esac
   done
+}
+if [ "${1:-}" = ps ]; then
+  everything=no
+  for argument in "$@"; do
+    case "${argument}" in
+      --all) everything=yes ;;
+    esac
+  done
+  name_from_filter "$@"
   if [ -f "${DOCKER_MARKER}-${wanted:-none}" ]; then
     echo c0ffee1234
+  elif [ "${everything}" = yes ] && [ -f "${DOCKER_EXITED}-${wanted:-none}" ]; then
+    echo deadbeef99
   fi
+  exit 0
+fi
+if [ "${1:-}" = rm ]; then
+  target="${2#edullm-}"
+  if [ -f "${DOCKER_MARKER}-${target}" ]; then
+    echo "Error response from daemon: cannot remove container: container is running" >&2
+    exit 1
+  fi
+  rm -f "${DOCKER_EXITED}-${target}"
   exit 0
 fi
 if [ "${1:-}" = run ]; then
@@ -119,6 +146,10 @@ if [ "${1:-}" = run ]; then
   done
   if [ "${DOCKER_RUN_FAILS:-no}" = yes ]; then
     echo "docker: Error response from daemon: no such image" >&2
+    exit 125
+  fi
+  if [ -f "${DOCKER_MARKER}-${started:-none}" ] || [ -f "${DOCKER_EXITED}-${started:-none}" ]; then
+    echo "docker: Error response from daemon: Conflict. The container name \\"/edullm-${started}\\" is already in use." >&2
     exit 125
   fi
   : > "${DOCKER_MARKER}-${started:-none}"
@@ -195,6 +226,7 @@ def node(tmp_path: Path) -> dict[str, object]:
         "claim": state / "claim.json",
         "binaries": binaries,
         "marker": tmp_path / "container-is-up",
+        "exited": tmp_path / "container-has-exited",
     }
 
 
@@ -213,6 +245,7 @@ def _run(
             **os.environ,
             "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
             "DOCKER_MARKER": str(node["marker"]),
+            "DOCKER_EXITED": str(node["exited"]),
             "DOCKER_RUN_FAILS": "yes" if docker_run_fails else "no",
         },
     )
@@ -377,3 +410,246 @@ def test_a_second_start_of_a_live_run_leaves_its_claim_alone(node: dict[str, obj
     assert again.returncode != 0
     assert "already running" in again.stderr
     assert _claim(node).exists(), "a refused second start cleared the claim of the live run"
+
+
+# ---------------------------------------------------------------------------------------
+# THE CLAIM IS TAKEN, NOT CHECKED AND THEN WRITTEN.
+# ---------------------------------------------------------------------------------------
+#
+# Reading `claim.json`, deciding the node is free and then writing it are three statements, and
+# between the first and the third is a window. Everything about this lane conspires to put two
+# people inside it. `block-run.yml` hands out one node under a concurrency group keyed by node
+# number; `block-run-distributed.yml` claims a whole set under a *different* group named for the
+# fleet; neither queues behind the other, so a per-node dispatch and a fleet dispatch race for
+# node 3 by design. A person typing `edullm-node run` in a shell is behind no group at all and
+# races both. All three arrive at this file.
+#
+# The loser of that race did not find out. It overwrote the winner's claim and started a second
+# container on the same eight cards, which on these machines is two runs dying of memory some
+# minutes later rather than one run waiting -- and each of them cost the other a slot in a
+# window nobody can extend.
+#
+# **A SHARED GITHUB CONCURRENCY GROUP IS NOT THE FIX AND WAS CONSIDERED FIRST.** It would
+# serialise the two workflows, at the price of serialising the eight independent single-node
+# dispatches that are the intended Saturday, and it would still leave the shell path racing both
+# because a person is not a workflow. The lock has to live on the machine being locked. `set -o
+# noclobber` makes the redirection `O_CREAT|O_EXCL`, so the kernel decides who gets the claim on
+# a local filesystem and exactly one caller is told it did.
+
+
+def test_a_claim_file_that_exists_but_is_not_yet_filled_in_is_still_a_claim(
+    node: dict[str, object],
+) -> None:
+    """Mutation: read the claim, find no run in it, and write over it.
+
+    This is the race in a bottle. The winner of an exclusive create owns an empty file for as
+    long as one ``printf`` takes, and during that moment ``claim_field run`` answers nothing at
+    all -- which to a check-then-write implementation is indistinguishable from a free node. It
+    is also what a truncated write leaves behind, and what a node that lost power mid-claim
+    comes back with.
+
+    Under the old code the empty file is not a claim and the second caller takes the machine.
+    Under an exclusive create the file existing *is* the claim, whatever is in it yet.
+    """
+    _claim(node).write_text("", encoding="utf-8")
+
+    done = _run(node, "claim", "an-arm", "ana", git=GIT_CLONES_A_TREE_WITH_A_SPEC)
+
+    assert done.returncode != 0, "an unfilled claim file was treated as a free node"
+    assert "is held by" in done.stderr
+
+
+def test_only_one_of_several_simultaneous_claims_wins(node: dict[str, object]) -> None:
+    """Mutation: any implementation with a window between the read and the write.
+
+    Eight callers at once is what a fleet dispatch does -- `tools/block_run_distributed.py`
+    sends `edullm-node claim` to every machine in one Systems Manager call -- and what two
+    overlapping dispatches do to one machine. The invariant is that the claim on the node names
+    exactly one of them and the rest are told so.
+
+    This test can only ever fail honestly: if the operating system happens not to interleave
+    the racers, it passes without having proved anything, and it never fails against correct
+    code. A false green is the acceptable direction for a concurrency test to be wrong in.
+    """
+    binaries = node["binaries"]
+    assert isinstance(binaries, Path)
+    _write_stub(binaries, "git", GIT_CLONES_A_TREE_WITH_A_SPEC)
+    helper = node["helper"]
+    assert isinstance(helper, Path)
+    environment = {
+        **os.environ,
+        "PATH": f"{binaries}{os.pathsep}{os.environ['PATH']}",
+        "DOCKER_MARKER": str(node["marker"]),
+        "DOCKER_EXITED": str(node["exited"]),
+        "DOCKER_RUN_FAILS": "no",
+    }
+
+    racers = [
+        subprocess.Popen(
+            [str(helper), "claim", f"arm-{index}", f"person-{index}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=environment,
+        )
+        for index in range(8)
+    ]
+    outcomes = [(racer.wait(), racer.communicate()) for racer in racers]
+
+    winners = [code for code, _ in outcomes if code == 0]
+    assert len(winners) == 1, (
+        f"{len(winners)} of eight simultaneous claims were told they had the node, and the "
+        "claim file can only describe one of them"
+    )
+    written = _claim(node).read_text(encoding="utf-8")
+    assert sum(f'"run":"arm-{index}"' in written for index in range(8)) == 1
+
+
+def test_forcing_still_overwrites_a_claim_somebody_else_holds(node: dict[str, object]) -> None:
+    """Mutation: make the exclusive create the only way in, and `--force` stops working.
+
+    Taking a machine off a colleague is the documented meaning of the flag and the reason it is
+    spelled out in the workflow form. An atomic take that had no bypass would turn a deliberate
+    act into an impossible one, and the person who needed it would reach for the one thing left
+    -- editing the claim file by hand -- which no test anywhere covers.
+    """
+    _run(node, "claim", "somebody-elses-arm", "bo", git=GIT_CLONES_A_TREE_WITH_A_SPEC)
+
+    done = _run(
+        node,
+        "run",
+        "--name",
+        "my-arm",
+        "--branch",
+        "edullm/final-model",
+        "--who",
+        "ana",
+        "--force",
+        git=GIT_CLONES_A_TREE_WITH_A_SPEC,
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert '"run":"my-arm"' in _claim(node).read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------------------
+# THE EXITED CONTAINER NOTHING REMOVES.
+# ---------------------------------------------------------------------------------------
+#
+# `docker ps` lists running containers. `docker run --name` collides with every container that
+# exists, running or not. Nothing on a node removes one when it exits, so a run that finished an
+# hour ago leaves `edullm-<name>` sitting in `Exited (0)` -- the guard reads the name as free,
+# the clone runs, the secret is fetched, and the very last line refuses with a message about a
+# name already in use. On a lane whose whole shape is hourly iteration on a name somebody has
+# grown attached to, that is not an edge case: it is what every second dispatch does.
+#
+# **REMOVING IT IS SAFE BY CONSTRUCTION RATHER THAN BY CHECKING.** `docker rm` without `--force`
+# refuses a running container, so the daemon decides whether this one is alive at the moment of
+# removal instead of a `docker ps` some milliseconds earlier. There is no window in which a live
+# run is removed, which is the property that makes an unconditional attempt defensible where a
+# check-then-remove would not be.
+#
+# Refusing instead reads as the more conservative choice and is not one. The fifteen people this
+# lane exists for hold no AWS role and cannot open a shell on the machine, so a refusal naming
+# `docker rm` hands them a cure they cannot apply -- and what it therefore says in practice is
+# "think of a name you have not used before", every hour, for a week.
+
+
+def test_a_name_left_by_a_finished_run_is_usable_again(node: dict[str, object]) -> None:
+    """Mutation: ask `docker ps` without `--all`, which is where this started.
+
+    The first run finishes, its container stays. The second dispatch of the same name has to
+    reach `docker run` and start something, rather than being refused by the daemon after
+    everything expensive has already happened.
+    """
+    exited = node["exited"]
+    assert isinstance(exited, Path)
+    exited.with_name(exited.name + "-an-arm").write_text("", encoding="utf-8")
+
+    done = _run(
+        node,
+        "run",
+        "--name",
+        "an-arm",
+        "--branch",
+        "edullm/final-model",
+        git=GIT_CLONES_A_TREE_WITH_A_SPEC,
+    )
+
+    assert done.returncode == 0, done.stderr + done.stdout
+    assert "removed the exited container" in done.stdout
+    assert _claim(node).exists()
+
+
+def test_a_live_container_is_never_removed_to_free_its_name(node: dict[str, object]) -> None:
+    """Mutation: pass `--force` to `docker rm`, or remove before checking for a running one.
+
+    The whole safety of clearing a name rests on never doing it to something that is training.
+    Two guards stand between here and that: the running check above this one refuses first, and
+    `docker rm` without `--force` would refuse even if it did not. This asserts the outcome
+    rather than either mechanism, so removing either one fails it.
+    """
+    started = _run(
+        node,
+        "run",
+        "--name",
+        "an-arm",
+        "--branch",
+        "edullm/final-model",
+        git=GIT_CLONES_A_TREE_WITH_A_SPEC,
+    )
+    assert started.returncode == 0, started.stderr
+
+    again = _run(
+        node,
+        "run",
+        "--name",
+        "an-arm",
+        "--branch",
+        "edullm/final-model",
+        git=GIT_CLONES_A_TREE_WITH_A_SPEC,
+    )
+
+    assert again.returncode != 0
+    assert "already running" in again.stderr
+    marker = node["marker"]
+    assert isinstance(marker, Path)
+    assert marker.with_name(marker.name + "-an-arm").exists(), (
+        "the live container was removed in order to free its name"
+    )
+
+
+def test_a_name_that_cannot_be_cleared_is_refused_before_the_clone(
+    node: dict[str, object],
+) -> None:
+    """Mutation: ignore what `docker rm` said and carry on to `docker run`.
+
+    A removal can fail for reasons that are not "it is running" -- a daemon that is unwell, a
+    container being removed by something else. Carrying on means paying for the clone and the
+    secret fetch to arrive at the same refusal from the daemon, with a message about a name
+    conflict rather than about what to do. The claim is given back either way.
+    """
+    binaries = node["binaries"]
+    assert isinstance(binaries, Path)
+    exited = node["exited"]
+    assert isinstance(exited, Path)
+    exited.with_name(exited.name + "-an-arm").write_text("", encoding="utf-8")
+    _write_stub(
+        binaries,
+        "docker",
+        DOCKER_STUB.replace("  rm -f \"${DOCKER_EXITED}-${target}\"\n  exit 0", "  exit 1"),
+    )
+
+    done = _run(
+        node,
+        "run",
+        "--name",
+        "an-arm",
+        "--branch",
+        "edullm/final-model",
+        git=GIT_CLONES_A_TREE_WITH_A_SPEC,
+    )
+
+    assert done.returncode != 0
+    assert "would not be removed" in done.stderr
+    assert not _claim(node).exists(), "a refused name left the node claimed"
