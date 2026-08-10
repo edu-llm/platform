@@ -61,6 +61,9 @@ readonly SETTINGS_FILE=/etc/edullm-block.env
 readonly READY_FILE="${STATE_DIRECTORY}/ready.json"
 readonly BOOTSTRAP_LOG="${STATE_DIRECTORY}/bootstrap.log"
 readonly SCRATCH=/scratch
+# The EFA libraries the container needs and the image lacks. `stage_the_efa_libraries` says
+# why they are copied into a directory of their own.
+readonly EFA_LIBRARY_BUNDLE=/opt/edullm-efa-libs
 
 # Where everything this node produces goes, and it is derived once here so that the log sync,
 # the checkpoint variable and the URI the run workflow prints cannot disagree about it. The
@@ -223,8 +226,47 @@ EDULLM_BLOCK_DRAIN_FROM_MINUTES=${DRAIN_FROM_MINUTES}
 EDULLM_BLOCK_S3_PREFIX=${S3_PREFIX}
 EDULLM_BLOCK_SCRATCH=${SCRATCH}
 EDULLM_BLOCK_STATE=${STATE_DIRECTORY}
+EDULLM_BLOCK_EFA_LIBS=${EFA_LIBRARY_BUNDLE}
 SETTINGS
 chmod 0644 "${SETTINGS_FILE}"
+
+# ---------------------------------------------------------------------------------------
+# THE EFA LIBRARIES, STAGED WHERE MOUNTING THEM CANNOT BREAK THE CONTAINER.
+# ---------------------------------------------------------------------------------------
+#
+# The aws-ofi-nccl plugin under /opt/amazon links against six libraries this AMI has and no
+# layer of the training image does: libefa, libibverbs, libhwloc, libnl-3, libnl-route-3
+# and libnuma. Mounting /opt/amazon alone therefore buys nothing -- the plugin is there and
+# will not load -- and it fails silently, because NCCL treats a plugin it cannot dlopen as
+# one that is absent and rings over TCP.
+#
+# WHY A BUNDLE RATHER THAN A MOUNT OF /usr/lib/x86_64-linux-gnu, which is the one-line
+# version of this: the host is Ubuntu 22.04 at glibc 2.35 and the image Debian 13 at 2.41,
+# so the host libc.so.6 shadows the container's the moment that directory is on
+# LD_LIBRARY_PATH -- `bash: libc.so.6: version GLIBC_2.38 not found`, before a rank starts.
+# Copying the six leans on the guarantee that holds: 2.35 loads under 2.41, not the
+# reverse. The verbs providers come too, since libibverbs opens no device without them.
+#
+# Missing is warned rather than fatal: a later image carrying them finds nothing here and
+# is correct anyway.
+stage_the_efa_libraries() {
+  rm -rf "${EFA_LIBRARY_BUNDLE}"
+  mkdir -p "${EFA_LIBRARY_BUNDLE}/libibverbs"
+  local library source
+  for library in libefa.so.1 libibverbs.so.1 libhwloc.so.15 libnl-3.so.200 \
+    libnl-route-3.so.200 libnuma.so.1 libudev.so.1 libltdl.so.7; do
+    source="$(find /usr/lib/x86_64-linux-gnu -name "${library}" 2> /dev/null | head -1)"
+    if [ -n "${source}" ]; then
+      cp -L "${source}" "${EFA_LIBRARY_BUNDLE}/"
+    else
+      echo "edullm-bootstrap: no ${library} on this host, so the fabric may not load"
+    fi
+  done
+  cp -L /usr/lib/x86_64-linux-gnu/libibverbs/*.so "${EFA_LIBRARY_BUNDLE}/libibverbs/" \
+    2> /dev/null || true
+  chmod -R 0755 "${EFA_LIBRARY_BUNDLE}"
+}
+stage_the_efa_libraries
 
 # ---------------------------------------------------------------------------------------
 # THE IMAGE, PULLED ONCE NOW SO THAT NOBODY PAYS FOR IT LATER.
@@ -494,10 +536,33 @@ do_run() {
   # `docker logs` for somebody sitting on the machine, and the file for the sync that
   # carries it to S3 for everybody who is not. `set -o pipefail` inside is what keeps the
   # exit status the trainer's rather than tee's.
+  #
+  # THE ARGUMENTS AFTER `--ipc=host` ARE THE FABRIC, AND WITHOUT THEM A MULTI-NODE RUN IS
+  # NOT SLOW, IT IS IMPOSSIBLE. Measured on this fleet on 2026-08-10.
+  #
+  # `--network host`: without it every container gets the same bridge address, 172.17.0.2,
+  # while `rendezvous_for` hands torchrun the *host* address of the lowest node. The store
+  # then listens in one network namespace on a port nothing outside it can dial, so the
+  # rendezvous never forms. This is why no multi-node run had ever started here.
+  #
+  # `--device /dev/infiniband`: docker passes through no device by default, so the EFA
+  # devices the launch attached are invisible one layer up and NCCL rings over TCP.
+  #
+  # The mounts and `LD_LIBRARY_PATH`: /opt/amazon carries libfabric and the aws-ofi-nccl
+  # plugin, /opt/efa-libs the six libraries it links against. `ldd` against the plugin from
+  # inside the container is the check and empty output is the pass.
   docker run --detach \
     --name "edullm-${name}" \
     --gpus all \
     --ipc=host \
+    --network host \
+    --device /dev/infiniband \
+    --volume /opt/amazon:/opt/amazon:ro \
+    --volume "${EDULLM_BLOCK_EFA_LIBS}:/opt/efa-libs:ro" \
+    --volume /etc/libibverbs.d:/etc/libibverbs.d:ro \
+    --env "LD_LIBRARY_PATH=/opt/amazon/efa/lib:/opt/amazon/ofi-nccl/lib:/opt/efa-libs" \
+    --env "IBV_DRIVERS_PATH=/opt/efa-libs/libibverbs" \
+    --env "NCCL_DEBUG=INFO" \
     --ulimit memlock=-1 \
     --ulimit stack=67108864 \
     --volume "${tree}/repo:/work" \
