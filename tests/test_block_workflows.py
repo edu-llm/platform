@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import ast
 import gzip
+import json
 import re
 import subprocess
 import sys
@@ -74,7 +75,9 @@ WAIT_STEP = "Wait for every node to reach running before anything reads it back"
 RESERVATION_STEP = "Refuse a reservation that is not open for business"
 RESOLVE_STEP = "Resolve the image, the subnet, the security group, the cards and the root device"
 VERIFY_STEP = "Verify every instance is drawing from the block, or terminate all of them"
-FABRIC_STEP = "Verify every node came up with the fabric and an address, or refuse the fleet"
+FABRIC_STEP = "Verify every node came up with the fabric, or refuse the fleet"
+AGENT_STEP = "Wait for Systems Manager to reach every node, or refuse the fleet"
+READINESS_STEP = "Wait for every node to finish its own bootstrap"
 GUARD_STEP = "Refuse a hand-started launch from somebody who may not make one"
 
 #: Every workflow file in this lane. One role serves all of them -- see the template for why
@@ -117,6 +120,22 @@ if [ "${2:-}" = describe-instances ]; then
   exit 0
 fi
 printf '%s\\n' "$@" >> "${RECORDED}"
+echo '{}'
+"""
+
+#: Answers the two reads the Systems Manager gate makes, each out of a file the test wrote. The
+#: gate is a poll loop around a comparison, and no assertion about the YAML can see whether the
+#: loop terminates, whether the diagnosis file survives ``set -u``, or which of the two causes
+#: a given node is reported under -- so the step is executed the way the runner executes it.
+AWS_AGENT_STUB = """
+if [ "${1:-}" = ec2 ] && [ "${2:-}" = describe-instances ]; then
+  cat "${FLEET_ANSWER}"
+  exit 0
+fi
+if [ "${1:-}" = ssm ] && [ "${2:-}" = describe-instance-information ]; then
+  cat "${AGENT_ANSWER}"
+  exit 0
+fi
 echo '{}'
 """
 
@@ -276,6 +295,89 @@ def fleet_role_grants() -> set[str]:
             statement["Action"] if isinstance(statement["Action"], list) else [statement["Action"]]
         )
     }
+
+
+BLOCK = "cr-0afc33f3a1af417a7"
+
+
+def a_fabric_fleet(*rows: tuple[int, str, str]) -> dict[str, Any]:
+    """A ``describe-instances`` answer for a fleet on the fabric layout.
+
+    **NOT ONE OF THESE INSTANCES CARRIES A** ``PublicIpAddress`` **AND THAT IS THE ACCOUNT
+    ANSWERING RATHER THAN A CONVENIENCE.** AWS suppresses public-IP auto-assignment on any
+    launch naming more than one network interface, so the field is absent on every node of
+    every correct EFA fleet this lane has ever started, whatever the subnet is set to.
+    """
+    return {
+        "Reservations": [
+            {
+                "Instances": [
+                    {
+                        "InstanceId": instance_id,
+                        "State": {"Name": state},
+                        "PrivateIpAddress": f"172.31.48.{number}",
+                        "CapacityReservationId": BLOCK,
+                        "Tags": [
+                            {"Key": "edullm:block", "Value": BLOCK},
+                            {"Key": "edullm:node", "Value": str(number)},
+                        ],
+                        "NetworkInterfaces": [
+                            {"InterfaceType": "interface"},
+                            *({"InterfaceType": "efa-only"} for _ in range(32)),
+                        ],
+                    }
+                ]
+            }
+            for number, instance_id, state in rows
+        ]
+    }
+
+
+def answering(*rows: tuple[str, str]) -> dict[str, Any]:
+    """A ``describe-instance-information`` answer, one instance id and ping status each."""
+    return {
+        "InstanceInformationList": [
+            {"InstanceId": instance_id, "PingStatus": ping} for instance_id, ping in rows
+        ]
+    }
+
+
+def drive_the_agent_gate(
+    launch: dict[str, Any],
+    tmp_path: Path,
+    *,
+    fleet: dict[str, Any],
+    agents: dict[str, Any],
+) -> subprocess.CompletedProcess[str]:
+    """Run the Systems Manager gate against one pair of answers, the way the runner runs it.
+
+    The two bounds are cut to a second each. Ten minutes is what the job env argues for against
+    a real agent on a real p5 and is the number that ships; what this exercises is the loop
+    around it, which behaves the same at either scale and cannot be waited out in a suite.
+    """
+    (tmp_path / "fleet-answer.json").write_text(json.dumps(fleet), encoding="utf-8")
+    (tmp_path / "agent-answer.json").write_text(json.dumps(agents), encoding="utf-8")
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "uv", UV_PASSTHROUGH)
+    write_stub(stub_bin, "aws", AWS_AGENT_STUB)
+
+    return run_step_script(
+        step(only_job(launch), AGENT_STEP)["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "FLEET_ANSWER": str(tmp_path / "fleet-answer.json"),
+            "AGENT_ANSWER": str(tmp_path / "agent-answer.json"),
+            "PYTHON_EXECUTABLE": sys.executable,
+            "PYTHONPATH": str(PROJECT_ROOT / "src"),
+            "RESERVATION_ID": BLOCK,
+            "BLOCK_REGION": "us-east-2",
+            "INSTANCE_PROFILE": "sbsandbox-intern-edullm-block-node",
+            "AGENT_WAIT_SECONDS": "1",
+            "AGENT_POLL_SECONDS": "1",
+        },
+        stub_bin=stub_bin,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -439,7 +541,6 @@ def test_the_fabric_check_refuses_the_fleet_and_does_not_terminate_it(
     script = step(only_job(launch), FABRIC_STEP)["run"]
 
     assert "without_the_fabric(" in script
-    assert "unaddressable(" in script
     assert "terminate-instances" not in script
     assert "block_fleet_came_up_without_the_fabric" in script
 
@@ -462,6 +563,218 @@ def test_the_fabric_refusal_does_not_offer_a_re_run_instead_of_terminating(
     assert "launches only the shortfall" in script
     assert "or re-run " not in script
     assert "Terminate them and re-run" not in script
+
+
+def test_nothing_in_the_launch_reads_a_public_address_off_anything(
+    launch: dict[str, Any],
+) -> None:
+    """THE ASSUMPTION THAT COST A FLEET, HELD OUT OF THE FILE RATHER THAN OUT OF ONE STEP.
+
+    Two places made it and one of them was invisible from the other. The read-back refused any
+    instance with no ``PublicIpAddress``, and the resolve step refused any subnet with
+    ``MapPublicIpOnLaunch`` false -- so a NAT-routed fleet was rejected before a machine
+    started, and the subnet that does pass produced a fleet with no address anyway. AWS
+    suppresses public-IP auto-assignment on any launch naming more than one network interface,
+    and this launch names thirty-three.
+
+    Measured on 2026-08-10: a fleet in the default subnet came up with all thirty-two EFA
+    interfaces, no public address, no route out, and died pulling from ECR.
+
+    The field is read out of the run bodies with the comments taken out, for the reason the
+    drain test gives against the same shape: two of the paragraphs this change added name the
+    reading they exist to forbid, and a check against the raw file would be satisfied by the
+    explanation instead of by the code. The subnet setting is still printed as a fact, so what
+    is forbidden there is the refusal rather than the word.
+    """
+    resolve = step(only_job(launch), RESOLVE_STEP)["run"]
+    scripts = SHELL_COMMENT.sub(
+        "", "".join(str(item.get("run", "")) for item in only_job(launch)["steps"])
+    )
+
+    assert "unaddressable" not in LAUNCH_PATH.read_text(encoding="utf-8")
+    assert "PublicIpAddress" not in scripts
+    assert 'if not subnet.get("MapPublicIpOnLaunch")' not in resolve
+    assert "subnet_assigns_a_public_address" in resolve
+
+
+def test_reachability_is_asked_of_systems_manager_after_the_fleet_is_up(
+    launch: dict[str, Any],
+) -> None:
+    """Mutation: keep inferring it from the launch, which is all anything before this can do.
+
+    Every property readable before a machine exists -- the auto-assign setting, a route table,
+    the presence of interface endpoints -- is a proxy for whether a command will reach a node,
+    and the proxy is the thing that was wrong. ``describe-instance-information`` is the same
+    question the sender of every command in this lane asks.
+
+    Ordered after the fabric check so that a fleet which came up wrong is reported in seconds
+    rather than after a ten-minute wait, and before the bootstrap wait so that a fleet nothing
+    reaches is named as that rather than as a bootstrap which never finished.
+    """
+    job = only_job(launch)
+    names = [item.get("name", "") for item in job["steps"]]
+    script = step(job, AGENT_STEP)["run"]
+
+    assert names.index(FABRIC_STEP) < names.index(AGENT_STEP) < names.index(READINESS_STEP)
+    assert ("ssm", "describe-instance-information") in calls_in_shell(script)
+    assert "unreachable(" in script
+    assert "why_nothing_reaches(" in script
+    assert "block_nodes_never_reached_systems_manager" in script
+
+
+def test_the_agent_gate_refuses_the_fleet_and_does_not_terminate_it(
+    launch: dict[str, Any],
+) -> None:
+    """Mutation: copy the reservation check wholesale, terminate included.
+
+    The same trade the fabric check makes, and it is if anything sharper here. A fleet nothing
+    can send a command to is the fleet somebody most needs left alive, because every way of
+    finding out what is wrong with it starts with the machine still being there.
+    """
+    argv = aws_commands(step(only_job(launch), AGENT_STEP)["run"])
+
+    assert [command[1:3] for command in argv] == [
+        ["ec2", "describe-instances"],
+        ["ssm", "describe-instance-information"],
+    ]
+
+
+def test_only_one_step_waits_for_the_agent_to_register(launch: dict[str, Any]) -> None:
+    """Mutation: leave the count the readiness step used to poll for where it was.
+
+    That loop asked the same question over the same API for up to thirteen minutes and then
+    carried on regardless of the answer. Two bounds for one wait is the arrangement where the
+    one that never refuses is the one somebody tunes, and the readiness step is now reached
+    only on a fleet Systems Manager has been shown to reach.
+    """
+    readiness_script = step(only_job(launch), READINESS_STEP)["run"]
+
+    assert ("ssm", "describe-instance-information") not in calls_in_shell(readiness_script)
+    assert "PingStatus" not in readiness_script
+    assert "send-command" in readiness_script
+
+
+def test_the_subnet_resolved_by_default_is_the_one_routed_through_a_nat_gateway() -> None:
+    """Mutation: leave the default at ``default-for-az``, which is where it was.
+
+    The default subnet for us-east-2a has ``MapPublicIpOnLaunch`` true and routes only to an
+    internet gateway, so it reads as the obvious answer and is the one subnet in this account a
+    fabric fleet cannot work in: the addresses that route needs are the addresses the launch
+    shape suppresses. The purpose-built subnet routes to a NAT gateway and needs no addresses
+    at all.
+
+    Resolved by tag rather than written here as an id, so that a subnet recreated under the
+    same name is still found and so that no fact about the account rots inside a workflow.
+    """
+    workflow = load_workflow(LAUNCH_PATH)
+    job = only_job(workflow)
+    resolve = step(job, RESOLVE_STEP)["run"]
+    described = workflow["on"]["workflow_dispatch"]["inputs"]["subnet_id"]["description"]
+
+    assert job["env"]["BLOCK_SUBNET_NAME"] == "edullm-block-nodes"
+    assert 'Name=tag:Name,Values=${BLOCK_SUBNET_NAME}' in resolve
+    assert "default-for-az" not in resolve
+    assert "edullm-block-nodes" in described
+    assert "NAT gateway" in described
+
+
+def test_a_fleet_with_no_public_address_anywhere_is_admitted(
+    launch: dict[str, Any], tmp_path: Path
+) -> None:
+    """THE LAUNCH THIS CHANGE EXISTS TO LET THROUGH, RUN RATHER THAN READ.
+
+    Eight fabric nodes, not one of them carrying a public address, every agent answering. That
+    is what a fleet in the NAT-routed subnet looks like, and the check this replaced refused it
+    outright.
+    """
+    nodes = [(number, f"i-{number:017d}", "running") for number in range(1, 9)]
+
+    result = drive_the_agent_gate(
+        launch,
+        tmp_path,
+        fleet=a_fabric_fleet(*nodes),
+        agents=answering(*((instance_id, "Online") for _, instance_id, _ in nodes)),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "SYSTEMS MANAGER REACHES EVERY NODE IN THIS FLEET" in result.stdout
+    assert "systems manager reaches 8 of 8 nodes" in result.stdout
+
+
+def test_a_fleet_that_never_registers_is_refused_and_sent_to_the_right_place(
+    launch: dict[str, Any], tmp_path: Path
+) -> None:
+    """THE REFUSAL THAT IS KEPT, AND THE WORDING IS MOST OF WHAT IT IS FOR.
+
+    A fleet nothing can drive is eight machines billing a window for nothing, so this still
+    fails. What it must not do is what its predecessor did, which is send whoever is holding
+    the reservation to look for a public address -- an answer that is absent on every correct
+    fabric fleet and tells them nothing when they find it missing. The causes it names instead
+    are the ones that are actually reachable from here: no route out of the subnet, or an
+    instance profile that cannot use Systems Manager.
+    """
+    result = drive_the_agent_gate(
+        launch,
+        tmp_path,
+        fleet=a_fabric_fleet((1, "i-0001", "running"), (2, "i-0002", "running")),
+        agents=answering(),
+    )
+
+    assert result.returncode == 1
+    assert "is running and has never registered with Systems Manager" in result.stderr
+    assert "i-0001" in result.stderr
+    assert "i-0002" in result.stderr
+    assert "NAT gateway" in result.stderr
+    assert "AmazonSSMManagedInstanceCore" in result.stderr
+    assert "DO NOT GO LOOKING FOR A PUBLIC ADDRESS" in result.stderr
+    assert "Nothing is being terminated" in result.stderr
+    assert "block_nodes_never_reached_systems_manager" in result.stderr
+
+
+def test_a_node_that_never_left_pending_is_reported_as_that_and_not_as_a_fault(
+    launch: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: one message for both causes, which is what one refusal string gives you.
+
+    An instance still in ``pending`` has nothing on it yet to register, so there is no route,
+    no policy and no agent to go and look at. Telling somebody to check the subnet routing for
+    a machine that has not finished starting is twenty minutes of the window spent on a fault
+    that is not there.
+    """
+    result = drive_the_agent_gate(
+        launch,
+        tmp_path,
+        fleet=a_fabric_fleet((1, "i-0001", "running"), (2, "i-0002", "pending")),
+        agents=answering(("i-0001", "Online")),
+    )
+
+    assert result.returncode == 1
+    assert "i-0002 is pending rather than running" in result.stderr
+    assert "i-0001" not in result.stderr
+    assert "systems manager reaches 1 of 2 nodes" in result.stdout
+
+
+def test_the_single_interface_fleet_passes_the_same_gate(
+    launch: dict[str, Any], tmp_path: Path
+) -> None:
+    """THE ESCAPE HATCH, WHICH IS NOT HYPOTHETICAL AND WAS CARRYING SOMEBODY THE DAY THIS LANDED.
+
+    ``efa_interfaces=0`` launches one ordinary interface, asks for a public address on it
+    explicitly, and lands in whatever subnet was named. The gate must neither require an
+    address nor be confused by one: it reads the agent list and nothing else, so both shapes
+    reach it by the same road.
+    """
+    fleet = a_fabric_fleet((1, "i-0001", "running"))
+    only = fleet["Reservations"][0]["Instances"][0]
+    only["NetworkInterfaces"] = [{"InterfaceType": "interface"}]
+    only["PublicIpAddress"] = "3.145.101.32"
+
+    result = drive_the_agent_gate(
+        launch, tmp_path, fleet=fleet, agents=answering(("i-0001", "Online"))
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "SYSTEMS MANAGER REACHES EVERY NODE IN THIS FLEET" in result.stdout
 
 
 def test_the_expected_interface_count_is_the_one_the_launch_used(launch: dict[str, Any]) -> None:
@@ -561,9 +874,10 @@ def test_nothing_reads_the_fleet_back_until_every_instance_is_running(
 
     The launch loop returns when the last ``run-instances`` is accepted, so node eight is
     described roughly zero seconds after being asked for. A ``p5.48xlarge`` is ``pending`` for
-    a minute or more and an auto-assigned public address is routinely absent from
-    ``describe-instances`` until it is ``running``. One of the two steps that read the fleet
-    back terminates every instance in it and the other prints an instruction to.
+    a minute or more and a described instance in that state does not carry everything a running
+    one does -- the interface list the fabric check counts fills in as the machine comes up.
+    One of the two steps that read the fleet back terminates every instance in it and the other
+    prints an instruction to.
 
     Named by instance id rather than by the tag filter, which is the part a rewrite would lose:
     under a filter, a machine that terminates while the waiter runs stops matching and the rest
