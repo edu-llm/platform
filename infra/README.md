@@ -1632,8 +1632,7 @@ until somebody applies it. That is the check working, and it is the honest state
 rather than a row this table omits.
 
 **The role name has no `sbsandbox-intern-edullm-` prefix**, unlike every other role in this
-file, because `docs-frank/reference/system-overview.md` and
-`docs-frank/reference/aws-spend-controls.md` both name it `edullm-researcher` and a person
+file, because it is `edullm-researcher` everywhere it is written down and a person
 types it. Two consequences: the deployer's resource scopes key on the long prefix and therefore
 cannot touch it, which is correct because no pipeline may; and the boundary's
 `DenyTamperingWithInternRoles` matches `role/Intern-*` and does not cover it either.
@@ -1656,9 +1655,9 @@ the boundary returns `explicitDeny`, so the check can still fail.
 `aws:PrincipalArn`, the `aws:RequestTag` conditions, `sts:SetSourceIdentity` on a chained call
 and role chaining from a web-identity session are all unproven by the roughly hundred and
 twenty simulations behind the permission policy. Whoever created the role would still pass a
-self-assumption test against a trust policy that accidentally granted only its creator.
-`docs-frank/reference/aws-spend-controls.md`, "The live test plan", step 3 is the one that
-cannot be skipped.
+self-assumption test against a trust policy that accidentally granted only its creator, which
+is why *Proving the trust policy, which needs a second person* below is the step in the live
+test plan that cannot be skipped.
 
 ### What stops `edullm stop` ending somebody else's machine is the CLI, not this policy
 
@@ -1789,7 +1788,9 @@ six times.
 the `ArnLike`, the two `aws:RequestTag` presence tests or `sts:SetSourceIdentity` work. Whoever
 created the role would pass a self-assumption test against a trust policy that accidentally
 granted only its creator, so this is run by a roster member who holds an `Intern-*` role and is
-not the person who applied the stack. The list is in `docs-frank/reference/who-has-what.md`.
+not the person who applied the stack. Who holds one is `aws_identities.roles` in
+`config/organization.yaml`, which is the only place in the platform a person's AWS identity is
+written down.
 
 ```bash
 aws sts assume-role \

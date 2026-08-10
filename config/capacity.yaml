@@ -2,9 +2,9 @@
 #
 # WHY THIS IS A FILE AT ALL. Whether EC2 will sell this account a shape is something the
 # submission path has to warn about, and until this file there was nowhere to read it: `rg -i
-# scarce` over config/ returned nothing, and the scarce shapes were named in prose in
-# docs-frank/reference/system-overview.md and nowhere a generator could read. A behaviour
-# described in a document and absent from the control plane is one nobody can build.
+# scarce` over config/ returned nothing, and the scarce shapes were named only in prose,
+# nowhere a generator could read. A behaviour described in a document and absent from the
+# control plane is one nobody can build.
 #
 # NOTHING HERE OFFERS A SUBSTITUTE, AND THE ABSENCE IS THE POSITION RATHER THAN AN EMPTY COLUMN.
 # This file used to name a replacement wherever it had one, and it had two. #185 re-measured

@@ -4,8 +4,7 @@ WHY THIS COMPONENT EXISTS AND WHY IT SHIPS WITH THE ROLE. edullm-researcher refu
 that carries no ExpiresAt tag. Without something that acts on that tag, the requirement is a
 comment: it produces a tag on every machine, tells thirty-five people their machines expire,
 and stops nothing -- which is worse than having no expiry at all, because people plan around a
-control that does not exist. docs-frank/reference/system-overview.md, "How money gets spent,
-and what stops a mistake", is the specification.
+control that does not exist.
 
 TWO PROPERTIES, AND EVERY RULE BELOW IS ONE OR THE OTHER.
 

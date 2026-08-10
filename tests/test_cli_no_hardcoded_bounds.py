@@ -34,10 +34,10 @@ rather than exempted. That refusal names ``edullm add repository`` now and says 
 about a count.
 
 **THE SECOND RULE IN THIS FILE IS THE SAME RULE AIMED AT PROSE NOBODY PRINTS.** A sweep of
-every citation of ``docs-frank/reference/system-overview.md`` on 2026-08-06 found six claims
+every citation of the written architecture on 2026-08-06 found six claims
 that had gone stale, and the split was clean enough to write down: every claim that rotted
 restated a number, every claim that gave a reason survived, and every rotted number was
-countable from the tree. So a comment may cite that document for why a set is what it is,
+countable from the tree. So a comment may say why a set is what it is,
 and may not say how many are in it. :data:`COUNTABLE` is the handful of things this tree can
 count, and :func:`count_claims` holds a comment's number against the count.
 
@@ -304,8 +304,8 @@ def point_it_at_the_tree(written: list[tuple[int, str, Countable]], *, where: st
             f"({countable.named}, in {countable.tree})"
             for line, said, countable in written
         )
-        + "\n\nDo not delete the sentence, and do not reword the number out of it. Cite "
-        "docs-frank/reference/system-overview.md for why the set is what it is, and name the "
+        + "\n\nDo not delete the sentence, and do not reword the number out of it. Say why "
+        "the set is what it is, and name the "
         "thing in the tree instead of saying how many are in it. 'every verb in BUILT_TODAY' "
         "is still true the day a tenth one lands; 'the nine verbs' is wrong that day and "
         "silent about it."

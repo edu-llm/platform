@@ -1,13 +1,13 @@
 """The three documents an agent reads, held to the tree they describe.
 
-**WHY A TEST AT ALL, WHEN THESE ARE PROSE.** system-overview.md's agent layer states the rule
-they are all built on: a skill restating a threshold in prose is wrong within a month and
+**WHY A TEST AT ALL, WHEN THESE ARE PROSE.** The rule all three are built on is that a skill
+restating a threshold in prose is wrong within a month and
 wrong silently. Nothing tests prose against a threshold, so the failure is not that somebody
 writes the wrong number. It is that nobody ever finds out. These tests are the finding-out.
 
 THREE PROPERTIES, AND EACH ONE IS A THING THAT HAS ALREADY GONE WRONG SOMEWHERE IN THIS
 REPOSITORY. A document naming a verb the binary does not have is `dry-run`, which every
-transcript in docs-frank/working/terminal-mockups/ types. A document naming a flag the parser
+terminal transcript written before the rename types. A document naming a flag the parser
 does not take is `edullm shell --notebook` on a page whose options list held two flags and not
 that one. A document writing out a bound is "any of the nine approvers can release it", which
 was right at one gate by coincidence and wrong by seven at the other.
@@ -89,8 +89,8 @@ FLAG_MENTION = re.compile(r"(?<![\w-])--[a-z][a-z0-9-]*")
 #: A sentence claiming something is not built. Every wording the tree has actually used is in
 #: here, which is the only reason to trust it: a pattern written from imagination matches the
 #: sentences somebody would write on purpose rather than the ones they wrote by accident.
-#: ``AGENTS.md`` said "are settled and not built" and
-#: ``docs-frank/working/what-you-can-test-tonight.md`` said 'print "not built yet"'.
+#: ``AGENTS.md`` said "are settled and not built" and a local planning note said
+#: 'print "not built yet"'.
 UNBUILT_CLAIM = re.compile(
     r"\b(?:not\s+built|unbuilt|not\s+yet\s+built|does\s+not\s+exist\s+yet)\b", re.IGNORECASE
 )
@@ -135,7 +135,7 @@ def test_the_document_exists_and_is_not_empty(document: Path) -> None:
 def test_every_verb_the_document_names_is_a_verb_the_binary_knows(document: Path) -> None:
     """Mutation: write `edullm dry-run` or `edullm activity`.
 
-    Both are real. Every transcript in docs-frank/working/terminal-mockups/ types the first
+    Both are real. Every terminal transcript written before the rename types the first
     and the second was a verb until `status` absorbed it. A retired name in an always-on rule
     is worse than one in a guide, because it is loaded into every session and an agent has no
     reason to doubt it.
@@ -268,7 +268,7 @@ def test_the_wording_this_looks_for_is_the_wording_the_tree_actually_used() -> N
     times, and a detector is the easiest place in a test file for it to hide.
 
     Both sentences below are verbatim: the first is what ``AGENTS.md`` said until 2026-08-05
-    and the second is what ``docs-frank/working/what-you-can-test-tonight.md`` said. The second
+    and the second is what a local planning note said. The second
     is the one that argues for :data:`NAMED_VERB` being wider than :data:`VERB_MENTION`, since
     it names its verbs with no ``edullm`` in front of any of them.
     """

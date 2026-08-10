@@ -56,8 +56,8 @@ def test_the_janitor_may_stop_a_machine_and_never_terminate_one() -> None:
     """THE ONE ASSERTION THIS MODULE EXISTS FOR.
     Mutation: add ec2:TerminateInstances.
 
-    system-overview.md draws the janitor as stopping a machine at expiry, and
-    docs-frank/reference/decisions.md puts strictness on the irreversible half throughout. A
+    The janitor's job is to stop a machine at expiry, and this platform puts its strictness on
+    the irreversible half of a pair throughout. A
     stopped machine keeps its root volume and restarts with one command; a terminated one is
     gone, and the researcher whose work was on it has no recourse and no warning that mattered.
     """

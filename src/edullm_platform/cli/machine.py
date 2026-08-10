@@ -3,8 +3,9 @@
 WHY THIS IS A SERIALIZER AND NOT A SECOND RENDERER. ``Preflight`` is a frozen dataclass of
 pydantic contract models and ``render_preflight`` is a pure function of it; ``RunFacts``
 stands the same way to ``render_run_facts``. Both verbs were structured-first with a human
-renderer bolted on, which is the whole reason ``docs-frank/reference/designing-the-cli.md``
-puts ``--json`` on these two and on no others. ``logs`` and ``cancel`` scan markdown headings
+renderer bolted on, which is the whole reason ``--json`` is on these two and on no others:
+the document is what exists and the paragraphs are derived from it. ``logs`` and ``cancel``
+scan markdown headings
 out of a workflow job log and there is no structure under that, so forcing a document onto
 them would invent a shape rather than publish one.
 

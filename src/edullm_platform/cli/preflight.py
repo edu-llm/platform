@@ -154,10 +154,10 @@ __all__ = [
 #: output of ``git status`` with a sentence on top.
 DIRTY_PATH_SAMPLE: Final = 5
 
-#: The bin rather than a group, and the one team id every member of the roster is in.
-#: ``docs-frank/reference/decisions.md`` records that the guides send every new person here
-#: and that the storage tier gave up the word rather than the team id doing so, because a
-#: team id cannot be renamed without stranding lineage records.
+#: The bin rather than a group, and the one team id every member of the roster is in. The
+#: guides send every new person here, and when the word collided it was the storage tier that
+#: gave it up rather than this team id, because a team id cannot be renamed without stranding
+#: every lineage record that already carries it.
 SCRATCH_TEAM: Final = "scratch"
 
 #: A well-formed digest naming nothing, so that ``RunManifest`` can be built before the
@@ -207,8 +207,8 @@ DEFERRED_TO_SUBMIT: Final = (
 class Refusal:
     """One reason this submission would not survive, with a code and a remedy.
 
-    Both halves, and ``docs-frank/reference/decisions.md`` settles why under "Notification
-    decisions": the code is what a skill and a test match on, the text is what a person
+    Both halves, and the split is settled rather than stylistic: the code is what a skill and
+    a test match on, the text is what a person
     reads. A refusal carrying only the code sends a first-week researcher to edit a
     security exceptions file, which is the failure ``adarsh-rajesh-first-run.md`` records.
     """
@@ -634,9 +634,9 @@ def working_tree_refusals(
 ) -> list[Refusal]:
     """What the recorded path needs of a checkout, asked of this one.
 
-    ``docs-frank/reference/decisions.md`` states the three in one clause -- the recorded
-    path needs a clean tree, a pushed commit and a published image -- and this answers the
-    first two. Both are refusals rather than warnings, and the reason is that neither
+    The recorded path needs three things of a checkout -- a clean tree, a pushed commit and
+    a published image -- and this answers the first two. Both are refusals rather than
+    warnings, and the reason is that neither
     produces an error later: a changed tracked file submits the last commit and silently
     runs code that is not what is on the laptop, and an unpushed commit published no image,
     so the refusal arrives from the registry naming a digest instead of naming a push.
@@ -896,15 +896,14 @@ def resolve_team(
 ) -> tuple[str | None, str, Refusal | None]:
     """Which team this run is charged to, when the submitter did not name one.
 
-    **THIS IS AN OPEN DECISION AND THIS FUNCTION DOES NOT CLOSE IT.**
-    ``docs-frank/reference/decisions.md`` records "How a run picks a team when the submitter
-    is on several" under Pending with two candidates -- the submitter names one from a
-    closed list, or the platform resolves it from the roster and refuses where the roster
-    cannot say -- and neither is ruled. What is implemented is the second, with ``--team``
-    left in place so the first is still reachable by anybody who wants it. Nothing here
-    silently picks, which is the third variant that document warns is the only one nobody
-    would notice going wrong: it bills a lead's own group for work they did as a member of
-    somebody else's.
+    **THIS IS AN OPEN DECISION AND THIS FUNCTION DOES NOT CLOSE IT.** How a run picks a team
+    when the submitter sits on several is still pending, with two candidates -- the submitter
+    names one from a closed list, or the platform resolves it from the roster and refuses
+    where the roster cannot say -- and neither is ruled. What is implemented is the second,
+    with ``--team`` left in place so the first is still reachable by anybody who wants it.
+    Nothing here silently picks, which is the third variant and the only one of the three
+    nobody would notice going wrong: it bills a lead's own group for work they did as a
+    member of somebody else's.
 
     **A PERSONAL DEFAULT IS READ FIRST AND IS NOT A FOURTH VARIANT OF THAT.** It is not the
     platform picking, because the person picked, once, in a file with their name on the

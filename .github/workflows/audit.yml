@@ -120,9 +120,9 @@ name: The audit (what the platform recorded, against what is actually there)
 #   open-asks — the cheapest, and the only one whose subject is neither the account nor a
 #     repository but the people using this one. It counts the open issues
 #     labelled `ask` by kind and says which kinds have reached the threshold
-#     config/reports/asks.yaml names. docs-frank/reference/system-overview.md says one place
-#     makes asks countable "which turns the third identical one into a config change"; this
-#     is that sentence made into a number somebody can read. It is here rather than on the
+#     config/reports/asks.yaml names. One place makes asks countable, which is what turns the
+#     third identical one into a config change; this job
+#     is that rule made into a number somebody can read. It is here rather than on the
 #     pull-request path because what it measures is what other people filed, which no diff
 #     causes and no diff can be blamed for.
 #

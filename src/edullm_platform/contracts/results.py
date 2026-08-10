@@ -161,9 +161,9 @@ class CheckpointPayload(ContractModel):
     of one submission on one dataset legitimately hold different bytes, because the order a
     GPU reduces in is not fixed. Nothing in this platform refuses, retries or warns on a
     difference here. ``run_comparison.VARIANCE_CAUSES`` carries a named cause for it, which
-    is what makes it a line in a report rather than a finding, and
-    ``docs-frank/reference/decisions.md`` records the ruling that what is proven is the same
-    code on the same data on the same machine shape, never the same output bytes.
+    is what makes it a line in a report rather than a finding. The standing ruling is that
+    what a rerun proves is the same code on the same data on the same machine shape, and
+    never the same output bytes.
 
     ``checksum`` is left where it is rather than renamed to what it actually describes.
     Every one of the 133 result records in the store carries it, ``ContractModel`` forbids

@@ -369,14 +369,14 @@
       "module": "edullm_platform.contracts.results",
       "name": "CheckpointManifest",
       "schema_version": "1",
-      "structural_digest": "sha256:24bca2c9f4cdd4658c686a51b154ae9977106e0b02c8e3f29402f5915cba5a6b"
+      "structural_digest": "sha256:c2bd01dd66b84fc9cd9a4d66d3133430ad59df3f2f17238d3076c8e780520608"
     },
     {
       "base": false,
       "module": "edullm_platform.contracts.results",
       "name": "CheckpointPayload",
       "schema_version": "1",
-      "structural_digest": "sha256:e2ec1fe537baed931fe10c8b434c8a040c6e768478d01da985a5780fc25895cb"
+      "structural_digest": "sha256:355b2ce9389b2c12f032a70f91f3703fb26f264420d6a7c36ae20a3f1acca91f"
     },
     {
       "base": false,
@@ -411,7 +411,7 @@
       "module": "edullm_platform.contracts.results",
       "name": "ResultManifest",
       "schema_version": "1",
-      "structural_digest": "sha256:e9513cd0bebe4e83f7b1723d26eb999d2436d55ccb9ce357255046c1c9e3888e"
+      "structural_digest": "sha256:cdb5be73afa9c0d397b0f1bfb5b4c29f7fa55a25b426bba8854c77a731af3e4c"
     },
     {
       "base": false,

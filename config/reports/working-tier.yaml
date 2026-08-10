@@ -2,12 +2,12 @@
 # rule is held equal to.
 #
 # UNDER config/reports/ RATHER THAN config/, AND THAT IS WHAT KEEPS IT OFF THE RELEASE TRIGGER.
-# docs-frank/reference/system-overview.md names nine configuration files as the control plane,
+# Nine configuration files make up the control plane,
 # and .github/workflows/release-tag.yml carries six of those nine as paths an installed CLI can
 # observe. Seven paths under config/ are on that trigger in all, the seventh being
 # config/run-history.json, which is a measurement rather than a rule -- both counts are right
 # and they count different things, which the researcher lane's header writes out. A further
-# file in config/ would either contradict that document or cut a release on every edit to a
+# file in config/ would either contradict that shape or cut a release on every edit to a
 # disk size. config/reports/ is where operational limits that are not the control plane already
 # live, beside config/reports/checkpoint-acknowledgements.yaml and the researcher lane's own
 # settings.
@@ -31,9 +31,9 @@ object_expiry_days: 90
 
 # The root volume every lane machine boots on. The default on the deep-learning AMI is 30 GiB
 # against a base image that is most of that, and the account has already paid for the lesson:
-# docs-frank/superpowers/specs/2026-08-04-platform-buildout-design.md records three pre-training
-# arms killed by P-family instances booting on 30 GiB against a 37.2 GiB corpus, and the Batch
-# environment now boots on 500 GiB. Two hundred is the lane's share of that argument. It is a
+# three pre-training arms were killed by P-family instances booting on 30 GiB against a 37.2 GiB
+# corpus, and the Batch environment now boots on 500 GiB for that reason.
+# Two hundred is the lane's share of that argument. It is a
 # gp3 volume, it is deleted with the instance, and anything worth keeping is in edullm-scratch.
 root_volume_gib: 200
 

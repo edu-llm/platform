@@ -1,6 +1,6 @@
 """``add`` and ``ask``: the two ways somebody changes what this platform will accept.
 
-**THEY ARE TWO VERBS AND NOT ONE, AND ``docs-frank/reference/decisions.md`` SETTLES WHY.**
+**THEY ARE TWO VERBS AND NOT ONE, AND THE SPLIT WAS ARGUED RATHER THAN INHERITED.**
 Teaching the system about a thing, such as a repository, a dataset, a shape, a model or a
 person, produces a config change that is permanent, shared and self-service, with an agent
 writing the pull request. Asking for something for yourself, such as a credential the
@@ -191,8 +191,8 @@ def issue_body(
     person cannot be expected to volunteer it.
 
     Nothing else is collected. No paths, no repository name, no commit. The footer is four
-    facts about the tool rather than about the work, which is the same line
-    ``docs-frank/reference/designing-the-cli.md`` draws around a usage log.
+    facts about the tool rather than about the work, which is the line this CLI draws around
+    anything that reads like a usage log: what the tool is, never what the work is.
     """
     lines = [detail.strip(), "", "---", "", "Filed by edullm."]
     lines.append(f"- who: {submitter or 'gh has recorded nobody'}")

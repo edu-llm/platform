@@ -2,8 +2,8 @@
 
 TWO PROGRAMS ARE SHELLED OUT TO AND NEITHER IS ``aws``. ``git`` answers which repository
 this is, which commit is checked out, whether the tree is clean and whether the commit is
-anywhere a build could have seen it. ``gh`` carries the credential, because
-``docs-frank/reference/system-overview.md`` puts the submission behind ``gh workflow run``
+anywhere a build could have seen it. ``gh`` carries the credential, because the submission
+goes through ``gh workflow run``
 and the trust policy pins the credential to the workflow file rather than to a person --
 so there is no credential for this binary to hold and nothing for it to ask a researcher
 to configure.

@@ -457,10 +457,10 @@ members:
 
 # WHICH AWS ROLE EACH PERSON LAUNCHES UNDER. This is the only place in the platform where a
 # person's AWS identity is written down, and the mismatch list in the morning message is the
-# only thing that reads it. `docs-frank/reference/system-overview.md` under "Where everything
-# is seen" says why nothing else can supply it: the role tag reads the same on all of them,
-# the OIDC subject is an email address against a roster keyed on GitHub logins, and a session
-# tag is exactly what an off-platform launch does not carry.
+# only thing that reads it. Nothing else in the account can supply it, and the three reasons
+# are each sufficient: the role tag reads the same on all of them, the OIDC subject is an
+# email address against a roster keyed on GitHub logins, and a session tag is exactly what an
+# off-platform launch does not carry.
 #
 # A ROLE MISSING FROM THIS LIST IS THE ONE GENUINELY SILENT FAILURE IN THE SURFACE, AND THE
 # MESSAGE PRINTS ITS DENOMINATOR BECAUSE OF IT. Launches under an unlisted role are filtered

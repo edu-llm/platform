@@ -1,8 +1,8 @@
 """Every account read the instruments need, in one place, degrading one source at a time.
 
 **THIS IS THE ONLY MODULE THAT TOUCHES THE ACCOUNT ON THE INSTRUMENTS' BEHALF.** The daily file
-and the per-run snapshot are two publications of one pipeline -- ``docs-frank`` records the split
-under "The activity and the run index are one pipeline and two publications" -- and this is the
+and the per-run snapshot are two publications of one pipeline -- a split that was settled
+deliberately rather than fallen into -- and this is the
 pipeline's mouth. Building either publication as its own reader would mean two ingestions of one
 account, which eventually disagree about one run, and the disagreement would surface as two
 dollar figures for the same thing.

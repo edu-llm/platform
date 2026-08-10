@@ -20,9 +20,8 @@ day before -- and it has moved in a way that strengthens rather than weakens the
 producer side is now demonstrably fixable, and 258 records that predate the fix still have to be
 readable.
 
-Whether an evaluation may read an uncertified checkpoint is recorded in
-``docs-frank/reference/decisions.md``. The ruling is that it may, and that the result manifest
-records that it did.
+Whether an evaluation may read an uncertified checkpoint has been ruled on rather than left
+open. It may, and the result manifest records that it did.
 
 **A step written twice resolves to the later write.** A retried attempt legitimately writes step
 200 again, and both attempts' result manifests report it. Evaluating both puts two points on one

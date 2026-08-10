@@ -1,7 +1,7 @@
 """``edullm add``: what teaching the platform a thing does, and what it refuses to pretend.
 
-WHAT THIS VERB IS. docs-frank/reference/decisions.md, under "`add` and `ask`, not one
-`request`", settles it: teaching the system about a thing, such as a repository, a dataset,
+WHAT THIS VERB IS, SETTLED AS `add` AND `ask` RATHER THAN ONE `request`. Teaching the system
+about a thing, such as a repository, a dataset,
 a shape, a model or a person, produces a config change that is permanent, shared and
 self-service, with an agent writing the pull request. That is one act and `ask` is the other.
 

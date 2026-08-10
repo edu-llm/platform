@@ -10,7 +10,7 @@ than a second activity generator to be merged with the real one later -- is the 
 caller wanted, so nothing here had to change when the caller landed and nothing said so.
 
 **THE MORNING MESSAGE IS THE HALF THAT IS STILL UNBUILT, AND IT IS A DIFFERENT SURFACE.**
-``docs-frank/reference/system-overview.md`` describes both: a message somebody is sent, and an
+The design calls for both: a message somebody is sent, and an
 ``activity/YYYY-MM-DD.md`` in this repository carrying what ran, by whom and at what cost.
 ``config/reports/surfaces.yaml`` carries a row for each, and ``days-activity`` reads yes on
 built and deployed while ``morning-message`` reads no on every stage. So this section reaches a

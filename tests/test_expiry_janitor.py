@@ -1,8 +1,8 @@
 """What the janitor decides, and the four ways deciding it wrong would matter.
 
-THE ONE PROPERTY EVERYTHING HERE PROTECTS: nothing is stopped that was not warned first.
-docs-frank/reference/system-overview.md, "How money gets spent, and what stops a mistake",
-draws the janitor as warning before it stops anything. A janitor that stops a machine somebody
+THE ONE PROPERTY EVERYTHING HERE PROTECTS: nothing is stopped that was not warned first. The
+janitor is specified to warn before it stops
+anything, and it is not an implementation detail. A janitor that stops a machine somebody
 is sitting at, with no warning, teaches thirty-five people that the platform destroys work --
 which is a more expensive outcome than the machine.
 

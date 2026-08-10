@@ -1,7 +1,7 @@
 """Enter the edullm-researcher lane, declaring a project, a lifetime and who you are.
 
-A PYTHON TOOL RATHER THAN THE SHELL SCRIPT docs-frank/reference/aws-spend-controls.md CARRIES.
-The logic is that script's and the reasoning behind every line of it is there. What moves by
+A PYTHON TOOL RATHER THAN THE SHELL SCRIPT THIS STARTED LIFE AS. The logic is that script's,
+restated in a language the suite can reach. What moves by
 being here: the default lifetime is read from config/reports/researcher-lane.yaml instead of
 being a required argument, the two computed values are unit-tested, and mypy --strict covers
 it the way it covers every other tool in this directory.

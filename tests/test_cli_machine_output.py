@@ -2,7 +2,7 @@
 
 WHY THIS EXISTS AT ALL. Every skill under .cursor/skills/ matches on a refusal code, and
 before --json the only way to get one was to match the word after "refused" in a wrapped
-paragraph. docs-frank/reference/designing-the-cli.md settles the shape: one document on
+paragraph. The shape is settled rather than improvised: one document on
 stdout whatever the outcome, the key names tools/compile_submission.py already writes, a
 format_version, and a flag rather than a terminal check.
 
@@ -195,8 +195,8 @@ def test_the_document_carries_every_check_a_laptop_could_not_make(
 ) -> None:
     """Mutation: leave `deferred` out, so a clean check reads as a clean bill of health.
 
-    docs-frank/working/adarsh-rajesh-first-run.md is a transcript of what it costs when a
-    submitter believes a clean preflight means a submission will go through. An agent
+    A first-week researcher's first run is this repository's own transcript of what it costs
+    when a submitter believes a clean preflight means a submission will go through. An agent
     believes it harder and faster than a person does.
 
     Held against ``DEFERRED_TO_SUBMIT`` rather than against a list written here, because

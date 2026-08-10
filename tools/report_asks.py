@@ -1,8 +1,8 @@
 """How many asks of each kind are open, and which kinds have stopped being asks.
 
-docs-frank/reference/system-overview.md, "What you click, and what generates it": one place
-makes asks countable, "which turns the third identical one into a config change". The count is
-not a metric -- it is that sentence made checkable. What the output is for is deciding what to
+One place makes asks countable, and countable is what turns the third identical one into a
+config change. The count is
+not a metric -- it is that rule made checkable. What the output is for is deciding what to
 build, so what it leads with is the kinds that have crossed.
 
 THERE IS NO EXIT CODE 1. tools/report_spend.py carries the same rule and gives the same reason:
