@@ -334,6 +334,151 @@ def test_a_clock_ahead_of_the_reader_reports_zero_rather_than_a_negative_duratio
     assert elapsed_as(NOW + timedelta(minutes=5), now=NOW) == "0h00m"
 
 
+# ---------------------------------------------------------------------------------------
+# A CLAIM WHOSE CONTAINER IS GONE, WHICH USED TO BE INDISTINGUISHABLE FROM A BUSY MACHINE.
+# ---------------------------------------------------------------------------------------
+#
+# Nothing on a node removes a claim when a container exits. A run that finished hours ago leaves
+# the machine reading as held by a name and a person, with no cards in use, and every reader
+# above turned that into ``node_is_busy`` naming a colleague who had gone home. It was measured
+# on this fleet: ``node_is_busy`` printed beside ``0/8 cards in use``. The cure -- ``edullm-node
+# release`` -- is a verb somebody has to already know about, in a shell fifteen of the
+# thirty-five people here hold no role to open, so what the refusal really said was "ask
+# somebody". The only lever a researcher had was ``take_the_node_anyway``, whose own description
+# promises a fight for memory with a run that does not exist.
+#
+# **ZERO CARDS IN USE IS NOT THE EVIDENCE AND MUST NEVER BE TREATED AS IT.** A run that is
+# cloning, importing torch, sharding a corpus or simply between steps holds no cards while being
+# entirely alive, and the claim is written *before* the clone precisely so that two dispatches
+# seconds apart cannot both proceed. A reader that called an idle-carded claim stale would hand
+# the machine to a second job during the first one's start-up, which is the collision the claim
+# exists to prevent, reintroduced by the code meant to police it. The container is the evidence.
+
+
+def test_a_claim_whose_container_has_gone_is_reported_as_stale() -> None:
+    """Mutation: leave the reading with no opinion about the container.
+
+    This is the state a finished run leaves on every node, and the whole point of asking is that
+    the answer differs from the one a live run gives while the two look identical in every other
+    field.
+    """
+    reading = parse_reading(
+        node=1,
+        instance_id="i-0001",
+        status="Success",
+        output=(
+            "gpus_total\t8\ngpus_busy\t0\nrun\tmfu-smoke\nwho\tana\n"
+            "started_at\t2026-08-08T11:48:00+00:00\ncontainer\tgone\nready\ttrue\n"
+        ),
+    )
+
+    assert reading.container == "gone"
+    assert reading.claim_is_stale
+
+
+def test_a_claim_taken_seconds_ago_whose_container_is_up_is_not_stale() -> None:
+    """Mutation: decide staleness from ``gpus_busy`` instead of from the container.
+
+    Zero cards and a live container is what the first minute of every run looks like: the claim
+    is taken before the clone, the clone is tens of seconds, and torch has not been imported
+    yet. Calling this stale is how a second dispatch lands on a machine that is already starting.
+    """
+    reading = parse_reading(
+        node=1,
+        instance_id="i-0001",
+        status="Success",
+        output=(
+            "gpus_total\t8\ngpus_busy\t0\nrun\tmfu-smoke\nwho\tana\n"
+            "container\trunning\nready\ttrue\n"
+        ),
+    )
+
+    assert not reading.claim_is_stale
+
+
+def test_a_dead_container_beside_busy_cards_is_not_offered_up_as_stale() -> None:
+    """Mutation: drop the card count from the staleness test.
+
+    A claimed container that has exited while eight cards are still busy is not an abandoned
+    machine -- it is a machine with something on it this lane did not start. Telling anybody to
+    clear the claim there is telling them to take a node out from under whatever that is.
+    """
+    reading = parse_reading(
+        node=1,
+        instance_id="i-0001",
+        status="Success",
+        output=(
+            "gpus_total\t8\ngpus_busy\t8\nrun\tmfu-smoke\nwho\tana\n"
+            "container\tgone\nready\ttrue\n"
+        ),
+    )
+
+    assert not reading.claim_is_stale
+
+
+def test_a_node_reading_from_a_fleet_that_predates_the_container_line_is_not_stale() -> None:
+    """Mutation: default an absent container to ``gone``.
+
+    The reading script gained that line after fleets had already booted, and a running node
+    keeps the bootstrap it launched with. An absent fact has to mean "not known" or every node
+    of an older fleet reads as abandoned to a laptop updated today -- which would advise
+    releasing eight live claims at once.
+    """
+    reading = parse_reading(
+        node=1,
+        instance_id="i-0001",
+        status="Success",
+        output="gpus_total\t8\ngpus_busy\t0\nrun\tmfu-smoke\nwho\tana\nready\ttrue\n",
+    )
+
+    assert reading.container is None
+    assert not reading.claim_is_stale
+
+
+def test_the_status_table_names_a_stale_claim_and_the_verb_that_clears_it() -> None:
+    """Mutation: report a stale claim as an ordinary busy node.
+
+    ``block-status.yml`` is the first thing the procedure tells a researcher to dispatch, so it
+    is where the difference has to be legible. A row that says a name and a person and nothing
+    else sends them to a colleague; a row that says the container exited and names the verb
+    sends them to the cure.
+    """
+    rows = status_rows(
+        (
+            parse_reading(
+                node=1,
+                instance_id="i-0001",
+                status="Success",
+                output=(
+                    "gpus_total\t8\ngpus_busy\t0\nrun\tmfu-smoke\nwho\tana\n"
+                    "started_at\t2026-08-08T13:00:00+00:00\ncontainer\tgone\nready\ttrue\n"
+                ),
+            ),
+        ),
+        now=NOW,
+    )
+
+    assert "STALE CLAIM" in rows[0]
+    assert "mfu-smoke" in rows[0]
+    assert "edullm-node release" in rows[0]
+    assert "2h00m" in rows[0]
+
+
+def test_the_reading_script_asks_docker_about_the_claimed_name() -> None:
+    """Mutation: ask ``nvidia-smi`` twice and call the second answer a container.
+
+    The script is a string sent to a machine, so nothing type-checks it. What is asserted here
+    is that it asks the one question the claim cannot answer about itself, filtered to the name
+    the claim carries rather than to any container at all -- a node running two containers, one
+    of them somebody's forced second run, must not report the claim as alive because *a*
+    container exists.
+    """
+    assert "docker ps" in REMOTE_READING_SCRIPT
+    assert 'name=^edullm-${held}$' in REMOTE_READING_SCRIPT
+    assert "printf 'container\\trunning\\n'" in REMOTE_READING_SCRIPT
+    assert "printf 'container\\tgone\\n'" in REMOTE_READING_SCRIPT
+
+
 def test_a_held_node_reports_hours_and_minutes_and_never_days() -> None:
     """Seventy-two hours is the longest window this lane serves, and ``2d3h`` makes a reader
     do arithmetic to find out whether their run is about to be cut off by the end of it."""

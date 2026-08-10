@@ -301,6 +301,12 @@ container_of() {
   docker ps --quiet --filter "name=^edullm-$1$" 2>/dev/null
 }
 
+# EVERY CONTAINER OF THAT NAME, NOT ONLY THE RUNNING ONE, because `docker run --name` collides
+# with an exited one too. tests/test_block_node_claim.py has the reasoning.
+container_named() {
+  docker ps --all --quiet --filter "name=^edullm-$1$" 2>/dev/null
+}
+
 busy_gpus() {
   nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader 2>/dev/null |
     sort --unique | grep --count . || true
@@ -313,6 +319,21 @@ total_gpus() {
 write_claim() {
   printf '{"run":"%s","who":"%s","repository":"%s","branch":"%s","commit":"%s","started_at":"%s"}\n' \
     "$1" "$2" "$3" "$4" "$5" "$(now)" > "${CLAIM}"
+}
+
+# TAKING THE CLAIM, NOT CHECKING AND THEN WRITING IT. `noclobber` makes the redirect
+# O_CREAT|O_EXCL, so the kernel picks one winner. tests/test_block_node_claim.py says why.
+take_claim() {
+  if (set -o noclobber; : > "${CLAIM}") 2>/dev/null; then
+    write_claim "$@"
+    return 0
+  fi
+  # Held. Ours if it names this run, which is a re-dispatch rather than a collision.
+  [ "$(claim_field run)" = "$1" ]
+}
+
+held_by() {
+  echo "node ${EDULLM_BLOCK_NODE} is held by $(claim_field who) for $(claim_field run) since $(claim_field started_at)"
 }
 
 # THE CLAIM `run` TOOK, GIVEN BACK WHEN NOTHING ENDS UP RUNNING. THIS IS THE OTHER HALF OF
@@ -386,12 +407,11 @@ do_status() {
 do_claim() {
   local name="${1:-}" who="${2:-unknown}"
   [[ "${name}" =~ ${SAFE_NAME} ]] || die "a run name must match ${SAFE_NAME}"
-  local held
-  held="$(claim_field run)"
-  if [ -n "${held}" ] && [ "${held}" != "${name}" ]; then
-    die "node ${EDULLM_BLOCK_NODE} is held by $(claim_field who) for ${held} since $(claim_field started_at)"
+  # The distributed tool sends this verb to a whole node set at once, so an atomic take here is
+  # what makes all-or-nothing actually all or nothing.
+  if ! take_claim "${name}" "${who}" "" "" ""; then
+    die "$(held_by)"
   fi
-  write_claim "${name}" "${who}" "" "" ""
   echo "node ${EDULLM_BLOCK_NODE} claimed by ${who} for ${name}"
 }
 
@@ -425,22 +445,33 @@ do_run() {
   [[ "${branch}" =~ ${SAFE_REF} ]] || die "--branch must match ${SAFE_REF}"
   [[ "${repository}" =~ ${SAFE_REF} ]] || die "--repository must match ${SAFE_REF}"
 
-  local held
-  held="$(claim_field run)"
-  if [ -n "${held}" ] && [ "${held}" != "${name}" ] && [ "${force}" != "--force" ]; then
-    die "node ${EDULLM_BLOCK_NODE} is held by $(claim_field who) for ${held} since $(claim_field started_at)"
-  fi
   if [ -n "$(container_of "${name}")" ]; then
     die "${name} is already running on node ${EDULLM_BLOCK_NODE}"
   fi
 
   # THE CLAIM IS TAKEN BEFORE THE CLONE AND REWRITTEN AFTER IT. A clone of OLMo-core is tens
   # of seconds, and two people dispatching within that window both read an unheld node and
-  # both proceed. Writing the claim first closes the window at the cost of a claim carrying
-  # no commit for as long as the clone takes, which reads as what it is on `status`.
-  write_claim "${name}" "${who}" "${repository}" "${branch}" ""
+  # both proceed. Taking the claim first closes the window at the cost of a claim carrying
+  # no commit for as long as the clone takes, which reads as what it is on `status`. Forcing
+  # overwrites rather than takes, which is the whole meaning of the flag.
+  if [ "${force}" = --force ]; then
+    write_claim "${name}" "${who}" "${repository}" "${branch}" ""
+  elif ! take_claim "${name}" "${who}" "${repository}" "${branch}" ""; then
+    die "$(held_by)"
+  fi
   UNSTARTED="${name}"
   trap give_the_claim_back EXIT
+
+  # THE CORPSE OF THE LAST RUN OF THIS NAME, CLEARED HERE RATHER THAN MET AT THE LAST LINE.
+  # `docker rm` without `--force` refuses a *running* container, which is what makes this safe
+  # rather than merely convenient: the daemon decides, not a `docker ps` milliseconds earlier.
+  if [ -n "$(container_named "${name}")" ]; then
+    if docker rm "edullm-${name}" > /dev/null 2>&1; then
+      echo "removed the exited container an earlier ${name} left behind"
+    else
+      die "edullm-${name} exists on node ${EDULLM_BLOCK_NODE} and would not be removed, so docker run will refuse the name. Use one nobody has used here."
+    fi
+  fi
 
   # CLONED FRESH EVERY TIME RATHER THAN PULLED INTO WHAT IS THERE. A directory left by an
   # earlier run of the same name is a tree at an unknown commit with unknown local edits,
@@ -494,6 +525,9 @@ do_run() {
   # `docker logs` for somebody sitting on the machine, and the file for the sync that
   # carries it to S3 for everybody who is not. `set -o pipefail` inside is what keeps the
   # exit status the trainer's rather than tee's.
+  #
+  # `PYTHONUNBUFFERED=1` for the reason infra/block-distributed-launch.sh gives: `--no-python`
+  # drops the interpreter that carried `-u`, and a process dying at start-up takes its buffer.
   docker run --detach \
     --name "edullm-${name}" \
     --gpus all \
@@ -517,6 +551,7 @@ do_run() {
     --env "EDULLM_WANDB_PROJECT=${project}" \
     --env "WANDB_RUN_ID=${name}" \
     --env "WANDB_NAME=${name}" \
+    --env PYTHONUNBUFFERED=1 \
     "${EDULLM_BLOCK_IMAGE}" \
     bash -lc "set -o pipefail; ${command} 2>&1 | tee -a /work/log/train.log"
 

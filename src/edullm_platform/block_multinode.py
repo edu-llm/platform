@@ -62,16 +62,19 @@ __all__ = [
     "cards_per_node",
     "choose_nodes",
     "command_refusals",
+    "exec_refusals",
     "expert_parallel_choices",
     "launch_markdown",
     "mesh_for",
     "mesh_refusals",
+    "names_a_launcher",
     "node_local_expert_parallel",
     "outcomes",
     "plan_launch",
     "refused",
     "rendezvous_for",
     "run_name_refusals",
+    "single_node_launch",
     "torchrun_command",
     "with_mesh_flags",
 ]
@@ -470,32 +473,33 @@ def rendezvous_for(
     return Rendezvous(host=host, port=port, run_id=run)
 
 
-def command_refusals(command: str) -> tuple[str, ...]:
-    """Whether the training command is the thing this path is going to wrap, or already wrapped.
+def names_a_launcher(command: str) -> str | None:
+    """Which launcher this command already carries, or ``None``.
 
-    What belongs here is the entrypoint and its arguments -- ``python .edullm/train.py --flag``
-    -- because the rendezvous flags depend on which machines were claimed and cannot be written
-    into a branch days earlier. A command that already names a launcher is about to be launched
-    twice: eight agents per node, each starting eight workers that each start eight more.
-
-    **THE REST OF THESE ARE THE SHAPES ``--no-python`` CANNOT EXEC, AND EACH OF THEM IS QUIET
-    EVERYWHERE ELSE.** :func:`torchrun_command` passes that flag, so torchrun execs the first
-    word instead of handing it to an interpreter and the first word has to name a program.
-    Both of the spellings that do not are things somebody would reasonably write, both are
-    accepted by the workflow form, by ``yaml.safe_load`` and by every check upstream of here,
-    and both arrive as sixty-four identical failures a minute after the containers are up. The
-    refusal costs a second at dispatch; the alternative costs what is left of the window.
+    Split out from :func:`command_refusals` because the two lanes want opposite things from the
+    same fact. Across several nodes a launcher already in the command is a refusal, since the
+    rendezvous flags depend on machines claimed seconds ago. On one node it is a person who has
+    said what shape they want, and the right response is to leave it alone.
     """
-    refusals: list[str] = []
-    if not command.strip():
-        return ("the command resolved to nothing",)
     for launcher in _LAUNCHERS:
         if launcher in command:
-            refusals.append(
-                f"the command already names {launcher!r}, and this path wraps it in one. "
-                "Pass the entrypoint and its arguments only; the rendezvous flags are decided "
-                "here because they depend on which nodes were claimed."
-            )
+            return launcher
+    return None
+
+
+def exec_refusals(command: str) -> tuple[str, ...]:
+    """The shapes ``--no-python`` cannot exec, whatever the node count.
+
+    **EACH OF THEM IS QUIET EVERYWHERE ELSE.** :func:`torchrun_command` passes that flag, so
+    torchrun execs the first word instead of handing it to an interpreter and the first word
+    has to name a program. Both of the spellings that do not are things somebody would
+    reasonably write, both are accepted by the workflow form, by ``yaml.safe_load`` and by
+    every check upstream of here, and both arrive as one identical failure per rank a minute
+    after the containers are up. The refusal costs a second at dispatch; the alternative costs
+    what is left of the window.
+    """
+    if not command.strip():
+        return ("the command resolved to nothing",)
     try:
         words = shlex.split(command)
     except ValueError as error:
@@ -504,13 +508,13 @@ def command_refusals(command: str) -> tuple[str, ...]:
         # composed line is re-split by the container's own `bash -lc`, so a quote that never
         # closes swallows the redirection and the log pipe written after the command.
         return (
-            *refusals,
             (
                 f"the command does not parse as a shell line: {error}. The launch line is "
                 "re-split by the shell inside the container, so an unclosed quote takes the "
                 "redirection and the `tee` that follow it into the argument it opened."
             ),
         )
+    refusals: list[str] = []
     first = words[0]
     if first.endswith(".py"):
         refusals.append(
@@ -528,6 +532,110 @@ def command_refusals(command: str) -> tuple[str, ...]:
             "`.edullm/train_on_corpus.py` puts its own clone on `sys.path`."
         )
     return tuple(refusals)
+
+
+def command_refusals(command: str) -> tuple[str, ...]:
+    """Whether the training command is the thing this path is going to wrap, or already wrapped.
+
+    What belongs here is the entrypoint and its arguments -- ``python .edullm/train.py --flag``
+    -- because the rendezvous flags depend on which machines were claimed and cannot be written
+    into a branch days earlier. A command that already names a launcher is about to be launched
+    twice: eight agents per node, each starting eight workers that each start eight more.
+    """
+    if not command.strip():
+        return ("the command resolved to nothing",)
+    refusals: list[str] = []
+    launcher = names_a_launcher(command)
+    if launcher is not None:
+        refusals.append(
+            f"the command already names {launcher!r}, and this path wraps it in one. "
+            "Pass the entrypoint and its arguments only; the rendezvous flags are decided "
+            "here because they depend on which nodes were claimed."
+        )
+    return (*refusals, *exec_refusals(command))
+
+
+def single_node_launch(
+    *, command: str, processes: str, cards: int
+) -> tuple[str, tuple[str, ...]]:
+    """What one node actually runs, given a command and how many processes it should start.
+
+    **THE PROBLEM THIS EXISTS FOR IS THAT ONE PROCESS ON EIGHT CARDS LOOKS EXACTLY LIKE EIGHT.**
+    ``edullm-node run`` hands its command to ``bash -lc`` and that starts a single process, so a
+    training entrypoint dispatched onto a ``p5.48xlarge`` uses one H100 and leaves seven idle.
+    Nothing reports it. The run starts, the loss falls, and the only evidence is a step time
+    against a baseline nobody has on the first day. It is how the first attempts on this fleet
+    died, and the knowledge needed to avoid it -- that this lane's single-node path wants its
+    own ``torchrun --standalone --nproc-per-node 8`` in front of the command -- was written
+    down nowhere a researcher would look.
+
+    **``auto`` ANSWERS ONLY WHERE THERE IS ONE ANSWER, AND REFUSES WHERE THERE ARE TWO.** A bare
+    command on a multi-card node is either a training run that wants every card or a
+    tokenisation, an evaluation or a data job that wants exactly one, and nothing here can tell
+    those apart. Defaulting to one leaves the trap where it was. Defaulting to all of them
+    starts eight copies of a single-process job, each writing the same output prefix, which is
+    worse than the trap. So the ambiguous case is named and handed back: a refusal costs one
+    dispatch and a wrong guess costs the difference between eight cards and one for as long as
+    the run was going to take.
+
+    **A COMMAND THAT BROUGHT ITS OWN LAUNCHER IS LEFT ALONE**, because wrapping it would start
+    one agent per card each starting one worker per card. Asking for a process count *as well*
+    is a contradiction rather than an emphasis, and is refused rather than resolved -- the two
+    numbers would disagree and only one of them would take effect.
+
+    Returns the command to run and every reason it cannot be built, in the collect-rather-than-
+    raise shape :func:`plan_launch` uses, so that a caller reports all of them at once.
+    """
+    if not command.strip():
+        return command, ("the command resolved to nothing",)
+
+    launcher = names_a_launcher(command)
+    if launcher is not None:
+        if processes != "auto":
+            return command, (
+                (
+                    f"the command already names {launcher!r} and processes={processes} asks "
+                    "for a second launcher around it. Leave processes at auto to run the "
+                    "command as written, or take the launcher out of the command."
+                ),
+            )
+        return command, ()
+
+    if processes == "auto":
+        if cards > 1:
+            return command, (
+                (
+                    f"the command names no launcher and this node has {cards} cards, so it "
+                    f"would run one process on one card and leave {cards - 1} idle. Say which "
+                    "you meant: processes=all for one process per card, processes=1 to run it "
+                    "exactly as written."
+                ),
+            )
+        return command, ()
+
+    if processes == "1":
+        return command, ()
+
+    wanted = cards if processes == "all" else int(processes) if processes.isdigit() else 0
+    if wanted < 1 or wanted > max(cards, 0):
+        return command, (
+            (
+                f"processes={processes} resolves to {wanted} against {cards} cards on this "
+                "node. More workers than there are devices fight each other for memory, and "
+                "none at all means this node's driver enumerated nothing."
+            ),
+        )
+
+    refusals = exec_refusals(command)
+    if refusals:
+        return command, refusals
+    # `--standalone` rather than a rendezvous endpoint typed out. It is torchrun's own
+    # single-node form and it binds the store on an ephemeral port, so two runs forced onto one
+    # machine cannot collide over 29400 the way a fixed port would.
+    return (
+        f"torchrun --standalone --nproc-per-node={wanted} --no-python {command}",
+        (),
+    )
 
 
 def run_name_refusals(run: str) -> tuple[str, ...]:
