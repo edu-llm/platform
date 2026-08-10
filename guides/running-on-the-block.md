@@ -432,7 +432,14 @@ gh workflow run block-release.yml --ref main -R edu-llm/platform -f nodes=3
 ```
 
    Pass a comma-separated list for several, or `all` to sweep the fleet. Then dispatch your run
-   again.
+   again. A node number that is not in the fleet is named in the summary rather than dropped, so
+   a typo reads as a typo instead of as an empty block.
+
+   **If it dies at `configure-aws-credentials` with a message about a subject claim, that is not
+   your dispatch.** Every workflow here is named individually in an IAM trust policy that is
+   applied by hand from a laptop, and this button is newer than the last time somebody applied
+   it. Say so in the channel; it is one command for whoever holds the deployer role and nothing
+   you can do from a browser.
 
 3. **Ask somebody with an AWS role** if that refused and you think it should not have. Name the
    node number and the run name off the table in the channel; if nobody answers,

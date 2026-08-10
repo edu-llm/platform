@@ -382,7 +382,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     now = datetime.now(tz=UTC)
     if arguments.summary:
         with Path(arguments.summary).open("a", encoding="utf-8") as page:
-            page.write(release_markdown(readings, now=now, who=arguments.who) + "\n")
+            page.write(
+                release_markdown(readings, now=now, who=arguments.who, missing=missing) + "\n"
+            )
 
     if arguments.json:
         print(_as_json(readings, missing=missing, who=arguments.who))

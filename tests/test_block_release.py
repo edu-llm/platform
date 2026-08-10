@@ -508,6 +508,62 @@ def test_the_summary_names_who_ended_the_lock() -> None:
     assert "safety property working" in page
 
 
+def test_a_node_number_that_is_not_in_the_fleet_reaches_the_page_and_not_only_the_log() -> None:
+    """THE SUMMARY IS THE WHOLE OF WHAT THE READER THIS BUTTON EXISTS FOR CAN SEE.
+
+    :func:`chosen` separates the numbers that are not in the fleet, the tool prints them to
+    stderr, and until this test they went no further. A dispatch naming node 9 against an
+    eight-node fleet therefore rendered as a page saying there was nothing to ask -- which reads
+    as *the block is gone* to somebody who typed one character wrong, and is the same misreading
+    the workflow refuses a malformed reservation id one step earlier to avoid.
+    """
+    page = release_markdown([], now=datetime.now(tz=UTC), who="a-researcher", missing=[9])
+
+    assert "- node 9" in page
+    assert "no running instance in this fleet" in page
+    assert "nothing to ask" not in page, (
+        "an empty fleet and a node number that is not in it are different answers, and this one "
+        "tells a researcher the block is gone"
+    )
+
+
+def test_an_empty_fleet_still_says_so_when_nobody_named_a_node_that_is_missing() -> None:
+    """Mutation: drop the empty-fleet sentence now that the branch above it is conditional.
+
+    A sweep that found no tagged instance at all is a real reading and a different one -- the
+    fleet has been reclaimed, or the reservation filter matched nothing -- and a page that went
+    silent on it would answer that with a heading and no words under it.
+    """
+    page = release_markdown([], now=datetime.now(tz=UTC), who="a-researcher")
+
+    assert "No running instance carries a node tag here" in page
+
+
+def test_the_tool_hands_the_missing_nodes_to_the_page_rather_than_only_to_stderr() -> None:
+    """The seam between the two tests above and the file that has to join them.
+
+    ``release_markdown`` growing the parameter proves nothing on its own: the whole defect was a
+    caller that had the list and wrote it somewhere a browser does not go. Read out of the syntax
+    because the tool prints the same numbers to stderr as well, on purpose, for the maintainer
+    running it from a laptop -- so the name appears in this file either way and only the call
+    argument settles it.
+    """
+    tree = ast.parse(RELEASE_TOOL.read_text(encoding="utf-8"))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "release_markdown"
+    ]
+
+    assert len(calls) == 1, "the tool writes the job summary in one place and this found another"
+    assert "missing" in {keyword.arg for keyword in calls[0].keywords}, (
+        "the job summary is built without the node numbers that are not in the fleet, so a "
+        "mistyped number reaches the log and never the page the dispatcher reads"
+    )
+
+
 # --------------------------------------------------------------------------------------
 # THE WORKFLOW.
 # --------------------------------------------------------------------------------------

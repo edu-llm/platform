@@ -313,7 +313,11 @@ def not_given_back(readings: Iterable[ReleaseReading]) -> tuple[str, ...]:
 
 
 def release_markdown(
-    readings: Sequence[ReleaseReading], *, now: datetime, who: str
+    readings: Sequence[ReleaseReading],
+    *,
+    now: datetime,
+    who: str,
+    missing: Sequence[int] = (),
 ) -> str:
     """The same reading as a job summary, for the people who have no other way to see it.
 
@@ -322,6 +326,16 @@ def release_markdown(
     extend, so ending somebody else's should leave a trace where the next person to read the
     node will find it. The durable half of that trace is the Systems Manager comment, which
     carries the same name into CloudTrail; this half is the one a researcher can read.
+
+    **THE NODE NUMBERS THAT ARE NOT IN THE FLEET ARE A PARAMETER HERE RATHER THAN SOMETHING THE
+    CALLER PRINTS ELSEWHERE, AND LEAVING THEM OUT PRODUCED THE ONE LIE THIS PAGE COULD TELL.**
+    :func:`~tools.block_release.chosen` separates them out precisely so a dispatch naming node 9
+    against an eight-node fleet does not read as a report about the machines that do exist. Sent
+    only to stderr, they reached the job log and not this page -- and this page is the whole of
+    what a researcher with no AWS role ever sees, so the render was the summary below saying
+    "there was nothing to ask": *the block is gone*, to somebody who typed one character wrong.
+    ``.github/workflows/block-release.yml`` refuses a malformed reservation id one step earlier
+    to avoid exactly that reading, which is how far the intent got before the page undid it.
     """
     ended = [reading for reading in readings if reading.verdict == "released" and reading.cleared]
     kept = [reading for reading in readings if reading.reachable and reading.verdict == "refused"]
@@ -335,8 +349,29 @@ def release_markdown(
         f"| refused, still running | {len(kept)} |",
         "",
     ]
+
+    if missing:
+        lines += [
+            (
+                "**These node numbers carry no running instance in this fleet, so nothing was "
+                "asked of them and no claim of theirs was touched.** Check the number against "
+                "`Block: which node is free`, which counts the machines that are actually up. "
+                "If two blocks have a fleet going at once, node numbers repeat across them and "
+                "the reservation id is what tells them apart."
+            ),
+            "",
+            *(f"- node {number}" for number in missing),
+            "",
+        ]
+
     if not readings:
-        lines.append("No running instance carries a node tag here, so there was nothing to ask.")
+        # Silent when something *was* asked for and was simply not here. The sentence below is
+        # about an empty fleet, and printing it under the list above would answer a mistyped
+        # node number with "the block is gone".
+        if not missing:
+            lines.append(
+                "No running instance carries a node tag here, so there was nothing to ask."
+            )
         return "\n".join(lines)
 
     lines += ["```", *release_rows(readings, now=now), "```", ""]
