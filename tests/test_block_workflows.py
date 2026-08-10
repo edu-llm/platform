@@ -63,11 +63,13 @@ DRAIN_FILE = "block-drain.yml"
 LOGS_FILE = "block-logs.yml"
 DISTRIBUTED_FILE = "block-run-distributed.yml"
 STATUS_FILE = "block-status.yml"
+RELEASE_FILE = "block-release.yml"
 LAUNCH_PATH = WORKFLOWS_ROOT / LAUNCH_FILE
 RUN_PATH = WORKFLOWS_ROOT / RUN_FILE
 DRAIN_PATH = WORKFLOWS_ROOT / DRAIN_FILE
 LOGS_PATH = WORKFLOWS_ROOT / LOGS_FILE
 STATUS_PATH = WORKFLOWS_ROOT / STATUS_FILE
+RELEASE_PATH = WORKFLOWS_ROOT / RELEASE_FILE
 BOOTSTRAP_PATH = PROJECT_ROOT / "infra" / "block-node-bootstrap.sh"
 ROLE_TEMPLATE = PROJECT_ROOT / "infra" / "iam" / "block-fleet-roles.yaml"
 STATUS_TOOL = PROJECT_ROOT / "tools" / "block_status.py"
@@ -87,7 +89,15 @@ PROCESSES_STEP = "Decide how many processes the command starts"
 #: Every workflow file in this lane. One role serves all of them -- see the template for why
 #: splitting it would suggest a boundary that does not exist -- and this tuple is the thing the
 #: trust policy has to agree with in both directions.
-BLOCK_WORKFLOWS = (LAUNCH_FILE, RUN_FILE, DRAIN_FILE, LOGS_FILE, DISTRIBUTED_FILE, STATUS_FILE)
+BLOCK_WORKFLOWS = (
+    LAUNCH_FILE,
+    RUN_FILE,
+    DRAIN_FILE,
+    LOGS_FILE,
+    DISTRIBUTED_FILE,
+    STATUS_FILE,
+    RELEASE_FILE,
+)
 
 #: The variable each of them names for the role it assumes.
 ROLE_VARIABLE = "AWS_BLOCK_FLEET_ROLE_ARN"
@@ -1216,9 +1226,11 @@ def test_every_block_workflow_assumes_the_role_the_template_names_for_it() -> No
     review, or at merge -- it fails at ``AssumeRole``, at the moment of the one dispatch that
     matters, with a message about a subject claim rather than about a filename.
 
-    Adding a file fails the same way and is the likelier direction now that there are four.
-    The trust list is an enumeration, so a workflow whose path is not in it holds no AWS
-    identity at all until somebody re-applies the stack from a laptop.
+    Adding a file fails the same way and is by now the likelier direction: this lane grows a
+    workflow every time somebody finds another thing the fifteen people with no AWS role cannot
+    do. The trust list is an enumeration rather than a pattern, so a workflow whose path is not
+    in it holds no AWS identity at all -- not a narrow one, none -- until somebody re-applies
+    the stack from a laptop.
     """
     trust = ROLE_TEMPLATE.read_text(encoding="utf-8")
 
@@ -1229,9 +1241,10 @@ def test_every_block_workflow_assumes_the_role_the_template_names_for_it() -> No
 
 
 def test_nothing_else_in_the_tree_assumes_the_block_fleet_role() -> None:
-    """The trust names four files and this is the other half of that claim. A fifth workflow
-    reaching for the variable is one whose token the role will refuse, which presents as a
-    broken credentials step rather than as a policy that has not been widened."""
+    """The trust names an exact set of files and this is the other half of that claim. A
+    workflow reaching for the variable without being in it is one whose token the role will
+    refuse, which presents as a broken credentials step rather than as a policy that has not
+    been widened."""
     reaching = sorted(
         path.name
         for path in WORKFLOWS_ROOT.glob("*.yml")
@@ -1623,10 +1636,15 @@ def test_the_reading_that_says_which_node_is_free_has_a_workflow_of_its_own() ->
 
 def test_reading_a_log_is_deliberately_not_limited_to_admins() -> None:
     """The property somebody tidying this up would break first, and it is the same one
-    ``block-run.yml`` carries. These three workflows exist because roughly fifteen of the
+    ``block-run.yml`` carries. These four workflows exist because roughly fifteen of the
     thirty-five people here hold no AWS role; an admin guard on any of them hands the door back
-    to the twenty who never needed it."""
-    for path in (DRAIN_PATH, LOGS_PATH, STATUS_PATH):
+    to the twenty who never needed it.
+
+    ``block-release.yml`` is the sharpest case of the four and the one most likely to attract a
+    guard, because it is the only one that changes something rather than reporting on it. What
+    it changes is a lock the node refuses to break over live work, and the population it exists
+    for is exactly the population a guard would exclude."""
+    for path in (DRAIN_PATH, LOGS_PATH, STATUS_PATH, RELEASE_PATH):
         job = only_job(load_workflow(path))
         names = [item.get("name", "") for item in job["steps"]]
 
@@ -1641,6 +1659,7 @@ def test_every_expression_in_the_reporting_workflows_names_something_real() -> N
     assert unreal_context_references(DRAIN_PATH) == []
     assert unreal_context_references(LOGS_PATH) == []
     assert unreal_context_references(STATUS_PATH) == []
+    assert unreal_context_references(RELEASE_PATH) == []
 
 
 @pytest.mark.slow

@@ -769,9 +769,14 @@ def status_rows(readings: Sequence[NodeReading], *, now: datetime) -> tuple[str,
                 if reading.started_at is not None
                 else ""
             )
+            # The remedy is named as the workflow rather than as the node command, for the
+            # reason `.github/workflows/block-release.yml` exists at all: this table is printed
+            # into a job summary by `block-status.yml` precisely so that the fifteen people
+            # here with no AWS role can read it, and telling them to run something on the
+            # machine is telling them to go somewhere they cannot reach.
             lines.append(
                 f"{head}STALE CLAIM  "
-                f"{reading.who or '-'} / {reading.run} exited{since}; `edullm-node release`"
+                f"{reading.who or '-'} / {reading.run} exited{since}; dispatch block-release"
             )
             continue
         held = (

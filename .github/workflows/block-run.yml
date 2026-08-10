@@ -404,13 +404,24 @@ jobs:
           # memory with a run that does not exist. So they either avoid the machine or learn to
           # tick the dangerous box by habit, and the second is how somebody eventually ticks it
           # over a live run.
+          #
+          # THE REMEDY IS A WORKFLOW AND NOT A COMMAND, AND THE FIRST WORDING OF THIS GOT THAT
+          # WRONG IN THE WAY THAT MATTERED MOST. It said to clear the claim with `edullm-node
+          # release` on the machine -- which is correct, and which roughly fifteen of the
+          # thirty-five people here cannot do, because they hold no AWS role and cannot open a
+          # node by any route. A refusal naming a cure its reader cannot obtain leaves them the
+          # one lever they can reach, and that lever is the dangerous box. `block-release.yml`
+          # is the same release behind a dispatch, and it is named first because this sentence
+          # is the only thing most people will read.
           if reading.claim_is_stale and not taking:
               raise SystemExit(
                   f"node_claim_is_stale:{reading.who} claimed node {reading.node} for "
                   f"{held} {since} ago and its container is gone, with no cards in use. "
-                  "Nothing is running, so nothing will be disturbed: clear it with "
-                  "`edullm-node release` on the machine, or dispatch again with "
-                  "take_the_node_anyway, which here only overwrites a claim nobody is using."
+                  "Nothing is running, so nothing will be disturbed. Clear it by dispatching "
+                  "the `Block: give a node back` workflow (.github/workflows/block-release.yml) "
+                  f"with nodes={reading.node}, which needs no AWS credential and refuses any "
+                  "claim whose container is still up -- or `edullm-node release` on the machine "
+                  "if you hold a role. Then dispatch this again."
               )
 
           if held is not None and held != wanted and not taking:
@@ -615,7 +626,9 @@ jobs:
           if invocation.get("Status") != "Success":
               raise SystemExit(
                   f"run_did_not_start:{invocation.get('Status')}. The claim may still be held "
-                  "on the node; `edullm-node release` there, or dispatch again."
+                  "on the node. The helper gives it back itself when nothing started, so try "
+                  "dispatching again first; if it still reads as held, dispatch `Block: give a "
+                  "node back`, which needs no AWS credential."
               )
           PY
 
