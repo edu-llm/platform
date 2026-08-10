@@ -136,7 +136,7 @@ INPUT_BUCKETS_BEYOND_THE_DATASET_LIBRARY: Final[dict[str, dict[str, InputBeyondT
         ),
     },
     "olmo-core-train": {
-        "edullm-olmo-370m-ckpts": InputBeyondTheLibrary(
+        "edullm-checkpoints": InputBeyondTheLibrary(
             kind=WhyItReadsPastTheLibrary.WEIGHTS_TO_START_FROM,
             reason=(
                 "the pretrained base checkpoint a fine-tune starts from. A run that is not "
@@ -518,12 +518,12 @@ def test_a_workload_reading_past_the_library_is_runnable_without_an_accelerator(
     validator.
 
     A base-checkpoint read is the counterexample. ``olmo-core-train`` reads
-    ``edullm-olmo-370m-ckpts`` to load the weights a fine-tune starts from and then trains
+    ``edullm-checkpoints`` to load the weights a fine-tune starts from and then trains
     on a GPU, so the read is inseparable from accelerated work and there is no placement
     for it that a CPU shape could serve.
 
     WHY THE ANSWER WAS NOT TO GRANT THE CPU ROLE AND MOVE ON, WHICH IS THE CHEAPER EDIT AND
-    THE ONE TO REFUSE. Adding ``edullm-olmo-370m-ckpts`` to the CPU workload role would have
+    THE ONE TO REFUSE. Adding ``edullm-checkpoints`` to the CPU workload role would have
     turned this green in one line, and it would have widened the reach of every container
     placed on ``cpu-32vcpu`` to a bucket no CPU workload in the catalog reads -- a real
     grant made to satisfy a test's assumption rather than a workload's need. The map's
@@ -577,7 +577,7 @@ def test_a_workload_reading_weights_to_start_from_can_reach_them_where_it_trains
     and forbidding the reach here would refuse it on behalf of a decision nobody has made.
     What is refused is the reach arriving with no entry at all, which the test below owns.
 
-    THIS TEST IS WITHDRAWN WITH THE GRANT. ``edullm-olmo-370m-ckpts`` is a named exception
+    THIS TEST IS WITHDRAWN WITH THE GRANT. ``edullm-checkpoints`` is a named exception
     standing in for a sealed ``model/`` entry that does not exist; when that entry lands the
     weights become an ordinary library read, the map entry goes, and the guard below turns
     this red rather than letting it sit measuring an empty set.
