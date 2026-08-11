@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import shlex
 import sys
+from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
 
@@ -33,6 +34,7 @@ from edullm_platform.block_multinode import (
     ROUTED_EXPERTS,
     Candidate,
     ExpertMesh,
+    NodeOutcome,
     cards_per_node,
     choose_nodes,
     command_refusals,
@@ -44,10 +46,12 @@ from edullm_platform.block_multinode import (
     node_local_expert_parallel,
     outcomes,
     plan_launch,
+    read_the_log_back,
     refused,
     rendezvous_for,
     run_name_refusals,
     single_node_launch,
+    tail_markdown,
     torchrun_command,
     with_mesh_flags,
 )
@@ -827,6 +831,122 @@ def test_the_report_is_quiet_about_the_fabric_when_every_node_has_one() -> None:
 
     assert "NOT USING THE FABRIC" not in page
     assert "the fabric between machines" in page
+
+
+# ---------------------------------------------------------------------------------------
+# THE LOG, READ BACK BY THE DISPATCH THAT STARTED IT.
+# ---------------------------------------------------------------------------------------
+#
+# `block-run.yml` has done this since it was written and a cold-start reader called it the best
+# feature of the lane: a job that dies on an import is fully answered by the dispatch, with no
+# second workflow and no minute of waiting for S3. This path had none of it, and this path is
+# the one the procedure recommends for anything that wants a whole machine -- so a run that died
+# in three seconds looked exactly like a run that worked, twice, on 2026-08-10.
+
+
+def read_back(*nodes: int, printed: Mapping[int, str], status: str = "Success") -> tuple[
+    NodeOutcome, ...
+]:
+    return tuple(
+        NodeOutcome(
+            node=number,
+            instance_id=f"i-{number:017d}",
+            status=status,
+            output=printed.get(number, ""),
+            error="",
+        )
+        for number in nodes
+    )
+
+
+def test_the_command_sent_is_the_one_the_single_node_button_already_sends() -> None:
+    """Mutation: read from S3, or invent a second path for the log to live at.
+
+    Both callers reading the same file from the same place is what keeps a distributed run
+    legible to the drain, the sync unit and ``block-logs.yml`` -- and reading it off the
+    machine rather than out of the bucket is what makes the answer arrive in the dispatch
+    rather than a minute later.
+    """
+    assert read_the_log_back("mfu-smoke-1") == (
+        "tail -n 40 /scratch/mfu-smoke-1/log/train.log 2>&1 || true"
+    )
+    assert read_the_log_back("a run", lines=5).endswith("'/scratch/a run/log/train.log' 2>&1 || true")
+
+
+def test_the_elected_node_is_shown_whole_and_every_other_node_by_its_last_line() -> None:
+    """Mutation: print forty lines per node.
+
+    Eight nodes of forty lines is 320 lines of nearly identical output, and a page nobody
+    reads is worth what the blank one it replaces was worth. Rank 0 is the log to read; what
+    the others are still worth is the question rank 0's log cannot answer, which is whether
+    one of them died differently.
+    """
+    page = tail_markdown(
+        run=RUN,
+        rendezvous=rendezvous_for(candidates(1, 2, 3), run=RUN),
+        found=read_back(
+            1,
+            2,
+            3,
+            printed={
+                1: "starting\nresolved the corpus\nstep 1 loss 11.889\n",
+                2: "starting\nresolved the corpus\nstep 1 loss 11.889\n",
+                3: "starting\nCUDA out of memory\n",
+            },
+        ),
+        after_seconds=45,
+    )
+
+    assert "step 1 loss 11.889" in page
+    assert "resolved the corpus" in page, "the elected node is not shown whole"
+    assert page.count("resolved the corpus") == 1, "a second node was shown whole as well"
+    assert "CUDA out of memory" in page, "a node that died differently is not reported at all"
+    assert "i-00000000000000003" in page
+
+
+def test_a_node_that_has_printed_nothing_says_so_rather_than_showing_a_blank() -> None:
+    """An empty fenced block reads as "the run printed nothing", which is a claim about the
+    run. What it actually means here is that the file is not there yet, which is a claim about
+    the read -- and the two send a person to different places."""
+    page = tail_markdown(
+        run=RUN,
+        rendezvous=rendezvous_for(candidates(1, 2), run=RUN),
+        found=read_back(1, 2, printed={}),
+        after_seconds=45,
+    )
+
+    assert "nothing in the log yet" in page
+
+
+def test_a_node_the_read_never_reached_is_not_reported_as_a_node_that_printed_nothing() -> None:
+    """The property every reader in this module defends, applied to the cheapest phase of all.
+
+    A node with no invocation and a node with an empty log look identical to anything built on
+    "was there output", and they are opposite facts: one is a run that has not printed yet and
+    one is a machine nothing could reach.
+    """
+    page = tail_markdown(
+        run=RUN,
+        rendezvous=rendezvous_for(candidates(1, 2), run=RUN),
+        found=read_back(1, 2, printed={}, status="no invocation"),
+        after_seconds=45,
+    )
+
+    assert "[no invocation]" in page
+
+
+def test_the_report_says_so_when_the_elected_node_is_the_one_that_did_not_answer() -> None:
+    """Rank 0 missing is the case where there is nothing to show, and silence there would read
+    as a dispatch that forgot rather than as a read that failed."""
+    page = tail_markdown(
+        run=RUN,
+        rendezvous=rendezvous_for(candidates(1, 2), run=RUN),
+        found=read_back(2, printed={2: "step 1 loss 11.889\n"}),
+        after_seconds=45,
+    )
+
+    assert "produced no answer" in page
+    assert "block-logs.yml" in page
 
 
 # ---------------------------------------------------------------------------------------

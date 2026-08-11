@@ -1759,3 +1759,308 @@ def test_the_capacity_block_guide_sends_people_to_the_procedure() -> None:
     background = (GUIDES_DIR / "the-capacity-block.md").read_text(encoding="utf-8")
 
     assert "running-on-the-block.md" in background
+
+
+# ---------------------------------------------------------------------------------------
+# AND THE COMMAND IT HANDS OVER, HELD TO ONE THAT WAS ACTUALLY RUN.
+# ---------------------------------------------------------------------------------------
+#
+# THIS IS ``guides/day-one.md``'S RULE, EXTENDED TO THE OTHER LANE, AND IT IS HERE BECAUSE THE
+# LANE WITHOUT IT SHIPPED A COMMAND THAT COULD NOT START. Day one says at the top that every
+# command on it was run and what it printed is what is written there, and the tests above make
+# that mechanical: the submission it quotes is driven through the CLI and the block it shows has
+# to be what came back. The block procedure had no such rule. It carried one example, repeated
+# verbatim in the one-node, two-node and eight-node sections, and that example omitted the
+# entrypoint's optional positional `run_name` and two of the three dataset flags this lane
+# requires -- so copying it claimed a `p5.48xlarge`, started eight containers and exited 64 about
+# three seconds later. A reader working only from the public repository hit it twice in one
+# afternoon, and every one of the fifteen people this page is for would have hit it once.
+#
+# NOTHING HERE CAN RUN THE COMMAND, WHICH IS THE DIFFERENCE FROM THE DAY-ONE MECHANISM AND THE
+# REASON THIS TAKES THE SHAPE IT DOES. There is no GPU in CI and the block exists for four days.
+# So the recorded line below stands in for the run: it is transcribed from a dispatch that
+# trained, it is the only spelling the page may carry, and changing the page means changing it
+# here as well -- which is the moment somebody has to answer "did you run this". A line that
+# merely looks right cannot get onto the page by being plausible, which is exactly how the last
+# one got there.
+
+#: The training command the procedure hands people, with the run name left as a field.
+#:
+#: Transcribed from a dispatch on 2026-08-10 that trained forty steps of the 7,123,109,888
+#: parameter OLMoE recipe on the eight H100s of node 1: first loss 11.889, last loss 6.975,
+#: 217.9 seconds including a 24.4 second end-of-training evaluation, 20,180 tokens/s per GPU and
+#: 18.95% MFU at steady state. Spelled out here rather than parsed back out of the page, for the
+#: reason :data:`QUOTED_CHECK_COMMAND` gives: an expectation derived from the thing it checks
+#: agrees with whatever that thing says.
+BLOCK_TRAINING_COMMAND = (
+    "python .edullm/train_on_corpus.py {run} "
+    "--model-factory olmoe_7b_32x4 "
+    "--dataset-id pretrain/regmix-10b --dataset-version v1 "
+    "--dataset-tokenizer tokenizer/dolma2-bpe "
+    "--sequence-length 4096 --global-batch-size 524288 --rank-microbatch-size 8192 "
+    "--param-dtype bfloat16 --steps 40 --warmup-steps 5 "
+    "trainer.callbacks.checkpointer.enabled=false"
+)
+
+#: How many sections of the procedure hand over a training command. Pinned, because the defect
+#: was that all three carried the same broken line and a test reading "every command that is
+#: there" would have passed against zero of them.
+BLOCK_TRAINING_EXAMPLES = 3
+
+FIELD_VALUE = re.compile(r"-f (?P<field>\w+)=(?:'(?P<quoted>[^']*)'|(?P<bare>\S*))")
+
+
+def block_dispatch_fields(dispatch: re.Match[str]) -> dict[str, str]:
+    return {
+        found["field"]: found["quoted"] if found["quoted"] is not None else (found["bare"] or "")
+        for found in FIELD_VALUE.finditer(dispatch.group("rest"))
+    }
+
+
+def test_every_training_command_the_procedure_hands_over_is_one_that_was_run(
+    block_procedure: str,
+) -> None:
+    """**THE ONE THE REST OF THIS SECTION EXISTS FOR.** Mutation: change a flag on any of them.
+
+    Three sections of this page print a `-f command=` carrying the flagship recipe, and they are
+    the only lines on it that spend a machine before they can be wrong. The one they carried
+    until 2026-08-10 was ``python .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4
+    --dataset-id=regmix-10b-v1``, which is missing the positional run name and two of the three
+    dataset flags the block requires, and which therefore cannot start a corpus here at all.
+
+    Every field of the recorded line is load-bearing and the two that read as decoration are the
+    two that were absent. ``--dataset-version`` and ``--dataset-tokenizer`` are set from the
+    submission form in ``us-east-1`` and by nothing at all in ``us-east-2``, so a command that
+    names only ``--dataset-id`` earns ``THE_PLATFORM_DID_NOT_SET_THE_ENVIRONMENT`` on every rank.
+    ``--sequence-length 4096`` is the value the recipe was planned at against an entrypoint
+    default of 2048. The batch shape is the measured one.
+    """
+    dispatches = [
+        found
+        for found in GH_DISPATCH.finditer(block_procedure)
+        if "command" in block_dispatch_fields(found)
+    ]
+
+    assert len(dispatches) == BLOCK_TRAINING_EXAMPLES, (
+        f"the procedure prints {len(dispatches)} dispatches carrying a command and this "
+        f"expects {BLOCK_TRAINING_EXAMPLES}. If a section was added or removed, move the "
+        "number; if a command was quietly dropped from one, put it back"
+    )
+    for dispatch in dispatches:
+        fields = block_dispatch_fields(dispatch)
+        run = fields.get("run_name", "")
+        assert run, f"the {dispatch.group('workflow')} example names no run_name"
+        assert fields["command"] == BLOCK_TRAINING_COMMAND.format(run=run), (
+            f"the {dispatch.group('workflow')} example is not the command that was run. It "
+            "should be, with this section's own run name in both places:\n\n"
+            f"{BLOCK_TRAINING_COMMAND.format(run=run)}\n\nIf you have run something else and "
+            "want the page to say so, change BLOCK_TRAINING_COMMAND in this file too -- and "
+            "the point of having to is that somebody then has to answer whether it was run"
+        )
+
+
+def test_the_run_name_is_in_the_command_as_well_as_in_the_form(block_procedure: str) -> None:
+    """**A DOCUMENTED EXAMPLE AND A DOCUMENTED FEATURE THAT COULD NOT BOTH BE USED.**
+
+    Mutation: take the positional back out of any of the three.
+
+    The entrypoint takes an optional positional ``run_name`` in front of its flags, and argparse
+    binds the first bare word it meets to it. So the example without one was correct exactly as
+    long as nothing bare was ever appended -- and the moment it was combined with the other
+    documented feature, a dotted config override, the override became the run's name and every
+    rank died. ``trainer.callbacks.checkpointer.enabled=false`` on the end of the recorded
+    command is that combination, which is why this is asserted rather than left to the reader.
+
+    The name has to be *this section's* name and not merely present, because two runs of one
+    name on this fleet share a W&B run and a rendezvous id.
+    """
+    for dispatch in GH_DISPATCH.finditer(block_procedure):
+        fields = block_dispatch_fields(dispatch)
+        command = fields.get("command")
+        if command is None:
+            continue
+        after = command.split(".edullm/train_on_corpus.py", 1)[1].split()
+
+        assert after and after[0] == fields["run_name"], (
+            f"the {dispatch.group('workflow')} example passes "
+            f"{after[0] if after else 'nothing'!r} where the entrypoint's positional run_name "
+            f"goes, and the dispatch names the run {fields['run_name']!r}. A bare word there "
+            "is taken as the name whatever it was meant to be"
+        )
+
+
+def test_the_launcher_the_procedure_prints_is_the_one_the_dispatch_composes(
+    block_procedure: str,
+) -> None:
+    """Mutation: edit the composed line by hand after changing the command.
+
+    The page shows a reader two lines it did not write: what ``processes=all`` turns their
+    command into, and the paste-ready remedy the MoE refusal ends with. Both are functions of
+    the command above them, so both go stale silently the moment that command changes -- and a
+    launcher printed in a guide is a thing people copy into a shell, where ``--no-python``
+    missing costs every rank on a paid machine.
+    """
+    from edullm_platform.block_launcher import launcher_refusals
+    from edullm_platform.block_multinode import single_node_launch
+
+    command = BLOCK_TRAINING_COMMAND.format(run="ana-mfu-smoke-1")
+    composed, refusals = single_node_launch(command=command, processes="all", cards=8)
+    assert refusals == (), f"the recorded command cannot be launched at all: {refusals}"
+    assert composed in block_procedure, (
+        "the procedure does not print what processes=all composes. It is now:\n\n"
+        f"{composed}"
+    )
+
+    said = launcher_refusals(command)
+    assert len(said) == 1, f"the recorded command no longer earns exactly one refusal: {said}"
+    remedy = said[0].split("Run it under a launcher: ", 1)[1]
+    assert remedy in block_procedure, (
+        "the procedure quotes a remedy the refusal no longer prints. It now ends:\n\n"
+        f"{remedy}"
+    )
+
+
+def test_the_procedure_names_the_processes_value_that_actually_silences_the_check(
+    block_procedure: str,
+) -> None:
+    """**THE GUIDE PROMISED THE EXACT THING THAT FAILS**, which is the worst shape prose has.
+
+    Mutation: say a count silences the launcher refusal.
+
+    It said "setting ``processes`` to a count silences the earlier one on purpose", and ``1`` is
+    the most natural reading of a count. It is not one: :func:`composes_a_launcher` prepends
+    nothing for ``auto`` or ``1``, so the command that would run is the command that was judged
+    and the refusal stands. A reader who wanted a single-process dry run set ``processes=1`` on
+    that advice on 2026-08-10 and lost the dispatch to a refusal the page had just told them
+    would not come -- and could only find out why by reading the workflow's own source, echoed
+    into the failed job's log.
+
+    The fact is driven out of the function rather than restated, so the day a count does silence
+    it this fails and the sentence gets rewritten. What a test cannot hold is prose in general;
+    what it can hold is that the wording which was wrong does not come back and that the value
+    the page names is the value that works.
+    """
+    from edullm_platform.block_multinode import composes_a_launcher
+
+    command = BLOCK_TRAINING_COMMAND.format(run="ana-mfu-smoke-1")
+    silences = {
+        value
+        for value in ("auto", "1", "8", "all")
+        if composes_a_launcher(command=command, processes=value)
+    }
+
+    assert "all" in silences and "1" not in silences and "auto" not in silences, (
+        f"composes_a_launcher now prepends a launcher for {sorted(silences)}. The paragraph "
+        "in section 3 about which value silences the earlier refusal has to be rewritten "
+        "against that, and this assertion with it"
+    )
+
+    # Whitespace-normalised, because these paragraphs are hard-wrapped and the sentence this
+    # looks for lands on a line break about as often as it does not.
+    claims = [
+        " ".join(block.split())
+        for block in block_procedure.split("\n\n")
+        if "silences the earlier" in " ".join(block.split())
+    ]
+    assert len(claims) == 1, (
+        "the procedure no longer has exactly one paragraph saying which value silences the "
+        "earlier refusal, so there is nothing here to hold the value to"
+    )
+    assert "`processes=all`" in claims[0], (
+        "the paragraph about silencing the launcher refusal does not name `processes=all`, "
+        "which is the only value that does it"
+    )
+    assert "to a count silences" not in block_procedure, (
+        "the procedure says a count silences the launcher refusal. `auto` and `1` prepend "
+        "nothing and the check stands, so this promises the reader the thing that fails"
+    )
+
+
+def test_the_procedure_recommends_the_multi_node_workflow_for_one_machine(
+    block_procedure: str,
+) -> None:
+    """**A PARAGRAPH THAT EARNED ITS PLACE, PINNED SO THAT NOBODY TIDIES IT INTO A FOOTNOTE.**
+
+    Mutation: cut it, or soften it to "the multi-node workflow also accepts one node".
+
+    A cold-start reader called this the single most useful sentence on the page. Taking it means
+    the one-machine case and the eight-machine case are the same command with one field changed:
+    it composes the launcher and the mesh flags, it removes the ``processes`` decision entirely,
+    and it turns going from one node to two into a one-character edit. Read the other way round,
+    somebody who smoke-tests through ``block-run.yml`` and then moves to the distributed form is
+    changing the button, the fields *and* the command at the moment they first spend eight
+    machines.
+
+    It reads like a note about a special case, which is exactly why it is at risk. The workflow
+    genuinely accepts ``node_count=1`` -- ``choose_nodes`` has no lower bound above one and
+    ``mesh_for`` computes a one-node mesh -- so the recommendation costs nothing and this holds
+    that it is still made in as many words.
+    """
+    from edullm_platform.block_multinode import mesh_for
+
+    mesh = mesh_for(nodes=1, gpus_per_node=8)
+    assert mesh.world_size == 8 and not mesh.all_to_all_crosses_the_fabric, (
+        "a one-node mesh is no longer eight ranks inside one machine, so the recommendation "
+        "the procedure makes has to be rechecked before this test is made to pass again"
+    )
+
+    section = block_procedure.split("\n## 2. ", 1)
+    assert len(section) == 2, "the procedure no longer has a section about claiming machines"
+    body = " ".join(section[1].split("\n## ", 1)[0].split())
+
+    assert "accepts `node_count=1`" in body and "recommendation" in body, (
+        "section 2 no longer recommends the multi-node workflow for a single machine. That "
+        "sentence is why the one-node and eight-node cases are one command with one field "
+        "changed, and a reader who does not meet it smoke-tests on the other button and then "
+        "changes everything at once on the dispatch that costs eight machines"
+    )
+
+
+def test_both_dispatches_read_the_log_back_and_the_procedure_says_so(
+    block_procedure: str,
+) -> None:
+    """Mutation: leave the multi-node dispatch printing the mesh plan and nothing else.
+
+    That was the state until 2026-08-10 and section 6 described it as though both did it. The
+    single-node summary tails the log and a cold-start reader called it the best feature of the
+    lane; the multi-node one, which this page recommends for every job wanting a whole machine,
+    printed the plan and stopped. So a run that died in three seconds was indistinguishable from
+    one that worked, until somebody separately dispatched ``block-logs.yml`` and waited a minute
+    for the log to reach S3, and two dead-on-arrival runs that afternoon were each found that
+    way.
+
+    Held against both implementations rather than against the sentence, because the sentence was
+    already there and already true of one of them.
+    """
+    from edullm_platform.block_multinode import TAIL_LINES
+
+    single = (WORKFLOWS_DIR / "block-run.yml").read_text(encoding="utf-8")
+    tool = (PROJECT_ROOT / "tools" / "block_run_distributed.py").read_text(encoding="utf-8")
+
+    assert f"tail -n {TAIL_LINES} " in single, (
+        "block-run.yml no longer reads the log back, and the procedure promises it does"
+    )
+    assert 'tee -a "${GITHUB_STEP_SUMMARY}"' in single.split("Show the first lines", 1)[1], (
+        "block-run.yml reads the log back into the job log alone. The summary is the page a "
+        "researcher opens from the run's URL and the one the procedure sends the people with "
+        "no AWS role to, so the section answering 'did it start' has to be on both"
+    )
+    assert "read_the_log_back(" in tool, (
+        "the multi-node tool no longer reads the log back, so the workflow this page "
+        "recommends for a whole machine says nothing about whether the job started"
+    )
+    assert TAIL_LINES == 40, (
+        "the procedure writes this number as the word 'forty'; move both or neither"
+    )
+    section = block_procedure.split("\n## 6. ", 1)
+    assert len(section) == 2, "the procedure no longer has a section about watching a run"
+    body = section[1].split("\n## ", 1)[0]
+    assert "forty lines" in body, (
+        "section 6 no longer says how much of the log a dispatch reads back, which is the "
+        "promise both workflows are now keeping"
+    )
+    for named in ("Block: start a run on a node", "Block: start one run across several nodes"):
+        assert named in body, (
+            f"section 6 does not say what {named!r} puts in its summary. Saying only that "
+            "'the dispatch' does it is what left one of the two silently not doing it"
+        )

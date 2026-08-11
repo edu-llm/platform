@@ -49,13 +49,16 @@ from edullm_platform.block_fleet import (
 from edullm_platform.block_multinode import (
     DEFAULT_RENDEZVOUS_PORT,
     ROUTED_EXPERTS,
+    TAIL_LINES,
     Candidate,
     LaunchPlan,
     NodeOutcome,
     launch_markdown,
     outcomes,
     plan_launch,
+    read_the_log_back,
     refused,
+    tail_markdown,
 )
 from edullm_platform.capture_tooling import CaptureFailedError, aws_json
 
@@ -93,6 +96,14 @@ START_SECONDS: Final = 900
 #: than execution: these are two different timeouts and confusing them kills a clone part way
 #: through and reports it as a node that failed.
 DELIVERY_SECONDS: Final = 600
+
+#: How long a node may take to read the last lines of one file, which is not long.
+TAIL_SECONDS: Final = 60
+
+#: How long to leave the containers alone before reading their log, which is ``block-run.yml``'s
+#: forty-five and is the same number for the same reason: the clone and the import of torch are
+#: what happen first, and reading sooner reports an empty file for a run that is perfectly well.
+TAIL_AFTER_SECONDS: Final = 45
 
 POLL_SECONDS: Final = 5
 
@@ -374,6 +385,55 @@ def _release(
     )
 
 
+def _tail(
+    *,
+    chosen: Sequence[Candidate],
+    run: str,
+    lines: int,
+    after_seconds: int,
+    profile: str | None,
+    region: str,
+) -> tuple[NodeOutcome, ...]:
+    """The first lines the run printed, read off the machines that are printing them.
+
+    **A BEST EFFORT AND NEVER A GATE, WHICH IS WHY IT SWALLOWS EVERYTHING IT CAN RAISE.** By the
+    time this is called the claims are taken, the containers are up and the job is forming; a
+    Systems Manager hiccup while reading a log must not turn a launch that worked into a
+    dispatch that reports failure and sends somebody looking for a fleet to clean up. The
+    single-node step is a separate ``continue-on-error`` step for the same reason and this is
+    that decision in the one place this lane keeps its decisions.
+
+    It is here rather than in the workflow so that a maintainer running the tool from a laptop
+    when GitHub is the broken thing gets the same answer, and so that what is shown is held by
+    ``tests/test_block_multinode.py`` rather than by a reviewer reading YAML once.
+    """
+    if lines < 1 or not chosen:
+        return ()
+    try:
+        time.sleep(max(after_seconds, 0))
+        command_id = _send(
+            instance_ids=[candidate.instance_id for candidate in chosen],
+            command=read_the_log_back(run, lines=lines),
+            comment=f"edullm block distributed tail {run}",
+            execution_seconds=TAIL_SECONDS,
+            profile=profile,
+            region=region,
+        )
+        return outcomes(
+            chosen,
+            _settle(
+                command_id=command_id,
+                expected=len(chosen),
+                wait_seconds=TAIL_SECONDS,
+                profile=profile,
+                region=region,
+            ),
+        )
+    except Exception as error:  # noqa: BLE001 - see the paragraph above; nothing here may fail a launch
+        print(f"the log could not be read back: {error!r}", file=sys.stderr)
+        return ()
+
+
 def _fabric_of(found: Sequence[NodeOutcome]) -> dict[int, str]:
     """Which fabric each node chose, out of the tab-separated record the launch script prints."""
     chosen: dict[int, str] = {}
@@ -427,6 +487,10 @@ class Launched:
     plan: LaunchPlan
     fabric: dict[int, str]
     reservation_id: str
+    #: What each node had printed a minute in, or nothing where the read did not happen -- a
+    #: dry run, a refusal, or a read that failed and was swallowed rather than allowed to
+    #: report a working launch as a broken one.
+    tail: tuple[NodeOutcome, ...] = ()
 
 
 def _report_failure(phase: str, found: Sequence[NodeOutcome]) -> None:
@@ -587,7 +651,18 @@ def launch(arguments: argparse.Namespace) -> Launched:
         )
 
     return Launched(
-        code=0, plan=plan, fabric=_fabric_of(started), reservation_id=reservation_id or ""
+        code=0,
+        plan=plan,
+        fabric=_fabric_of(started),
+        reservation_id=reservation_id or "",
+        tail=_tail(
+            chosen=plan.chosen,
+            run=arguments.run,
+            lines=arguments.tail_lines,
+            after_seconds=arguments.tail_after_seconds,
+            profile=arguments.profile,
+            region=arguments.region,
+        ),
     )
 
 
@@ -687,6 +762,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wait-seconds", type=int, default=60)
     parser.add_argument("--start-wait-seconds", type=int, default=START_SECONDS)
     parser.add_argument(
+        "--tail-lines",
+        type=int,
+        default=TAIL_LINES,
+        help=(
+            "how many lines of the elected node's log to read back into the report once the "
+            "containers are up. Zero reads nothing and reports nothing"
+        ),
+    )
+    parser.add_argument(
+        "--tail-after-seconds",
+        type=int,
+        default=TAIL_AFTER_SECONDS,
+        help="how long to leave the containers alone before reading that log",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help=(
@@ -738,12 +828,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     plan = done.plan
+    # The tail goes to stdout as well as to the summary, and it is the only part of the report
+    # that does. There is no `gh` command for a job summary, so somebody driving this lane from
+    # a terminal reads the job log -- and what they are reading it for is whether the thing
+    # started, which is the one question this section answers.
+    read_back = (
+        tail_markdown(
+            run=arguments.run,
+            rendezvous=plan.rendezvous,
+            found=done.tail,
+            lines=arguments.tail_lines,
+            after_seconds=arguments.tail_after_seconds,
+        )
+        if done.tail and plan.rendezvous is not None
+        else ""
+    )
     if arguments.json:
         print(_as_json(plan, fabric=done.fabric))
     elif plan.rendezvous is not None:
         print(plan.mesh.describe())
         print(f"rendezvous {plan.rendezvous.endpoint} on node {plan.rendezvous.host.node}")
         print(plan.launch_command)
+        if read_back:
+            print()
+            print(read_back)
 
     if arguments.summary and plan.rendezvous is not None:
         with Path(arguments.summary).open("a", encoding="utf-8") as page:
@@ -763,6 +871,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 + "\n"
             )
+            if read_back:
+                page.write("\n" + read_back + "\n")
     return done.code
 
 

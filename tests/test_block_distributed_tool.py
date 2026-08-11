@@ -97,7 +97,7 @@ class FakeCli:
         self.commands: dict[str, str] = {}
 
     def phase_of(self, comment: str) -> str:
-        for name in ("probe", "claim", "start", "rollback"):
+        for name in ("probe", "claim", "start", "rollback", "tail"):
             if name in comment:
                 return name
         raise AssertionError(f"no phase in comment {comment!r}")
@@ -159,22 +159,38 @@ def answered(nodes: Sequence[int], *, status: str = "Success", output: str = "")
     }
 
 
+def argv(*extra: str) -> list[str]:
+    return [
+        "--run",
+        "final-model-a",
+        "--branch",
+        "edullm/final-model",
+        "--command",
+        TRAINING,
+        "--no-profile",
+        "--wait-seconds",
+        "0",
+        "--start-wait-seconds",
+        "0",
+        # The real dispatch waits three quarters of a minute before reading the log, which is
+        # right on a machine that is cloning a repository and wrong in a unit test.
+        "--tail-after-seconds",
+        "0",
+        *extra,
+    ]
+
+
 def arguments(*extra: str) -> Any:
-    return block_run_distributed.build_parser().parse_args(
-        [
-            "--run",
-            "final-model-a",
-            "--branch",
-            "edullm/final-model",
-            "--command",
-            TRAINING,
-            "--no-profile",
-            "--wait-seconds",
-            "0",
-            "--start-wait-seconds",
-            "0",
-            *extra,
-        ]
+    return block_run_distributed.build_parser().parse_args(argv(*extra))
+
+
+def tail_output(node: int, *, last: str = "step 1/40 loss 11.889") -> str:
+    """Four lines of a log, the last of them different per node so a reader can tell them apart."""
+    return (
+        f"[rank{(node - 1) * 8}] torch 2.9.0+cu128, 8 x NVIDIA H100 80GB HBM3\n"
+        "[rank0] resolved pretrain/regmix-10b v1 tokenizer/dolma2-bpe\n"
+        "[rank0] 32 ranks: 4 replicas x 8 expert-parallel\n"
+        f"{last}\n"
     )
 
 
@@ -187,6 +203,14 @@ def four_idle_nodes() -> dict[str, dict[int, dict[str, Any]]]:
             node: {
                 "Status": "Success",
                 "StandardOutputContent": started_output(node),
+                "StandardErrorContent": "",
+            }
+            for node in (1, 2, 3, 4)
+        },
+        "tail": {
+            node: {
+                "Status": "Success",
+                "StandardOutputContent": tail_output(node),
                 "StandardErrorContent": "",
             }
             for node in (1, 2, 3, 4)
@@ -226,7 +250,7 @@ def test_the_claim_is_taken_before_anything_is_cloned(
         if argv[:2] == ["ssm", "send-command"]
     ]
 
-    assert order == ["probe", "claim", "start"]
+    assert order == ["probe", "claim", "start", "tail"]
     assert "edullm-node claim" in cli.commands["claim"]
 
 
@@ -687,6 +711,136 @@ def test_the_rollback_command_parses_as_bash(monkeypatch: pytest.MonkeyPatch) ->
         )
 
         assert checked.returncode == 0, f"{shell}: {checked.stderr}"
+
+
+# ---------------------------------------------------------------------------------------
+# Reading the log back, which is the difference between a dispatch and an answer.
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_dispatch_reads_the_log_back_off_every_node_it_started(
+    monkeypatch: pytest.MonkeyPatch, four_idle_nodes: dict[str, dict[int, dict[str, Any]]]
+) -> None:
+    """Mutation: read only the elected node, or read nothing at all.
+
+    Reading nothing is what this path did until 2026-08-10, and it is the defect: the button
+    the procedure recommends for any whole-machine job printed the mesh plan and stopped, so a
+    run that died in three seconds was indistinguishable from one that worked until somebody
+    dispatched ``block-logs.yml`` and waited a minute for S3. Two dead-on-arrival runs that
+    afternoon were each found that way.
+
+    Reading only the elected node is the plausible half-measure and it costs nothing to avoid:
+    the same ``send-command`` goes to the whole set whichever way, and a node that died
+    differently from rank 0 is the one thing rank 0's log cannot report.
+    """
+    cli = FakeCli(fleet=[1, 2, 3, 4], phases=four_idle_nodes)
+    monkeypatch.setattr(block_run_distributed, "aws_json", cli)
+
+    done = block_run_distributed.launch(arguments("--node-count", "4"))
+
+    assert done.code == 0
+    assert cli.instance_ids_for("tail") == [f"i-{node:017d}" for node in (1, 2, 3, 4)]
+    assert [outcome.node for outcome in done.tail] == [1, 2, 3, 4]
+    asked = json.loads(cli.commands["tail"])["commands"][0]
+    assert asked == "tail -n 40 /scratch/final-model-a/log/train.log 2>&1 || true"
+
+
+def test_reading_the_log_happens_after_the_containers_are_up_and_never_before(
+    monkeypatch: pytest.MonkeyPatch, four_idle_nodes: dict[str, dict[int, dict[str, Any]]]
+) -> None:
+    """There is nothing to read until the start phase has returned, and the wait is the point.
+
+    ``docker run --detach`` returns as soon as the container exists, which is what lets a job
+    on eight machines be launched by something that finishes in a couple of minutes -- and it
+    means the log is empty at the moment the start phase succeeds. Reading immediately reports
+    a blank page for a run that is perfectly well, which is worse than not reading at all
+    because it looks like an answer.
+    """
+    cli = FakeCli(fleet=[1, 2, 3, 4], phases=four_idle_nodes)
+    monkeypatch.setattr(block_run_distributed, "aws_json", cli)
+    slept: list[int] = []
+    monkeypatch.setattr(block_run_distributed.time, "sleep", lambda seconds: slept.append(seconds))
+
+    block_run_distributed.launch(arguments("--node-count", "4", "--tail-after-seconds", "45"))
+
+    assert 45 in slept
+    assert block_run_distributed.TAIL_AFTER_SECONDS == 45
+
+
+def test_a_log_that_cannot_be_read_leaves_a_working_launch_reported_as_working(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**THE ONE THAT MATTERS, AND THE REASON THIS IS BEST-EFFORT RATHER THAN A PHASE.**
+
+    Mutation: let the read raise, or let it set a non-zero exit code.
+
+    By the time it runs, the claims are taken and the containers are up. A Systems Manager
+    hiccup reading a file would then turn a launch that worked into a dispatch reporting
+    failure -- and what the person does next is look for a fleet to clean up, or dispatch
+    again onto machines their own job is already running on. The single-node step is
+    ``continue-on-error`` for exactly this and this is the same decision.
+    """
+    cli = FakeCli(
+        fleet=[1, 2],
+        phases={
+            "probe": answered([1, 2], output=probe_output()),
+            "claim": answered([1, 2]),
+            "start": {
+                node: {
+                    "Status": "Success",
+                    "StandardOutputContent": started_output(node),
+                    "StandardErrorContent": "",
+                }
+                for node in (1, 2)
+            },
+        },
+    )
+    monkeypatch.setattr(block_run_distributed, "aws_json", cli)
+
+    done = block_run_distributed.launch(arguments("--node-count", "2"))
+
+    assert done.code == 0, "a log that could not be read failed a launch that had succeeded"
+    assert done.tail == ()
+    assert not cli.reached("rollback")
+
+
+def test_a_dry_run_and_a_refused_launch_read_no_log(
+    monkeypatch: pytest.MonkeyPatch, four_idle_nodes: dict[str, dict[int, dict[str, Any]]]
+) -> None:
+    """Neither of them started a container, so there is no log and nothing to wait for."""
+    cli = FakeCli(fleet=[1, 2, 3, 4], phases=four_idle_nodes)
+    monkeypatch.setattr(block_run_distributed, "aws_json", cli)
+
+    done = block_run_distributed.launch(arguments("--node-count", "4", "--dry-run"))
+
+    assert done.tail == ()
+    assert not cli.reached("tail")
+
+
+def test_the_report_carries_the_log_and_stdout_carries_it_too(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    four_idle_nodes: dict[str, dict[int, dict[str, Any]]],
+) -> None:
+    """Both surfaces, because the two readers of this lane are on different ones.
+
+    The job summary is the page somebody opens from the run's URL. The job *log* is all a
+    terminal can see -- there is no ``gh`` command for a summary -- and whether the thing
+    started is the question a terminal is asking. Everything else this tool reports stays in
+    the summary alone; this one section is in both.
+    """
+    cli = FakeCli(fleet=[1, 2, 3, 4], phases=four_idle_nodes)
+    monkeypatch.setattr(block_run_distributed, "aws_json", cli)
+    summary = tmp_path / "summary.md"
+
+    code = block_run_distributed.main(argv("--node-count", "4", "--summary", str(summary)))
+    written = summary.read_text(encoding="utf-8")
+
+    assert code == 0
+    for surface in (written, capsys.readouterr().out):
+        assert "The first 40 lines `final-model-a` printed" in surface
+        assert "resolved pretrain/regmix-10b v1 tokenizer/dolma2-bpe" in surface
 
 
 def test_the_fabric_each_node_chose_is_read_out_of_what_it_printed() -> None:

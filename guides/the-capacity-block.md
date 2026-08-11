@@ -33,6 +33,8 @@ Being registered in `config/repositories.yaml` has nothing to do with this. That
 
 **The image is chosen once, for the whole fleet, at launch.** Every node pulls `sbsandbox-intern-edullm-olmo-core` at one tag while it boots, because a cold cross-region pull is minutes and paying it once in a window nobody is waiting in is the whole reason the lane feels fast. There is no per-run image and no per-node image. What that image carries is torch 2.9.0 with CUDA, `olmo_core`, `edullm_data`, `boto3` with the CRT extra, `wandb`, `numpy`, `pandas`, `pyyaml`, `rich`, `safetensors`, and gcc and g++ so that `torch.compile` works. What it does not carry is `git`, `nvcc`, flash-attn, vLLM, DeepSpeed, `transformers` or `datasets`.
 
+**Nor `nvidia-smi`, and that one deserves its own sentence because it is the first thing anybody types on a new machine.** The list above is Python packages and a compiler; the CUDA userspace tools are a separate question and the answer is that they are not in the container. `which nvidia-smi` prints nothing, so `nvidia-smi && python train.py` on an eight-H100 node produces a run that exits having printed nothing at all, with nothing explaining why. Ask torch instead: `python -c 'import torch; print(torch.cuda.device_count())'` answered `8` on this fleet, under torch 2.9.0+cu128.
+
 **A node may pull that one repository and nothing else.** This is the constraint people mistake for a missing feature. The instance role `sbsandbox-intern-edullm-block-node` grants `ecr:BatchGetImage` against exactly `sbsandbox-intern-edullm-olmo-core`, so `docker pull` of any other image is refused on the machine — from the helper, from a shell, from anywhere. Bringing your own container is not a flag that is missing; it is a permission that is not there, and widening it is a CloudFormation apply from a laptop that only a repository admin can make.
 
 **The helper on each node is baked into its user-data.** `edullm-node` is written to `/usr/local/bin` while the machine boots, out of `infra/block-node-bootstrap.sh`. A change to that file reaches a running node only by relaunching it, and relaunching it destroys everything on its `/scratch`.
@@ -114,6 +116,8 @@ Everything a run produces lands under one prefix, built from the reservation and
 | The log | the same, with `log/train.log` |
 | Whatever else was on disk | the same, with `scratch/`, written by the drain rather than by you |
 | `$EDULLM_DATA_BUCKET` | `edullm-data-us-east-2`, the corpus mirror, readable and not writable |
+
+**What the container is *not* given is the three variables that name a corpus**, and this is the difference between the two lanes that has cost the most time here. In `us-east-1` the submission form sets `EDULLM_DATASET_ID`, `EDULLM_DATASET_VERSION` and `EDULLM_DATASET_TOKENIZER`, and OLMo-core's entrypoint reads them; nothing on the block sets any of the three. On this lane they are command-line flags — `--dataset-id`, `--dataset-version` and `--dataset-tokenizer` — and all three are required. Leave two of them off and every rank exits 64 about three seconds after the machine was paid for, with a message naming a submission-form field that does not exist here. [Running a job on the capacity block](running-on-the-block.md#that-command-line-was-run-and-every-part-of-it-earns-its-place) carries the command that works.
 
 ## The rules
 
