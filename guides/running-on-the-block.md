@@ -52,10 +52,11 @@ gh run view <run-id> --log | sed -n '/^node /p'
 ```
 
 **Use the URL `gh` printed rather than `gh run list -L1`.** There is no `gh` command for a job
-summary, so the summary is readable from a terminal only because these workflows `tee` into it,
-and the obvious way to find the run is wrong on a fleet eight people share. A reader on
-2026-08-10 took the newest `block-logs` run, got somebody else's dispatch fired seconds after
-their own, and spent a minute reading node 8's `router-balance-sweep` believing it was theirs.
+summary at all; what makes the table readable from a terminal is that these workflows `tee` their
+report into the job log as well. And the obvious way to find the run is wrong on a fleet eight
+people share: a reader on 2026-08-10 took the newest `block-logs` run, got somebody else's
+dispatch fired seconds after their own, and spent a minute reading node 8's
+`router-balance-sweep` believing it was theirs.
 
 One line per node:
 
