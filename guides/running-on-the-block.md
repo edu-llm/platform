@@ -41,7 +41,23 @@ directly rather than a sheet, and prints a table into the job summary.
 gh workflow run block-status.yml --ref main -R edu-llm/platform
 ```
 
-Wait about thirty seconds, then read the summary of the run it started. One line per node:
+Wait about thirty seconds, then read the summary of the run it started.
+
+**How you read the answer is the part every `gh workflow run` line on this page leaves out, so it
+is written once here and meant for all of them.** `gh` prints the new run's URL as it dispatches
+and that URL is the answer; open it in a browser, or read the same thing from the terminal:
+
+```bash
+gh run view <run-id> --log | sed -n '/^node /p'
+```
+
+**Use the URL `gh` printed rather than `gh run list -L1`.** There is no `gh` command for a job
+summary, so the summary is readable from a terminal only because these workflows `tee` into it,
+and the obvious way to find the run is wrong on a fleet eight people share. A reader on
+2026-08-10 took the newest `block-logs` run, got somebody else's dispatch fired seconds after
+their own, and spent a minute reading node 8's `router-balance-sweep` believing it was theirs.
+
+One line per node:
 
 | Row | What it means | What to do |
 | --- | --- | --- |
@@ -121,7 +137,7 @@ Fields that matter; the rest have defaults that are right.
 | `branch` | Your branch, pushed. Resolved against GitHub before the node is touched, so a typo costs nothing |
 | `run_name` | Letters, digits, dot, dash, underscore. Put something of your own in it -- see [section 5](#5-where-does-my-output-go) |
 | `repository` | `edu-llm/<yours>`. Defaults to `edu-llm/OLMo-core`; it is an ordinary field, change it |
-| `command` | Your entrypoint and its arguments. Empty means "read `.edullm/run.yaml` from my branch", which only OLMo-core carries |
+| `command` | Your entrypoint and its arguments, **starting with the run name** -- see below. Empty means "read `.edullm/run.yaml` from my branch", which only OLMo-core carries |
 | `processes` | **`all` for a training run. `1` for anything single-process.** See below |
 
 ```bash
@@ -130,11 +146,90 @@ gh workflow run block-run.yml --ref main -R edu-llm/platform \
   -f branch=my-branch \
   -f run_name=ana-mfu-smoke-1 \
   -f repository=edu-llm/OLMo-core \
-  -f command='python .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4 --dataset-id=regmix-10b-v1' \
+  -f command='python .edullm/train_on_corpus.py ana-mfu-smoke-1 --model-factory olmoe_7b_32x4 --dataset-id pretrain/regmix-10b --dataset-version v1 --dataset-tokenizer tokenizer/dolma2-bpe --sequence-length 4096 --global-batch-size 524288 --rank-microbatch-size 8192 --param-dtype bfloat16 --steps 40 --warmup-steps 5 trainer.callbacks.checkpointer.enabled=false' \
   -f processes=all \
   -f wandb_project=capacity-block \
   -f region=us-east-2
 ```
+
+### That command line was run, and every part of it earns its place
+
+**It was run on node 1 on 2026-08-10 and it trained**: forty steps of the 7,123,109,888-parameter
+OLMoE recipe on eight H100s, first loss 11.889, last loss 6.975, 217.9 seconds wall including a
+24.4-second evaluation nobody asked for. The version of it this page carried until then could not
+start at all, and the same eleven-word line appeared in all three sections below, so anybody who
+copied it claimed a `p5.48xlarge`, started eight containers and got `exit=64` about three seconds
+later. It happened twice to one reader on one afternoon. **Do not replace what is above with
+something you have not run**; `tests/test_guides.py` holds this page to the recorded line for that
+reason, and the whole of what you are meant to change is the name.
+
+`ana-mfu-smoke-1` **appears twice on purpose and both are the same word.** The entrypoint takes an
+optional positional `run_name` before its flags, and this is the trap that ate the first attempt:
+leave it out and the command still runs, because argparse binds the first bare word it meets to
+the name -- so the moment you add a dotted config override, that override silently becomes the
+run's name and the run dies with `argument run_name`. A documented example and a documented
+feature that cannot both be used is worse than either alone. Put the run name in front, always.
+
+**All three dataset flags are required here and the platform lane is where the confusion comes
+from.** `--dataset-id`, `--dataset-version` and `--dataset-tokenizer` are read from
+`EDULLM_DATASET_ID`, `EDULLM_DATASET_VERSION` and `EDULLM_DATASET_TOKENIZER` when the platform
+sets them, and the block does not set any of them -- see the table in [section
+5](#5-where-does-my-output-go). Passing one of the three earns
+`THE_PLATFORM_DID_NOT_SET_THE_ENVIRONMENT exit=64` on every rank, and the message names a
+submission-form field that does not exist in this lane, so it reads as though you are on the wrong
+page. You are not; you are missing two flags.
+
+**`pretrain/regmix-10b` is not the same string as `regmix-10b-v1`, and this page used to print the
+wrong one.** The short form is the *reference id* `edullm data` lists corpora under. The three
+values the flags want are the coordinates underneath it, and `edullm data regmix-10b-v1` is what
+prints them -- it reaches no network, answers instantly, and it is the only thing that will tell
+you a corpus is registered and still cannot be opened.
+
+| Flag | Why this value |
+| --- | --- |
+| `--sequence-length 4096` | The recipe was planned at 4096. **The entrypoint's own default is 2048**, and its `--help` says in capitals that the default predates the MoE recipe, so leaving this off trains the flagship at half the context it was designed for and nothing anywhere says so |
+| `--global-batch-size 524288` | Tokens per optimiser step, 128 sequences of 4096. Measured, below |
+| `--rank-microbatch-size 8192` | Tokens a rank forwards at once, two sequences. **Move this down under memory pressure and never up** |
+| `--param-dtype bfloat16` | These are H100s and the recipe wants it |
+| `--steps 40 --warmup-steps 5` | It is a smoke run. Raise `--steps` for a real one and take the checkpointer override off |
+| `trainer.callbacks.checkpointer.enabled=false` | A dotted override into the config, which is why the positional above matters. Forty steps of a 7.5B model has nothing worth an optimiser-state checkpoint, and writing one costs S3 and minutes |
+
+**What that shape measured, on one node with all eight cards.** These are off the trainer's own
+console logger at step 30 of 40 and they are the only published numbers for this recipe on this
+hardware. Yours will not be these exactly; what says it is working is being near them.
+
+| | Steady state | Averaged over 40 steps |
+| --- | --- | --- |
+| tokens/s per GPU | 20,180 | 18,816 |
+| tokens/s, all eight | ~161,400 | ~150,500 |
+| MFU per device | 18.95% | 17.67% |
+| TFLOP/s per device | 187.5 | 174.9 |
+| step time | ~3.25 s | ~3.5 s |
+
+**That shape also ran to 88% of reserved memory with allocation retries in it, so it is near the
+top rather than in the middle.** If you meet an out-of-memory, halve `--rank-microbatch-size` to
+4096 and leave `--global-batch-size` alone: the two are independent, the microbatch decides how
+much is resident and the global batch decides what the optimiser sees, so coming down on the
+microbatch costs you step time and changes nothing about the model. Going *up* from 8192 is the
+one edit that is reliably wrong here.
+
+**Timing a short run? An evaluation you did not ask for is in that number.** `--eval-interval`
+defaults to 1000 so it never fires inside forty steps, and an end-of-training evaluation runs
+anyway -- 24.4 seconds of the 217.9 above. Subtract it before you compare two short runs.
+
+**Your run leaves a claim behind when it exits, and giving it back is yours to do.** Nothing on a
+node removes a claim when a container exits, so a finished run reads to everybody else as a
+machine that is held by somebody who has gone home. When you are done with the machine:
+
+```bash
+gh workflow run block-release.yml --ref main -R edu-llm/platform -f nodes=1
+```
+
+It needs no AWS credential and it refuses while a container is still up, so it cannot end a run.
+On eight machines shared by fifteen people this is the difference between a usable Saturday and a
+fleet that reads fully held by Sunday morning. [Section
+8](#8-it-says-the-node-is-busy-and-nothing-is-running) is the other side of the same fact, written
+for whoever trips over the claim you left.
 
 **`processes` is the field that will cost you an afternoon if you skip past it.** The node runs
 your command through a shell, and a shell starts one process. One process on a `p5.48xlarge` uses
@@ -145,7 +240,7 @@ card count read off the machine rather than assumed. On an eight-card node the c
 dispatched as:
 
 ```
-torchrun --standalone --nproc-per-node=8 --no-python python .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4 --dataset-id=regmix-10b-v1
+torchrun --standalone --nproc-per-node=8 --no-python python .edullm/train_on_corpus.py ana-mfu-smoke-1 --model-factory olmoe_7b_32x4 --dataset-id pretrain/regmix-10b --dataset-version v1 --dataset-tokenizer tokenizer/dolma2-bpe --sequence-length 4096 --global-batch-size 524288 --rank-microbatch-size 8192 --param-dtype bfloat16 --steps 40 --warmup-steps 5 trainer.callbacks.checkpointer.enabled=false
 ```
 
 **`--no-python` is the word that makes that line work, and it is the reason not to write the
@@ -180,15 +275,22 @@ as `command_needs_a_launcher:`, names the recipe and the incident, warns you off
 ... python script.py` spelling, and ends with the line to paste:
 
 ```
-Run it under a launcher: python -m torch.distributed.run --nproc-per-node=gpu --standalone .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4 --dataset-id=regmix-10b-v1
+Run it under a launcher: python -m torch.distributed.run --nproc-per-node=gpu --standalone .edullm/train_on_corpus.py ana-mfu-smoke-1 --model-factory olmoe_7b_32x4 --dataset-id pretrain/regmix-10b --dataset-version v1 --dataset-tokenizer tokenizer/dolma2-bpe --sequence-length 4096 --global-batch-size 524288 --rank-microbatch-size 8192 --param-dtype bfloat16 --steps 40 --warmup-steps 5 trainer.callbacks.checkpointer.enabled=false
 ```
 
 `gpu` is torchrun's own value for one process per visible device and it resolves on the node --
 the check runs before any machine has been addressed, so it will not write a number it cannot
-see. Put the card count there yourself if you would rather pin it. Only one of the two refusals
-ever fires on a dispatch. Setting `processes` to a count silences the earlier one
-on purpose: a launcher is about to be composed for you, and refusing you for not having written
-the thing the form is about to write would be the guide arguing with itself.
+see. Put the card count there yourself if you would rather pin it.
+
+**Only one of the two refusals ever fires on a dispatch, and `processes=all` is what silences the
+earlier one.** Not "a count": `auto` and `1` prepend nothing, so the command that would run is the
+command that was judged and the check stands. This paragraph said "setting `processes` to a count"
+until 2026-08-10, and `1` is the most natural reading of a count -- a reader who wanted a
+single-process dry run set it to `1` on that advice and lost the dispatch to the refusal the
+sentence promised would not come. What `all` buys is that a launcher is about to be composed for
+you, so refusing you for not having written the thing the form is about to write would be the
+guide arguing with itself. If one process is genuinely what you want on the MoE recipe, the
+refusal names the waiver and you should read what you are waiving before you use it.
 
 ### Two nodes
 
@@ -197,7 +299,7 @@ gh workflow run block-run-distributed.yml --ref main -R edu-llm/platform \
   -f run_name=ana-two-node-smoke \
   -f branch=my-branch \
   -f repository=edu-llm/OLMo-core \
-  -f command='python .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4 --dataset-id=regmix-10b-v1' \
+  -f command='python .edullm/train_on_corpus.py ana-two-node-smoke --model-factory olmoe_7b_32x4 --dataset-id pretrain/regmix-10b --dataset-version v1 --dataset-tokenizer tokenizer/dolma2-bpe --sequence-length 4096 --global-batch-size 524288 --rank-microbatch-size 8192 --param-dtype bfloat16 --steps 40 --warmup-steps 5 trainer.callbacks.checkpointer.enabled=false' \
   -f node_count=2 \
   -f nodes= \
   -f expert_parallel= \
@@ -210,7 +312,17 @@ gh workflow run block-run-distributed.yml --ref main -R edu-llm/platform \
 
 `node_count=2` takes the two lowest-numbered free machines. Read the plan, then send the same
 line with `dry_run=false`. Changing `node_count` to `1` or to `8` is the only edit between the
-three cases on this page.
+three cases on this page, and the command is deliberately byte-for-byte the one measured on one
+node in [section 3](#that-command-line-was-run-and-every-part-of-it-earns-its-place).
+
+**The one thing worth reconsidering across node counts is the global batch, and nothing here
+scales it for you.** `--global-batch-size 524288` over 16 ranks is 32,768 tokens a rank a step and
+over 64 ranks it is 8,192, which is exactly one microbatch -- so the same line runs at every node
+count on this page and the arithmetic quietly changes underneath it. If what you want is the
+one-node measurement repeated on more machines, keep tokens per rank fixed and double the global
+batch with the node count. If what you want is the flagship's own shape, take it off the flagship
+rather than off this page. **Neither of those has been measured above one node** and the dry run
+below will not tell you, so a two-node launch is still the first time anybody finds out.
 
 **Turn `mesh_flags` off unless your entrypoint is the OLMo-core mixture-of-experts recipe.** Left
 on, the dispatch appends `--moe-shard-degree` and `--moe-num-replicas` to your command, computed
@@ -220,20 +332,33 @@ seconds of the containers coming up -- after the node set has been claimed and t
 for. It is on by default because the flagship is what the block was bought for, and it is a
 field rather than a guess because nothing here can read your argument parser.
 
-A one-node dry run on 2026-08-10 printed this, which is what the plan looks like when the fleet
-can serve it:
+A two-node dry run on 2026-08-10 printed this in twenty-three seconds, having claimed nothing,
+which is what the plan looks like when the fleet can serve it:
 
 ```
-8 ranks: 1 replicas x 8 expert-parallel, 4 of 32 experts a rank
-rendezvous 172.31.3.137:29400 on node 1
-torchrun --nnodes=1 --nproc-per-node=8 --max-restarts=0 --rdzv-id=procedure-plan-1n
-  --rdzv-backend=c10d --rdzv-endpoint=172.31.3.137:29400 --rdzv-conf=join_timeout=900
-  --no-python python .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4
-  --dataset-id=regmix-10b-v1 --moe-shard-degree 8 --moe-num-replicas 1
+16 ranks: 2 replicas x 8 expert-parallel, 4 of 32 experts a rank
+rendezvous 172.31.54.106:29400 on node 2
+torchrun --nnodes=2 --nproc-per-node=8 --max-restarts=0 --rdzv-id=coldstart-mfu-2n-dry
+  --rdzv-backend=c10d --rdzv-endpoint=172.31.54.106:29400 --rdzv-conf=join_timeout=900
+  --no-python python .edullm/train_on_corpus.py coldstart-mfu-2n [...]
+  --moe-shard-degree 8 --moe-num-replicas 2
 ```
 
 Everything from `torchrun` to `--no-python` was added for you, and so were the last two flags.
-Your `command` is the part in the middle.
+Your `command` is the part in the middle, unchanged and elided here for width.
+
+**It elected node 2 rather than node 1**, because node 1 was busy at the time, and the number in
+the `rendezvous` line is the only place the plan says which machine that was. You need it: it is
+the node whose log to read, the node whose prefix the output lands under, and the `node` you pass
+to `block-logs.yml`. On a dispatch that was refused and retried it can move.
+
+**A dry run resolves machines and composes a launcher. It validates nothing about your job.** Not
+the dataset id, not your branch's flags, not whether the entrypoint accepts a single argument on
+that line. The dry run that printed the plan above would have printed an equally happy one for the
+command that then died on every rank in three seconds, and on 2026-08-10 it did exactly that. What
+`dry_run` is worth is that it is free, so use it for every node count you have not used before --
+and then find out about the command from `edullm data`, from `--help`, and from one short run on
+one node, rather than from eight machines.
 
 **There is no `processes` field here and there must not be one.** The launcher is not optional on
 this path and is not yours to write: `--nnodes`, `--nproc-per-node` and the rendezvous endpoint
@@ -249,7 +374,7 @@ gh workflow run block-run-distributed.yml --ref main -R edu-llm/platform \
   -f run_name=ana-full-fleet \
   -f branch=my-branch \
   -f repository=edu-llm/OLMo-core \
-  -f command='python .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4 --dataset-id=regmix-10b-v1' \
+  -f command='python .edullm/train_on_corpus.py ana-full-fleet --model-factory olmoe_7b_32x4 --dataset-id pretrain/regmix-10b --dataset-version v1 --dataset-tokenizer tokenizer/dolma2-bpe --sequence-length 4096 --global-batch-size 524288 --rank-microbatch-size 8192 --param-dtype bfloat16 --steps 40 --warmup-steps 5 trainer.callbacks.checkpointer.enabled=false' \
   -f node_count= \
   -f nodes=1,2,3,4,5,6,7,8 \
   -f expert_parallel= \
@@ -276,6 +401,18 @@ busy.
 fits inside one machine, which keeps the mixture-of-experts all-to-all on NVLink instead of on the
 network between machines. Setting it wider than a node's card count is accepted by everything, is
 not an error anywhere, and makes every step several times slower.
+
+**`fabric` is the field nothing on this page explained, and on a cross-node run it is the one that
+decides whether the numbers are worth having.** It picks how the gradient reduction between
+machines travels. `auto`, the default, takes EFA on a node that has the devices and falls back to
+TCP on a node that does not. `efa` refuses a node with none, which is what to choose when the run
+is only worth doing on the fabric. `tcp` forces the ordinary network interface. On one node it
+cannot matter, because nothing crosses a machine. On two or more it is the difference between a
+useful measurement and a misleading one: a `p5.48xlarge` carries no EFA device unless the fleet
+launch asked for interfaces, and NCCL falls back with nothing anywhere reporting a problem -- the
+loss still falls, and every step takes several times longer than it should. The dispatch summary
+prints the fabric each node actually chose, per node, and says so loudly when any of them reads
+`tcp`. Read that column before you believe a cross-node number.
 
 ### What a refusal looks like, and what it costs
 
@@ -341,9 +478,29 @@ no flash-attn, no vLLM, no DeepSpeed, no `transformers`, no `datasets`. A `pip i
 of your command works and happens again on every single dispatch, so a twenty-minute install is
 twenty minutes off every iteration.
 
+**There is no `nvidia-smi` in the container either, and that one catches people because it is the
+first thing anybody types on a new machine.** `which nvidia-smi` prints nothing. The lists above
+and in [using the capacity block](the-capacity-block.md) are Python packages plus a compiler and
+say nothing either way about the CUDA userspace tools, so `nvidia-smi && python train.py` on an
+eight-H100 node is a run that exits having printed nothing at all, with no error explaining it --
+the `&&` never reaches the second half. Enumerate the devices through torch instead:
+
+```
+python -c 'import torch; print(torch.cuda.device_count(), torch.cuda.get_device_name(0))'
+```
+
+which answered `8 NVIDIA H100 80GB HBM3` on this fleet, under torch 2.9.0+cu128.
+
+**To find out what an entrypoint takes, run its `--help` as a job.** There is no offline way to
+ask, and OLMo-core's `train_on_corpus.py` has by some distance the best documentation of these
+flags anywhere -- long paragraphs on why each default is what it is, including the one about
+`--sequence-length` that this page now quotes. It is about 200 lines and the dispatch summary tails
+only 40, so read it back with `block-logs.yml` at `-f lines=400`. `processes=1` is right for this,
+it costs a node for twenty seconds, and it is worth doing once.
+
 ## 5. Where does my output go
 
-The container is handed these and builds nothing itself:
+The container is handed these four and builds nothing itself:
 
 | | |
 | --- | --- |
@@ -351,6 +508,25 @@ The container is handed these and builds nothing itself:
 | `$EDULLM_CHECKPOINT_DIR` | the same, with `checkpoints/` |
 | the log | the same, with `log/train.log` |
 | `$EDULLM_DATA_BUCKET` | `edullm-data-us-east-2`, the corpus mirror, readable and not writable |
+
+`$EDULLM_RUN_ID` is there too, and is the fifth. `env | grep EDULLM` inside a run on this fleet
+returns those five and nothing else.
+
+**Three more that the platform sets and this lane does not, which is the difference that has cost
+the most time here:**
+
+| | |
+| --- | --- |
+| `EDULLM_DATASET_ID` | **not set on the block.** Pass `--dataset-id` |
+| `EDULLM_DATASET_VERSION` | **not set on the block.** Pass `--dataset-version` |
+| `EDULLM_DATASET_TOKENIZER` | **not set on the block.** Pass `--dataset-tokenizer` |
+
+In `us-east-1` the submission form sets all three and OLMo-core's entrypoint reads them, which is
+why [training a model](olmo-core.md) documents them as environment and never as flags. There is no
+submission form here, nothing sets them, and the entrypoint's refusal names a form field you have
+never seen. The three flags in the [command in section
+3](#that-command-line-was-run-and-every-part-of-it-earns-its-place) are those three variables, and
+they are not optional.
 
 Write your checkpoints to `$EDULLM_CHECKPOINT_DIR` and everything else under
 `$EDULLM_OUTPUT_PREFIX`. A multi-node run gets **one** prefix for the whole job, built from the
@@ -375,12 +551,29 @@ gh workflow run block-logs.yml --ref main -R edu-llm/platform \
 
 Each node copies its logs to S3 once a minute, so a log is readable from outside the machine
 within about that. On a multi-node run, rank 0's log is the one to read; the others are the same
-job seen from another machine.
+job seen from another machine. `lines` goes as high as you need -- an entrypoint's `--help` wants
+about 400.
 
-The dispatch summary itself answers the first question you will have, which is whether the thing
-started at all: it prints the instance, the commit that was actually cloned, and the first forty
-lines the run printed, read back about a minute after the container came up. A run that died on a
-missing import shows it there.
+**The dispatch summary itself answers the first question you will have, which is whether the
+thing started at all, and both workflows answer it now.** Each reads the log off the machine
+about forty-five seconds after the container came up, which is well before it has reached S3, so
+a run that died on a missing import or an unset variable has already said so on the page you are
+looking at.
+
+| | What the summary carries |
+| --- | --- |
+| **Block: start a run on a node** | The instance, the commit that was actually cloned, the W&B link, and the first forty lines the run printed |
+| **Block: start one run across several nodes** | The mesh, the elected node, every machine with its private address and the fabric it chose, the W&B link, the command every rank is running, the first forty lines **rank 0** printed, and one line each from the other nodes |
+
+**The multi-node summary printed the mesh and stopped until 2026-08-10**, which made the button
+this page recommends for every whole-machine job the button with no feedback. Rank 0 is shown
+whole because it is the log to read and eight nodes of forty lines is 320 lines of nearly
+identical output; the others get their last line, because the one thing rank 0 cannot tell you is
+that node 5 died differently. A line down there that is not rank 0's is a machine with a problem
+of its own.
+
+The multi-node read is a best effort and never a gate. If Systems Manager will not answer it, the
+section is missing or says so, and the launch is still the launch it was.
 
 ## 7. How do I stop it
 

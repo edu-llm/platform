@@ -52,6 +52,7 @@ __all__ = [
     "DEFAULT_RENDEZVOUS_PORT",
     "MESH_FLAGS",
     "ROUTED_EXPERTS",
+    "TAIL_LINES",
     "Candidate",
     "ExpertMesh",
     "LaunchPlan",
@@ -72,10 +73,12 @@ __all__ = [
     "node_local_expert_parallel",
     "outcomes",
     "plan_launch",
+    "read_the_log_back",
     "refused",
     "rendezvous_for",
     "run_name_refusals",
     "single_node_launch",
+    "tail_markdown",
     "torchrun_command",
     "with_mesh_flags",
 ]
@@ -86,6 +89,15 @@ __all__ = [
 #: of this platform, so every function below takes it as an argument and this is only the
 #: default. A different MoE is a different number and not a different code path.
 ROUTED_EXPERTS: Final = 32
+
+#: How many lines of the elected node's log the dispatch reads back into its own summary.
+#:
+#: Forty because that is what ``block-run.yml`` reads back, and the two want to be the same
+#: number rather than each somebody's idea of enough: a person moving between the one-node
+#: button and this one is comparing two dispatches, and a difference in how much they show is a
+#: difference they will read as a difference in what happened. It is also about what fits --
+#: a start-up failure puts its cause in the first page of output, and forty lines is that page.
+TAIL_LINES: Final = 40
 
 #: The port the c10d rendezvous is hosted on, which is torchrun's own default and is left at it
 #: deliberately. Nothing in this lane picks a port anywhere else, the nodes share the VPC's
@@ -1134,3 +1146,99 @@ def launch_markdown(
         "```",
     ]
     return "\n".join(lines)
+
+
+def read_the_log_back(run: str, *, lines: int = TAIL_LINES) -> str:
+    """What each node is asked for, which is ``block-run.yml``'s own ``tail`` and nothing else.
+
+    The path is the one every other reader of this lane already uses --
+    ``infra/block-distributed-launch.sh`` writes there so that the sync unit, the drain and
+    ``block-logs.yml`` see a distributed run without knowing there is such a thing -- so this
+    reads the same file from the machine rather than waiting the minute it takes to reach S3.
+
+    ``2>&1 || true`` for the reason the single-node step has it: a container that has not
+    written a line yet leaves no file, and a node answering ``No such file or directory`` is
+    the honest report of a run that has printed nothing. A failed invocation would instead read
+    as a node that could not be reached, which is a different and much more alarming fact.
+    """
+    log = f"/scratch/{run}/log/train.log"
+    return f"tail -n {lines} {shlex.quote(log)} 2>&1 || true"
+
+
+def _last_line_of(outcome: NodeOutcome) -> str:
+    said = (outcome.output or outcome.error).strip().splitlines()
+    if not outcome.ok:
+        return f"[{outcome.status}] {said[-1] if said else 'no output'}"
+    return said[-1] if said else "(nothing in the log yet)"
+
+
+def tail_markdown(
+    *,
+    run: str,
+    rendezvous: Rendezvous,
+    found: Sequence[NodeOutcome],
+    lines: int = TAIL_LINES,
+    after_seconds: int,
+) -> str:
+    """What the run printed, as the dispatch that started it can still show it.
+
+    **THE DISPATCH PROMISED THIS AND ONLY THE ONE-NODE BUTTON DELIVERED IT, WHICH IS THE WORST
+    PLACE FOR THE GAP TO BE.** ``block-run.yml`` reads forty lines back into its own log and a
+    cold-start reader on 2026-08-10 called it the best thing in the lane -- a job that dies on
+    an import is fully answered by the dispatch, with no second workflow and no wait for S3.
+    This path, the one the procedure recommends for anything wanting a whole machine, printed
+    the mesh plan and stopped. So a run that died in three seconds looked exactly like a run
+    that worked until somebody separately dispatched ``block-logs.yml`` and waited a minute,
+    and the two dead-on-arrival runs that afternoon were each found that way.
+
+    **RANK 0 IN FULL AND ONE LINE FROM EVERY OTHER NODE, WHICH IS A CHOICE ABOUT EIGHT
+    MACHINES RATHER THAN ABOUT ONE.** Forty lines times eight nodes is 320 lines of nearly
+    identical output, and a page nobody reads is worth about as much as the blank one this
+    replaces. Rank 0's is the log to read -- the procedure already says so, and the elected node
+    is where the rendezvous, the output prefix and the checkpoint directory all are. What the
+    others are still worth is the question rank 0 cannot answer: whether they died differently.
+    A node whose last line is not rank 0's is a node with its own problem, and one line each is
+    enough to see it and cheap enough to always show. They cost nothing extra either way, since
+    the same ``send-command`` goes to the whole set.
+    """
+    host = next(
+        (outcome for outcome in found if outcome.node == rendezvous.host.node), None
+    )
+    others = [outcome for outcome in found if outcome is not host]
+    page = [
+        f"### The first {lines} lines `{run}` printed",
+        "",
+        (
+            f"Read off node {rendezvous.host.node}, which is rank 0, about {after_seconds} "
+            "seconds after the containers came up. A run that died on a missing import or an "
+            "unset variable has said so by now, and this is where it says it."
+        ),
+        "",
+    ]
+    if host is None:
+        page += [
+            (
+                f"Node {rendezvous.host.node} produced no answer to the read, so there is "
+                "nothing to show. The run may well be fine; dispatch `block-logs.yml` against "
+                "that node in a minute, once the log has reached S3."
+            )
+        ]
+    else:
+        page += ["```", (host.output or host.error).strip() or _last_line_of(host), "```"]
+    if others:
+        page += [
+            "",
+            (
+                "The other nodes are the same job seen from another machine, so only the last "
+                "line of each is below. A line that is not rank 0's is a node with a problem "
+                "of its own."
+            ),
+            "",
+            "```",
+            *(
+                f"{outcome.node:<6}{outcome.instance_id:<21}{_last_line_of(outcome)}"
+                for outcome in others
+            ),
+            "```",
+        ]
+    return "\n".join(page)
