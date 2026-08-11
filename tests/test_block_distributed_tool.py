@@ -35,6 +35,9 @@ from tests.torchrun_argv import INTERPRETER, child_argv
 from tools import block_run_distributed
 
 BLOCK = "cr-0afc33f3a1af417a7"
+#: The group every interface of the fabric fleet wears. The real one on cr-05872979e28a491aa,
+#: because the rule this file asserts about it is the rule that block was launched without.
+FABRIC_GROUP = "sg-0988ddf995169aa1f"
 TRAINING = "python .edullm/train_on_corpus.py --model-factory=olmoe_7b_32x4"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LAUNCH_SCRIPT = PROJECT_ROOT / "infra" / "block-distributed-launch.sh"
@@ -50,11 +53,23 @@ REQUIRED_SETTING = re.compile(r"\$\{(EDULLM_DIST_[A-Z_]+):\?")
 CLAIM_RECORD = re.compile(r'\{(?:"[a-z_]+":"%s",)+"[a-z_]+":"%s"\}')
 
 
-def instance(number: int) -> dict[str, Any]:
+def instance(number: int, *, efa: int = 0) -> dict[str, Any]:
+    """One node as EC2 describes it, optionally wearing a fabric.
+
+    ``efa`` builds the interface list a real p5.48xlarge here has: one ordinary interface
+    carrying the address and ``efa`` EFA-only ones carrying none, every one of them in the same
+    security group. It defaults to none because most of this file is about claiming and
+    starting, where the fabric is not the question.
+    """
+    interfaces = [{"InterfaceType": "interface", "Groups": [{"GroupId": FABRIC_GROUP}]}]
+    interfaces += [
+        {"InterfaceType": "efa-only", "Groups": [{"GroupId": FABRIC_GROUP}]} for _ in range(efa)
+    ]
     return {
         "InstanceId": f"i-{number:017d}",
         "State": {"Name": "running"},
         "PrivateIpAddress": f"172.31.0.{number}",
+        "NetworkInterfaces": interfaces,
         "Tags": [
             {"Key": NODE_TAG, "Value": str(number)},
             {"Key": RESERVATION_TAG, "Value": BLOCK},
@@ -89,9 +104,21 @@ class FakeCli:
     intended for something else.
     """
 
-    def __init__(self, *, fleet: Sequence[int], phases: dict[str, dict[int, dict[str, Any]]]):
+    def __init__(
+        self,
+        *,
+        fleet: Sequence[int],
+        phases: dict[str, dict[int, dict[str, Any]]],
+        efa: int = 0,
+        self_egress: bool = True,
+    ):
         self.fleet = list(fleet)
         self.phases = phases
+        #: How many EFA interfaces each described instance carries. Zero by default, which is
+        #: the fleet the rest of this file was written against and the one where the fabric
+        #: question does not arise.
+        self.efa = efa
+        self.self_egress = self_egress
         self.calls: list[list[str]] = []
         self.sent: dict[str, str] = {}
         self.commands: dict[str, str] = {}
@@ -111,7 +138,30 @@ class FakeCli:
         if head == "ec2 describe-instances":
             if "--query" in argv:
                 return [[BLOCK]]
-            return {"Reservations": [{"Instances": [instance(n)]} for n in self.fleet]}
+            return {
+                "Reservations": [
+                    {"Instances": [instance(n, efa=self.efa)]} for n in self.fleet
+                ]
+            }
+        if head == "ec2 describe-security-groups":
+            egress: list[dict[str, Any]] = [
+                {"IpProtocol": "-1", "IpRanges": [{"CidrIp": "0.0.0.0/0"}]}
+            ]
+            if self.self_egress:
+                egress.append(
+                    {"IpProtocol": "-1", "UserIdGroupPairs": [{"GroupId": FABRIC_GROUP}]}
+                )
+            return {
+                "SecurityGroups": [
+                    {
+                        "GroupId": FABRIC_GROUP,
+                        "IpPermissions": [
+                            {"IpProtocol": "-1", "UserIdGroupPairs": [{"GroupId": FABRIC_GROUP}]}
+                        ],
+                        "IpPermissionsEgress": egress,
+                    }
+                ]
+            }
         if head == "ssm send-command":
             phase = self.phase_of(argv[argv.index("--comment") + 1])
             self.commands[phase] = argv[argv.index("--parameters") + 1]
@@ -230,6 +280,93 @@ def test_the_happy_path_claims_then_starts_and_touches_nothing_else(
     assert done.plan.mesh.world_size == 32
     assert done.fabric == {1: "tcp", 2: "tcp", 3: "tcp", 4: "tcp"}
     assert not cli.reached("rollback")
+
+
+def test_a_fabric_dispatch_is_refused_when_the_group_cannot_carry_efa(
+    monkeypatch: pytest.MonkeyPatch,
+    four_idle_nodes: dict[str, dict[int, dict[str, Any]]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """THE REFUSAL THAT WOULD HAVE SAVED THE EVENING OF 2026-08-10.
+
+    A group with self-referencing ingress and only ``0.0.0.0/0`` outbound reads as correct to
+    everything except EFA. Dispatched into, it claims every node, clones on all of them, brings
+    sixty-four ranks up and reports ``Using network Libfabric`` -- and then hangs or dies on
+    ``ncclRemoteError`` minutes later, with no line anywhere naming the security group. This
+    turns that into one sentence and no claim.
+    """
+    cli = FakeCli(fleet=[1, 2, 3, 4], phases=four_idle_nodes, efa=32, self_egress=False)
+    monkeypatch.setattr(block_run_distributed, "aws_json", cli)
+
+    done = block_run_distributed.launch(arguments("--node-count", "4", "--fabric", "efa"))
+
+    assert done.code == 1
+    assert not cli.reached("claim")
+    assert not cli.reached("start")
+    printed = capsys.readouterr().err
+    assert "security_group_does_not_carry_efa:sg-0988ddf995169aa1f" in printed
+    # The way out has to be in the refusal. Fifteen of the people who can dispatch this hold no
+    # AWS role, so what they need is the sentence to forward to somebody who does.
+    assert "authorize-security-group-egress" in printed
+
+
+def test_a_group_that_does_carry_efa_is_not_refused(
+    monkeypatch: pytest.MonkeyPatch, four_idle_nodes: dict[str, dict[int, dict[str, Any]]]
+) -> None:
+    """The other half, without which the check above could be a constant."""
+    cli = FakeCli(fleet=[1, 2, 3, 4], phases=four_idle_nodes, efa=32, self_egress=True)
+    monkeypatch.setattr(block_run_distributed, "aws_json", cli)
+
+    done = block_run_distributed.launch(arguments("--node-count", "4", "--fabric", "efa"))
+
+    assert done.code == 0
+    assert cli.reached("start")
+
+
+def test_a_tcp_dispatch_is_not_refused_by_the_fabric_check(
+    monkeypatch: pytest.MonkeyPatch, four_idle_nodes: dict[str, dict[int, dict[str, Any]]]
+) -> None:
+    """``fabric=tcp`` is the answer to this refusal rather than a case of it, and while the
+    group is unfixed it is the only way to use the fleet across machines at all. Refusing it
+    would leave a fleet nobody could run a multi-node job on by any route."""
+    cli = FakeCli(fleet=[1, 2, 3, 4], phases=four_idle_nodes, efa=32, self_egress=False)
+    monkeypatch.setattr(block_run_distributed, "aws_json", cli)
+
+    done = block_run_distributed.launch(arguments("--node-count", "4", "--fabric", "tcp"))
+
+    assert done.code == 0
+    assert cli.reached("start")
+    assert not any(argv[:2] == ["ec2", "describe-security-groups"] for argv in cli.calls)
+
+
+def test_a_rehearsal_finds_the_group_rather_than_reporting_a_plan_that_cannot_run(
+    monkeypatch: pytest.MonkeyPatch, four_idle_nodes: dict[str, dict[int, dict[str, Any]]]
+) -> None:
+    """``--dry-run`` is the command somebody runs to check a dispatch before spending one. A
+    check placed behind its return would be missing from the one place it is most wanted."""
+    cli = FakeCli(fleet=[1, 2, 3, 4], phases=four_idle_nodes, efa=32, self_egress=False)
+    monkeypatch.setattr(block_run_distributed, "aws_json", cli)
+
+    done = block_run_distributed.launch(
+        arguments("--node-count", "4", "--fabric", "efa", "--dry-run")
+    )
+
+    assert done.code == 1
+
+
+def test_a_fleet_with_no_fabric_is_not_asked_about_its_group(
+    monkeypatch: pytest.MonkeyPatch, four_idle_nodes: dict[str, dict[int, dict[str, Any]]]
+) -> None:
+    """A fleet launched with ``efa_interfaces=0`` has nothing for the self-referencing rule to
+    carry. Refusing it would send somebody back to a form that cannot satisfy the refusal, which
+    is the reasoning ``block-launch-fleet.yml`` already records about the same question."""
+    cli = FakeCli(fleet=[1, 2, 3, 4], phases=four_idle_nodes, efa=0, self_egress=False)
+    monkeypatch.setattr(block_run_distributed, "aws_json", cli)
+
+    done = block_run_distributed.launch(arguments("--node-count", "4"))
+
+    assert done.code == 0
+    assert not any(argv[:2] == ["ec2", "describe-security-groups"] for argv in cli.calls)
 
 
 def test_the_claim_is_taken_before_anything_is_cloned(

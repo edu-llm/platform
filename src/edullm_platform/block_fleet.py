@@ -136,6 +136,11 @@ class FleetNode:
     #: of a launch that nothing downstream can recover. Defaulted so that the several callers
     #: constructing a node by hand keep working; the reading below always fills it.
     efa_interfaces: int = 0
+    #: Every distinct security group across *all* of this instance's interfaces, not only the
+    #: primary one. A p5.48xlarge here wears thirty-three, and the fabric is carried by the
+    #: thirty-two nobody looks at -- so a reading that took the first interface's groups would
+    #: answer confidently about the one interface EFA does not use.
+    security_groups: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -341,6 +346,24 @@ def interface_plan(
     )
 
 
+def _all_traffic_to_the_group(rules: Any, *, group_id: str) -> bool:
+    """Whether one rule list carries an all-protocol rule naming ``group_id`` itself.
+
+    The same predicate in both directions, which is the point of factoring it out. What went
+    wrong below was that the two directions were spelled differently and only one of them was
+    right.
+    """
+    return any(
+        rule.get("IpProtocol") == "-1"
+        and any(
+            isinstance(pair, Mapping) and pair.get("GroupId") == group_id
+            for pair in rule.get("UserIdGroupPairs") or []
+        )
+        for rule in rules or []
+        if isinstance(rule, Mapping)
+    )
+
+
 def admits_its_own_members(described: Mapping[str, Any], *, group_id: str) -> bool:
     """Whether a security group lets EFA traffic between the machines that wear it.
 
@@ -349,36 +372,42 @@ def admits_its_own_members(described: Mapping[str, Any], *, group_id: str) -> bo
     the plugin loads, and the fabric never forms because the packets are dropped. There is no
     error. NCCL falls back to sockets exactly as it would with no device at all.
 
-    Ordinary IP ingress rules do not substitute. EFA traffic is not routable and is matched on
-    the group rather than on a CIDR, so a rule admitting the subnet's own range -- which looks
-    equivalent and is what somebody tightening this would reach for -- admits none of it.
+    Ordinary IP rules do not substitute, **in either direction, and that is the correction this
+    function is carrying.** EFA traffic is not routable and is matched on the group rather than
+    on a CIDR, so a rule naming an address range -- which looks equivalent and is what somebody
+    tightening this would reach for -- carries none of it. AWS states it flatly: "CIDR-based
+    rules, including ``0.0.0.0/0``, do not satisfy EFA requirements even if they allow all
+    traffic on all ports. You must explicitly specify a security group ID as the source or
+    destination for all EFA traffic rules."
+
+    **THIS USED TO ACCEPT ``0.0.0.0/0`` AS AN EGRESS RULE AND THAT IS WHY THE FLEET COULD NOT
+    TALK TO ITSELF.** The paragraph above was already written, correctly, about ingress; the
+    egress arm then took either a self-reference *or* the default allow-all CIDR. A default VPC
+    group carries exactly that pair -- self-referencing ingress, ``0.0.0.0/0`` egress -- so
+    ``block-launch-fleet.yml`` asked this question about ``sg-0988ddf995169aa1f`` on
+    cr-05872979e28a491aa, was told yes, and launched eight p5.48xlarge with thirty-two EFA
+    devices each into a group that drops every packet they emit.
+
+    What that costs is invisible from the machine, which is why it survived a whole window.
+    Measured on all eight nodes on 2026-08-10: ``ibv_devinfo`` lists thirty-two HCAs all
+    ``PORT_ACTIVE``, ``fi_info -p efa`` enumerates ninety-six endpoints, the plugin loads and
+    logs ``Using network Libfabric``, NCCL forms its channels and reports ``GPU Direct RDMA
+    Enabled`` -- and ``/sys/class/infiniband/*/ports/1/hw_counters`` reads ``tx_pkts 0`` and
+    ``rx_pkts 0`` on every one of the two hundred and fifty-six devices, cumulative since boot,
+    while ``send_wrs`` climbs. The device accepts the work request and the Nitro card emits
+    nothing, because an egress rule matched on an IPv4 CIDR cannot match traffic addressed to an
+    ``efa-only`` interface, which holds no IP address at all. A sixteen-rank all-reduce over TCP
+    across the same two machines completes in seconds.
+
+    So the egress arm now asks the same question the ingress arm asks. A group that has only
+    ``0.0.0.0/0`` outbound is refused, and the refusal names the rule to add.
     """
     for group in described.get("SecurityGroups") or []:
         if not isinstance(group, Mapping) or group.get("GroupId") != group_id:
             continue
-        return any(
-            rule.get("IpProtocol") == "-1"
-            and any(
-                isinstance(pair, Mapping) and pair.get("GroupId") == group_id
-                for pair in rule.get("UserIdGroupPairs") or []
-            )
-            for rule in group.get("IpPermissions") or []
-            if isinstance(rule, Mapping)
-        ) and any(
-            rule.get("IpProtocol") == "-1"
-            and (
-                any(
-                    isinstance(pair, Mapping) and pair.get("GroupId") == group_id
-                    for pair in rule.get("UserIdGroupPairs") or []
-                )
-                or any(
-                    isinstance(span, Mapping) and span.get("CidrIp") == "0.0.0.0/0"
-                    for span in rule.get("IpRanges") or []
-                )
-            )
-            for rule in group.get("IpPermissionsEgress") or []
-            if isinstance(rule, Mapping)
-        )
+        return _all_traffic_to_the_group(
+            group.get("IpPermissions"), group_id=group_id
+        ) and _all_traffic_to_the_group(group.get("IpPermissionsEgress"), group_id=group_id)
     return False
 
 
@@ -433,6 +462,17 @@ def read_fleet(described: Mapping[str, Any]) -> tuple[FleetNode, ...]:
                         for interface in instance.get("NetworkInterfaces") or []
                         if isinstance(interface, Mapping)
                         and str(interface.get("InterfaceType") or "") in EFA_INTERFACES
+                    ),
+                    security_groups=tuple(
+                        sorted(
+                            {
+                                str(found["GroupId"])
+                                for interface in instance.get("NetworkInterfaces") or []
+                                if isinstance(interface, Mapping)
+                                for found in interface.get("Groups") or []
+                                if isinstance(found, Mapping) and found.get("GroupId")
+                            }
+                        )
                     ),
                 )
             )
