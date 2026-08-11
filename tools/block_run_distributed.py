@@ -43,6 +43,7 @@ from edullm_platform.block_fleet import (
     RESERVATION_TAG,
     FleetNode,
     NodeReading,
+    admits_its_own_members,
     parse_reading,
     read_fleet,
 )
@@ -447,6 +448,71 @@ def _fabric_of(found: Sequence[NodeOutcome]) -> dict[int, str]:
     return chosen
 
 
+def _fabric_refusals(
+    *,
+    chosen: Sequence[Candidate],
+    fleet: Sequence[FleetNode],
+    fabric: str,
+    profile: str | None,
+    region: str,
+) -> tuple[str, ...]:
+    """Refuse an EFA dispatch into a security group that cannot carry EFA.
+
+    **THIS IS ASKED HERE AS WELL AS AT LAUNCH BECAUSE THE FLEET IS ALREADY UP BY THE TIME IT
+    MATTERS.** ``.github/workflows/block-launch-fleet.yml`` asks the same question of the same
+    function before it spends a capacity block, which is the right place for it and is not the
+    only place it is needed: a group can be narrowed after a launch, a fleet can be launched by
+    an older workflow, and -- the case that actually happened -- the check itself can have been
+    wrong when the fleet went up. On cr-05872979e28a491aa the launch was told the group was
+    fine, and the correction to ``admits_its_own_members`` cannot reach eight machines that are
+    already running. This can, and it costs one ``describe-security-groups`` read.
+
+    **WHAT IT BUYS IS THE DIFFERENCE BETWEEN A SENTENCE AND A WINDOW.** Without it, a dispatch
+    into this fleet claims every node, clones the branch on all of them, pulls sixty-four ranks
+    up through torch and NCCL, forms its channels, and then either hangs until somebody notices
+    or dies several minutes in on ``ncclRemoteError`` -- with ``Using network Libfabric`` in the
+    log saying the fabric was chosen, which reads as though the fabric were working. There is no
+    line anywhere that names the security group. Two of those attempts is most of an evening.
+
+    ``tcp`` is exempt because it is the answer to this refusal rather than a case of it, and a
+    fleet with no EFA devices is exempt for the reason the launch workflow gives about
+    ``efa_interfaces=0``: there is nothing for the self-referencing rule to carry, so refusing
+    would send somebody back to a form that cannot satisfy it.
+    """
+    if fabric == "tcp":
+        return ()
+    holders = {node.instance_id: node for node in fleet}
+    taken = [
+        holders[candidate.instance_id]
+        for candidate in chosen
+        if candidate.instance_id in holders
+    ]
+    if not any(node.efa_interfaces for node in taken):
+        return ()
+    groups = sorted({group for node in taken for group in node.security_groups})
+    if not groups:
+        return ()
+    described = aws_json(
+        ["ec2", "describe-security-groups", "--group-ids", *groups],
+        profile=profile,
+        region=region,
+    )
+    return tuple(
+        f"security_group_does_not_carry_efa:{group_id}. It has no rule allowing all traffic "
+        f"OUT to {group_id} itself, which is what EFA needs and what an allow-all "
+        "0.0.0.0/0 egress rule does not provide -- an efa-only interface holds no IP "
+        "address for a CIDR rule to match. Every device would come up, NCCL would report "
+        "`Using network Libfabric`, and every packet between nodes would be dropped before "
+        "it left the card. Ask somebody who can change it to run: aws ec2 "
+        f"authorize-security-group-egress --group-id {group_id} --region {region} "
+        "--ip-permissions "
+        f"'[{{\"IpProtocol\":\"-1\",\"UserIdGroupPairs\":[{{\"GroupId\":\"{group_id}\"}}]}}]'"
+        ". Or dispatch with fabric=tcp to run over the ordinary interface meanwhile."
+        for group_id in groups
+        if not admits_its_own_members(described, group_id=group_id)
+    )
+
+
 def _reservation_of(*, profile: str | None, region: str) -> str | None:
     """Which block has a fleet up, read off the instances rather than typed on the form.
 
@@ -548,6 +614,22 @@ def launch(arguments: argparse.Namespace) -> Launched:
             print(f"distributed_launch_refused:{refusal}", file=sys.stderr)
         return Launched(code=1, plan=plan, fabric={}, reservation_id=reservation_id or "")
     assert plan.rendezvous is not None
+
+    # AFTER THE PLAN AND BEFORE THE DRY RUN, WHICH IS THE ORDER THAT MAKES A REHEARSAL WORTH
+    # DOING. It needs the chosen set to know which groups to read, and putting it behind the
+    # dry-run return would mean the one command somebody runs to check a dispatch is the one
+    # command that cannot find this.
+    fabric_refusals = _fabric_refusals(
+        chosen=plan.chosen,
+        fleet=fleet,
+        fabric=arguments.fabric,
+        profile=arguments.profile,
+        region=arguments.region,
+    )
+    if fabric_refusals:
+        for refusal in fabric_refusals:
+            print(f"distributed_launch_refused:{refusal}", file=sys.stderr)
+        return Launched(code=1, plan=plan, fabric={}, reservation_id=reservation_id or "")
 
     if arguments.dry_run:
         return Launched(code=0, plan=plan, fabric={}, reservation_id=reservation_id or "")

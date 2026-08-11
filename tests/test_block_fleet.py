@@ -92,13 +92,26 @@ def group(
     group_id: str = GROUP,
     self_ingress: bool = True,
     cidr_ingress: bool = False,
-    egress: bool = True,
+    self_egress: bool = True,
+    cidr_egress: bool = False,
 ) -> dict[str, Any]:
+    """One ``describe-security-groups`` answer, with each of the four rules asked for separately.
+
+    Egress is two independent flags rather than one boolean because the pair that matters is a
+    group carrying ``cidr_egress`` and *not* ``self_egress``: that is what a default VPC group
+    ships as, it is what cr-05872979e28a491aa ran on, and it is the shape this reading used to
+    call correct.
+    """
     ingress: list[dict[str, Any]] = []
     if self_ingress:
         ingress.append({"IpProtocol": "-1", "UserIdGroupPairs": [{"GroupId": group_id}]})
     if cidr_ingress:
         ingress.append({"IpProtocol": "-1", "IpRanges": [{"CidrIp": "172.31.0.0/16"}]})
+    egress_rules: list[dict[str, Any]] = []
+    if self_egress:
+        egress_rules.append({"IpProtocol": "-1", "UserIdGroupPairs": [{"GroupId": group_id}]})
+    if cidr_egress:
+        egress_rules.append({"IpProtocol": "-1", "IpRanges": [{"CidrIp": "0.0.0.0/0"}]})
     return {
         "SecurityGroups": [
             {
@@ -106,9 +119,7 @@ def group(
                 "GroupName": "default",
                 "VpcId": "vpc-0854c9e902a502b2c",
                 "IpPermissions": ingress,
-                "IpPermissionsEgress": (
-                    [{"IpProtocol": "-1", "IpRanges": [{"CidrIp": "0.0.0.0/0"}]}] if egress else []
-                ),
+                "IpPermissionsEgress": egress_rules,
             }
         ]
     }
@@ -784,10 +795,36 @@ def test_a_group_admitting_the_subnet_range_instead_does_not_carry_efa() -> None
 
 
 def test_a_group_with_no_egress_does_not_carry_efa_either() -> None:
-    """EFA needs all traffic *to and from* the group. A default VPC group ships with both; one
-    somebody narrowed to inbound-only is the half of the rule that is easy to miss."""
-    assert not admits_its_own_members(group(egress=False), group_id=GROUP)
+    """EFA needs all traffic *to and from* the group, and the outbound half is the one that is
+    easy to miss."""
+    assert not admits_its_own_members(group(self_egress=False), group_id=GROUP)
     assert not admits_its_own_members(group(), group_id="sg-somethingelse")
+
+
+def test_an_allow_all_cidr_egress_rule_is_not_the_self_reference_efa_needs() -> None:
+    """THE MUTATION THAT COST A WHOLE CAPACITY BLOCK, AND THE REASON THIS FILE HAS THE REAL
+    GROUP ID IN IT.
+
+    A default VPC security group ships with self-referencing all-traffic ingress and
+    ``0.0.0.0/0`` all-traffic egress, and this reading used to accept that second rule in place
+    of an outbound self-reference. So ``block-launch-fleet.yml`` asked about
+    ``sg-0988ddf995169aa1f``, was told yes, and launched the cr-05872979e28a491aa fleet into a
+    group that carries no EFA traffic at all.
+
+    Nothing on the machine says so, which is why it survived the window. On all eight nodes:
+    thirty-two HCAs ``PORT_ACTIVE``, ninety-six endpoints out of ``fi_info``, the plugin loading
+    and logging ``Using network Libfabric``, NCCL reporting ``GPU Direct RDMA Enabled`` -- and
+    ``tx_pkts`` still zero on every one of the two hundred and fifty-six devices since boot.
+    AWS documents the rule this asserts: CIDR-based rules, ``0.0.0.0/0`` included, do not
+    satisfy EFA requirements even when they allow all traffic on all ports, because an
+    ``efa-only`` interface has no IP address for a CIDR to match against.
+    """
+    assert not admits_its_own_members(
+        group(self_egress=False, cidr_egress=True), group_id=GROUP
+    )
+    # And the pair together is fine: nothing here objects to allow-all egress existing, only to
+    # it standing in for the self-reference.
+    assert admits_its_own_members(group(cidr_egress=True), group_id=GROUP)
 
 
 def test_both_spellings_of_an_efa_interface_are_counted_off_a_described_instance() -> None:
