@@ -319,9 +319,10 @@ gh workflow run block-run-distributed.yml --ref main -R edu-llm/platform \
 ```
 
 `node_count=2` takes the two lowest-numbered free machines. Read the plan, then send the same
-line with `dry_run=false`. Changing `node_count` to `1` or to `8` is the only edit between the
-three cases on this page, and the command is deliberately byte-for-byte the one measured on one
-node in [section 3](#that-command-line-was-run-and-every-part-of-it-earns-its-place).
+line with `dry_run=false`. Apart from the run name, which goes in twice, `node_count` is the only
+edit between the three cases on this page: the command is deliberately the one measured on one
+node in [section 3](#that-command-line-was-run-and-every-part-of-it-earns-its-place), character
+for character.
 
 **The one thing worth reconsidering across node counts is the global batch, and nothing here
 scales it for you.** `--global-batch-size 524288` over 16 ranks is 32,768 tokens a rank a step and
@@ -487,11 +488,11 @@ of your command works and happens again on every single dispatch, so a twenty-mi
 twenty minutes off every iteration.
 
 **There is no `nvidia-smi` in the container either, and that one catches people because it is the
-first thing anybody types on a new machine.** `which nvidia-smi` prints nothing. The lists above
-and in [using the capacity block](the-capacity-block.md) are Python packages plus a compiler and
-say nothing either way about the CUDA userspace tools, so `nvidia-smi && python train.py` on an
-eight-H100 node is a run that exits having printed nothing at all, with no error explaining it --
-the `&&` never reaches the second half. Enumerate the devices through torch instead:
+first thing anybody types on a new machine.** `which nvidia-smi` prints nothing. The list above is
+Python packages plus a compiler and the CUDA userspace tools were never in it either way, so
+`nvidia-smi && python train.py` on an eight-H100 node is a run that exits having printed nothing
+at all, with no error explaining it -- the `&&` never reaches the second half, and a semicolon
+would have. Enumerate the devices through torch instead:
 
 ```
 python -c 'import torch; print(torch.cuda.device_count(), torch.cuda.get_device_name(0))'
@@ -508,7 +509,7 @@ it costs a node for twenty seconds, and it is worth doing once.
 
 ## 5. Where does my output go
 
-The container is handed these four and builds nothing itself:
+The container is handed these and builds nothing itself:
 
 | | |
 | --- | --- |
@@ -516,9 +517,11 @@ The container is handed these four and builds nothing itself:
 | `$EDULLM_CHECKPOINT_DIR` | the same, with `checkpoints/` |
 | the log | the same, with `log/train.log` |
 | `$EDULLM_DATA_BUCKET` | `edullm-data-us-east-2`, the corpus mirror, readable and not writable |
+| `$EDULLM_RUN_ID` | the run name you dispatched with |
 
-`$EDULLM_RUN_ID` is there too, and is the fifth. `env | grep EDULLM` inside a run on this fleet
-returns those five and nothing else.
+**Those four variables are the whole of it.** `env | grep EDULLM` inside a run on this fleet
+returns `EDULLM_RUN_ID`, `EDULLM_OUTPUT_PREFIX`, `EDULLM_DATA_BUCKET` and
+`EDULLM_CHECKPOINT_DIR`, and nothing else.
 
 **Three more that the platform sets and this lane does not, which is the difference that has cost
 the most time here:**
@@ -568,10 +571,13 @@ about forty-five seconds after the container came up, which is well before it ha
 a run that died on a missing import or an unset variable has already said so on the page you are
 looking at.
 
-| | What the summary carries |
+| | What its summary carries |
 | --- | --- |
 | **Block: start a run on a node** | The instance, the commit that was actually cloned, the W&B link, and the first forty lines the run printed |
 | **Block: start one run across several nodes** | The mesh, the elected node, every machine with its private address and the fabric it chose, the W&B link, the command every rank is running, the first forty lines **rank 0** printed, and one line each from the other nodes |
+
+The forty lines are in the job log as well as in the summary, on both, because there is no `gh`
+command for a summary and a terminal can only read the log.
 
 **The multi-node summary printed the mesh and stopped until 2026-08-10**, which made the button
 this page recommends for every whole-machine job the button with no feedback. Rank 0 is shown

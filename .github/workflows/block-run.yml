@@ -703,6 +703,14 @@ jobs:
       # answers is the one asked within thirty seconds of every dispatch: did the thing start,
       # or did it die on an import. Reading the first lines back here means the answer arrives
       # in the same page as the dispatch, for a person who cannot read the log any other way.
+      #
+      # IT GOES TO THE SUMMARY AS WELL AS THE LOG, AND IT WENT ONLY TO THE LOG UNTIL 2026-08-10.
+      # The job log is what somebody driving this from a terminal can read, since `gh` has no
+      # command for a summary; the summary is the page a researcher opens from the run's URL, and
+      # it is the surface `guides/running-on-the-block.md` sends the fifteen people with no AWS
+      # role to. Every other report in this workflow is `tee`d into both for that reason and this
+      # one was not, so the one section answering "did it start" was missing from the page most
+      # of its readers were looking at.
       - name: Show the first lines the run printed
         if: always()
         continue-on-error: true
@@ -739,9 +747,17 @@ jobs:
           read -r tail_id < "${tail_command}"
           sleep 10
 
-          aws ssm get-command-invocation \
-            --region "${BLOCK_REGION}" \
-            --command-id "${tail_id}" \
-            --instance-id "${instance_id}" \
-            --query StandardOutputContent \
-            --output text
+          # Fenced, because the summary is markdown and a traceback in it is otherwise
+          # reflowed into one paragraph with the indentation that made it readable removed.
+          {
+            echo "### The first 40 lines \`${RUN_NAME}\` printed"
+            echo ""
+            echo '```'
+            aws ssm get-command-invocation \
+              --region "${BLOCK_REGION}" \
+              --command-id "${tail_id}" \
+              --instance-id "${instance_id}" \
+              --query StandardOutputContent \
+              --output text
+            echo '```'
+          } | tee -a "${GITHUB_STEP_SUMMARY}"

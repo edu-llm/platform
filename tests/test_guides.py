@@ -2040,6 +2040,11 @@ def test_both_dispatches_read_the_log_back_and_the_procedure_says_so(
     assert f"tail -n {TAIL_LINES} " in single, (
         "block-run.yml no longer reads the log back, and the procedure promises it does"
     )
+    assert 'tee -a "${GITHUB_STEP_SUMMARY}"' in single.split("Show the first lines", 1)[1], (
+        "block-run.yml reads the log back into the job log alone. The summary is the page a "
+        "researcher opens from the run's URL and the one the procedure sends the people with "
+        "no AWS role to, so the section answering 'did it start' has to be on both"
+    )
     assert "read_the_log_back(" in tool, (
         "the multi-node tool no longer reads the log back, so the workflow this page "
         "recommends for a whole machine says nothing about whether the job started"
