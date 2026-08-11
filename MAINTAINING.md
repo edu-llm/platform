@@ -435,6 +435,31 @@ the image configurations of one commit built several times from the same pinned 
 the analysis of where they diverge is a test rather than a paragraph. See
 `tests/test_phase1_rebuild_comparison.py`.
 
+## What a cold-start reader found on the block, and what must not be tidied away
+
+A reader with no insider knowledge was given the public repository and told to get work onto
+the capacity block on 2026-08-10. They got a 7.5B mixture-of-experts model training on eight
+H100s without asking anybody anything, and it cost them three dispatches and two dead-on-arrival
+runs. What was wrong is fixed. What was right is listed here because the next person to tidy
+this lane will not know which paragraphs were load-bearing, and four of them were.
+
+| What earned its place | What holds it |
+| --- | --- |
+| The `command_needs_a_launcher` refusal, whole. It names the parameter count, the two defaults, the branch they came from, the `torchrun ... python script.py` trap, the incident and a paste-ready line, and it fires before a node is touched | `tests/test_block_launcher.py`, extensively |
+| `edullm data`, and its separation of registered from runnable. It was called the best-designed thing in the session | `test_the_guide_sends_a_reader_to_the_verb_rather_than_tabulating_the_corpora` |
+| The entrypoint's `run_name` argparse error, which explains a binding rule instead of printing `unrecognized arguments`. It turned an afternoon into four minutes | Nothing here. It lives in OLMo-core |
+| Section 2's advice to use the multi-node workflow at `node_count=1`, which makes the one-machine and eight-machine cases one command with one field changed | `test_the_procedure_recommends_the_multi_node_workflow_for_one_machine` |
+
+The refusal's one fault is that it is a single two-thousand-character paragraph and the operative
+sentence is easy to miss inside it. That is a reason to break it up, not to shorten it.
+
+Two things the same reader found are still open and neither is fixable here. OLMo-core's
+`THE_PLATFORM_DID_NOT_SET_THE_ENVIRONMENT` refusal names `dataset_release: none`, which is a
+field on the platform's submission form and does not exist in this lane, so it sends a block user
+looking for a control that is not there; it should also name the three `--dataset-*` flags. And
+nothing in this repository records which corpora reach `edullm-data-us-east-2`, so `edullm data`
+answers "will this run" for `us-east-1` and no tool answers it for the block.
+
 ## Open decisions
 
 `src/edullm_platform/open_decisions.py` records questions this repository has surfaced and

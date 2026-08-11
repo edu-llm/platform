@@ -156,12 +156,12 @@ gh workflow run block-run.yml --ref main -R edu-llm/platform \
 
 **It was run on node 1 on 2026-08-10 and it trained**: forty steps of the 7,123,109,888-parameter
 OLMoE recipe on eight H100s, first loss 11.889, last loss 6.975, 217.9 seconds wall including a
-24.4-second evaluation nobody asked for. The version of it this page carried until then could not
-start at all, and the same eleven-word line appeared in all three sections below, so anybody who
-copied it claimed a `p5.48xlarge`, started eight containers and got `exit=64` about three seconds
-later. It happened twice to one reader on one afternoon. **Do not replace what is above with
-something you have not run**; `tests/test_guides.py` holds this page to the recorded line for that
-reason, and the whole of what you are meant to change is the name.
+24.4-second evaluation nobody asked for. The line this page carried until then could not start at
+all, and the same four words of it stood in all three sections, so anybody who copied it claimed a
+`p5.48xlarge`, started eight containers and got `exit=64` about three seconds later. It happened
+twice to one reader on one afternoon. **Do not replace what is above with something you have not
+run**; `tests/test_guides.py` holds this page to the recorded line for that reason, and the whole
+of what you are meant to change is the name.
 
 `ana-mfu-smoke-1` **appears twice on purpose and both are the same word.** The entrypoint takes an
 optional positional `run_name` before its flags, and this is the trap that ate the first attempt:
@@ -174,7 +174,7 @@ feature that cannot both be used is worse than either alone. Put the run name in
 from.** `--dataset-id`, `--dataset-version` and `--dataset-tokenizer` are read from
 `EDULLM_DATASET_ID`, `EDULLM_DATASET_VERSION` and `EDULLM_DATASET_TOKENIZER` when the platform
 sets them, and the block does not set any of them -- see the table in [section
-5](#5-where-does-my-output-go). Passing one of the three earns
+5](#5-where-does-my-output-go). Passing only one of the three earns
 `THE_PLATFORM_DID_NOT_SET_THE_ENVIRONMENT exit=64` on every rank, and the message names a
 submission-form field that does not exist in this lane, so it reads as though you are on the wrong
 page. You are not; you are missing two flags.
@@ -184,6 +184,14 @@ wrong one.** The short form is the *reference id* `edullm data` lists corpora un
 values the flags want are the coordinates underneath it, and `edullm data regmix-10b-v1` is what
 prints them -- it reaches no network, answers instantly, and it is the only thing that will tell
 you a corpus is registered and still cannot be opened.
+
+**One thing `edullm data` cannot answer is whether the corpus is here.** It describes the platform
+in `us-east-1` and knows nothing about this lane, and the block reads `edullm-data-us-east-2`,
+which is a mirror. Nothing in this repository records what is in that mirror or when it was last
+filled, so "registered" and "runnable" -- the distinction `edullm data` is good at -- are still
+two questions short of "openable from a node in `us-east-2`". `pretrain/regmix-10b v1` is there,
+because the run above read it. For anything else, ask in the channel before you spend a machine
+finding out, or find out on one node rather than eight.
 
 | Flag | Why this value |
 | --- | --- |

@@ -17,11 +17,19 @@ Then the guide for what you are actually doing:
 | [Training a model](guides/olmo-core.md) | OLMo-core, for pretraining and fine-tuning on one to eight GPUs |
 | [Running an evaluation](guides/olmo-eval-full.md) | olmo-eval-full, for scoring a model against a task suite |
 | [Validating a corpus](guides/edullm-data.md) | edullm-data, for checking and publishing a dataset |
-| [Using the capacity block](guides/the-capacity-block.md) | The eight-machine window in us-east-2, whichever repository you work in. A separate lane, and nothing off it is a run you can cite |
 
 The three above need nothing installed and no AWS account. If you would rather work in a terminal than in the Actions UI, `uv tool install --force git+https://github.com/edu-llm/platform` puts the `edullm` command on your path, and `edullm --version` has to read 3.4.8 or higher afterwards, because below that `submit` unquotes your command and the submission is refused. It prices a submission offline before it sends it, and submits, follows and stops runs. Re-running that same line is how you upgrade, whichever way the tool was installed. `uv tool upgrade` follows the ref the install named, so it upgrades one made from the bare URL above and answers `Nothing to upgrade` to one pinned at a release tag, however far behind that one is. If you installed before v4.2.2, when the package was called `edullm-platform` rather than `edullm`, run `uv tool uninstall edullm-platform` **before** that install line and not after: both installs own the same `edullm` executable and uv deletes it with the old entry, which leaves you with a healthy-looking `uv tool list` and no command. [Day one](guides/day-one.md) is the short way through it and [from a terminal](guides/the-platform.md#from-a-terminal) is the reference.
 
 Working through Cursor, Claude Code or Codex rather than typing the commands yourself? [**A skill for your coding agent**](skills/README.md) is one file to drop into your own repository, and it is what stops an agent writing a shell script that talks to AWS.
+
+## There is a second lane this week, and it is not one of the guides above
+
+**The capacity block is eight `p5.48xlarge` in `us-east-2` for one window, and everything about how you reach it is different.** Not another kind of workload: a different region, a different entry point, and its own tooling. You dispatch `block-*.yml` workflows rather than running `edullm submit`, the image is fixed for the whole fleet rather than built from your commit, nothing is priced or approved, and **nothing off it is a run anybody can cite** — no admission record, no lineage entry, no run id. The platform above is untouched and is where anything reproducible goes.
+
+- [**Running a job on the capacity block**](guides/running-on-the-block.md) is the procedure: what is free, what to type for one node, two or eight, and what to do when a machine says it is busy and nothing is running
+- [**Using the capacity block**](guides/the-capacity-block.md) is the background: whether your repository can run there at all, what the fleet's one image carries, and the traps that cost a day
+
+Somebody who reads only the table above and needs H100s this week will spend an hour submitting into `us-east-1` before finding out the cards are somewhere else. That is what this section is for.
 
 ## What it does
 

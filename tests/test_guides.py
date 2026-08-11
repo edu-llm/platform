@@ -1976,6 +1976,46 @@ def test_the_procedure_names_the_processes_value_that_actually_silences_the_chec
     )
 
 
+def test_the_procedure_recommends_the_multi_node_workflow_for_one_machine(
+    block_procedure: str,
+) -> None:
+    """**A PARAGRAPH THAT EARNED ITS PLACE, PINNED SO THAT NOBODY TIDIES IT INTO A FOOTNOTE.**
+
+    Mutation: cut it, or soften it to "the multi-node workflow also accepts one node".
+
+    A cold-start reader called this the single most useful sentence on the page. Taking it means
+    the one-machine case and the eight-machine case are the same command with one field changed:
+    it composes the launcher and the mesh flags, it removes the ``processes`` decision entirely,
+    and it turns going from one node to two into a one-character edit. Read the other way round,
+    somebody who smoke-tests through ``block-run.yml`` and then moves to the distributed form is
+    changing the button, the fields *and* the command at the moment they first spend eight
+    machines.
+
+    It reads like a note about a special case, which is exactly why it is at risk. The workflow
+    genuinely accepts ``node_count=1`` -- ``choose_nodes`` has no lower bound above one and
+    ``mesh_for`` computes a one-node mesh -- so the recommendation costs nothing and this holds
+    that it is still made in as many words.
+    """
+    from edullm_platform.block_multinode import mesh_for
+
+    mesh = mesh_for(nodes=1, gpus_per_node=8)
+    assert mesh.world_size == 8 and not mesh.all_to_all_crosses_the_fabric, (
+        "a one-node mesh is no longer eight ranks inside one machine, so the recommendation "
+        "the procedure makes has to be rechecked before this test is made to pass again"
+    )
+
+    section = block_procedure.split("\n## 2. ", 1)
+    assert len(section) == 2, "the procedure no longer has a section about claiming machines"
+    body = " ".join(section[1].split("\n## ", 1)[0].split())
+
+    assert "accepts `node_count=1`" in body and "recommendation" in body, (
+        "section 2 no longer recommends the multi-node workflow for a single machine. That "
+        "sentence is why the one-node and eight-node cases are one command with one field "
+        "changed, and a reader who does not meet it smoke-tests on the other button and then "
+        "changes everything at once on the dispatch that costs eight machines"
+    )
+
+
 def test_both_dispatches_read_the_log_back_and_the_procedure_says_so(
     block_procedure: str,
 ) -> None:
