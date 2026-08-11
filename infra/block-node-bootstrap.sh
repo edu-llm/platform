@@ -97,12 +97,13 @@ trap failed ERR
 # fresh Nitro boot and `nvidia-smi` answers "couldn't communicate with the NVIDIA driver"
 # for the first several seconds of a machine that is completely healthy. Failing on the
 # first read would terminate a good node out of a fleet of eight.
+# `--id=0` and no `head`: that pipe SIGPIPEs the writer and pipefail fails a healthy boot.
 observed_gpus=0
 driver_version=unknown
 for _attempt in $(seq 1 30); do
   if nvidia-smi -L > "${STATE_DIRECTORY}/nvidia-smi.txt" 2>/dev/null; then
     observed_gpus="$(grep -c '^GPU ' "${STATE_DIRECTORY}/nvidia-smi.txt" || true)"
-    driver_version="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -n 1)"
+    driver_version="$(nvidia-smi --id=0 --query-gpu=driver_version --format=csv,noheader)"
     break
   fi
   sleep 10
