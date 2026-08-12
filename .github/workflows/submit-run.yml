@@ -52,6 +52,7 @@ on:
           - edullm-alt-cl
           - edullm-data
           - edullm-p1
+          - nested-learning
           - OLMo-core
           - olmo-eval-full
           - open-instruct-scored-rewards
