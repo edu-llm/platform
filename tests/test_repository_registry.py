@@ -113,6 +113,7 @@ def test_the_registry_and_the_pilot_list_are_asked_different_questions() -> None
         "edullm-alt-cl",
         "edullm-data",
         "edullm-p1",
+        "nested-learning",
         "olmo-eval-full",
         "open-instruct-scored-rewards",
     }

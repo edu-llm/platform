@@ -370,7 +370,112 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
     # nothing here compares the two, so the register cannot tell a run that has not happened
     # from a run that will never contain the stack. Where the role lives in an IAM stack,
     # say the apply and say it is a laptop one.
-    amendments: tuple[PendingAmendment, ...] = ()
+    amendments: tuple[PendingAmendment, ...] = (
+        PendingAmendment(
+            role_name="sbsandbox-intern-edullm-ecr-publisher",
+            reason=(
+                "registering edu-llm/nested-learning added its GitHub repository id to the "
+                "publisher trust policy and its ECR repository to the publish scope, but "
+                "the ecr-publisher IAM stack is applied from a laptop and the account has "
+                "not caught up to this template yet."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="trust policy statement 1 conditions",
+                    detail=(
+                        "StringEquals token.actions.githubusercontent.com:repository_id "
+                        "does not accept values the template does: 1331629363"
+                    ),
+                ),
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="trust policy statement 1 conditions",
+                    detail=(
+                        "StringLike token.actions.githubusercontent.com:sub does not "
+                        "accept values the template does: "
+                        "repo:edu-llm@306859726/nested-learning@1331629363:"
+                        "ref:refs/heads/*"
+                    ),
+                ),
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'publish-research-images' statement 2 resources",
+                    detail=(
+                        "the template declares resources the deployed role does not: "
+                        "arn:<partition>:ecr:<region>:<account>:repository/"
+                        "sbsandbox-intern-edullm-nested-learning"
+                    ),
+                ),
+            ),
+        ),
+        PendingAmendment(
+            role_name="sbsandbox-intern-edullm-admission-states",
+            reason=(
+                "registering edu-llm/nested-learning added its ECR repository to the "
+                "admission workflow image-resolution scope, but the admission service "
+                "roles stack is applied from a laptop and the account has not caught up "
+                "to this template yet."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'run-admission-workflow' statement 7 resources",
+                    detail=(
+                        "the template declares resources the deployed role does not: "
+                        "arn:<partition>:ecr:<region>:<account>:repository/"
+                        "sbsandbox-intern-edullm-nested-learning"
+                    ),
+                ),
+            ),
+        ),
+        PendingAmendment(
+            role_name="sbsandbox-intern-edullm-batch-execution",
+            reason=(
+                "registering edu-llm/nested-learning added its ECR repository to the CPU "
+                "Batch execution role pull scope, but the phase3 Batch IAM stack is "
+                "applied from a laptop and the account has not caught up to this template "
+                "yet."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element=(
+                        "inline policy 'pull-the-image-and-open-the-log-stream' statement "
+                        "2 resources"
+                    ),
+                    detail=(
+                        "the template declares resources the deployed role does not: "
+                        "arn:<partition>:ecr:<region>:<account>:repository/"
+                        "sbsandbox-intern-edullm-nested-learning"
+                    ),
+                ),
+            ),
+        ),
+        PendingAmendment(
+            role_name="sbsandbox-intern-edullm-batch-instance",
+            reason=(
+                "registering edu-llm/nested-learning added its ECR repository to the CPU "
+                "Batch instance role ECS join scope, but the phase3 Batch IAM stack is "
+                "applied from a laptop and the account has not caught up to this template "
+                "yet."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element=(
+                        "inline policy 'join-the-batch-managed-ecs-cluster' statement 3 "
+                        "resources"
+                    ),
+                    detail=(
+                        "the template declares resources the deployed role does not: "
+                        "arn:<partition>:ecr:<region>:<account>:repository/"
+                        "sbsandbox-intern-edullm-nested-learning"
+                    ),
+                ),
+            ),
+        ),
+    )
     # The role-is-declared check used to be a loop here. It is in ``__post_init__`` now,
     # because the same lookup is the first step of deriving ``cleared_by`` and two places
     # asking the same question is how the answers part company.
@@ -1144,18 +1249,46 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # this was rebuilt rather than chosen between.
     releases: tuple[PendingRelease, ...] = (
         PendingRelease(
+            function="validator",
+            reason=(
+                "registering edu-llm/nested-learning changed the repository registry and "
+                "workload catalog that the admission validator packages into its zip, so "
+                "the branch builds bytes the deployed validator cannot run until the "
+                "release is cut from main."
+            ),
+            cleared_by=f"uv run python {RELEASE_COMMAND} --function validator",
+            builds_to="7d987e5abbd1447c8cec84df5c6f563796cc36b9ce5c66174f16083cf8297785",
+            released="2cda942e9518cf23b6042a5b5ab35d550557a0784acfc9c3ee2d593844e9064c",
+            recorded_on=date(2026, 8, 12),
+        ),
+        PendingRelease(
+            function="recorder",
+            reason=(
+                "registering edu-llm/nested-learning changed platform configuration and "
+                "contracts packaged beside the lifecycle recorder, so the branch builds a "
+                "new recorder zip that cannot be the deployed one until the release is cut "
+                "from main."
+            ),
+            cleared_by=f"uv run python {RELEASE_COMMAND} --function recorder",
+            builds_to="a740998e153dd3ef2591c4c09052a858935569dca16792e787ce7edf8b5b00a9",
+            released="1c2d5c6d7f7e52f6b4ef07d6c69f2777a08ce94c3e850d0e1f4ad70def1e5b7b",
+            recorded_on=date(2026, 8, 12),
+        ),
+        PendingRelease(
             function="notifier",
             reason=(
                 "the run-ended message interpolated the submitter's experiment into Slack "
                 "without escaping it, so a run named <!channel> notified the whole workspace "
                 "every time it ended. messages.escaped now converts the three characters "
                 "Slack parses, per field and before the line is assembled so the link the "
-                "approval message builds survives."
+                "approval message builds survives. Registering edu-llm/nested-learning "
+                "moved the packaged configuration again before that release was cut, so "
+                "the pending record now names the zip this branch actually builds."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function notifier",
-            builds_to="15058807c08d7bddefbfa7413ee737a3ecd910de0955f4e6879cf0b2ddf75d8d",
+            builds_to="19b959a044d05a7c5ca94af8b303bdcceffafa6a20252d8dc2a04f41776e283e",
             released="d78c4a48482558039e7affc51331ec558e5880f8e48876bafb567fe683ee67b9",
-            recorded_on=date(2026, 8, 6),
+            recorded_on=date(2026, 8, 12),
         ),
         PendingRelease(
             function="janitor",
@@ -1169,12 +1302,15 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "ConfigFile member, which researcher_lane.py imports and this zip carries, so "
                 "a line in a StrEnum moved a Lambda for two reports the sweep never reads. "
                 "The fourteenth entry in this register recorded that coupling as the finding "
-                "rather than a one-off, and this is its third and fourth arrival."
+                "rather than a one-off, and this is its third and fourth arrival. "
+                "Registering edu-llm/nested-learning moved the packaged configuration again "
+                "before that release was cut, so the pending record now names the zip this "
+                "branch actually builds."
             ),
             cleared_by=f"uv run python {RELEASE_COMMAND} --function janitor",
-            builds_to="05a5cc589472e7d95800da952b740f438002ec0cd4e094ad0e71173d1e016339",
+            builds_to="8a8c59f205341b2324375b9d6ee6f7dc239f6ad99faeb1c0fbee668ca7adc863",
             released="e07efe963ec9cadb79f7345a14d9074c125e359a588e0661f99db687a757e96a",
-            recorded_on=date(2026, 8, 6),
+            recorded_on=date(2026, 8, 12),
         ),
     )
     return one_record_per_function(releases)

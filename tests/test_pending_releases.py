@@ -29,7 +29,7 @@ explain something rather than succeeding.
 from __future__ import annotations
 
 import sys
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -58,7 +58,7 @@ from release_lambda import FUNCTIONS
 
 BUILT = "a" * 64
 DEPLOYED = "b" * 64
-TODAY = date(2026, 8, 4)
+TODAY = datetime.now(tz=UTC).date()
 
 
 def a_record(**overrides: Any) -> PendingRelease:

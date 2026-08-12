@@ -89,3 +89,13 @@ repositories:
     base_image_digest: sha256:ebef3c171eeef0298e4eb2e4be843105edf3b8b0ac45e0b43acee358e8046867
     dockerfile_path: .edullm/Dockerfile
     build_context: .
+  # nested-learning: Nested Learning OLMoE/CMS architecture experiments on official MoE
+  # base models, with a bounded 12-hour GPU Block proof run.
+  - repository: nested-learning
+    github_repository_id: 1331629363
+    default_branch: main
+    ecr_repository: sbsandbox-intern-edullm-nested-learning
+    base_image_repository: docker.io/library/python
+    base_image_digest: sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+    dockerfile_path: .edullm/Dockerfile
+    build_context: .

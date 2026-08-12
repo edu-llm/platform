@@ -357,7 +357,11 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     # host fault. The entry in config/workload-catalog.yaml argues each of them, and
     # test_edullm_p1_train_bounds_a_real_mixlaw_arm below pins the two that decide what a
     # submission costs.
-    assert len(catalog.workloads) == 12
+    #
+    # THIRTEEN SINCE nested-learning-train REGISTERED THE 12-HOUR BLOCK PROOF RUN. It is
+    # deliberately a training profile rather than a one-hour check, because the research
+    # repository's own .edullm/run.yaml names nested-learning-train and gpu-8xa100.
+    assert len(catalog.workloads) == 13
     # The check Phase 3 runs. It names OLMo-core, which was the only registered repository
     # with a published image when this was written; dolma-tokenize is the same shape against
     # a repository that still has neither.
@@ -395,6 +399,25 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     # routine_maximum_runtime_hours went from 12 to 24 and this entry's bound went with it,
     # so the ceiling a four-GPU training run can reach doubled and is still under $500.
     assert gpu_cost.maximum_compute_cost_usd == Decimal("272.26")
+
+
+def test_nested_learning_train_bounds_the_block_proof_run() -> None:
+    """Mutation: turn the 12-hour profile back into a one-hour registration default.
+
+    The first run this repository is set up for is the bounded Block matrix, not a standalone
+    smoke test. One attempt and no checkpoint contract are intentional until the trainer
+    proves it can resume from EDULLM_CHECKPOINT_DIR.
+    """
+    project_root = Path(__file__).resolve().parents[1]
+    catalog = load_yaml(project_root / "config" / "workload-catalog.yaml", WorkloadCatalog)
+    train = next(
+        workload for workload in catalog.workloads if workload.name == "nested-learning-train"
+    )
+
+    assert train.repository == "nested-learning"
+    assert train.maximum_runtime_hours == Decimal(12)
+    assert train.maximum_attempts == 1
+    assert train.checkpoint is None
 
 
 def test_edullm_p1_train_bounds_a_real_mixlaw_arm() -> None:

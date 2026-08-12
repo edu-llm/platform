@@ -574,10 +574,11 @@ workloads:
   # The image also differs in kind rather than in degree -- it carries vLLM, DeepSpeed
   # and a pip-installed nvcc, which no registered image does.
   #
-  # The bounds are this tool's defaults and not a measurement: one hour, one attempt and
-  # no checkpoint contract is the shape of every repository's first entry, and it is
-  # right for a check and wrong for anything that trains. The machine is the submission
-  # form's compute_profile field and is deliberately not named here.
+  # Twelve hours is the bound the first Block proof run is designed to fit: eight
+  # one-node variants share a capacity-block window rather than one job occupying the
+  # whole fleet. One attempt and no checkpoint contract are deliberate until this
+  # repository teaches the trainer to resume from EDULLM_CHECKPOINT_DIR. The machine is
+  # the submission form's compute_profile field and is deliberately not named here.
   - name: open-instruct-scored-rewards-check
     repository: open-instruct-scored-rewards
     maximum_runtime_hours: "1"
@@ -850,3 +851,17 @@ workloads:
       interval_minutes: 20
       destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
       resume_required: false
+  # nested-learning-train: the first workload profile for nested-learning, written with
+  # the registration because a repository with no entry here has nothing a run can name.
+  # Nested Learning OLMoE/CMS architecture experiments on official MoE base models, with
+  # a bounded 12-hour GPU Block proof run.
+  #
+  # The bounds are this tool's defaults and not a measurement: one hour, one attempt and
+  # no checkpoint contract is the shape of every repository's first entry, and it is
+  # right for a check and wrong for anything that trains. The machine is the submission
+  # form's compute_profile field and is deliberately not named here.
+  - name: nested-learning-train
+    repository: nested-learning
+    maximum_runtime_hours: "12"
+    maximum_attempts: 1
+    checkpoint: null
