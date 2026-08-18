@@ -1,3 +1,6 @@
+> [!CAUTION]
+> **PLATFORM FROZEN (2026-08-18).** The eduLLM AWS platform is decommissioned for the season: submissions, block workflows, image builds and deploys are disabled. All datasets and infrastructure are archived for resumption next summer (see the archive MANIFEST in the devops-dashboard repo, plans/edullm-decommission-plan.md, TASK-127). Questions or resumption: contact Max McCorkel.
+
 # edu-llm platform
 
 Shared research compute for eduLLM. Submit a training, evaluation or data job through a form on GitHub, a team lead approves it, and it runs on AWS. **No AWS account, credentials or local install required.**
